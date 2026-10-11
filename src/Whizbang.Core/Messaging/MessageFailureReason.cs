@@ -190,6 +190,14 @@ public enum MessageFailureReason {
   MessagePayloadTooLarge = 20,
 
   /// <summary>
+  /// A body claim arrived with no cipher descriptor at a receiver that requires sealed bodies
+  /// (<c>MessageBodyOffloadOptions.RequireSealedBodies</c>). Refused before the body is fetched. Fix by
+  /// configuring a cipher on the sender, or leave the option off until every sender seals.
+  /// </summary>
+  /// <docs>fundamentals/offloads/message-body-store</docs>
+  BodyClaimUnsealed = 21,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

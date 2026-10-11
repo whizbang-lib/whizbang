@@ -22,7 +22,7 @@ namespace Whizbang.Sagas.Services;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
-/// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs</tests>
+/// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs</tests>
 public interface ISagaWatchdogParticipant {
   /// <summary>The name ticks are addressed to — the saga name the service arms them with.</summary>
   string SagaName { get; }

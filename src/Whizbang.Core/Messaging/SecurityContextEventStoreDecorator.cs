@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -65,7 +64,7 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : Forw
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
           Scope = CascadeContext.ResolveHopFirstScope(sourceEnvelope: null),
           CorrelationId = correlation,
           CausationId = causation,

@@ -31,7 +31,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 public sealed partial class PgDurableSignalRetentionWorker(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,

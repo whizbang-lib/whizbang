@@ -10,15 +10,26 @@ namespace Whizbang.Core.Workers;
 /// liveness signal).
 /// </summary>
 /// <remarks>
-/// Implemented by <c>Whizbang.Data.Postgres.Notifications.PgSharedNotifyConnection</c>
-/// (the existing LISTEN direct conn). Hosts that don't enable the direct conn don't
-/// register an implementation; <see cref="HeartbeatWorker"/> then sees null and
-/// stays on the fast cadence (today's behaviour).
+/// <para>
+/// Implemented by <c>Whizbang.Data.Postgres.Notifications.PgSharedNotifyConnection</c> (the LISTEN direct
+/// connection, which takes the lock) and registered by the Postgres notifications (#1286). It reports the lock held
+/// only on a connection of its own: behind the pooled fallback it reports none. Hosts without the notifications keep
+/// <see cref="NullInstanceAliveLockSource"/>, and <see cref="HeartbeatWorker"/> stays on the fast cadence.
+/// </para>
+/// <para>
+/// The slow cadence is safe because every reader that judges a peer by its heartbeat also honors the lock: a direct
+/// instance holding it is live whatever its heartbeat's age (the claim's rank, the stale-peer reap, the partition
+/// assigner, the standby handshake), and once the lock is gone it is judged by its heartbeat at once. The claim loop
+/// passes this source's answer to each claim, so a direct instance holding the lock is not asked to re-register
+/// between slow beats.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/instance-liveness</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockHeld_AdvisoryLockMode_UsesSlowCadenceAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockNotHeld_AdvisoryLockMode_UsesFastCadenceAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerAdaptiveCadenceTests.cs:LockTransitionsHeldToNotHeld_NextResolveReturnsFastCadenceAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourceRegistrationTests.cs:AddWhizbangPostgresNotifications_RegistersTheSharedConnectionAsTheAliveLockSourceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/ClaimWorkerAliveLockTests.cs:AClaim_WhileTheAliveLockIsHeld_SaysSoAsync</tests>
 public interface IInstanceAliveLockSource {
   /// <summary>True when the session-level alive-lock is currently held by this instance.</summary>
   bool IsAliveLockHeld { get; }

@@ -69,6 +69,56 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     await Assert.That(rebuilder.LastStreamIds).DoesNotContain(excluded);
   }
 
+  // The caller's RequestId is what makes a broadcast rebuild answerable: every service that ran
+  // stamps the same id on its rebuild events, so the caller can find its own rebuild across them.
+  // Replacing it with a fresh id would make "did anything run" unanswerable for that caller.
+  [Test]
+  public async Task HandleAsync_WithARequestId_StampsTheCallersIdAndRequesterOnTheOriginAsync() {
+    var requestId = Guid.NewGuid();
+    var rebuilder = new RecordingRebuilder();
+    var receptor = _receptor(rebuilder);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+      Mode: RebuildMode.InPlace,
+      IncludeStreamIds: [Guid.NewGuid()],
+      RequestId: requestId,
+      RequestedBy: "operator@example.com"), CancellationToken.None);
+
+    await Assert.That(rebuilder.LastOrigin).IsNotNull();
+    await Assert.That(rebuilder.LastOrigin!.RequestId).IsEqualTo(requestId);
+    await Assert.That(rebuilder.LastOrigin.RequestedBy).IsEqualTo("operator@example.com");
+    await Assert.That(rebuilder.LastOrigin.Trigger).IsEqualTo(RebuildTrigger.Requested);
+  }
+
+  // Without a caller id each service mints its own, so the rebuild's events still carry an origin
+  // id ("did anything run here" stays answerable per service) rather than none at all.
+  [Test]
+  public async Task HandleAsync_WithoutARequestId_StampsAFreshIdOnTheOriginAsync() {
+    var rebuilder = new RecordingRebuilder();
+    var receptor = _receptor(rebuilder);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+      Mode: RebuildMode.InPlace,
+      IncludeStreamIds: [Guid.NewGuid()]), CancellationToken.None);
+
+    await Assert.That(rebuilder.LastOrigin).IsNotNull();
+    await Assert.That(rebuilder.LastOrigin!.RequestId).IsNotNull();
+    await Assert.That(rebuilder.LastOrigin.RequestId).IsNotEqualTo(Guid.Empty);
+    await Assert.That(rebuilder.LastOrigin.RequestedBy).IsNull();
+    await Assert.That(rebuilder.LastOrigin.Trigger).IsEqualTo(RebuildTrigger.Requested);
+  }
+
+  private static RebuildPerspectiveCommandReceptor _receptor(RecordingRebuilder rebuilder) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStoreQuery>(new SyncOnlyEventStoreQuery([]));
+    services.AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakeRunnerRegistry("TestPerspective"));
+    var sp = services.BuildServiceProvider();
+    return new RebuildPerspectiveCommandReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      NullLogger<RebuildPerspectiveCommandReceptor>.Instance);
+  }
+
   // ── fakes ─────────────────────────────────────────────────────────────
 
   /// <summary>

@@ -1,0 +1,551 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Transports.Component.Tests.Generated;
+
+namespace Whizbang.Transports.Tests;
+
+/// <summary>
+/// <para>Tests for DispatcherTransportBridge - a component that connects IDispatcher with ITransport.
+/// Following TDD: These tests are written BEFORE implementing the bridge.
+/// All tests should FAIL initially (RED phase), then pass after implementation (GREEN phase).</para>
+///
+/// <para>Architecture:
+/// - IDispatcher remains pure (no transport concerns)
+/// - DispatcherTransportBridge handles transport integration
+/// - Bridge serializes/deserializes messages
+/// - Bridge routes incoming transport messages to local dispatcher
+/// - Bridge publishes outgoing messages to transport destinations</para>
+/// </summary>
+public class DispatcherTransportBridgeTests {
+  [Test]
+  public async Task PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-service");
+
+    IMessageEnvelope? receivedEnvelope = null;
+    var messageReceivedSignal = new TaskCompletionSource();
+
+    // Subscribe to the destination to simulate remote service
+    await transport.SubscribeBatchAsync(
+      async (batch, _) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
+        messageReceivedSignal.TrySetResult();
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var message = new TestCommand { Value = 42 };
+
+    // Act - Publish message to transport via bridge
+    await bridge.PublishToTransportAsync(message, destination);
+
+    // Wait for batch handler to fire (signal-based, not timing-based)
+    await messageReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - Message was delivered to transport destination
+    await Assert.That(receivedEnvelope).IsNotNull();
+
+    // Verify payload was preserved
+    if (receivedEnvelope != null) {
+      var typedEnvelope = (MessageEnvelope<TestCommand>)receivedEnvelope;
+      await Assert.That(typedEnvelope.Payload.Value).IsEqualTo(42);
+    }
+  }
+
+  [Test]
+  public async Task PublishToTransportAsync_AutomaticallySerializesMessageAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    var serializer = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-service");
+
+    byte[]? serializedBytes = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await transport.SubscribeBatchAsync(
+      async (batch, _) => {
+        foreach (var msg in batch) {
+          // Verify serialization works
+          serializedBytes = await serializer.SerializeAsync(msg.Envelope);
+          var deserialized = await serializer.DeserializeAsync<TestCommand>(serializedBytes);
+          await Assert.That(deserialized).IsNotNull();
+        }
+        batchHandled.TrySetResult();
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var message = new TestCommand { Value = 42, Name = "Test" };
+
+    // Act
+    await bridge.PublishToTransportAsync(message, destination);
+
+    // Wait for batch handler to fire (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - Serialization occurred
+    await Assert.That(serializedBytes).IsNotNull();
+    await Assert.That(serializedBytes!.Length).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-calculator");
+
+    // Setup remote responder (simulates remote service)
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var requestEnvelope in batch.Select(msg => msg.Envelope)) {
+          var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
+          var response = new TestResult { Result = request.Value * 2 };
+
+          var responseEnvelope = new MessageEnvelope<TestResult> {
+            MessageId = MessageId.New(),
+            Payload = response,
+            Hops = [
+              new MessageHop {
+                ServiceInstance = new ServiceInstanceInfo {
+                  ServiceName = "TestService",
+                  InstanceId = Guid.NewGuid(),
+                  HostName = "test-host",
+                  ProcessId = 12345
+                },
+                Timestamp = DateTimeOffset.UtcNow,
+                CorrelationId = requestEnvelope.GetCorrelationId(),
+                CausationId = requestEnvelope.MessageId
+              }
+            ],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+          };
+
+          var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, cancellationToken: ct);
+        }
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var query = new TestQuery { Value = 21 };
+
+    // Act - Send request and wait for response
+    var response = await bridge.SendToTransportAsync<TestQuery, TestResult>(query, destination);
+
+    // Assert - Got typed response from remote receptor
+    await Assert.That(response).IsNotNull();
+    await Assert.That(response.Result).IsEqualTo(42);
+  }
+
+  [Test]
+  public async Task SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("local-commands");
+
+    var dispatcherInvokedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Configure test dispatcher to track invocations
+    dispatcher.OnSendAsync = (_) => {
+      dispatcherInvokedSignal.TrySetResult();
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(
+        MessageId.New(),
+        "test",
+        CorrelationId.New(),
+        MessageId.New()
+      ));
+    };
+
+    // Subscribe bridge to transport - incoming messages should route to dispatcher
+    await bridge.SubscribeFromTransportAsync<TestCommand>(destination);
+
+    // Simulate remote sender publishing to transport
+    var message = new TestCommand { Value = 99 };
+    var envelope = new MessageEnvelope<TestCommand> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act - Publish to transport (simulates remote send)
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
+
+    // Wait for dispatcher to be invoked (signal-based)
+    await dispatcherInvokedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - Dispatcher was invoked with the message (signal completed = true)
+    await Assert.That(dispatcherInvokedSignal.Task.IsCompletedSuccessfully).IsTrue();
+  }
+
+  [Test]
+  public async Task SubscribeFromTransportAsync_DeserializesAndInvokesLocalReceptorAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("local-commands");
+
+    TestCommand? receivedMessage = null;
+    var messageReceivedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Configure test dispatcher to capture the message
+    dispatcher.OnSendAsync = (msg) => {
+      receivedMessage = msg as TestCommand;
+      messageReceivedSignal.TrySetResult();
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(
+        MessageId.New(),
+        "test",
+        CorrelationId.New(),
+        MessageId.New()
+      ));
+    };
+
+    // Subscribe bridge to transport
+    await bridge.SubscribeFromTransportAsync<TestCommand>(destination);
+
+    // Create and serialize envelope
+    var message = new TestCommand { Value = 123, Name = "TestMessage" };
+    var envelope = new MessageEnvelope<TestCommand> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    // Act - Publish serialized envelope to transport
+    await transport.PublishAsync(envelope, destination, envelopeType: null, cancellationToken: CancellationToken.None);
+
+    // Wait for dispatcher to process (signal-based)
+    await messageReceivedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - Message was deserialized and passed to dispatcher
+    await Assert.That(receivedMessage).IsNotNull();
+    await Assert.That(receivedMessage!.Value).IsEqualTo(123);
+    await Assert.That(receivedMessage.Name).IsEqualTo("TestMessage");
+  }
+
+  [Test]
+  public async Task PublishToTransportAsync_PreservesCorrelationIdAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-service");
+    var correlationId = CorrelationId.New();
+
+    IMessageEnvelope? receivedEnvelope = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await transport.SubscribeBatchAsync(
+      async (batch, _) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
+        batchHandled.TrySetResult();
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var message = new TestCommand { Value = 42 };
+    var context = new MessageContext {
+      CorrelationId = correlationId,
+      CausationId = MessageId.New()
+    };
+
+    // Act - Publish with explicit context
+    await bridge.PublishToTransportAsync(message, destination, context);
+
+    // Wait for batch handler (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - CorrelationId was preserved
+    await Assert.That(receivedEnvelope).IsNotNull();
+    await Assert.That(receivedEnvelope!.GetCorrelationId()).IsEqualTo(correlationId);
+  }
+
+  [Test]
+  public async Task PublishToTransportAsync_CreatesEnvelopeWithHopAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-service");
+
+    IMessageEnvelope? receivedEnvelope = null;
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await transport.SubscribeBatchAsync(
+      async (batch, _) => {
+        foreach (var msg in batch) {
+          receivedEnvelope = msg.Envelope;
+        }
+        batchHandled.TrySetResult();
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var message = new TestCommand { Value = 42 };
+
+    // Act
+    await bridge.PublishToTransportAsync(message, destination);
+
+    // Wait for batch handler (signal-based)
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - Envelope has at least one hop
+    await Assert.That(receivedEnvelope).IsNotNull();
+    await Assert.That(receivedEnvelope!.Hops).Count().IsGreaterThanOrEqualTo(1);
+    await Assert.That(receivedEnvelope.Hops[0].ServiceInstance.ServiceName).IsNotNull();
+  }
+
+  [Test]
+  public async Task SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var options = WhizbangJsonContext.CreateOptions();
+    _ = new JsonMessageSerializer(options);
+    var dispatcher = _createTestDispatcher();
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
+    var destination = new TransportDestination("remote-calculator");
+    var correlationId = CorrelationId.New();
+
+    IMessageEnvelope? receivedRequest = null;
+
+    // Setup remote responder
+    await transport.SubscribeBatchAsync(
+      async (batch, ct) => {
+        foreach (var requestEnvelope in batch.Select(msg => msg.Envelope)) {
+          receivedRequest = requestEnvelope;
+          var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
+          var response = new TestResult { Result = request.Value * 2 };
+
+          var responseEnvelope = new MessageEnvelope<TestResult> {
+            MessageId = MessageId.New(),
+            Payload = response,
+            Hops = [
+              new MessageHop {
+                ServiceInstance = new ServiceInstanceInfo {
+                  ServiceName = "TestService",
+                  InstanceId = Guid.NewGuid(),
+                  HostName = "test-host",
+                  ProcessId = 12345
+                },
+                Timestamp = DateTimeOffset.UtcNow,
+                CorrelationId = requestEnvelope.GetCorrelationId(),
+                CausationId = requestEnvelope.MessageId
+              }
+            ],
+            DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+          };
+
+          var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
+          await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, cancellationToken: ct);
+        }
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var query = new TestQuery { Value = 21 };
+    var context = new MessageContext {
+      CorrelationId = correlationId,
+      CausationId = MessageId.New()
+    };
+
+    // Act - Send request with explicit context
+    var response = await bridge.SendToTransportAsync<TestQuery, TestResult>(query, destination, context);
+
+    // Assert - Got typed response and correlationId was preserved
+    await Assert.That(response).IsNotNull();
+    await Assert.That(response.Result).IsEqualTo(42);
+    await Assert.That(receivedRequest).IsNotNull();
+    if (receivedRequest != null) {
+      await Assert.That(receivedRequest.GetCorrelationId()).IsEqualTo(correlationId);
+    }
+  }
+
+  // Helper methods
+  private static TestDispatcher _createTestDispatcher() {
+    var serviceProvider = new TestServiceProvider();
+    var instanceProvider = new TestServiceInstanceProvider();
+    return new TestDispatcher(serviceProvider, instanceProvider);
+  }
+
+  // Test message types
+  public record TestCommand : ICommand {
+    public int Value { get; init; }
+    public string Name { get; init; } = string.Empty;
+  }
+
+  public record TestQuery : ICommand {
+    public int Value { get; init; }
+  }
+
+  public record TestResult : IEvent {
+    [StreamId]
+    public int Result { get; init; }
+  }
+
+  // Test dispatcher with hooks for verification
+  private sealed class TestDispatcher(IServiceProvider serviceProvider, IServiceInstanceProvider instanceProvider) : Dispatcher(serviceProvider, instanceProvider) {
+    public Func<object, Task<IDeliveryReceipt>>? OnSendAsync { get; set; }
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      // For testing, we can hook into the receptor invocation
+      // SendAsync calls this method to get the invoker
+      if (OnSendAsync != null && typeof(TResult) == typeof(object)) {
+        return async (msg) => {
+          await OnSendAsync(msg);
+          return (TResult)(object)Task.CompletedTask;
+        };
+      }
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      // For testing, track that void receptor was called
+      if (OnSendAsync != null) {
+        return (msg) => {
+          _ = OnSendAsync(msg);
+          return ValueTask.CompletedTask;
+        };
+      }
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return async (_) => await Task.CompletedTask;
+    }
+
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return null;
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
+      // Return null to use default cascade behavior (no receptor-level routing override)
+      return null;
+    }
+  }
+
+  private sealed class TestServiceProvider : IServiceProvider {
+    private readonly TestServiceScopeFactory _scopeFactory = new();
+
+    public object? GetService(Type serviceType) {
+      if (serviceType == typeof(IServiceScopeFactory)) {
+        return _scopeFactory;
+      }
+      return null;
+    }
+  }
+
+  private sealed class TestServiceScopeFactory : IServiceScopeFactory {
+    public IServiceScope CreateScope() {
+      return new TestServiceScope(new TestServiceProvider());
+    }
+  }
+
+  private sealed class TestServiceScope(IServiceProvider serviceProvider) : IServiceScope {
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
+
+    public void Dispose() {
+      // No-op for testing
+    }
+  }
+
+  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
+
+    public Guid InstanceId { get; } = Guid.NewGuid();
+    public string ServiceName => "test-service";
+    public string HostName => "test-host";
+    public int ProcessId => 12345;
+
+    public ServiceInstanceInfo ToInfo() {
+      return new ServiceInstanceInfo {
+        ServiceName = ServiceName,
+        InstanceId = InstanceId,
+        HostName = HostName,
+        ProcessId = ProcessId
+      };
+    }
+  }
+}

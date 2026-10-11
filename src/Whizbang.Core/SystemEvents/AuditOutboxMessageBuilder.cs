@@ -105,7 +105,7 @@ public static partial class AuditOutboxMessageBuilder {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
-      TraceParent = System.Diagnostics.Activity.Current?.Id,
+      TraceParent = HopStamping.AmbientTraceParent,
       Scope = AuditRecordScope.For(eventMessage.Scope?.TenantId),
     });
 
@@ -133,7 +133,7 @@ public static partial class AuditOutboxMessageBuilder {
       Envelope = auditEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = auditEnvelope.MessageId,
-        Hops = auditEnvelope.Hops?.ToList() ?? []
+        Hops = auditEnvelope.CopyHops()
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
       Priority = options.AuditPriority,

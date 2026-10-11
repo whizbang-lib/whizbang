@@ -207,7 +207,7 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
 
     var diagnostic = Diagnostic.Create(
         DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
-        member.Locations.FirstOrDefault() ?? Location.None,
+        LocationUtilities.FirstOrNone(member),
         member.Name,
         containingType.Name,
         keyType,

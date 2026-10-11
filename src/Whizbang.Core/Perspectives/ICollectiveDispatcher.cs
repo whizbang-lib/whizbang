@@ -16,8 +16,8 @@ namespace Whizbang.Core.Perspectives;
 /// aggregation.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_DispatchesEventOnceAndSkipsRunner_Async</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_LongApply_RenewsWorkLeasePerReportedBatchAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/EFCoreCollectiveDiUnitTests.cs:AddCollectiveEventsEFCore_RegistersDispatcherResolverAccessorAsync</tests>
 public interface ICollectiveDispatcher {
   /// <summary>

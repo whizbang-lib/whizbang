@@ -284,6 +284,16 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
     await Assert.That(afterParameter).IsEquivalentTo(after)
       .Because("where the bound came from cannot change which rows answer");
 
+    // Which side of the comparison the document is on cannot change the answer either: the bound on
+    // the left is converted just as it is on the right, and the document's side is read as stored.
+    var boundFirst = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()
+      .Where(r => _startedAt < r.Data.StartedAt)
+      .Select(r => r.Id)
+      .ToListAsync();
+
+    await Assert.That(boundFirst).IsEquivalentTo(after)
+      .Because("a bound on the left of the comparison is converted to the stored unit as one on the right is");
+
     // An instant carrying an offset and a date with no time of day are each stored in the same unit
     // and each converted by an overload of their own, so each is filtered on here as well.
     var endedAfter = await reader.Set<PerspectiveRow<OpaqueDocument>>().AsNoTracking()

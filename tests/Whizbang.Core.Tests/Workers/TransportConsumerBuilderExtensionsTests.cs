@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -78,6 +79,29 @@ public class TransportConsumerBuilderExtensionsTests {
     await Assert.That(usersDest).IsNotNull();
     await Assert.That(paymentsDest!.RoutingKey).IsEqualTo("#");
     await Assert.That(usersDest!.RoutingKey).IsEqualTo("#");
+  }
+
+  [Test]
+  public async Task AddTransportConsumer_WithoutARegisteredDiscovery_SubscribesFromTheRoutingOptionsAsync() {
+    // WithRouting registers the discovery, but a host can remove or replace registrations after it.
+    // Without one in the container the consumer still subscribes to what routing names, from a
+    // discovery of its own over the same options.
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").SubscribeTo("myapp.payments.events"));
+    builder.AddTransportConsumer();
+    services.RemoveAll<EventSubscriptionDiscovery>();
+
+    var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<TransportConsumerOptions>();
+
+    await Assert.That(provider.GetService<EventSubscriptionDiscovery>()).IsNull();
+    var payments = options.Destinations.FirstOrDefault(d => d.Address == "myapp.payments.events");
+    await Assert.That(payments).IsNotNull()
+      .Because("the subscription comes from routing, so it must not depend on the discovery being registered");
+    await Assert.That(payments!.RoutingKey).IsEqualTo("#");
   }
 
   [Test]

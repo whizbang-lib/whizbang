@@ -24,7 +24,7 @@ it: the rules there are enforced by the workflows, and a step that fights them f
 | A bug found during the release | F4 | Fix on `fix/<name>` cut from `release/vX.Y.Z`, PR **into `release/vX.Y.Z`**. After it merges and the branch goes green, publish the next beta/rc (F3). |
 | "Ship it" / stable | F5 | Merge the release PR **with a merge commit**: `gh pr merge <n> --merge` (or `--auto --merge`). Then the `nuget-publish` approval. |
 | A release must not ship | F6 | Close the release PR, delete `release/vX.Y.Z`. Re-cut later with `auto`: it reuses the number if betas/rcs shipped. |
-| Production bug in the latest stable | F7 | `git switch -c release/vX.Y.(Z+1) vX.Y.Z && git push -u origin HEAD`, then commit the fix and push. CI opens the release PR itself. Continue with F3/F5. |
+| Production bug in the latest stable | F7 | `git switch -c release/vX.Y.(Z+1) vX.Y.Z && git push -u origin HEAD`, then put the fix on `fix/<name>` and **PR it into that branch** (a direct push is refused). CI opens the release PR itself. Continue with F3/F5. |
 | Bug in an older line someone still runs | F8 | Branch `release/vA.B.(C+1)` from the older tag and push it; put the fix on `fix/<name>` and **PR it into that branch** (a direct push is refused). Merging publishes and opens a develop-only back-merge PR; it never touches `main`. |
 | `Gate · Alpha is not below NuGet` red on develop, or a published prerelease sorts above develop's current builds | F9 | Usually an abandoned cut (#872). Tag the commit that first published the stale version with that version, then unlist it on nuget.org (the user runs the unlist: it needs an API key). Verify with GitVersion 6.2 `/nocache` on develop before pushing the tag. Never add `next-version` to `GitVersion.yml`. |
 | Something is stuck or red | F9 | The **Recovery** table in RELEASING.md, by symptom. |
@@ -54,6 +54,11 @@ Work out the version from facts, not guesses:
 - Run names say the stage (`CI · 4 release candidate · release/vX.Y.Z`, `Release · 6 publish stable`),
   and job names say the phase (`Plan ·`, `Build ·`, `Test ·`, `Analyze ·`, `Gate ·`, `Publish ·`,
   `Merge back ·`). RELEASING.md → *Reading a run*.
+- `release.yml` starts from the push to `main` (not the `pull_request` event), because the publish
+  environments admit only `develop`, `main` and `release/**`. RELEASING.md → *Where a publish may run from*.
+- Pushes, PRs and `v*` tags are made by the `whizbang-release-bot` app, never `GITHUB_TOKEN` or a
+  personal token. A red `Mint the release app token` has its own Recovery row. RELEASING.md →
+  *Which identity writes*.
 - After merging a release PR, confirm three things, and don't assume: the `release.yml` run reached
   the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`), and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
@@ -95,3 +100,6 @@ by name, so suites can be renamed or sharded freely, but a new suite must join t
 `$Suites` in `.github/scripts/Test-CiResult.ps1`. Any new way to skip suites must become a path in that
 script with its own evidence and tests (`Test · Pipeline scripts`); the gate fails a skip it cannot
 prove. Renaming the gate itself wedges every merge.
+A new workflow step that pushes, opens a PR or tags mints the app token the same way the existing ones
+do (`actions/create-github-app-token`, only the permissions it needs) and gets a row in *Which identity
+writes*; a reusable workflow declares `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` as secrets.

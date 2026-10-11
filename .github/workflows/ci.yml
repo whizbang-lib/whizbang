@@ -152,7 +152,7 @@ jobs:
 
   queue-validated:
     name: Plan · Reuse already-tested results
-    # Two pushes carry a tree another run already tested, and skip the six suites and Quality here:
+    # Two pushes carry a tree another run already tested, and skip the suites and Quality here:
     #   DEVELOP: the merge queue fast-forwards develop to the exact SHA its run just validated.
     #   RELEASE CUT: release/vX.Y.Z is the develop commit it was cut from, plus main's version file
     #     and the new version, all in Directory.Build.props, which the build does not read (the
@@ -239,7 +239,7 @@ jobs:
     #
     # RELEASE PR. start-release pushes release/v** AND opens the release PR at the SAME commit. The
     # push run must run the matrix because it publishes; the PR run only gates the merge. The PR run
-    # yields format, build and the six suites to the push run. That run may itself have reused
+    # yields format, build and the suites to the push run. That run may itself have reused
     # develop's tested results (queue-validated), so its suite checks can be absent: the proof main
     # merges on is this run's Gate · CI result, which waits for the push run's gate to end green.
     #
@@ -524,7 +524,7 @@ jobs:
   # the redundant IN-QUEUE run for the ~1/3 of merges that are FAST-FORWARDS — a
   # single PR whose branch already contains the current develop tip, so the queue's
   # prospective-merge commit has a tree byte-identical to what the PR run already
-  # tested fully. In that case the six suites and quality skip here; the queue's
+  # tested fully. In that case the suites and quality skip here; the queue's
   # Build still runs (unconditionally) so the determinism manifest exists for the
   # push run's verify-rebuild. On a real merge (develop moved) or a batched queue
   # group, the guard falls through to the full queue matrix — the queue's whole
@@ -754,6 +754,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
     # and EFCore alone is ~87% of it — so EFCore is sliced five ways by shard category while
     # Dapper and Soak ride their own runners. Every tagged project appears in exactly one shard;
@@ -799,6 +800,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-inmemory-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -809,6 +811,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-rabbitmq-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -822,6 +825,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
     # containers), so one project per runner halves the suite's wall-clock.
     strategy:
@@ -840,6 +844,7 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
@@ -849,9 +854,24 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
+      packages: read   # the CI image mirror (reusable workflow needs it)
     uses: ./.github/workflows/reusable-test-integration.yml
     with:
       artifact-name: build-integration-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+
+  component-tests:
+    name: Test · Component
+    # Component-type projects: real workers and threads in one process, no infrastructure (#1264).
+    # Like every suite it must also be in the needs of ci-result, test-results, publish-test-status and
+    # notify-cancelled, in Test-CiResult.ps1's suite list, and in both publish conditions;
+    # .github/scripts/Test-WhizbangTestType.ps1 (script-tests) fails on any list that misses it.
+    needs: [build, queue-validated, ff-validated, release-pr]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reusable-test-component.yml
+    with:
+      artifact-name: build-component-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
 
   quality:
     name: Analyze · Quality
@@ -860,11 +880,14 @@ jobs:
     # if any test job fails). actions:read is required for that polling.
     #
     # Dependabot PR runs are excluded: workflows triggered by dependabot receive only
-    # Dependabot-scope secrets (this repo defines none), so SONAR_TOKEN arrives empty
+    # Dependabot-scope secrets (this repo defines only the lock-file app's, never
+    # SONAR_TOKEN), so SONAR_TOKEN arrives empty
     # and the scanner hard-fails on auth — and a re-run keeps the original actor's
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
-    # before anything lands on develop.
+    # before anything lands on develop. The run for the regenerated lock files that
+    # dependabot-lockfiles.yml pushes has the GitHub App as its actor, so it gets full
+    # secrets and runs quality like any other pull request.
     # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
     needs: [changes, queue-validated, ff-validated, release-pr]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
@@ -875,7 +898,7 @@ jobs:
     # tree). Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
     # own upload on a fast-forward.
     #
-    # NOT gated on the release-PR check, though format, build and the six suites are. Those are
+    # NOT gated on the release-PR check, though format, build and the suites are. Those are
     # equivalent across the two runs covering a release cut: same commit, same bytes, same tests.
     # This job is NOT, because it behaves differently per EVENT — SonarScanner Begin/End run only
     # on a pull request or on main, so the push run for a release branch deliberately skips the
@@ -916,7 +939,7 @@ jobs:
     # The check is a DIRECT needs.<job>.result read, NOT contains(needs.*.result, ...):
     # in a job-level `if`, the needs.* object filter proved to see the results of skipped
     # TRANSITIVE ancestors (version is skipped on PR runs), so a 'skipped'-scan silently
-    # skipped this job even with all six direct needs green — the same transitive
+    # skipped this job even with every direct need green — the same transitive
     # poisoning documented on the suites' `if`, which direct result reads dodge.
     #
     # Codecov accepts JUnit XML only, and the suites emit TRX (Microsoft.Testing.Platform
@@ -930,7 +953,7 @@ jobs:
     # On queue-validated develop pushes the suites skip, but reupload-reports republishes
     # the queue run's TRX into this run (as trx-queue) — so the upload still happens,
     # under the develop branch context Codecov's flake baseline needs.
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
+    needs: [unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
     if: ${{ !cancelled() && (needs.unit-tests.result != 'skipped' || needs.reupload-reports.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1011,7 +1034,11 @@ jobs:
       # A full checkout: the inert-list test checks every tracked file the list matches.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The coverage merge tests read real binary coverage reports with the tool the quality job uses.
+      # The coverage gate's tests (Find-UncoveredNewLines.Tests.ps1) build the shapes under
+      # .github/scripts/tests/shapes and run them as separate test processes under the real collector
+      # (codecoverage.config, cobertura and binary output, as the suites do), then merge the binary
+      # reports with the tool the quality job uses. No coverage data is committed; without the SDK or
+      # dotnet-coverage those tests fail, they never skip.
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
         with:
@@ -1060,7 +1087,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
+    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has
@@ -1178,7 +1205,7 @@ jobs:
 
   prerelease-publish:
     name: Publish · Alpha (develop)
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, queue-validated, verify-rebuild, alpha-floor]
+    needs: [version, pack, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, queue-validated, verify-rebuild, alpha-floor]
     # The explicit per-suite results replace the old implicit success() (which a
     # skipped suite would poison). Publish requires pack + format green AND either
     # the full same-run matrix or the queue-validated + verified-rebuild pair, AND a version that
@@ -1188,7 +1215,7 @@ jobs:
       github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       needs.pack.result == 'success' && needs.format.result == 'success' &&
       needs.alpha-floor.result == 'success' &&
-      ((needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      ((needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
         needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
         needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success') ||
        (needs.queue-validated.outputs.validated == 'true' && needs.verify-rebuild.result == 'success'))
@@ -1240,13 +1267,21 @@ jobs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       line: ${{ steps.check.outputs.line }}
     steps:
+      # The release app opens the PR so its CI runs: a PR opened with GITHUB_TOKEN sits in action_required
+      # and never reports its required checks.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+
       - name: Classify the release branch and route its publish
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          # RELEASE_PAT opens the PR so its CI runs (a GITHUB_TOKEN-created PR sits in
-          # action_required and never reports its required checks).
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+          RELEASE_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           VERSION: ${{ needs.version.outputs.semver }}
@@ -1294,7 +1329,7 @@ jobs:
           if [ "$LINE" = "current" ]; then
             # Route through main like every release: the merge publishes (release.yml) and
             # sync-develop carries it back. The title IS the version string (release.yml parses it).
-            GH_TOKEN="$RELEASE_PAT" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
+            GH_TOKEN="$RELEASE_TOKEN" gh pr create --repo "$REPO" --head "$BRANCH" --base main \
               --title "chore(release): v${VERSION}" \
               --body "Current-line hotfix: v${VERSION} is above the highest stable release (v${HIGHEST}), so it ships through main — merging publishes it and syncs develop. Opened automatically because the branch was pushed without a PR." \
               || [ -n "$(open_pr)" ] || {
@@ -1333,19 +1368,19 @@ jobs:
 
   release-publish:
     name: Publish · Hotfix (older line)
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, release-guard]
+    needs: [version, pack, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, release-guard]
     # EXPLICIT gate, mirroring prerelease-publish. GitHub applies success() implicitly only while an
     # `if` contains no status-check function, so the old plain `if` gated on every need implicitly
     # — and adding the `!failure() && !cancelled()` every other job opens with would have silently
     # deleted the whole test gate on the path that publishes STABLE releases. Naming each result
     # makes the gate survive that edit. Every suite runs on a release/v push (the queue-validated
-    # and release-pr skips never apply to one), so all six must be green.
+    # and release-pr skips never apply to one), so every suite must be green.
     if: >-
       !failure() && !cancelled() &&
       github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created &&
       needs.release-guard.outputs.should_publish == 'true' &&
       needs.version.result == 'success' && needs.pack.result == 'success' && needs.format.result == 'success' &&
-      needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+      needs.unit-tests.result == 'success' && needs.component-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
       needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
       needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success' && needs.general-integration.result == 'success'
     permissions:
@@ -1374,7 +1409,8 @@ jobs:
       source-label: hotfix
       version: ${{ needs.version.outputs.semver }}
     secrets:
-      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion
@@ -1428,7 +1464,7 @@ jobs:
 
   notify-cancelled:
     name: Notify · Canceled
-    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality]
+    needs: [build, format, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality]
     permissions:
       contents: read
     # merge_group is excluded for a different reason than success: the queue cancels its own runs
@@ -1451,23 +1487,23 @@ jobs:
     # or when suites were skipped (docs-only pushes produce no TRX).
     # reupload-reports is in needs purely for ordering: on queue-validated pushes it
     # republishes the queue run's TRX as trx-queue before this job downloads trx-*.
-    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
+    needs: [version, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, reupload-reports]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DOCS_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+      HAVE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
-      - name: Check for docs push token
+      - name: Check for the release app
         id: token
         run: |
-          if [ -n "$DOCS_TOKEN" ]; then
+          if [ "$HAVE_APP" = true ]; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "DOCS_REPO_PUSH_TOKEN not set — skipping test-status publish"
+            echo "RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY not set — skipping test-status publish"
           fi
 
       - name: Download TRX artifacts
@@ -1488,13 +1524,27 @@ jobs:
             echo "No TRX artifacts (suites skipped?) — nothing to publish"
           fi
 
+      # Scoped to the docs repository. Actions: the last step dispatches the docs site's start-release.
+      - name: Mint the release app token
+        id: app-token
+        if: steps.trx.outputs.have == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: whizbang-lib.github.io
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+
       - name: Checkout docs repo
         if: steps.trx.outputs.have == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: whizbang-lib/whizbang-lib.github.io
           ref: develop
-          token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: docs-repo
 
       - name: Build test-status data
@@ -1518,7 +1568,7 @@ jobs:
         if: steps.trx.outputs.have == 'true'
         working-directory: docs-repo
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           # `published` is only ever set on a successful merge; unset reads as falsy.
           git config user.name "whizbang-ci"
@@ -1557,7 +1607,7 @@ jobs:
       - name: Release docs to main
         if: steps.publish.outputs.published == 'true'
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh workflow run start-release.yml \
             --repo whizbang-lib/whizbang-lib.github.io \

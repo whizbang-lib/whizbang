@@ -98,6 +98,12 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.AddSingleton<INotifySignalingGate>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddHostedService(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    // #1286: the shared connection takes the instance's alive-lock, so it is the source the heartbeat's cadence and
+    // the claim read. It reports the lock held only on a connection of its own; behind the pooled fallback it reports
+    // none, and a pooled deployment keeps the fast cadence. Displaces the core's null default in either order; a
+    // host's own source is left in place.
+    services.TryAddSingletonOverNullDefault<Whizbang.Core.Workers.IInstanceAliveLockSource>(
+      sp => sp.GetRequiredService<PgSharedNotifyConnection>());
 
     // Displace the placeholder listener the core registers; a host's own listener, if it registered
     // one, is left in place. The listener is a thin subscriber: it subscribes via the shared
@@ -190,6 +196,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IPostConfigureOptions<Whizbang.Core.Startup.RoleAssignmentOptions>, CommitOrderStamperRoleOptions>());
     services.AddWhizbangRoleAssignmentByDefault();
+
+    // #1254: the elected partition assigner and the claimers' cached assignment, built on the role election above.
+    services.AddWhizbangPartitionAssigner();
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call
@@ -427,6 +436,11 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
     if (int.TryParse(section["BatchSize"], System.Globalization.NumberStyles.Integer,
         System.Globalization.CultureInfo.InvariantCulture, out var batch)) {
       options.BatchSize = batch;
+    }
+
+    if (int.TryParse(section["DrainBatchSize"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var drain)) {
+      options.DrainBatchSize = drain;
     }
 
     if (bool.TryParse(section["DisableStamper"], out var disable)) {

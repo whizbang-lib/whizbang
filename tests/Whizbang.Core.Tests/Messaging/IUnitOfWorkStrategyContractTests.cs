@@ -152,9 +152,6 @@ public abstract class IUnitOfWorkStrategyContractTests {
     // Act
     var unitId = await strategy.QueueMessageAsync(message);
 
-    // Allow async operations to complete (some strategies flush immediately, others don't)
-    await Task.Delay(100);
-
     // Assert - Callback was successfully wired (no exception thrown)
     // Actual invocation timing varies by strategy (Immediate invokes immediately, others don't)
     await Assert.That(unitId).IsNotEqualTo(Guid.Empty);

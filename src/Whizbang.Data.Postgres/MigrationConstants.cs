@@ -120,12 +120,9 @@ public static partial class MigrationConstants {
     }
   }
 
-  private static IReadOnlyList<KeyValuePair<string, string>> _load() {
-    using var stream = typeof(MigrationConstants).Assembly.GetManifestResourceStream(RESOURCE_NAME)
-      ?? throw new InvalidOperationException($"Embedded resource '{RESOURCE_NAME}' is missing; the migrations' constants file is part of the package.");
-    using var reader = new StreamReader(stream);
-    return Parse(reader.ReadToEnd());
-  }
+  private static IReadOnlyList<KeyValuePair<string, string>> _load() =>
+    Parse(EmbeddedText.Read(typeof(MigrationConstants).Assembly, RESOURCE_NAME,
+      $"Embedded resource '{RESOURCE_NAME}' is missing; the migrations' constants file is part of the package."));
 
   [GeneratedRegex("__[A-Z][A-Z0-9_]*__")]
   private static partial Regex _tokenPattern();

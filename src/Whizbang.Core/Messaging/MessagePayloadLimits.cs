@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Messaging;
 
@@ -63,7 +64,7 @@ public sealed partial class MessagePayloadLimits {
       services.GetService<IMessageTypeCatalog>() ?? NullMessageTypeCatalog.Instance,
       // Not GetServices: a provider outside the container answers null for the list, and GetServices throws.
       services.GetService<IEnumerable<IMessagePayloadSizeHook>>() ?? [],
-      services.GetService<ILogger<MessagePayloadLimits>>() ?? NullLogger<MessagePayloadLimits>.Instance);
+      services.GetLoggerOrNullLogger<MessagePayloadLimits>());
   }
 
   /// <summary>The size of a serialized payload in UTF-8 bytes, as it is stored and sent.</summary>

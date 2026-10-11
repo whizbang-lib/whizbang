@@ -79,26 +79,21 @@ public sealed class CommitOrderStamperOptions {
   public int BatchSize { get; set; } = 1000;
 
   /// <summary>
-  /// The largest number of rows to ask for while a backlog is draining. Default 25,000.
+  /// The largest number of rows to ask for while a backlog is draining. Default 25,000. Bound from
+  /// <c>Whizbang:Database:Stamper:DrainBatchSize</c>.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Each stamp call costs a scan and a sort of the whole unstamped set, because the column that orders
-  /// it is a system column no index can cover. The cost is per call, so a backlog of N rows drained in
-  /// steps of B costs about N/B scans: four million rows at a thousand a call is four thousand of them,
-  /// which is hours. Growing the request while calls keep filling cuts the number of scans without
-  /// changing what any of them does.
+  /// A call has a fixed cost of its own (a round trip, the visibility horizon, a transaction under the role fence), so
+  /// while calls keep filling their batch the worker doubles the request toward this ceiling and a large backlog pays
+  /// that cost fewer times. Since migrations 197 and 205 a call reads only what it stamps, so the ceiling no longer
+  /// bounds a scan; it bounds how long one call holds its rows, the sequence and the role row.
   /// </para>
   /// <para>
-  /// The ceiling exists because a batch holds its rows locked and the sequence advanced for the length
-  /// of its call. Raising it shortens a drain and lengthens the longest single stamp; lowering it does
-  /// the reverse. Setting it at or below <see cref="BatchSize"/> disables the growth, which is the way
-  /// to opt out.
-  /// </para>
-  /// <para>
-  /// This bounds the number of scans rather than making the drain proportional to the work. The
-  /// proportional fix needs an ordering key an index can cover, which changes what the stamp treats as
-  /// order and is tracked separately.
+  /// The ceiling must be a size the database can stamp inside the command timeout. A call that times out stamps
+  /// nothing; the worker then halves the batch, and does not grow back past the size that completed until the backlog
+  /// drains (#1217). Lower this when a database cannot finish the default in time; setting it at or below
+  /// <see cref="BatchSize"/> disables the growth.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>

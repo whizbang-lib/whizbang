@@ -46,7 +46,8 @@ public sealed partial class PgSharedNotifyConnection(
   TimeProvider? timeProvider = null,
   INotificationDataSource? notificationDataSource = null,
   NotifyMetrics? metrics = null
-) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate, Whizbang.Core.Workers.IInstanceAliveLockSource {
+) : BackgroundService, ISharedNotifyConnection, INotifySignalingGate, Whizbang.Core.Workers.IInstanceAliveLockSource,
+    Whizbang.Core.Workers.IInstanceConnectionModeSource {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -80,22 +81,44 @@ public sealed partial class PgSharedNotifyConnection(
   private int _resyncPending;
   private bool _isAvailable;
   private bool _aliveLockHeld;
+  private bool _hasDedicatedConnection;
   private DateTimeOffset? _lastVerifiedAt;
   private DateTimeOffset? _lastFailureAt;
   private string? _lastFailureReason;
 
   /// <summary>
-  /// True when this conn holds the session-level alive-lock claimed at open.
-  /// HeartbeatWorker reads this to switch between fast (5 s) and slow (60 s) cadence
-  /// per the adaptive heartbeat design in slice 7b.
+  /// True when this connection holds the session-level alive-lock claimed at open, and the connection is one of its
+  /// own (<see cref="ConnectionMode"/> is direct). Registered as the instance's
+  /// <see cref="Whizbang.Core.Workers.IInstanceAliveLockSource"/> (#1286): the heartbeat beats on its slow cadence while
+  /// this is true, and its peers judge the instance by the lock instead of the heartbeat's age.
   /// </summary>
+  /// <remarks>
+  /// Behind the pooled fallback the lock may still be taken, but on a pooled session its peers cannot attribute to
+  /// this instance, and a pooled instance is judged by its heartbeat alone. Reporting it held there would put a pooled
+  /// instance on the slow cadence and let its peers count it out between beats, so it is never reported.
+  /// </remarks>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:OnADirectConnection_TheLockIsHeld_AndReportedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:BehindThePooledFallback_NoLockIsReported_WhateverTheSessionTookAsync</tests>
   public bool IsAliveLockHeld {
     get {
       lock (_connectionGate) {
-        return _aliveLockHeld && _isAvailable;
+        return _aliveLockHeld && _isAvailable && Volatile.Read(ref _hasDedicatedConnection);
       }
     }
   }
+
+  /// <summary>
+  /// Direct once this connection has resolved a direct connection string (or a dedicated data source) rather than the
+  /// pooled fallback: the instance then registers its connection mode as direct, and the partition assigner treats its
+  /// alive-lock as authoritative (#1254). Pooled while it has not started, when signaling is off, and behind the pooled
+  /// fallback.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PartitionAssignerWorkerPostgresTests.cs:SharedConnection_OnADirectConnection_ReportsTheDirectModeAsync</tests>
+  public Whizbang.Core.Workers.InstanceConnectionMode ConnectionMode => Volatile.Read(ref _hasDedicatedConnection)
+    ? Whizbang.Core.Workers.InstanceConnectionMode.Direct
+    : Whizbang.Core.Workers.InstanceConnectionMode.Pooled;
 
   /// <summary>
   /// Computes the <c>application_name</c> the per-pod LISTEN connection sets on its
@@ -143,7 +166,7 @@ public sealed partial class PgSharedNotifyConnection(
     var resolution = NotificationConnectionStringResolver.Resolve(
       _options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     if (resolution.ConnectionString is null && _dataSource is null) {
-      SetAvailable(false, "no connection string resolvable");
+      MarkUnavailable("no connection string resolvable");
       return false;
     }
     try {
@@ -161,10 +184,14 @@ public sealed partial class PgSharedNotifyConnection(
       // can't authenticate). When the data source path is used the probe doesn't open a
       // second connection itself, so this argument is unused.
       var ok = await RunProbeAsync(conn, resolution.ConnectionString ?? string.Empty, cancellationToken).ConfigureAwait(false);
-      SetAvailable(ok, ok ? null : "ProbeNowAsync round-trip failed");
+      if (ok) {
+        MarkAvailable();
+      } else {
+        MarkUnavailable("ProbeNowAsync round-trip failed");
+      }
       return ok;
     } catch (Exception ex) {
-      SetAvailable(false, ProbeFailureReason(ex, cancellationToken));
+      MarkUnavailable(ProbeFailureReason(ex, cancellationToken));
       return false;
     }
   }
@@ -411,6 +438,10 @@ public sealed partial class PgSharedNotifyConnection(
     // the first self-test probe to fail before realizing the misconfiguration.
     if (resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
       LogPooledFallbackWarning(_logger, keyForDiagnostics);
+    } else {
+      // #1254: a connection of its own, not through the pooler, so this instance's alive-lock is visible to its
+      // peers. Registered as the instance's connection mode.
+      Volatile.Write(ref _hasDedicatedConnection, true);
     }
 
     var connectionString = resolution.ConnectionString;
@@ -489,13 +520,13 @@ public sealed partial class PgSharedNotifyConnection(
         // and recycle the conn so the reprobe path runs after PeriodicReprobeInterval.
         var probeOk = await RunProbeAsync(conn, connectionString ?? string.Empty, stoppingToken).ConfigureAwait(false);
         if (!probeOk) {
-          SetAvailable(false, "self-test probe round-trip failed");
+          MarkUnavailable("self-test probe round-trip failed");
           throw new InvalidOperationException(
             "Self-test probe failed: connection opened but pg_notify round-trip did not arrive within SelfTestTimeout.");
         }
 
         attempt = 0;
-        SetAvailable(true, failureReason: null);
+        MarkAvailable();
         var channelCount = _registry.AllChannels().Count;
         LogConnected(_logger, channelCount);
         _emitMode(SignalingModeName.LISTEN_NOTIFY, reason: $"connected; LISTENing on {channelCount} channel(s)");
@@ -515,7 +546,7 @@ public sealed partial class PgSharedNotifyConnection(
           _connection = null;
         }
         attempt++;
-        SetAvailable(false, failureReason: ex.Message);
+        MarkUnavailable(ex.Message);
         var delay = _computeBackoff(attempt);
         LogReconnect(_logger, ex.Message, resolution.Source, _options.ConnectionStringKey ?? "(unset)", delay.TotalSeconds);
         try {
@@ -530,7 +561,7 @@ public sealed partial class PgSharedNotifyConnection(
       }
     }
 
-    SetAvailable(false, failureReason: "shutdown");
+    MarkUnavailable("shutdown");
     LogStopped(_logger);
   }
 
@@ -636,11 +667,18 @@ public sealed partial class PgSharedNotifyConnection(
     }
   }
 
-  internal void SetAvailable(bool available, string? failureReason) {
+  /// <summary>Records that the LISTEN/NOTIFY connection works: a probe round-trip succeeded.</summary>
+  internal void MarkAvailable() => _transition(available: true, reason: "self-test probe succeeded (restored)");
+
+  /// <summary>Records that the LISTEN/NOTIFY connection does not work, and why.</summary>
+  /// <param name="failureReason">What failed, for the mode-transition log and <c>LastFailureReason</c>.</param>
+  internal void MarkUnavailable(string failureReason) => _transition(available: false, reason: failureReason);
+
+  private void _transition(bool available, string reason) {
     bool fire;
     lock (_availabilityGate) {
       // ProbeNowAsync can run concurrently with the BackgroundService loop's probe; both
-      // call SetAvailable. Guard the transition so OnAvailabilityChanged fires exactly
+      // record a transition. Guard it so OnAvailabilityChanged fires exactly
       // once per actual change.
       fire = _isAvailable != available;
       _isAvailable = available;
@@ -649,7 +687,7 @@ public sealed partial class PgSharedNotifyConnection(
         _lastVerifiedAt = now;
       } else {
         _lastFailureAt = now;
-        _lastFailureReason = failureReason;
+        _lastFailureReason = reason;
       }
     }
     if (fire) {
@@ -659,10 +697,7 @@ public sealed partial class PgSharedNotifyConnection(
       // captures the runtime fallback / restore.
       _metrics?.ConnectionState.Add(available ? 1 : -1);
       var transitionMode = available ? SignalingModeName.LISTEN_NOTIFY : SignalingModeName.POLLING_ONLY;
-      var transitionReason = available
-        ? "self-test probe succeeded (restored)"
-        : failureReason ?? "connection lost";
-      _emitMode(transitionMode, reason: transitionReason);
+      _emitMode(transitionMode, reason: reason);
       OnAvailabilityChanged?.Invoke(available);
     }
   }

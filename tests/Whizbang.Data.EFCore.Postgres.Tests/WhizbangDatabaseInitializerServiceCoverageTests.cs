@@ -11,6 +11,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -20,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the background retry loop's <see cref="CancellationTokenSource"/>, and the log line emitted when
 /// the best-effort partition recompute actually changed rows.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/WhizbangDatabaseInitializerService.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/WhizbangDatabaseInitializerService.cs</code-under-test>
 [Category("Shard1")]
 public class WhizbangDatabaseInitializerServiceCoverageTests {
 
@@ -83,12 +84,13 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
     var provider = services.BuildServiceProvider();
     return new WhizbangDatabaseInitializerService(
       provider,
-      new NoOpRunner(),
+      [new NoOpRunner()],
       new SchemaReadyGate(),
       Options.Create(new ClaimWorkerOptions { PartitionCount = partitionCount }),
       Options.Create(new SchemaInitializationOptions()),
       TimeProvider.System,
-      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
   }
 
   /// <summary>Runner that completes immediately; StartAsync/StopAsync are not under test here.</summary>

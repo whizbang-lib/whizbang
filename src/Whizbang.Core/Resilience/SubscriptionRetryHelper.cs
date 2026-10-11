@@ -19,7 +19,7 @@ namespace Whizbang.Core.Resilience;
 /// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
 public static partial class SubscriptionRetryHelper {
   /// <summary>
   /// Groups subscription retry parameters that travel together through retry and reconnection logic.

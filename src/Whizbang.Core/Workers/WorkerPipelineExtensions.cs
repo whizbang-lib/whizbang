@@ -1,13 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Health;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
@@ -23,8 +23,8 @@ namespace Whizbang.Core.Workers;
 /// just the worker pipeline (e.g., to host workers in a separate process).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupWiringAuditTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupWiringAuditTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
   /// The ONE construction recipe for the turnkey <see cref="HousekeepingCoordinator"/> and its
@@ -35,7 +35,7 @@ public static class WorkerPipelineExtensions {
   /// existed in code and never once reached telemetry, fleet-wide.
   /// </summary>
   /// <docs>operations/workers/housekeeping-arbitration</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
@@ -194,8 +194,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.LoggingStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.LoggingStartupStepObserver(
-        sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)));
+        sp.GetLoggerOrNullLogger("Whizbang.Core.Startup.Pipeline"))));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.MetricsStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
         sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>())));
@@ -279,9 +278,7 @@ public static class WorkerPipelineExtensions {
     // informational version unless a driver registered the package version first.
     services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(static _ =>
       new Whizbang.Core.Observability.LibraryVersionProvider(
-        typeof(HeartbeatWorker).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? typeof(HeartbeatWorker).Assembly.GetName().Version?.ToString()
-        ?? "unknown"));
+        Whizbang.Core.Observability.AssemblyVersionText.Of(typeof(HeartbeatWorker).Assembly)));
     services.TryAddSingleton<HeartbeatWorker>();
     // The claim window's churn signal lives here: the claim returns stream ids and never sees a
     // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the
@@ -608,7 +605,7 @@ public static class WorkerPipelineExtensions {
     // #1029: the receive path warns when integrity is on but received events carry no origin.
     services.TryAddSingleton(sp => new ReceivedOriginStampMonitor(
         sp.GetRequiredService<IOptions<StreamIntegrityOptions>>(),
-        sp.GetService<ILogger<ReceivedOriginStampMonitor>>() ?? NullLogger<ReceivedOriginStampMonitor>.Instance,
+        sp.GetLoggerOrNullLogger<ReceivedOriginStampMonitor>(),
         sp.GetService<TimeProvider>()));
 
     // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the

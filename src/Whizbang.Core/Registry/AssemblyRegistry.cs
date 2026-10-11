@@ -34,7 +34,7 @@ namespace Whizbang.Core.Registry;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/identity/assembly-registry</docs>
-/// <tests>tests/Whizbang.Core.Tests/Registry/AssemblyRegistryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Registry/AssemblyRegistryTests.cs</tests>
 #pragma warning disable CA1000 // Do not declare static members on generic types - by design for registry pattern
 #pragma warning disable S2743 // Static fields in generic types are intentional — each T gets its own registry
 public static class AssemblyRegistry<T> where T : class {

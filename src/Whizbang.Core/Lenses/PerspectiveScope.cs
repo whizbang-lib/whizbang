@@ -288,12 +288,16 @@ public class PerspectiveScope {
     mergedPrincipals.AddRange(other.AllowedPrincipals.Where(knownPrincipals.Add));
 
     return new PerspectiveScope {
-      TenantId = !string.IsNullOrEmpty(other.TenantId) ? other.TenantId : TenantId,
-      UserId = !string.IsNullOrEmpty(other.UserId) ? other.UserId : UserId,
-      CustomerId = !string.IsNullOrEmpty(other.CustomerId) ? other.CustomerId : CustomerId,
-      OrganizationId = !string.IsNullOrEmpty(other.OrganizationId) ? other.OrganizationId : OrganizationId,
+      TenantId = _mergedField(other.TenantId, TenantId),
+      UserId = _mergedField(other.UserId, UserId),
+      CustomerId = _mergedField(other.CustomerId, CustomerId),
+      OrganizationId = _mergedField(other.OrganizationId, OrganizationId),
       AllowedPrincipals = mergedPrincipals,
       Extensions = mergedExtensions,
     };
   }
+
+  // A merge overwrites a field only with a value: an incoming null or empty field keeps the current one.
+  private static string? _mergedField(string? incoming, string? current) =>
+    !string.IsNullOrEmpty(incoming) ? incoming : current;
 }

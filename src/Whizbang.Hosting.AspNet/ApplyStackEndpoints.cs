@@ -53,7 +53,7 @@ internal partial class ApplyStackJsonContext : JsonSerializerContext;
 /// </para>
 /// </remarks>
 /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
-/// <tests>tests/Whizbang.Hosting.AspNet.Tests/ApplyStackEndpointsTests.cs</tests>
+/// <tests>tests/Whizbang.Hosting.AspNet.Component.Tests/ApplyStackEndpointsTests.cs</tests>
 public static class ApplyStackEndpoints {
 
   /// <summary>

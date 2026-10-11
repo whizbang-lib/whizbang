@@ -107,6 +107,40 @@ public class StackHistorySqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RecordStacksBatch_CarriesWhetherEachStackIsProseOrFramedAsync() {
+    // A prose identity (an error with no frames) is grouped by its message template rather than by
+    // frames, and the batch must say which kind each entry is: a framed stack recorded as prose, or
+    // the reverse, would group unrelated failures together.
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var suffix = Guid.NewGuid().ToString("N");
+    var framedText = $"System.Exception: framed {suffix}\n   at My.App.Framed{suffix}.RunAsync()";
+    var proseText = $"The broker refused the message for tenant {suffix}";
+    var framed = StackNormalizer.Normalize(framedText)!;
+    var prose = StackNormalizer.Normalize(proseText)!;
+    await Assert.That(framed.IsProse).IsFalse();
+    await Assert.That(prose.IsProse).IsTrue();
+
+    await _svc(ctx).RecordStacksAsync([
+      (await _seedAsync(conn, framedText), framed),
+      (await _seedAsync(conn, proseText), prose),
+    ]);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT stack_id, is_prose FROM wh_stacks WHERE stack_id = ANY(@ids)";
+    q.Parameters.AddWithValue("ids", new[] { framed.SequenceHash, prose.SequenceHash });
+    var stored = new Dictionary<string, bool>();
+    await using (var reader = await q.ExecuteReaderAsync()) {
+      while (await reader.ReadAsync()) {
+        stored[reader.GetString(0)] = reader.GetBoolean(1);
+      }
+    }
+    await Assert.That(stored[framed.SequenceHash]).IsFalse();
+    await Assert.That(stored[prose.SequenceHash]).IsTrue();
+  }
+
+  [Test]
   public async Task RecordStacksBatch_ReturnsCountOfNewlySeenStacksAsync() {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

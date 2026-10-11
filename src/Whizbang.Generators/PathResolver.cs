@@ -15,8 +15,8 @@ namespace Whizbang.Generators;
 /// running beside it produced. The package's build props still default <c>WhizbangDocsPath</c> from that variable, so
 /// setting it keeps working, but as an MSBuild input rather than process state.
 /// </remarks>
-/// <tests>tests/Whizbang.Generators.Tests/PathResolverTests.cs</tests>
-/// <tests>tests/Whizbang.Generators.Tests/MessageRegistryDocsPathTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Component.Tests/PathResolverTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Component.Tests/MessageRegistryDocsPathTests.cs</tests>
 public static class PathResolver {
   /// <summary>The MSBuild property naming the documentation checkout, as the generator receives it.</summary>
   public const string DOCS_PATH_PROPERTY = "build_property.WhizbangDocsPath";

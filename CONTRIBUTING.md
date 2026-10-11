@@ -160,6 +160,11 @@ See [src/Whizbang.Generators/ai-docs/](src/Whizbang.Generators/ai-docs/) for det
   build can only use the exact versions and content hashes in those files.
 - After adding a package or changing a version, run `dotnet restore Whizbang.slnx` and commit the
   updated lock files with the change. A pull request whose lock files are stale fails at restore.
+  Two projects with lock files sit outside the solution
+  (`benchmarks/Whizbang.Benchmarks.Postgres`, `tests/Whizbang.Soak.Tests`); restore them too.
+- Dependabot updates only the lock files of projects that reference a package directly. The
+  `dependabot-lockfiles.yml` workflow regenerates the rest on its pull requests and pushes them back
+  (see `.github/WORKFLOWS.md`, "Dependabot lock files").
 - The SDK's implicit `Microsoft.NET.ILLink.Tasks` reference is pinned in `Directory.Build.targets`
   so the lock files do not depend on which SDK patch is installed. Move it when moving the SDK.
 - The Aspire AppHost projects, and the tests that reference them, do not use lock files: the

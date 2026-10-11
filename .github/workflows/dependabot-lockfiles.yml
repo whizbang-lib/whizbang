@@ -1,0 +1,94 @@
+name: Dependabot lock files
+
+# Dependabot's NuGet updater bumps Directory.Packages.props and the packages.lock.json of each project
+# that references the package directly. Projects that reach the package through a project reference keep
+# the old version, so CI's locked-mode restore fails with NU1004 (Compile, Format, OSV Scanner). This
+# workflow regenerates every lock file on a Dependabot pull request and pushes them back to its branch.
+#
+# The push uses a GitHub App installation token rather than GITHUB_TOKEN, because a push made with
+# GITHUB_TOKEN does not trigger CI and the pull request would be left with no result for its fixed head.
+# The app's id and private key are Dependabot secrets (LOCKFILE_APP_ID, LOCKFILE_APP_PRIVATE_KEY): a
+# workflow Dependabot triggers sees only Dependabot secrets. Without them the job skips with a notice.
+# Setup and caveats: .github/WORKFLOWS.md, "Dependabot lock files".
+#
+# pull_request, not pull_request_target: the job checks out and restores the pull request's own code,
+# and Scorecard flags pull_request_target as a dangerous workflow. Not part of CI and never a required
+# check: the gate, "Gate · CI result", reads only ci.yml's own jobs.
+#
+# Loop safety: the app's push re-triggers this workflow with the app as the actor, which the job's
+# condition refuses; the script also stops when the head commit is the app's, and a restore over the
+# regenerated files changes nothing.
+
+on:
+  pull_request:
+    branches: [develop]   # .github/dependabot.yml targets develop only
+    paths:
+      - '**/Directory.Packages.props'
+      - '**/*.csproj'
+      - '**/packages.lock.json'
+
+# The repository default is read-only; stated here so no job can silently gain more. The write is done
+# with the app's token, scoped to this repository's contents.
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-lockfiles-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    name: Regenerate lock files
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # The pull request's head, not the merge commit, since that is what gets pushed back. No stored
+      # credential: the restore runs the branch's MSBuild, and the push passes the app token itself.
+      - name: Checkout the pull request branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Check for the GitHub App credentials
+        id: credentials
+        env:
+          HAS_APP_ID: ${{ secrets.LOCKFILE_APP_ID != '' }}
+          HAS_PRIVATE_KEY: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY != '' }}
+        run: >-
+          pwsh -NoProfile -File .github/scripts/Update-DependabotLockFiles.ps1 -Step Credentials
+          -HasAppId "$HAS_APP_ID" -HasPrivateKey "$HAS_PRIVATE_KEY"
+
+      # client-id accepts the app's numeric App ID as well as its Client ID.
+      - name: Create the GitHub App token
+        id: app-token
+        if: steps.credentials.outputs.ready == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.LOCKFILE_APP_ID }}
+          private-key: ${{ secrets.LOCKFILE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Setup .NET
+        if: steps.credentials.outputs.ready == 'true'
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Regenerate, commit and push the lock files
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          LOCKFILE_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: >-
+          pwsh -NoProfile -File .github/scripts/Update-DependabotLockFiles.ps1 -Step Regenerate
+          -AppSlug "$APP_SLUG" -HeadRef "$HEAD_REF" -HeadSha "$HEAD_SHA" -Repository "$REPOSITORY"

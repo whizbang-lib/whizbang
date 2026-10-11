@@ -133,13 +133,31 @@ public sealed class AzureBlobMessageBodyStore : IMessageBodyStore {
 
     var blobClient = _containerClient.GetBlobClient(claim.StorageKey);
     try {
-      var response = await blobClient.DownloadContentAsync(cancellationToken);
-      return response.Value.Content.ToMemory();
+      var response = await blobClient.DownloadStreamingAsync(cancellationToken: cancellationToken);
+      await using var content = response.Value.Content;
+      return await _readAtMostAsync(content, claim, cancellationToken);
     } catch (RequestFailedException ex) when (ex.Status == 404) {
       throw new InvalidOperationException(
         $"Body not found at '{claim.StorageKey}' in container '{_options.ContainerName}'. " +
         "TTL may have removed it before the receiver downloaded.", ex);
     }
+  }
+
+  // The cap above trusts the size the claim declares, and the claim comes from the sender; the read
+  // stops one byte past that size, so a blob larger than its claim is never held in memory in full.
+  private static async Task<ReadOnlyMemory<byte>> _readAtMostAsync(
+      Stream content, MessageBodyClaim claim, CancellationToken cancellationToken) {
+    await using var buffer = new MemoryStream();
+    var chunk = new byte[81_920];
+    int read;
+    while ((read = await content.ReadAsync(chunk, cancellationToken)) > 0) {
+      if (buffer.Length + read > claim.Size) {
+        throw new InvalidOperationException(
+          $"Body at '{claim.StorageKey}' is larger than its claim of {claim.Size} bytes; refusing to read further.");
+      }
+      await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+    }
+    return buffer.ToArray();
   }
 
   /// <inheritdoc />

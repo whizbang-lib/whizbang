@@ -43,6 +43,38 @@ pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync" # Filter to speci
 
 ---
 
+### Move-TestReference.ps1
+
+Relinks everything that points at a test file or test folder that moves (to another project, or within one). Every test move goes through it, and its counts go in the PR description.
+
+**Usage:**
+```powershell
+pwsh scripts/Move-TestReference.ps1 -From tests/Example.Tests/Async/SignalTests.cs -To tests/Example.Component.Tests/Async/SignalTests.cs -DryRun
+pwsh scripts/Move-TestReference.ps1 -From tests/Example.Tests/Workers -To tests/Example.Component.Tests/Workers
+pwsh scripts/Move-TestReference.ps1 -MapFile moves.csv -UpdateDocsSite    # CSV columns: From,To
+```
+
+**Parameters:**
+- `-From` / `-To` - Old and new repository-relative paths (files or folders), paired in order
+- `-MapFile` - CSV of moves (From,To columns); combines with -From/-To
+- `-RepositoryRoot` - Library checkout (default: the folder above this script)
+- `-DocsSiteRoot` - Docs-site checkout (default: `whizbang-lib.github.io` next to the library checkout)
+- `-UpdateDocsSite` - Also rewrite the docs site's hand-written references (default: report only)
+- `-DryRun` - Write nothing; report what a real run would rewrite (`-WhatIf` also works and lists each file)
+
+**What it touches:**
+- Rewrites `<tests>` tags (C# doc comments, SQL comments) and other mentions in `src/**`, plus `ai-docs/**`, `plans/**/*.md`, `docs/**/*.md`, every `README*.md` and every `CLAUDE.md`
+- Matches whole paths only: moving `tests/A.Tests/Foo.cs` leaves `FooBar.cs` alone, moving `tests/A.Tests` leaves `tests/A.Tests.Extra/` alone
+- Keeps each rewritten file's encoding, byte order mark and line endings; never writes a file without a reference
+- Stops before writing anything when a move's paths exist on neither side (a typo)
+- Docs site: rewrites hand-written pages only with `-UpdateDocsSite`; reports script code (`.mjs`, `.js`, `.ts`) for review by hand; never rewrites generated files (`code-tests-map.json`, the VS Code feed, `test-status/*.json`, the static page, search indexes, audit reports) and lists them as "regenerate" items with their generator; counts the class-based `tests=[...]` and `{verified: ...}` markers naming a moved class, which a path move leaves valid
+
+**Output:**
+- Counts for the PR: tags rewritten (and files), other source references, library doc references, docs-site references found and rewritten, docs-site generated artifacts to regenerate
+- A result object on the pipeline (`DryRun`, `TagsRewritten`, `Changes`, `Regenerate`, ...) for scripting
+
+---
+
 ## Coverage
 
 ### run-all-tests-with-coverage.ps1

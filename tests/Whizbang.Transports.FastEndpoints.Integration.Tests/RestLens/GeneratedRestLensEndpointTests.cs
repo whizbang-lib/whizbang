@@ -116,6 +116,15 @@ public class GeneratedRestLensEndpointTests {
   }
 
   [Test]
+  public async Task Paging_APageBeyondTheIntegerRange_IsEmptyNotTheFirstPageAsync() {
+    var response = await _getAsync(new LensRequest { Page = int.MaxValue });
+
+    await Assert.That(response.Data).IsEmpty()
+      .Because("an overflowed offset wraps negative, which some providers read as the first page and databases reject");
+    await Assert.That(response.TotalCount).IsEqualTo(5);
+  }
+
+  [Test]
   [Arguments("colour", "red")]
   [Arguments("amount", "lots")]
   [Arguments("status", "Pending")]

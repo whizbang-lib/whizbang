@@ -15,7 +15,7 @@ namespace Whizbang.Core.Startup;
 /// An elector that holds duties beyond a single call, and gives them up on a graceful stop.
 /// </summary>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/DutyShutdownReleaseServiceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyShutdownReleaseServiceTests.cs</tests>
 public interface IReleasesDutiesOnShutdown {
   /// <summary>Releases every duty this instance still holds.</summary>
   /// <param name="cancellationToken">The host's stop token.</param>
@@ -32,7 +32,7 @@ public interface IReleasesDutiesOnShutdown {
 /// is not a reason to fail the stop. Cancellation of the stop itself propagates.
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/DutyShutdownReleaseServiceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyShutdownReleaseServiceTests.cs</tests>
 public sealed partial class DutyShutdownReleaseService : IHostedService {
   private readonly IReadOnlyList<IReleasesDutiesOnShutdown> _releasers;
   private readonly ILogger<DutyShutdownReleaseService> _logger;

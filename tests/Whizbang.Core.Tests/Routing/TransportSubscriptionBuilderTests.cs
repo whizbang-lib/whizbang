@@ -333,6 +333,15 @@ public class TransportSubscriptionBuilderTests {
       .Throws<ArgumentException>();
   }
 
+  [Test]
+  public async Task Constructor_NullRegistry_ThrowsAsync() {
+    var routingOptions = new RoutingOptions();
+    var discovery = new EventSubscriptionDiscovery(routingOptions: Options.Create(routingOptions), registry: new StaticEventNamespaceRegistry());
+
+    await Assert.That(() => new TransportSubscriptionBuilder(routingOptions: Options.Create(routingOptions), discovery: discovery, serviceName: "S", inboxStrategy: null, receptorRegistry: null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
   #endregion
 
   #region Plural seam + DI strategy resolution (topology arc phase 3)

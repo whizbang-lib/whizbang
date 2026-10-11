@@ -42,11 +42,10 @@ public class IdentityValueObjectTests {
   [Test]
   [MethodDataSource(nameof(GetIdTypes))]
   public async Task IdTypes_New_GeneratesTimeOrderedIdsAsync(Func<Guid> createId, string typeName) {
-    // Arrange - Create IDs with small delay between them
+    // Arrange - ids from one generator are ordered by construction: a counter orders ids issued within
+    // the same millisecond, so no wait between them is needed
     var id1 = createId();
-    await Task.Delay(2); // Small delay to ensure different timestamp
     var id2 = createId();
-    await Task.Delay(2);
     var id3 = createId();
 
     // Assert - UUIDv7 should be sortable by creation time
@@ -66,7 +65,6 @@ public class IdentityValueObjectTests {
     var ids = Enumerable.Range(0, 100)
         .Select(_ => {
           var id = createId();
-          Thread.Sleep(1); // Ensure timestamp progression
           return id;
         })
         .ToList();

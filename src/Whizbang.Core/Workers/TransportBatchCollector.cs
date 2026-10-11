@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <typeparam name="T">The type of transport message to collect.</typeparam>
 /// <docs>messaging/transports/transport-consumer#batch-collector</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs</tests>
 public sealed class TransportBatchCollector<T> : IAsyncDisposable {
   private readonly TransportBatchOptions _options;
   private readonly Func<IReadOnlyList<T>, Task> _flushCallback;

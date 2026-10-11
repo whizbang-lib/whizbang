@@ -62,7 +62,7 @@ internal sealed record PerspectiveInfo(
 /// <param name="EnumScalarType">For an enumeration, the CLR name of the scalar its column holds; null otherwise.</param>
 /// <param name="ColumnType">The column type declared with <c>[PhysicalField(ColumnType = …)]</c>, if any.</param>
 /// <param name="TypeName">The property's fully qualified type, which a Split load reads its column as</param>
-/// <param name="IsInitOnly">True when the property's setter is <c>init</c>, which a class model sets only through a copy (issue #1002)</param>
+/// <param name="IsInitOnly">True when the property cannot be assigned on an instance that exists (its setter is <c>init</c>, or it has none), which a class model sets only through a copy (issue #1002)</param>
 internal sealed record PhysicalFieldInfoCompact(
     string PropertyName,
     string ColumnName,

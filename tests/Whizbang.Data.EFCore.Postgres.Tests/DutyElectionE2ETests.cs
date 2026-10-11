@@ -109,14 +109,38 @@ public class DutyElectionE2ETests : EFCoreTestBase {
   private sealed class CountingStep : IStartupStep {
     private int _executions;
     public int Executions => Volatile.Read(ref _executions);
+
+    /// <summary>
+    /// Awaited while the step runs, so the winner keeps the duty until the test says to let go. Without a
+    /// hold the winner can acquire, execute and RELEASE before the other pipeline attempts anything, and
+    /// the loser then wins the duty for real and runs the step too: two executions, no defect, a failing
+    /// assertion. A released duty is one somebody else may take, which a sibling test asserts on purpose.
+    /// </summary>
+    public Task Hold { get; init; } = Task.CompletedTask;
+
     public StartupStepDescriptor Descriptor { get; } = new() {
       Name = "ExclusiveWork",
       RequiredCapability = "pipeline-duty",
       NonHolderBehavior = NonHolderBehavior.Skip,
     };
-    public ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+    public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
       Interlocked.Increment(ref _executions);
-      return new(new StartupStepReport(StartupStepOutcome.Completed));
+      await Hold.WaitAsync(cancellationToken);
+      return new StartupStepReport(StartupStepOutcome.Completed);
+    }
+  }
+
+  /// <summary>
+  /// Reports the first refusal any instance gets, which is the signal that the two pipelines really did
+  /// contend rather than merely both having run.
+  /// </summary>
+  private sealed class RefusalSignallingElector(IDutyElector inner, TaskCompletionSource refused) : IDutyElector {
+    public async Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
+      var attempt = await inner.TryAcquireAsync(duty, cancellationToken);
+      if (attempt.Grant is null) {
+        refused.TrySetResult();
+      }
+      return attempt;
     }
   }
 
@@ -128,18 +152,29 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await _joinFleetAsync(podA, cancellationToken);
     await _joinFleetAsync(podB, cancellationToken);
 
-    var stepA = new CountingStep();
-    var stepB = new CountingStep();
-    var runnerA = new StartupPipelineRunner(steps: [stepA], observers: [], dutyElector: _electorFor(podA));
-    var runnerB = new StartupPipelineRunner(steps: [stepB], observers: [], dutyElector: _electorFor(podB));
+    // The winner holds the duty until the loser has been refused. Task.WhenAll starts both pipelines
+    // but does not make them overlap: the winner could acquire, execute and release before the other
+    // instance attempts anything, and the loser would then win the duty legitimately and run the step
+    // too. That is correct behavior and a failing assertion, which is the shape of this test's flake.
+    var refused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var stepA = new CountingStep { Hold = refused.Task };
+    var stepB = new CountingStep { Hold = refused.Task };
+    var runnerA = new StartupPipelineRunner(
+      steps: [stepA], observers: [], dutyElector: new RefusalSignallingElector(_electorFor(podA), refused));
+    var runnerB = new StartupPipelineRunner(
+      steps: [stepB], observers: [], dutyElector: new RefusalSignallingElector(_electorFor(podB), refused));
 
-    // Both instances run their pipelines concurrently — the real race, through the real elector.
+    // Both instances run their pipelines concurrently — the real race, through the real elector. Whichever
+    // loses releases the winner, so the contention is observed rather than assumed; if neither wins, the
+    // signal still fires and the counts below say so.
     var results = await Task.WhenAll(
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));
 
     await Assert.That(stepA.Executions + stepB.Executions).IsEqualTo(1)
       .Because("a step requiring a duty runs on the one instance that wins it — the pipeline's "
-             + "exclusivity is the capability's, not a mode it enters");
+             + "exclusivity is the capability's, not a mode it enters. "
+             + $"A={stepA.Executions} B={stepB.Executions}: "
+             + "two means the exclusivity leaked, zero means neither instance won and the fence refused both");
     var outcomes = new[] { results[0][0].Outcome, results[1][0].Outcome };
     await Assert.That(outcomes.Count(o => o == StartupStepOutcome.Completed)).IsEqualTo(1);
     await Assert.That(outcomes.Count(o => o == StartupStepOutcome.Skipped)).IsEqualTo(1)

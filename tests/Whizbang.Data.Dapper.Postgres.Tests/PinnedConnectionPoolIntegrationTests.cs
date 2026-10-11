@@ -36,6 +36,21 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task RealPool_NoBorrowTimeout_BorrowsWithoutADeadlineAsync() {
+    // A borrow timeout of zero means "no deadline", not "time out at once": the borrow is bounded only
+    // by the caller's token, and an idle pool hands over an open connection.
+    var opts = _options(size: 1);
+    opts.BorrowTimeoutMilliseconds = 0;
+    await using var pool = new PinnedConnectionPool(opts, _registry(typeof(PinnedWorker)));
+
+    await using var borrow = await pool.TryPinForAsync(typeof(PinnedWorker), CancellationToken.None);
+
+    await Assert.That(borrow.Connection).IsNotNull();
+    await Assert.That(borrow.Connection!.State).IsEqualTo(ConnectionState.Open)
+      .Because("a zero timeout read as an immediate deadline would cancel every borrow before it could open");
+  }
+
+  [Test]
   public async Task RealPool_IneligibleWorker_ReturnsNoOpBorrowAsync() {
     var opts = _options(size: 1);
     opts.ExcludeWorkers.Add(nameof(PinnedWorker));

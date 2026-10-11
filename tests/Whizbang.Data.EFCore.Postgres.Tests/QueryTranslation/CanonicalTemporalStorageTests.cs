@@ -91,6 +91,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
 
   /// <summary>The only row past the range boundary.</summary>
   private static readonly string[] _pastTheBoundary = ["row-2"];
+  private static readonly string[] _rowsWithMaybeAt = ["row-1", "row-2"];
 
   /// <summary>Every row, newest first.</summary>
   private static readonly string[] _newestFirst = ["row-2", "row-1", "row-0"];
@@ -360,6 +361,39 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
       .ToListAsync();
 
     await Assert.That(labels).IsEquivalentTo(_pastTheBoundary);
+  }
+
+  /// <summary>
+  /// A comparison reads the same with the bound on either side: the bound is converted to the stored
+  /// unit whichever operand it is.
+  /// </summary>
+  [Test]
+  public async Task ARangeWithTheBoundOnTheLeftReturnsTheSameRowsAsync() {
+    var boundary = _origin.AddMinutes(90);
+
+    var labels = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .Where(r => boundary < r.Data.OccurredAt)
+      .Select(r => r.Data.Label)
+      .ToListAsync();
+
+    await Assert.That(labels).IsEquivalentTo(_pastTheBoundary);
+  }
+
+  /// <summary>
+  /// Two stored temporals compare as stored numbers, with neither side converted: both are already in
+  /// the stored unit, and converting one would compare microseconds with an instant.
+  /// </summary>
+  [Test]
+  public async Task TwoStoredTemporalsCompareWithEachOtherAsync() {
+    var labels = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .Where(r => r.Data.MaybeAt == r.Data.OccurredAt)
+      .Select(r => r.Data.Label)
+      .ToListAsync();
+
+    await Assert.That(labels).IsEquivalentTo(_rowsWithMaybeAt)
+      .Because("rows one and two carry the same instant in both keys; row zero has no MaybeAt");
   }
 
   /// <summary>

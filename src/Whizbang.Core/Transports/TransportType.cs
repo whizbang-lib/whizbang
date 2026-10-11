@@ -17,24 +17,24 @@ public enum TransportType {
   /// Apache Kafka / Azure Event Hubs transport
   /// </summary>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:TransportType_ShouldHaveKafkaValueAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync</tests>
   Kafka = 0,
 
   /// <summary>
   /// Azure Service Bus transport
   /// </summary>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:TransportType_ShouldHaveServiceBusValueAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync</tests>
   ServiceBus = 1,
 
   /// <summary>
   /// RabbitMQ transport
   /// </summary>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:TransportType_ShouldHaveRabbitMQValueAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerSubscriptionTests.cs:SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
   RabbitMQ = 2,
 
   /// <summary>

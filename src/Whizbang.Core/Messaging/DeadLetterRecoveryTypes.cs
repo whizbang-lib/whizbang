@@ -107,7 +107,7 @@ public sealed record DeadLetterEntry(
 /// <docs>operations/dead-letter-queue/recovery</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetPolicy_TransportException_ReturnsMediumRetryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDeadLetterRecoveryPolicyTests.cs:GetStreamMode_StreamIdPresent_ReturnsTailAwareAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:EntryWithHoldForReviewStatus_IsSkippedByPolicyAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:EntryWithHoldForReviewStatus_IsSkippedByPolicyAsync</tests>
 public interface IDeadLetterRecoveryPolicy {
   /// <summary>Returns the policy for this entry's <see cref="MessageFailureReason"/>.</summary>
   RecoveryPolicy GetPolicy(DeadLetterEntry entry);

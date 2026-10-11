@@ -100,6 +100,30 @@
           BeforeTargets="Build"
           Condition="'$(IsTestProject)' == 'true' AND '$(WhizbangTestTags)' == ''">
     <Error Code="WHZ0001"
-           Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestTags&gt;. Tag-based selection (Run-Tests.ps1 -Tag, and the CI integration jobs built on it) would skip it silently. Add a kind tag (Unit or Integration), plus Docker and the infrastructure it needs (Postgres, RabbitMQ, AzureServiceBus, AzureBlob, InMemory) when it uses containers." />
+           Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestTags&gt;. Tag-based selection (Run-Tests.ps1 -Tag, and the CI integration jobs built on it) would skip it silently. Add a kind tag (Unit, Component or Integration), plus Docker and the infrastructure it needs (Postgres, RabbitMQ, AzureServiceBus, AzureBlob, InMemory) when it uses containers." />
+  </Target>
+
+  <!--
+    Every test project must declare a WhizbangTestType that every tool knows.
+
+    Run-Tests.ps1, Test-SolutionTestProjects.ps1, the CI build slices and the CI suites all select
+    projects by this property, and each one skips a type it does not know without a word: the
+    project builds, its tests never run. A test project with no type at all is skipped the same way
+    (Whizbang.LanguageServer.Tests ran nowhere until #1264). Adding a type means teaching every reader
+    (docs/TEST-PROJECTS.md, "Adding a test type"); .github/scripts/Test-WhizbangTestType.ps1 checks
+    that each one knows every type listed here and every type a project declares.
+  -->
+  <PropertyGroup>
+    <WhizbangKnownTestTypes>Unit;Component;Integration;Benchmark;Soak</WhizbangKnownTestTypes>
+  </PropertyGroup>
+  <Target Name="ValidateWhizbangTestType"
+          BeforeTargets="Build"
+          Condition="'$(IsTestProject)' == 'true' OR '$(WhizbangTestType)' != ''">
+    <Error Code="WHZ0002"
+           Condition="'$(WhizbangTestType)' == ''"
+           Text="$(MSBuildProjectName) is a test project (IsTestProject=true) but declares no &lt;WhizbangTestType&gt;. Every test runner selects projects by it, so this project's tests would never run. Declare one of: $(WhizbangKnownTestTypes) (docs/TEST-PROJECTS.md)." />
+    <Error Code="WHZ0003"
+           Condition="'$(WhizbangTestType)' != '' AND !$([System.String]::new(';$(WhizbangKnownTestTypes);').Contains(';$(WhizbangTestType);'))"
+           Text="$(MSBuildProjectName) declares &lt;WhizbangTestType&gt;$(WhizbangTestType)&lt;/WhizbangTestType&gt;, which no test runner knows, so its tests would never run. Use one of: $(WhizbangKnownTestTypes), or add the type to every reader (docs/TEST-PROJECTS.md, &quot;Adding a test type&quot;)." />
   </Target>
 </Project>

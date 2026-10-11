@@ -242,6 +242,41 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   }
 
   /// <summary>
+  /// An empty Schema named argument names no schema: the context keeps the namespace-derived one,
+  /// exactly as when the argument is absent, rather than generating SQL against an empty schema name.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithEmptySchemaProperty_DerivesTheSchemaFromTheNamespaceAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_SNIPPET}}
+
+      [WhizbangDbContext(Schema = "")]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+    await Assert.That(sourceText).Contains("-- Schema: testapp")
+      .Because("an empty Schema argument falls back to the namespace-derived schema, as an absent one does");
+  }
+
+  /// <summary>
   /// The ConnectionStringName named argument on [WhizbangDbContext] must be used as the
   /// default connection string key in BOTH generated registration paths (turnkey extension
   /// and DbContextRegistrationRegistry callback) instead of the "{classname}-db" convention.

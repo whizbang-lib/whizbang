@@ -12,10 +12,10 @@ namespace Whizbang.Core.Tags;
 /// its inputs — the hosted seam is <see cref="TagPolicyStartupValidator"/>.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#validation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_UserTagWithSysPrefix_ThrowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_FrameworkSysAuditOnFrameworkType_DoesNotThrowAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_TypeMatchingTwoCoalesceBindings_ThrowsNamingTypeAndBothTagsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_AmbiguityIgnoresDisabledBindingsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_UserTagWithSysPrefix_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_FrameworkSysAuditOnFrameworkType_DoesNotThrowAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_TypeMatchingTwoCoalesceBindings_ThrowsNamingTypeAndBothTagsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_AmbiguityIgnoresDisabledBindingsAsync</tests>
 public static class TagPolicyValidator {
   /// <summary>
   /// Validates <paramref name="registrations"/> against the reserved-prefix rule,

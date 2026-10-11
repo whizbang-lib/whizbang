@@ -360,8 +360,10 @@ public static class ServiceCollectionExtensions {
         commandInboxResolver.DefaultCommandInboxAddress,
         loggerFactory,
         namespaceRouting: commandInboxResolver,
-        // Bound from Whizbang:ThrottleRetry by the worker pipeline (#1014); absent, the strategy's defaults.
-        throttleRetryOptions: sp.GetService<Microsoft.Extensions.Options.IOptions<ThrottleRetryOptions>>()?.Value, metrics: null,
+        // Bound from Whizbang:ThrottleRetry by the worker pipeline (#1014); unbound, the options' defaults.
+        // Required, not optional: TryAddWhizbangDefaults above registers logging, and with it the
+        // open-generic IOptions<>, so every container this factory runs in resolves it.
+        throttleRetryOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ThrottleRetryOptions>>().Value, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
         transportNamespaces: transportNamespaces);
     });

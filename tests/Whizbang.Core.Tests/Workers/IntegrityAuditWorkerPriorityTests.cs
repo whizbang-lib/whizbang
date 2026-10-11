@@ -100,7 +100,7 @@ public class IntegrityAuditWorkerPriorityTests {
   }
 
   private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(IntegrityAuditWorkerTests.AuditProbeEvent)];
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(IntegrityAuditTestEvents.AuditProbeEvent)];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {

@@ -11,8 +11,8 @@ namespace Whizbang.Core.Tags;
 /// under a policy nobody declared.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#validation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_UserTagWithSysPrefix_ThrowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:Validate_TypeMatchingTwoCoalesceBindings_ThrowsNamingTypeAndBothTagsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_UserTagWithSysPrefix_ThrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:Validate_TypeMatchingTwoCoalesceBindings_ThrowsNamingTypeAndBothTagsAsync</tests>
 public sealed class TagPolicyConfigurationException : Exception {
   /// <summary>Creates the exception with a message describing the policy violation.</summary>
   public TagPolicyConfigurationException(string message) : base(message) { }

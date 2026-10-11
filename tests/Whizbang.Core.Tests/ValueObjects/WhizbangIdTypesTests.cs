@@ -63,7 +63,6 @@ public class WhizbangIdTypesTests {
   [Test]
   public async Task StreamId_RelationalOperators_AgreeWithCompareToAsync() {
     var a = StreamId.New();
-    await Task.Delay(2);
     var b = StreamId.New();
     var cmp = a.CompareTo(b);
     if (cmp < 0) {
@@ -120,7 +119,6 @@ public class WhizbangIdTypesTests {
   [Test]
   public async Task EventId_Comparison_TimeOrderedAsync() {
     var a = EventId.New();
-    await Task.Delay(2);
     var b = EventId.New();
     await Assert.That(a.CompareTo(b)).IsLessThan(0);
   }
@@ -128,7 +126,6 @@ public class WhizbangIdTypesTests {
   [Test]
   public async Task EventId_RelationalOperators_AgreeAsync() {
     var a = EventId.New();
-    await Task.Delay(2);
     var b = EventId.New();
     await Assert.That(a < b).IsTrue();
     await Assert.That(b > a).IsTrue();

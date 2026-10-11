@@ -53,7 +53,7 @@ public sealed record StartupSummary(IReadOnlyList<StartupStepResult> Results);
 /// zero-reflection and native-AOT constraints.
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineHooksTests.cs</tests>
 public interface IStartupStepObserver {
   /// <summary>
   /// A run is about to begin; the plan carries every step it will execute, in order. Default

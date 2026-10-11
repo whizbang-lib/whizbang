@@ -90,6 +90,17 @@ public sealed class EventMarkerResolver : IEventMarkerResolver {
   /// </summary>
   public int IndexedTypeNameCount => _byClrTypeName.Count;
 
+  /// <summary>
+  /// The number of type names <paramref name="resolver"/> has indexed, or -1 when it is not the
+  /// catalog-backed resolver and so has no index to count; for the receive path's startup diagnostic.
+  /// </summary>
+  /// <param name="resolver">The resolver the receive path was given.</param>
+  /// <returns>The indexed count, or -1.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/EventMarkerResolverCoverageTests.cs:IndexedCountOf_CatalogResolver_ItsCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/EventMarkerResolverCoverageTests.cs:IndexedCountOf_OtherResolver_MinusOneAsync</tests>
+  internal static int IndexedCountOf(IEventMarkerResolver resolver) =>
+    (resolver as EventMarkerResolver)?.IndexedTypeNameCount ?? -1;
+
   /// <inheritdoc />
   public EventFlags? Resolve(string clrTypeName)
     => clrTypeName is not null && _byClrTypeName.TryGetValue(clrTypeName, out var flags) ? flags : null;

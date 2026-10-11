@@ -60,7 +60,11 @@ public sealed partial class SagaClaimPruneStep(ILogger<SagaClaimPruneStep> logge
       return;
     }
 
-    var options = services.GetService<SagaOptions>() ?? new SagaOptions();
+    // Without registered options the step still prunes on the default retention, measured from the
+    // host's clock when it registers one (as every other worker resolves its TimeProvider) and from the
+    // system clock otherwise.
+    var options = services.GetService<SagaOptions>()
+      ?? new SagaOptions { TimeProvider = services.GetService<TimeProvider>() ?? TimeProvider.System };
     var before = options.TimeProvider.GetUtcNow() - options.ClaimRetention;
     var pruned = 0;
     foreach (var prefix in SpentClaimPrefixes) {

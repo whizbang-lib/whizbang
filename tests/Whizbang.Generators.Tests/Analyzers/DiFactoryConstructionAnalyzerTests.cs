@@ -156,5 +156,7 @@ public class DiFactoryConstructionAnalyzerTests {
     // "Something is missing" sends the reader back to the constructor to work out what. Naming it
     // is the difference between a fix and an investigation.
     await Assert.That(message).Contains("probe");
+    await Assert.That(message).Contains("'Store' is constructed without")
+      .Because("the service named is the one whose constructor declares the omitted parameter");
   }
 }

@@ -25,17 +25,17 @@ namespace Whizbang.Core.Observability;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/envelope-registry</docs>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithUnregisteredMessage_ReturnsNullAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithDifferentInstanceSameValue_ReturnsNullAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Unregister_ByMessage_RemovesFromRegistryAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Unregister_ByEnvelope_RemovesFromRegistryAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_MultipleEnvelopes_AllCanBeRetrievedAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Dispose_ClearsRegistryAndReturnsDictionaryToPoolAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_SameMessageTwice_OverwritesPreviousEnvelopeAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Unregister_NonExistentMessage_DoesNotThrowAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Registry_IsThreadSafe_ConcurrentAccessAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:PoolReuse_MultipleRegistryInstances_ReusesDictionariesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithUnregisteredMessage_ReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithDifferentInstanceSameValue_ReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Unregister_ByMessage_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Unregister_ByEnvelope_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Register_MultipleEnvelopes_AllCanBeRetrievedAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Dispose_ClearsRegistryAndReturnsDictionaryToPoolAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Register_SameMessageTwice_OverwritesPreviousEnvelopeAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Unregister_NonExistentMessage_DoesNotThrowAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Registry_IsThreadSafe_ConcurrentAccessAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:PoolReuse_MultipleRegistryInstances_ReusesDictionariesAsync</tests>
 public sealed class EnvelopeRegistry : IEnvelopeRegistry, IDisposable {
   private static readonly ConcurrentBag<Dictionary<object, IMessageEnvelope>> _pool = [];
   private static int _poolSize;

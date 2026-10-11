@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -28,9 +29,9 @@ namespace Whizbang.Core.Workers;
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
 /// <docs>operations/workers/perspective-worker</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCoverageTests.cs:Worker_WithWork_TransitionsToActiveAndFiresEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_NormalPathWithoutCoordinator_FiresPostLifecycleFallbackAndDetachedStagesAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
@@ -200,8 +201,7 @@ public partial class PerspectiveWorker(
   // chatter up or down without touching the worker's own level.
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Minor Code Smell", "S6669:Logger fields should be named \"logger\"", Justification = "The name distinguishes this logger from the worker's own _logger; the rule assumes one logger per type.")]
   private readonly ILogger _startupScanLog = scopeFactory.CreateScope().ServiceProvider
-    .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Workers.PerspectiveStartupScan")
-    ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    .GetLoggerOrNullLogger("Whizbang.Core.Workers.PerspectiveStartupScan");
   private readonly IPerspectiveStreamLocker _streamLocker = streamLocker;
   private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions.Value;
 
@@ -249,6 +249,8 @@ public partial class PerspectiveWorker(
   /// <summary>How many sink streams have a predecessor wake pending (#1003); read by tests.</summary>
   internal int PendingCollectiveHoldWakes => _collectiveHoldWakes.Count;
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), StreamAffinityGateEntry> _streamAffinityGates = new();
+  // Releases deferred to the end of an abandoned apply, until each has run; the worker's stop waits for them.
+  private readonly ConcurrentDictionary<Task, byte> _abandonedApplyReleases = new();
   private readonly PerspectiveStreamAffinityOptions _streamAffinityOptions = streamAffinityOptions.Value;
   private long _lastStreamAffinitySweepTicks = DateTimeOffset.UtcNow.Ticks;
   // Tracks whether the PerspectiveCursorCache eviction subscription has been wired. The
@@ -444,8 +446,8 @@ public partial class PerspectiveWorker(
   /// to materialize immediately. Safe to call from any thread; redundant calls are harmless.
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#immediate-poll</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:RequestImmediatePoll_CalledRepeatedly_CoalescesWithoutThrowingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathChannelTests.cs:Worker_WithNotificationListener_SubscribesCoalescesAndUnsubscribesAsync</tests>
   public void RequestImmediatePoll() {
     if (Interlocked.CompareExchange(ref _wakeSignaled, 1, 0) == 0) {
       _pollWakeSignal.Release();
@@ -499,6 +501,28 @@ public partial class PerspectiveWorker(
   /// </remarks>
   /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
   public event Action<(Guid StreamId, string PerspectiveName)>? OnStreamAffinityGateContended;
+
+  /// <summary>
+  /// Fired each time an intra-pod stream-affinity gate for a <c>(streamId, perspectiveName)</c> is
+  /// released: the apply that held it has ended and the gate no longer counts as held. The next applier
+  /// takes the gate once the handlers return, so releases of one gate are raised in the order they
+  /// happen; keep handlers short.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="AffinityGateRelease.Abandoned"/> is true when the apply had been abandoned by its drain
+  /// consumer (its lease ran out, or the worker was stopping) and the gate stayed held until the apply
+  /// itself ended. In production a steady rate of abandoned releases names the perspectives whose
+  /// handlers outlive their lease, and a release that never follows a long hold is a hung handler.
+  /// </para>
+  /// <para>
+  /// It is also a deterministic synchronization point: it fires exactly when a gate goes free, so a
+  /// test can wait for the release itself instead of a stop, a report or a delay that only correlates
+  /// with it. A handler that throws is logged and the gate is still released.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public event Action<AffinityGateRelease>? OnStreamAffinityGateReleased;
 
   /// <summary>
   /// Groups per-stream perspective processing parameters that travel together through lifecycle phases.
@@ -594,6 +618,8 @@ public partial class PerspectiveWorker(
         await watchdog.ConfigureAwait(false);
       }
     } finally {
+      // The consumer loops have ended, so every abandoned apply has registered its release by now.
+      await _awaitAbandonedApplyReleasesAsync().ConfigureAwait(false);
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
       // completes before the host disposes scoped services (DbContext, etc.) out from
       // under it. Stage guards ensure idempotence if the task already finished.
@@ -761,7 +787,7 @@ public partial class PerspectiveWorker(
     await _loopRecovery.RecoverAsync(
       exception,
       (transient, cause) => LogTransientBatchFailure(
-        _logger, transient.Reason, transient.SqlState ?? "none", streamIds.Count, streams, cause),
+        _logger, transient.Reason, transient.SqlStateOrNone, streamIds.Count, streams, cause),
       cause => LogUnexpectedBatchFailure(_logger, streamIds.Count, streams, cause),
       cancellationToken).ConfigureAwait(false);
   }
@@ -1039,9 +1065,9 @@ public partial class PerspectiveWorker(
   /// In Background mode, logs the summary and lets normal polling handle them.
   /// </summary>
   /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanDisabled_NeverQueriesAsync</tests>
   private async Task _scanAndRepairRewindsOnStartupAsync(CancellationToken ct) {
     if (!_rewindOptions.StartupScanEnabled) {
       return;
@@ -1412,10 +1438,7 @@ public partial class PerspectiveWorker(
             await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
           }
         } finally {
-          Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
-          _markAffinityReleased(gateEntry);
-          gateEntry.Semaphore.Release();
-          _sweepIdleStreamAffinityGatesIfDue();
+          _releaseStreamAffinityGate(streamId, perspectiveName, gateEntry, abandoned: false);
         }
       });
 
@@ -1544,15 +1567,23 @@ public partial class PerspectiveWorker(
       await body(apply => outstandingApply = apply).ConfigureAwait(false);
     } finally {
       if (outstandingApply.IsCompleted) {
-        _releaseStreamAffinityGate(gateEntry);
+        _releaseStreamAffinityGate(streamId, perspectiveName, gateEntry, abandoned: false);
       } else {
         gateEntry.Path = "drain-abandoned";
-        _ = outstandingApply.ContinueWith(
+        var release = outstandingApply.ContinueWith(
           static (_, state) => {
-            var (worker, entry) = ((PerspectiveWorker, StreamAffinityGateEntry))state!;
-            worker._releaseStreamAffinityGate(entry);
+            var (worker, stream, perspective, entry) = ((PerspectiveWorker, Guid, string, StreamAffinityGateEntry))state!;
+            worker._releaseStreamAffinityGate(stream, perspective, entry, abandoned: true);
           },
-          (this, gateEntry),
+          (this, streamId, perspectiveName, gateEntry),
+          CancellationToken.None,
+          TaskContinuationOptions.ExecuteSynchronously,
+          TaskScheduler.Default);
+        // Tracked until it has run, so stopping the worker waits for it: a stopped worker holds no gate.
+        _abandonedApplyReleases.TryAdd(release, 0);
+        _ = release.ContinueWith(
+          static (done, state) => ((ConcurrentDictionary<Task, byte>)state!).TryRemove(done, out _),
+          _abandonedApplyReleases,
           CancellationToken.None,
           TaskContinuationOptions.ExecuteSynchronously,
           TaskScheduler.Default);
@@ -1560,17 +1591,75 @@ public partial class PerspectiveWorker(
     }
   }
 
-  /// <summary>Frees a gate its apply has finished with, and gives the idle sweep its chance to run.</summary>
-  private void _releaseStreamAffinityGate(StreamAffinityGateEntry gateEntry) {
+  /// <summary>
+  /// Frees a gate its apply has finished with, announces it through
+  /// <see cref="OnStreamAffinityGateReleased"/>, and gives the idle sweep its chance to run.
+  /// </summary>
+  /// <remarks>
+  /// The release is announced after the hold is cleared and before the semaphore lets the next applier
+  /// in. Announced after it, the next applier could take the gate, finish and announce its own release
+  /// on another thread first, so subscribers would see releases out of order.
+  /// </remarks>
+  private void _releaseStreamAffinityGate(
+      Guid streamId, string perspectiveName, StreamAffinityGateEntry gateEntry, bool abandoned) {
     Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
     _markAffinityReleased(gateEntry);
-    _ = gateEntry.Semaphore.Release();
+    try {
+      _raiseStreamAffinityGateReleased(new AffinityGateRelease(streamId, perspectiveName, abandoned));
+    } finally {
+      _ = gateEntry.Semaphore.Release();
+    }
     _sweepIdleStreamAffinityGatesIfDue();
   }
+
+  private void _raiseStreamAffinityGateReleased(AffinityGateRelease release) {
+    var handler = OnStreamAffinityGateReleased;
+    if (handler is null) {
+      return;
+    }
+    try {
+      handler(release);
+    } catch (Exception ex) {
+      // A monitoring subscriber must not break the release path; the gate is already free.
+      LogAffinityGateReleasedHandlerFailed(_logger, ex, release.PerspectiveName, release.StreamId);
+    }
+  }
+
+  /// <summary>
+  /// Waits for every abandoned apply still holding a gate to end and release it. Runs as the worker
+  /// stops, after its consumer loops have ended, so a stopped worker holds no gate and no apply of its
+  /// is still running. A hung apply holds the stop only as long as the host's own stop timeout allows.
+  /// </summary>
+  private Task _awaitAbandonedApplyReleasesAsync() {
+    var pending = _abandonedApplyReleases.Keys;
+    if (pending.Count == 0) {
+      return Task.CompletedTask;
+    }
+    LogAwaitingAbandonedApplies(_logger, pending.Count);
+    return Task.WhenAll(pending);
+  }
+
+  [LoggerMessage(EventId = 75, Level = LogLevel.Warning,
+    Message = "A handler of OnStreamAffinityGateReleased threw for perspective {PerspectiveName} on stream {StreamId}; the gate was released regardless")]
+  static partial void LogAffinityGateReleasedHandlerFailed(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(EventId = 76, Level = LogLevel.Information,
+    Message = "PerspectiveWorker stopping: waiting for {Count} abandoned apply(s) to end and release their affinity gates")]
+  static partial void LogAwaitingAbandonedApplies(ILogger logger, int count);
 
   /// <summary>One affinity gate held by an apply in progress: who holds it, where it is, and for how long.</summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
   public readonly record struct AffinityHold(Guid StreamId, string PerspectiveName, string Path, string Phase, TimeSpan Held);
+
+  /// <summary>
+  /// One release of an affinity gate, raised through <see cref="OnStreamAffinityGateReleased"/>.
+  /// </summary>
+  /// <param name="StreamId">The stream whose gate went free.</param>
+  /// <param name="PerspectiveName">The perspective whose gate went free.</param>
+  /// <param name="Abandoned">True when the apply that held the gate had been abandoned by its consumer
+  /// and the gate was held until that apply ended.</param>
+  /// <docs>operations/workers/perspective-worker#processing-hooks</docs>
+  public readonly record struct AffinityGateRelease(Guid StreamId, string PerspectiveName, bool Abandoned);
 
   private void _markAffinityHeld(StreamAffinityGateEntry entry, string path) {
     entry.Path = path;
@@ -1616,7 +1705,7 @@ public partial class PerspectiveWorker(
   /// </summary>
   /// <param name="olderThan">Minimum hold age to include; <see cref="TimeSpan.Zero"/> lists every hold.</param>
   /// <param name="nowUtcTicks">The clock to age against; defaults to the worker's clock.</param>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal IReadOnlyList<AffinityHold> SnapshotAffinityHolds(TimeSpan olderThan, long? nowUtcTicks = null) {
     var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
     return [.. _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold)];
@@ -1627,7 +1716,7 @@ public partial class PerspectiveWorker(
   /// <see cref="PerspectiveStreamAffinityOptions.LongHoldWarning"/>: once when the hold crosses the
   /// threshold and once per threshold thereafter while it persists. Returns how many were named.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal int ReportLongAffinityHolds(long? nowUtcTicks = null) {
     var threshold = _streamAffinityOptions.LongHoldWarning;
     if (threshold <= TimeSpan.Zero) {
@@ -1748,7 +1837,7 @@ public partial class PerspectiveWorker(
       await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = f.LastEventId,
         CompletedStatus = MessageProcessingStatus.None,
-        Error = f.Error ?? "perspective failed",
+        Error = f.Error,
         Reason = MessageFailureReason.Unknown,
       }, ct).ConfigureAwait(false);
     }
@@ -1767,7 +1856,7 @@ public partial class PerspectiveWorker(
   /// PostAllPerspectives + PostLifecycle fire via FirePostLifecycleDetachedAsync after this returns.
   /// </summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDrainModeLifecycleTests.cs</tests>
   private async Task _processDrainModeStreamsAsync(
       AsyncServiceScope scope,
       List<Guid> streamIds,
@@ -2079,8 +2168,7 @@ public partial class PerspectiveWorker(
           var filteredEvents = perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
               ? currentEvents.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
               : [.. currentEvents
-                  .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
-                    && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
+                  .Where(e => _perspectivesFor(currentContext.TypeNameCache, e.Payload).Contains(perspectiveName))
                   .OrderByMessageId()];
 
           if (filteredEvents.Count == 0) {
@@ -2192,6 +2280,22 @@ public partial class PerspectiveWorker(
     return (eventsForStream, nextContext);
   }
 
+  /// <summary>
+  /// The registered perspectives an event's type feeds. The batch's type-name cache is built from the
+  /// same events the drain iterates (_buildDrainModeTypeNameCache), so every payload's type is in it.
+  /// </summary>
+  private IReadOnlyList<string> _perspectivesFor(Dictionary<Type, string> typeNameCache, IEvent payload) =>
+    PerspectivesFor(_perspectivesPerEventType!, typeNameCache[payload.GetType()]);
+
+  /// <summary>
+  /// The perspectives registered for an event type, or none when no registered perspective takes it: a
+  /// stream can hold events this service registers no perspective for, and those feed nothing here.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPerspectivesForTests.cs</tests>
+  internal static IReadOnlyList<string> PerspectivesFor(
+      IReadOnlyDictionary<string, IReadOnlyList<string>> perspectivesPerEventType, string eventTypeKey) =>
+    perspectivesPerEventType.TryGetValue(eventTypeKey, out var perspectives) ? perspectives : [];
+
   /// <summary>Collects the set of perspective names that apply to the event types in this stream.</summary>
   private HashSet<string> _collectDrainModePerspectiveNames(
       List<MessageEnvelope<IEvent>> streamEvents,
@@ -2204,9 +2308,8 @@ public partial class PerspectiveWorker(
       // Add it explicitly so the drain guard (_runDrainModePerspectiveAsync) dispatches the event.
       if (payload is ICollectiveEvent) {
         perspectiveNames.Add(CollectiveRouting.SINK_PERSPECTIVE_NAME);
-      } else if (typeNameCache.TryGetValue(payload.GetType(), out var eventTypeKey)
-          && _perspectivesPerEventType!.TryGetValue(eventTypeKey, out var perspectives)) {
-        perspectiveNames.UnionWith(perspectives);
+      } else {
+        perspectiveNames.UnionWith(_perspectivesFor(typeNameCache, payload));
       }
     }
     return perspectiveNames;
@@ -4051,7 +4154,7 @@ public partial class PerspectiveWorker(
     if (needsRewind && checkpoint is not null && rewindTriggerEventId.HasValue) {
       var eventsBehind = group.Count();
       LogRewindRequired(_logger, streamCtx.PerspectiveName, streamCtx.StreamId,
-        checkpoint.LastEventId ?? Guid.Empty, rewindTriggerEventId.Value, eventsBehind);
+        checkpoint.LastEventId, rewindTriggerEventId.Value, eventsBehind);
       _metrics?.RewindEventsBehind.Record(eventsBehind,
         new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, streamCtx.PerspectiveName));
 
@@ -4645,8 +4748,7 @@ public partial class PerspectiveWorker(
         // fresh scope (the work scope is already disposed here) and record it via the source-generated
         // LoggerMessage so a failed detached stage is always diagnosable.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<PerspectiveWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<PerspectiveWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });
@@ -4847,10 +4949,10 @@ public partial class PerspectiveWorker(
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
   private static async ValueTask _establishSecurityContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -5442,7 +5544,7 @@ public partial class PerspectiveWorker(
     Level = LogLevel.Warning,
     Message = "Perspective rewind required for {PerspectiveName} stream {StreamId} — cursor at {CursorEventId}, late event {TriggerEventId} ({EventsBehind} events behind)"
   )]
-  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid cursorEventId, Guid triggerEventId, int eventsBehind);
+  static partial void LogRewindRequired(ILogger logger, string perspectiveName, Guid streamId, Guid? cursorEventId, Guid triggerEventId, int eventsBehind);
 
   [LoggerMessage(
     EventId = 53,
@@ -5479,9 +5581,9 @@ public partial class PerspectiveWorker(
 /// Configure via: "Whizbang.Core.Workers.PerspectiveStartupScan": "Information"
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind#startup-scan</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanClean_QueriesExactlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBackgroundMode_DoesNotRepollAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerStartupAndMaintenanceTests.cs:Startup_RewindScanBlockingMode_RepollsUntilNoRewindCursorsRemainAsync</tests>
 internal static partial class PerspectiveStartupScanLog {
   [LoggerMessage(
     EventId = 54,
@@ -5578,7 +5680,7 @@ public class PerspectiveWorkerOptions {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_BusyApplyLock_IsNotReportedAsAFailure_AndKeepsItsRowAsync</tests>
   public bool CollectiveLockBusyCountsAsFailure { get; set; }
 
   /// <summary>
@@ -5593,7 +5695,7 @@ public class PerspectiveWorkerOptions {
   /// rows are this instance's only while their lease lasts.
   /// </remarks>
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkTests.Predecessor.cs:CollectiveSink_Predecessor_WaitDisabled_AppliesAtOnceAsync</tests>
   public int CollectivePredecessorWaitSeconds { get; set; } = 30;
 
   /// <summary>

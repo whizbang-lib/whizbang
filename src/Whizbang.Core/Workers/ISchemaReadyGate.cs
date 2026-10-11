@@ -5,8 +5,8 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Signal-based gate that workers await before issuing SQL against the database. The schema
-/// initializer (typically <c>WhizbangDatabaseInitializerService</c> in the EFCore Postgres
-/// driver) calls <see cref="MarkReady"/> after migrations succeed. Workers call
+/// initializer (<c>WhizbangDatabaseInitializerService</c>, which both Postgres drivers share)
+/// calls <see cref="MarkReady"/> after migrations succeed. Workers call
 /// <see cref="WaitForReadyAsync"/> at the top of their <c>ExecuteAsync</c> so they hold off
 /// on any SQL until the schema is provisioned.
 /// </summary>

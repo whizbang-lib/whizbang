@@ -91,12 +91,13 @@ code only"). The PR gate (`scripts/Find-UncoveredNewLines.ps1`) applies it to ev
 
 - **Uncovered new line**: the line never ran.
 - **Uncovered new branch**: the line ran, the collector recorded conditions on it, not every outcome
-  was taken, **and** the line's source contains a decision construct: `if` / `else if`, the conditional
-  `?:`, `??`, `??=`, `?.` or `?[`, `&&`, `||`, `switch` / `case` / a switch-expression arm, `when`,
-  `catch`, a `while` / `for` / `foreach` condition, or an `is` pattern test. Constructs inside string
-  literals and comments do not count; constructs inside interpolation holes do.
+  was taken, **and** the statement that starts on the line contains a decision construct on any of its
+  lines: `if` / `else if`, the conditional `?:`, `??`, `??=`, `?.` or `?[`, `&&`, `||`, `switch` /
+  `case` / a switch-expression arm, `when`, `catch`, a `while` / `for` / `foreach` condition, or an `is`
+  pattern test. Constructs inside string literals and comments do not count; constructs inside
+  interpolation holes do.
 
-Conditions on a line with none of those constructs are **compiler-generated** and the gate does not
+Conditions on a statement with none of those constructs are **compiler-generated** and the gate does not
 count them: the state-machine branches behind a bare `await`, the null checks of an object or collection
 initializer, and similar. No test can target them as such, and covering the code around them already
 proves what the author wrote. Counting them would make 100% unreachable for reasons that say nothing
@@ -108,12 +109,23 @@ Two consequences worth knowing:
   statement, or `ArgumentGuard.NotNull(x)` in a Core field or property initializer, rather than
   `x ?? throw new ArgumentNullException(nameof(x))`. The exception is the same and the branch lives in
   the runtime, so it needs no per-constructor test.
-- The rule reads one line at a time. A decision split across lines is matched on the line that carries
-  the construct (`?` and `:` continuation lines count), which is also where the collector reports its
-  conditions.
+- The rule reads the whole statement. The collector reports every condition of a statement on the
+  statement's first line, so a decision on a continuation line (a `?.` starting the second line of a
+  call chain, a `??` inside an object initializer, a `switch` expression in an argument) is counted on a
+  line whose own text has none. Reading only that line once classified such a decision as
+  compiler-generated and hid it (#1305). The statement runs to the `;` that ends it, or to the `{` that
+  opens its block; an initializer's braces are part of it, and so is a `?.` split at the line break
+  (`x?` then `.Member`). A lambda's body is a function of its own whose conditions the collector reports
+  on the lambda's own lines, so a block body, and an expression body that starts on a continuation
+  line, are not part of the statement. Reading stops at a multi-line string or block comment, whose text
+  a per-line reader would take for code.
 
-The rule and its fixtures are tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change
-both together.
+The rule is tested in `.github/scripts/tests/Find-UncoveredNewLines.Tests.ps1`. Change both together.
+Those tests never read a stored coverage report: they build the small libraries under
+`.github/scripts/tests/shapes/` and run each as two test processes under the real collector, with the
+settings and versions CI uses (`New-ShapesCoverage.ps1`), so the gate is tested against what the
+collector writes today. A new shape the gate must handle is added there as code, never as a report.
+The collector cannot instrument on macOS, so run them on Linux (CI's "Test · Pipeline scripts" job does).
 
 ### Outcomes taken in different test processes
 
@@ -124,10 +136,26 @@ that took the same one, so the gate can never add them up. It keeps the best cou
 the **binary** report (`*.coverage`) each process writes beside its Cobertura one. Those record every
 block's hit and merge exactly (`dotnet-coverage merge`). The collector counts an outcome as taken when
 the block it leads to ran, so once every block of a function ran in some process, every outcome in it
-was taken, whichever process took it, and the gate counts those lines as covered. A line in a function
-with a block no test ran keeps the reports' count: which of its outcomes is missing cannot be told
-without the IL, so nothing is claimed. A decision whose two outcomes run in two different suites is
-therefore covered as soon as the rest of its function is.
+was taken, whichever process took it, and the gate counts those lines as covered. A decision whose two
+outcomes run in two different suites is therefore covered as soon as the rest of its function is.
+
+A function with a block no test ran does not end the proof. A statement that only branches within
+itself (a `?.`, `??`, `?:`, `&&` or `||` with no `if`, loop, `switch`, `case`, `when`, `catch`,
+`await`, `yield`, `using`, `try` or jump in it) sends each outcome either to a block of the statement or
+to the code it falls through to. So when every block on the statement ran and the range after it in its
+function ran too, every outcome was taken, whatever else in the function went untested. That is the case
+of a `metrics?.Record(...)` whose null outcome ran in one suite and the other in another, inside a loop
+with an unrelated untested branch (#1305). Each condition is checked against what the block data shows:
+
+- a block on the statement that never ran (a `?.` no test took both ways) leaves it uncovered;
+- an `if`, loop or `switch` sends its outcomes to blocks elsewhere in the function, and `await` adds the
+  state machine's hidden blocks, so such a statement is never proven this way, even when every block on
+  its own line ran;
+- a statement whose following code never ran is not proven either: a `bomb?.Fail()` whose only path
+  threw never reached the code its null outcome would have jumped to.
+
+Anything else in a function with an unrun block keeps the reports' count: which of its outcomes is
+missing cannot be told without the IL, so nothing is claimed.
 
 One more piece of evidence is exact without the IL: an `if (...) {` whose body sits on lines of its
 own. C# cannot jump into a block from outside it, so the body is entered only through the true
@@ -140,17 +168,26 @@ Codecov still receives the per-process reports and merges them its own way.
 ### The whole-library gate
 
 The PR comment's last row, **Whole library (gated)**, shows the coverage of all hand-written library
-code on every PR, and the quality job fails while it is not 100%: every hand-written decision in the
-library is covered, not only the ones a PR adds, so the library stays at 100% once it is there and any
-gap a change uncovers (a refactor that splits a decision, a test removed) is fixed in that change. Lines over
-everything under `src/` that is instrumented and not generated (`src/Whizbang.Testing` is not
-instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated), and outcomes of hand-written
-decisions by the same rule as above. For example, "Whole library: lines 99.9%, hand-written branches
-98.6% (382 outcomes untested)", and once nothing is left, "Whole library: lines 100%, hand-written
-branches 100%, every hand-written decision in the library is covered". Percentages are truncated, so a
-gap never reads as 100%. The gate counts untested outcomes of hand-written decisions; a line no test
-runs is listed in the gap and counted by the new-code gate, and a member excluded with
-`[ExcludeFromCodeCoverage]` is absent from the reports, so it is not counted. That makes every exclusion
+code on every PR, and the quality job fails while either half is not 100%: every line is run by some
+test, and every hand-written decision is covered, not only the ones a PR adds, so the library stays at
+100% once it is there and any gap a change uncovers (a refactor that splits a decision, a test removed)
+is fixed in that change. Lines over everything under `src/` that is instrumented and not generated
+(`src/Whizbang.Testing` is not instrumented; `*.g.cs`, `obj/` and the `.whizbang` cache are generated),
+and outcomes of hand-written decisions by the same rule as above. For example, "Whole library: lines
+99.9% (17 lines never run), hand-written branches 98.6% (382 outcomes untested)", and once nothing is
+left, "Whole library: lines 100%, hand-written branches 100%, every line and every hand-written decision
+in the library is covered". Percentages are truncated, so a gap never reads as 100%, and the line count
+is printed beside the percentage because a library this size truncates 17 uncovered lines and 80 to the
+same figure.
+
+**A line carrying no decision still gates.** It is tempting to read the line half as a weaker signal
+than the branch half, because an auto-property or a record's positional parameter has no logic in it.
+What it has is a contract: a documented default, a value the record promises to carry, the body of a
+default interface method a consumer reaches when it supplies no implementation of its own. An accessor
+no test ever runs is a promise nothing holds anyone to, and the test that pins it is a claim about the
+documented behavior rather than about the number. Assert the **documented** value, not a round-trip:
+"set it and read it back" would pass for any auto-property and so proves nothing. A member excluded with
+`[ExcludeFromCodeCoverage]` is absent from the reports, so it is counted by neither half. That makes every exclusion
 a decision someone has to defend: follow the procedure above, put the reason in the attribute's
 `Justification` and a comment, and, when the reason is an open issue, name the issue so the exclusion
 goes with its fix. The list of what is left is `library-gap.txt` in the `pr-quality-gate` artifact

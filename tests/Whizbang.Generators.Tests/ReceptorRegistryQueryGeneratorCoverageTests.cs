@@ -87,6 +87,35 @@ namespace MyApp {
              + "dispatcher) and must register as a consumer so the receive-boundary drop-gate does not discard it");
   }
 
+  /// <summary>
+  /// A concrete type carrying [NotificationTag] has the tagged-notification dispatcher as its consumer,
+  /// exactly as one carrying [NotificationIdTag] does, so it registers too.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ConcreteTypeWithNotificationTag_HasAnyConsumerReturnsTrueAsync() {
+    const string source = """
+
+namespace Whizbang.Core {
+  public sealed class NotificationTagAttribute : System.Attribute {
+    public NotificationTagAttribute(string tag) { }
+  }
+}
+
+namespace MyApp {
+  [Whizbang.Core.NotificationTagAttribute("order-updates")]
+  public class OrderUpdatedNotice { }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(_extractRegion(generated!, "AnyConsumerTypes")).Contains("MyApp.OrderUpdatedNotice")
+      .Because("a [NotificationTag] type is consumed by the tagged-notification dispatcher, so the drop-gate must keep it");
+  }
+
   /// <summary>Isolates the braced initializer for one contribution field (e.g. "AnyConsumerTypes")
   /// so assertions are scoped to that field instead of the whole generated file — an over-broad
   /// Contains would pass for the wrong reason (a coincidental match elsewhere in the file).</summary>

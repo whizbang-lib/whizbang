@@ -222,6 +222,131 @@ namespace TestNamespace {
              + "row under the wrong identity, which reads as data loss rather than a codegen bug.");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_FromFactoryThatCannotConvertAGuid_LeavesKeyUnsetAsync() {
+    // A strongly typed id is initialized through its factory only when the factory is exactly the convention:
+    // public, static, one System.Guid parameter, returning the id type. Each id below misses by one of those,
+    // and calling it would not compile (or would build the wrong type), so the key is left unset for each.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public readonly record struct InstanceId(Guid Value) { public InstanceId From(Guid value) => new(value); }
+  public readonly record struct PrivateId(Guid Value) { private static PrivateId From(Guid value) => new(value); }
+  public readonly record struct TwoArgId(Guid Value) { public static TwoArgId From(Guid value, int shard) => new(value); }
+  public readonly record struct TextId(Guid Value) { public static TextId From(string value) => new(Guid.Parse(value)); }
+  public readonly record struct OtherReturnId(Guid Value) { public static Guid From(Guid value) => value; }
+
+  public record KeyEvent : IEvent { [StreamId] public Guid Id { get; init; } }
+
+  public record InstanceModel { [StreamId] public InstanceId Key { get; init; } }
+  public record PrivateModel { [StreamId] public PrivateId Key { get; init; } }
+  public record TwoArgModel { [StreamId] public TwoArgId Key { get; init; } }
+  public record TextModel { [StreamId] public TextId Key { get; init; } }
+  public record OtherReturnModel { [StreamId] public OtherReturnId Key { get; init; } }
+
+  public class InstancePerspective : IPerspectiveFor<InstanceModel, KeyEvent> { public InstanceModel Apply(InstanceModel currentData, KeyEvent @event) => currentData; }
+  public class PrivatePerspective : IPerspectiveFor<PrivateModel, KeyEvent> { public PrivateModel Apply(PrivateModel currentData, KeyEvent @event) => currentData; }
+  public class TwoArgPerspective : IPerspectiveFor<TwoArgModel, KeyEvent> { public TwoArgModel Apply(TwoArgModel currentData, KeyEvent @event) => currentData; }
+  public class TextPerspective : IPerspectiveFor<TextModel, KeyEvent> { public TextModel Apply(TextModel currentData, KeyEvent @event) => currentData; }
+  public class OtherReturnPerspective : IPerspectiveFor<OtherReturnModel, KeyEvent> { public OtherReturnModel Apply(OtherReturnModel currentData, KeyEvent @event) => currentData; }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    foreach (var name in new[] { "Instance", "Private", "TwoArg", "Text", "OtherReturn" }) {
+      var runner = GeneratorTestHelper.GetGeneratedSource(result, $"{name}PerspectiveRunner.g.cs");
+      await Assert.That(runner).IsNotNull();
+      await Assert.That(runner).Contains($"new global::TestNamespace.{name}Model {{ }}")
+        .Because($"{name}Id's From is not the public static From(System.Guid) returning the id, so no conversion is guessed");
+      await Assert.That(runner).DoesNotContain(".From(streamId)");
+    }
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ModelWithNoDeclaredDefaults_RegistersNoMemberDefaultsAsync() {
+    // A model whose every member reads as null for an absent key declares no defaults, so there is
+    // nothing to register and no module initializer for one.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record NoteEvent : IEvent { [StreamId] public string Id { get; init; } }
+
+  public record NoteModel {
+    [StreamId]
+    public string Id { get; init; }
+    public string? Text { get; init; }
+  }
+
+  public class NotePerspective : IPerspectiveFor<NoteModel, NoteEvent> {
+    public NoteModel Apply(NoteModel currentData, NoteEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runner = GeneratorTestHelper.GetGeneratedSource(result, "NotePerspectiveRunner.g.cs");
+
+    await Assert.That(runner).IsNotNull();
+    await Assert.That(runner).DoesNotContain("_registerMemberDefaults")
+      .Because("with no declared default there is nothing for the predicate compiler to learn");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_SplitClassWithAGetOnlyPromotedField_IsWHIZ808NotAnAssignmentAsync() {
+    // A get-only promoted field can no more be assigned once the instance exists than an init-only one can.
+    // Treating it as assignable emitted "model.Status = default!" into the runner, which does not compile
+    // (CS0200). It is a field the class sets only through a copy, and a copy cannot carry a get-only stored
+    // value either, so the build reports WHIZ808 and leaves the field out of the generated assignments.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class FrozenEvent : IEvent { public Guid Id { get; set; } }
+
+  [PerspectiveStorage(FieldStorageMode.Split)]
+  public class FrozenModel {
+    [StreamId]
+    public Guid Id { get; set; }
+
+    [PhysicalField]
+    public string Status { get; } = "";
+
+    [PhysicalField]
+    public int Priority { get; set; }
+  }
+
+  public class FrozenPerspective : IPerspectiveFor<FrozenModel, FrozenEvent> {
+    public FrozenModel Apply(FrozenModel currentData, FrozenEvent @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var messages = result.Diagnostics.Where(d => d.Id == "WHIZ808")
+      .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).ToList();
+    var runner = GeneratorTestHelper.GetGeneratedSource(result, "FrozenPerspectiveRunner.g.cs") ?? "";
+
+    await Assert.That(messages).Contains(m => m.Contains("Status is a get-only property that stores a value", StringComparison.Ordinal));
+    await Assert.That(runner).DoesNotContain("model.Status =")
+      .Because("assigning a get-only property is CS0200 in generated code");
+    await Assert.That(runner).Contains("model.Priority = default!;")
+      .Because("the settable promoted field is still stripped in place");
+  }
+
   #endregion
 
   #region Apply-overload return-type classifier

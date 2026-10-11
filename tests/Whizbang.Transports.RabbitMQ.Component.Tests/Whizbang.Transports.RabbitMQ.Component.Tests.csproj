@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: real workers and threads in one process, no external infrastructure (no broker,
+         no Docker). The unit tests of the RabbitMQ transport stay in Whizbang.Transports.RabbitMQ.Tests
+         (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Suppress CA1707: Test method names use underscores for readability -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="RabbitMQ.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- The RabbitMQ test doubles, the capturing logger and the test message JSON context are shared with the unit project:
+       one source, compiled into both test assemblies, so the two copies cannot drift. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Transports.RabbitMQ.Tests/CapturingLogger.cs" Link="Shared/CapturingLogger.cs" />
+    <Compile Include="../Whizbang.Transports.RabbitMQ.Tests/TestDoubles.cs" Link="Shared/TestDoubles.cs" />
+    <Compile Include="../Whizbang.Transports.RabbitMQ.Tests/TestJsonContext.cs" Link="Shared/TestJsonContext.cs" />
+  </ItemGroup>
+
+</Project>

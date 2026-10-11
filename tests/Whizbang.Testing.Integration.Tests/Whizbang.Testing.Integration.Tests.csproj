@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Run by the general integration suite ("Test · Integration (general)", tag Integration). -->
+    <WhizbangTestTags>Integration</WhizbangTestTags>
+    <!-- Integration: the testing library against real infrastructure (a PostgreSQL container for
+         query-plan capture). The unit tests stay in Whizbang.Testing.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Integration</WhizbangTestType>
+    <RootNamespace>Whizbang.Testing.Tests</RootNamespace>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+  </ItemGroup>
+
+</Project>

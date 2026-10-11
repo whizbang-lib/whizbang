@@ -128,7 +128,7 @@ public class ReceptorInvokerLoggingTests {
       LifecycleStage.PostInboxInline,
       "SuccessReceptor",
       static async (_, _, _, _, ct) => {
-        await Task.Delay(5, ct).ConfigureAwait(false);
+        await Task.Yield();
         return null;
       });
 

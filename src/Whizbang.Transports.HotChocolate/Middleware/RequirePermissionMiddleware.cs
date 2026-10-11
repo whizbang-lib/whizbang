@@ -3,7 +3,6 @@
 
 using HotChocolate;
 using HotChocolate.Resolvers;
-using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Attributes;
 
@@ -12,7 +11,8 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// <summary>
 /// HotChocolate field middleware that enforces <see cref="RequirePermissionAttribute"/>
 /// declarations at GraphQL resolution time. Reads the current request's
-/// <see cref="IScopeContext"/> and verifies every required permission is present before
+/// <see cref="IScopeContext"/> from <see cref="IScopeContextAccessor.Current"/>, where the scope middleware
+/// publishes it, and verifies every required permission is present before
 /// invoking the resolver. Failure throws a <see cref="GraphQLException"/> with extension
 /// code <c>AUTH_NOT_AUTHORIZED</c>, which clients can pattern-match consistently.
 /// </summary>
@@ -44,7 +44,7 @@ public static class RequirePermissionMiddleware {
         _ => ScopeOperation.Read,
       };
 
-      var scope = ctx.Services.GetService<IScopeContext>();
+      var scope = RequestScope.Resolve(ctx.Services);
       var failure = Evaluate(scope, required, operationKind);
       if (failure is not null) {
         throw new GraphQLException(failure);

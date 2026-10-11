@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// group. Inert without a drain-capable coordinator, a transport, or learned origins.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RepairDrainWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/RepairDrainWorkerTests.cs</tests>
 public sealed partial class RepairDrainWorker(
     IServiceScopeFactory scopeFactory,
     ISchemaReadyGate schemaReadyGate,
@@ -99,8 +99,7 @@ public sealed partial class RepairDrainWorker(
     var tracker = services.GetService<IntegrityGapTracker>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
-    var replyTopic = _options.RepairTopic
-      ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var replyTopic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (coordinator is null || transport is null || serializer is null || tracker is null
         || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(replyTopic)) {
       return;   // no dispatch infrastructure — the ledger keeps the backlog durable.

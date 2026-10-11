@@ -59,9 +59,9 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
     }
 
     var fullyQualified = TypeNameHelper.GetFullyQualifiedName(symbol);   // "global::Ns.Type"
-    var defaultWireName = fullyQualified.StartsWith("global::", StringComparison.Ordinal)
-        ? fullyQualified["global::".Length..]
-        : fullyQualified;
+    // The fully qualified format includes the global namespace for every named type, a type declared in the
+    // global namespace too ("global::Type"), so the prefix is always there to drop.
+    var defaultWireName = fullyQualified["global::".Length..];
     var wireName = _readWireNameAttribute(symbol) ?? defaultWireName;
     return new SignalTypeInfo(fullyQualified, wireName);
   }

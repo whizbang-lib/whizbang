@@ -20,7 +20,7 @@ namespace Whizbang.Generators;
 /// Also generates MessageTagHookDispatcher for custom attribute types to enable AOT-compatible hook invocation.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#registry</docs>
-/// <tests>Whizbang.Generators.Tests/MessageTagDiscoveryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageTagDiscoveryGeneratorTests.cs</tests>
 [Generator]
 public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   private const string MESSAGE_TAG_ATTRIBUTE = "Whizbang.Core.Attributes.MessageTagAttribute";

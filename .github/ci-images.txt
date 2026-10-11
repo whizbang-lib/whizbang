@@ -1,0 +1,22 @@
+# Docker Hub images that CI pulls, mirrored to ghcr.io/whizbang-lib/ci-mirror/ by
+# .github/workflows/mirror-ci-images.yml so the test jobs do not hit Docker Hub's pull rate limit.
+#
+# One image per line: <Docker Hub name>:<tag>@<digest of the multi-arch index>. The name is written the
+# way the code writes it (`rabbitmq`, not `library/rabbitmq`), because that is the name Testcontainers
+# and the fixtures prefix. The digest is what gets copied, so the mirror holds exactly this content until
+# the line changes; refresh it with
+#   docker buildx imagetools inspect <name>:<tag> --format '{{.Manifest.Digest}}'
+#
+# Images from other registries (mcr.microsoft.com, ...) are not rate limited and are not listed.
+# A test job fails when it pulls a Docker Hub image this file does not list (Test-CiImagePulls.ps1).
+# How to add one: ai-docs/ci-image-mirror.md.
+
+# Shared PostgreSQL fixture (SharedPostgresContainer, Run-Tests.ps1) and the restart chaos tests.
+pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+
+# Shared RabbitMQ fixture (SharedRabbitMqContainer, Run-Tests.ps1) and RabbitMqClassFixtureSource.
+rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+
+# The Testcontainers reaper. The tag is fixed by the Testcontainers package version (4.10.0 uses 0.14.0);
+# a Testcontainers upgrade that moves it fails the pull check until this line follows.
+testcontainers/ryuk:0.14.0@sha256:7c1a8a9a47c780ed0f983770a662f80deb115d95cce3e2daa3d12115b8cd28f0

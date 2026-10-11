@@ -47,6 +47,17 @@ public class EFCoreInfrastructureRegistrationTests {
     services.AddSingleton<IOptions<WhizbangCoreOptions>>(GlobalScopeOptions.Instance);
   }
 
+  /// <summary>
+  /// The no-op accessor reports no initiating context, which is what makes it safe to register when a
+  /// lens query is built without scope support: anything reading the accessor sees "none", not a stale one.
+  /// </summary>
+  [Test]
+  public async Task NullScopeContextAccessor_ReportsNoInitiatingContextAsync() {
+    IScopeContextAccessor accessor = NullScopeContextAccessor.Instance;
+
+    await Assert.That(accessor.InitiatingContext).IsNull();
+  }
+
   [Test]
   public async Task RegisterPerspectiveModel_RegistersIPerspectiveStoreAsync() {
     // Arrange

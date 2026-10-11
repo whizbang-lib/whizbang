@@ -14,7 +14,7 @@ namespace Whizbang.Core.Observability;
 /// Runs every 30 seconds. Waits for database readiness before starting.
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,

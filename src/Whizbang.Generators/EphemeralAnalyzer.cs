@@ -104,7 +104,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     if (ephemeral.Count > 0 && sourced.Count > 0 && !_hasDangerousMixOptIn(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(
         MixedModePerspective,
-        symbol.Locations.FirstOrDefault() ?? Location.None,
+        LocationUtilities.FirstOrNone(symbol),
         symbol.Name,
         string.Join(", ", ephemeral),
         string.Join(", ", sourced)));
@@ -115,7 +115,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     if (EphemeralResolver.IsAmbiguousComposition(symbol)) {
       context.ReportDiagnostic(Diagnostic.Create(
         AmbiguousComposition,
-        symbol.Locations.FirstOrDefault() ?? Location.None,
+        LocationUtilities.FirstOrNone(symbol),
         symbol.Name));
     }
   }

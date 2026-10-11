@@ -238,6 +238,34 @@ public class CompositeIndexDiscoveryTests {
   /// The semantic model returns null for a type it could not resolve, which happens for real:
   /// mid-edit source in the IDE, or a model referencing a type from an assembly that failed to load.
   /// </remarks>
+  /// <summary>A declaration whose arguments do not bind names no properties, so it is no index.</summary>
+  /// <remarks>
+  /// An analyzer runs on source mid-edit, where <c>[PerspectiveIndex(1, 2)]</c> is a compile error the
+  /// author has not fixed yet. The compiler still resolves the attribute class but binds no constructor,
+  /// so the declaration carries no arguments at all. Discovery reads that as "names nothing" and skips
+  /// it, rather than indexing nothing or failing the whole compilation.
+  /// </remarks>
+  [Test]
+  public async Task ADeclarationWhoseArgumentsDoNotBind_IsNoIndexAsync() {
+    var compilation = GeneratorTestHelper.CreateCompilation("""
+      using Whizbang.Core.Perspectives;
+
+      namespace Probe;
+
+      [PerspectiveIndex(1, 2)]
+      public class ProbeModel {
+        public string Tenant { get; init; } = "";
+      }
+      """);
+    var model = compilation.GetTypeByMetadataName("Probe.ProbeModel")!;
+    var declaration = model.GetAttributes().Single();
+
+    await Assert.That(declaration.AttributeClass!.Name).IsEqualTo("PerspectiveIndexAttribute");
+    await Assert.That(declaration.ConstructorArguments).IsEmpty()
+      .Because("this is the shape under test: the class resolves, the constructor does not");
+    await Assert.That(JsonIndexDiscovery.CompositesFrom(model)).IsEmpty();
+  }
+
   [Test]
   public async Task ANullModel_HasNoCompositesAsync() {
     await Assert.That(JsonIndexDiscovery.CompositesFrom(null)).IsEmpty();

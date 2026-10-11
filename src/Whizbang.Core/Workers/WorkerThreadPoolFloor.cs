@@ -27,7 +27,7 @@ namespace Whizbang.Core.Workers;
 /// <para>The floor is only ever RAISED. A host or operator that tuned the pool higher keeps it.</para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerThreadPoolFloorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/WorkerThreadPoolFloorTests.cs</tests>
 public static class WorkerThreadPoolFloor {
 
   private const int DEFAULT_FLOOR_VALUE = 64;

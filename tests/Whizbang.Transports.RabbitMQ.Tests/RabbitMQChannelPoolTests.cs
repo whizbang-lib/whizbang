@@ -67,19 +67,20 @@ public class RabbitMQChannelPoolTests {
     var pooled1 = await pool.RentAsync(CancellationToken.None);
     var pooled2 = await pool.RentAsync(CancellationToken.None);
 
-    // Try to rent a third (should block)
+    // Try to rent a third (should block). Both permits are held and only a return releases one, so
+    // the rent cannot complete before pooled1.Dispose() below: no delay is needed to observe that.
     var rentTask = pool.RentAsync(CancellationToken.None).AsTask();
-
-    // Wait a bit - should NOT complete
-    await Task.Delay(100);
     await Assert.That(rentTask.IsCompleted).IsFalse();
 
     // Return one channel
+    var returnedChannel = pooled1.Channel;
     pooled1.Dispose();
 
-    // Now the rent should complete
+    // Now the rent completes, and it is served by the returned channel. A pool that did not block
+    // would have created a third channel instead, so this proves the rent waited for the return.
     var pooled3 = await rentTask;
-    await Assert.That(pooled3.Channel).IsNotNull();
+    await Assert.That(pooled3.Channel).IsSameReferenceAs(returnedChannel);
+    await Assert.That(channelCount).IsEqualTo(2);
 
     // Cleanup
     pooled2.Dispose();

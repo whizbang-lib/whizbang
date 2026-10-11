@@ -85,7 +85,7 @@ public class InMemoryEventStore : IEventStore {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

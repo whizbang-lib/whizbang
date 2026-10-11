@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// Enables request/response pattern on Kafka and Event Hubs.
 /// </summary>
 /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs</tests>
 /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
 public interface IRequestResponseStore {
   /// <summary>
@@ -37,7 +37,7 @@ public interface IRequestResponseStore {
   /// <param name="correlationId">The correlation ID to wait for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response envelope, or null if timed out</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
   Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -63,7 +63,7 @@ public interface IRequestResponseStore {
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
   Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -72,7 +72,7 @@ public interface IRequestResponseStore {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when cleanup is finished</returns>
   /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
   Task CleanupExpiredAsync(CancellationToken cancellationToken = default);
 }

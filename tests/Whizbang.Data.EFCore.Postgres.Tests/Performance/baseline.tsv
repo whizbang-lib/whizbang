@@ -336,3 +336,53 @@ liveness.under_load.wh_vote_role.lock_wait_samples	2064	samples		recorded: was 4
 claim.ledger_write.shared_buffers_per_claim	1136	buffers/claim		recorded: was 1,151 before 200
 claim.ledger_write.wh_active_streams.blocks_per_claim	221	blocks/claim	330	GATED: was 234.7 before 200; the ledger write is one probe and one write per claimed stream
 claim.ledger_write.wh_outbox.blocks_per_claim	612.667	blocks/claim		recorded: unchanged by 200
+
+# --- Inbox claim and claim_work, the stream-ledger write ------------------------------------------
+# The same thirty streams and three ledger paths, through claim_orphaned_inbox (one inbox row per
+# stream) and through a whole claim_work whose outbox and inbox acquisitions lease the same thirty
+# streams. 202 (#1256) gives the inbox acquisition 200's one pass and makes claim_work write the
+# ledger once for every stream its acquisitions leased, after the last of them, where each
+# acquisition used to write its own. Before 202: inbox 222.7 ledger blocks and 1,050 buffers;
+# claim_work 290.0 ledger blocks and 2,016 buffers, because a stream both acquisitions leased was
+# written twice. The ledger ceilings are half again the measured value, as above.
+claim.inbox_ledger_write.shared_buffers_per_claim	1047	buffers/claim		recorded: was 1,050 before 202
+claim.inbox_ledger_write.wh_active_streams.blocks_per_claim	221	blocks/claim	330	GATED: was 222.7 before 202; one probe and one write per claimed stream
+claim.inbox_ledger_write.wh_inbox_state.blocks_per_claim	461.667	blocks/claim		recorded: unchanged by 202
+claim.work_ledger_write.shared_buffers_per_claim	1980	buffers/claim		recorded: was 2,016 before 202
+claim.work_ledger_write.wh_active_streams.blocks_per_claim	253	blocks/claim	380	GATED: was 290.0 before 202; the ledger is written once per stream, not once per acquisition
+claim.work_ledger_write.wh_inbox_state.blocks_per_claim	516.833	blocks/claim		recorded: unchanged by 202
+claim.work_ledger_write.wh_outbox.blocks_per_claim	626	blocks/claim		recorded: unchanged by 202
+
+# --- Partition assignment: what presenting the assignment costs a claim ---------------------------
+# 203 (#1254). The same claim_work, once ranking itself over the live registrations and once
+# presenting a current cached assignment, at twenty and at four hundred registered instances. The
+# scenario asserts the assigned claim costs no more than the self-ranked one: the fence reads the
+# one-row assignment table instead of ranking, so it adds no work per claim. When the fence was a
+# primary-key probe it cost one buffer more than the ranking it replaced (620 against 619 at twenty,
+# 609 against 608 at four hundred); reading the table's single page without its index made the two
+# equal. The refresh read is one keyed read, gated at two buffers in the scenario.
+partition_assignment.claim.assigned.instances_20.shared_buffers	619	buffers/claim		recorded: gated relative to self_ranked in the scenario
+partition_assignment.claim.assigned.instances_400.shared_buffers	599	buffers/claim		recorded: gated relative to self_ranked in the scenario
+partition_assignment.claim.self_ranked.instances_20.shared_buffers	619	buffers/claim		
+partition_assignment.claim.self_ranked.instances_400.shared_buffers	599	buffers/claim		
+partition_assignment.refresh_read.shared_buffers	2	buffers/read		recorded: gated at 2 in the scenario
+
+# --- Role vote beside a stamp held back by an open import -----------------------------------------
+# One import transaction holds the visibility horizon open while 100,000 events (10,000 streams of
+# ten) commit behind it, and the stamper makes 20 fenced calls of 1,000 beside the holder's renewal
+# votes. Captured on a deployed environment under bulk imports (#1217): the holder's vote waited a
+# median of 14.5 s and up to 30 s, behind a fenced stamp that ran, unblocked, for up to 47 s.
+#
+# Nothing behind the horizon is eligible. Before 205 the stamp's walk filtered on xmin, which no index
+# holds, so it never reached its batch: each call read every unstamped entry behind the horizon
+# (100,001) and stamped none, the worker retried on its fenced interval because rows were pending, and
+# the holder's vote waited 474 samples behind those calls. 205 finds eligible rows through the
+# inserting transaction's id, so a call reads nothing behind the horizon. Entries read are counted on
+# every event-store index inside the call's own transaction and do not depend on the machine, so they
+# carry the gate: a call may read what one batch (1,000) could stamp. Times and samples are recorded.
+role_vote.held_back_stamp.index_entries_read_per_call	4	entries	1000	GATED: was 100,001 before 205
+role_vote.held_back_stamp.longest_vote_wait_ms	3	ms		recorded: was 17 before 205
+role_vote.held_back_stamp.rows_behind_the_horizon	100000	rows		recorded
+role_vote.held_back_stamp.rows_stamped_per_call	0	rows		recorded
+role_vote.held_back_stamp.stamp_call_median_ms	0	ms		recorded: was 10 before 205
+role_vote.held_back_stamp.vote_lock_wait_samples	41	samples		recorded: was 474 before 205

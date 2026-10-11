@@ -237,12 +237,12 @@ public class TransportManager(
       Hops = [
         new MessageHop {
           Type = HopType.Current,
-          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = context.CorrelationId,
           CausationId = context.CausationId,
           Scope = scopeDelta,
-          TraceParent = System.Diagnostics.Activity.Current?.Id,
+          TraceParent = HopStamping.AmbientTraceParent,
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }

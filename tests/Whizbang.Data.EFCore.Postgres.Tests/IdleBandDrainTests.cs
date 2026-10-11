@@ -3,7 +3,9 @@
 
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Priority;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -25,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/167_IdleBandIsWithheldWhileBusy.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
 [Category("Shard2")]
 public class IdleBandDrainTests : EFCoreTestBase {
@@ -217,5 +220,62 @@ public class IdleBandDrainTests : EFCoreTestBase {
       .Because("interactive and background work is claimed exactly as before; only the idle band is withheld");
     await Assert.That(await _idleHeldAsync(conn, instance)).IsEqualTo(0)
       .Because("and the idle band, fresh and on a busy service, is the one thing left behind");
+  }
+
+  /// <summary>Runs one claim through the coordinator with the idle bounds a host configured.</summary>
+  private static Task<WorkBatch> _coordinatorClaimAsync(
+    WorkCoordinationDbContext ctx, Guid instance, TimeSpan? trickleAfter, TimeSpan? forceAfter) =>
+    new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, JsonContextRegistry.CreateCombinedOptions())
+      .ClaimWorkAsync(new ClaimWorkRequest(
+        InstanceId: instance,
+        ServiceName: "IdleBandSvc",
+        HostName: "host",
+        ProcessId: 1,
+        MaxStreams: 100,
+        MaxAcquireRows: 100,
+        IdleSettled: false,
+        IdleTrickleAfter: trickleAfter,
+        IdleTrickleSlice: 10,
+        IdleForceAfter: forceAfter));
+
+  /// <summary>
+  /// A host's trickle bound reaches the claim. Ten-minute-old idle work on a busy service waits under
+  /// the store's thirty-minute default, so a slice is taken only if the coordinator carried the
+  /// host's five minutes; the unset force bound keeps the store default and does not drain.
+  /// </summary>
+  [Test]
+  public async Task ClaimWorkAsync_CarriesTheRequestsTrickleBound_AndDefaultsTheUnsetForceBoundAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var instance = Guid.NewGuid();
+    await _heartbeatAsync(conn, instance);
+    await _seedAsync(conn, WorkPriority.IDLE, rows: 40, ageMinutes: 10);
+
+    await _coordinatorClaimAsync(ctx, instance, trickleAfter: TimeSpan.FromMinutes(5), forceAfter: null);
+
+    var held = await _idleHeldAsync(conn, instance);
+    await Assert.That(held).IsGreaterThan(0)
+      .Because("ten minutes is past the host's five-minute trickle bound; under the thirty-minute default nothing moves");
+    await Assert.That(held).IsLessThanOrEqualTo(10)
+      .Because("the force bound was left unset, so the four-hour default holds and only the slice moves");
+  }
+
+  /// <summary>
+  /// A host's force bound reaches the claim. Ten-minute-old idle work on a busy service drains at full
+  /// width only if the coordinator carried the host's five minutes instead of the four-hour default;
+  /// the unset trickle bound keeps the store default.
+  /// </summary>
+  [Test]
+  public async Task ClaimWorkAsync_CarriesTheRequestsForceBound_AndDefaultsTheUnsetTrickleBoundAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var instance = Guid.NewGuid();
+    await _heartbeatAsync(conn, instance);
+    await _seedAsync(conn, WorkPriority.IDLE, rows: 40, ageMinutes: 10);
+
+    await _coordinatorClaimAsync(ctx, instance, trickleAfter: null, forceAfter: TimeSpan.FromMinutes(5));
+
+    await Assert.That(await _idleHeldAsync(conn, instance)).IsGreaterThan(10)
+      .Because("ten minutes is past the host's five-minute force bound, so the band drains at full width, past the slice");
   }
 }

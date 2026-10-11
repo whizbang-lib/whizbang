@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
@@ -172,7 +173,7 @@ public static class ServiceCollectionExtensions {
       var tagOptions = sp.GetRequiredService<TagOptions>();
       SystemEvents.SystemEventCoalesceDefaults.Apply(
         tagOptions,
-        sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+        sp.GetOptionsValue<SystemEvents.SystemEventOptions>());
       // Whizbang:Tags:Coalesce:<tag> overrides the code policies (#1012).
       TagCoalesceConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
       return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());

@@ -36,6 +36,7 @@ Whizbang:BodyOffload:PassiveSweepBatchSize
 Whizbang:BodyOffload:PassiveSweepClaimWindow
 Whizbang:BodyOffload:PassiveSweepMaxBatchesPerCycle
 Whizbang:BodyOffload:ProviderName
+Whizbang:BodyOffload:RequireSealedBodies
 Whizbang:BodyOffload:SizeThresholdBytes
 Whizbang:CircuitBreakers:*:CooldownBackoffMultiplier
 Whizbang:CircuitBreakers:*:FailureThreshold
@@ -69,6 +70,7 @@ Whizbang:Database:Stamper
 Whizbang:Database:Stamper:AdvisoryLockKey
 Whizbang:Database:Stamper:BatchSize
 Whizbang:Database:Stamper:DisableStamper
+Whizbang:Database:Stamper:DrainBatchSize
 Whizbang:Database:Stamper:FencedRetryInterval
 Whizbang:Database:Stamper:LeaderElectionRetry
 Whizbang:Database:Stamper:NotifyHealthyPollingInterval

@@ -1,0 +1,217 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
+
+namespace Whizbang.Data.Postgres;
+
+/// <summary>
+/// Hosted service that initializes the Whizbang database schema, then signals
+/// <see cref="ISchemaReadyGate"/> so workers (which await the gate at the top of their ExecuteAsync)
+/// can issue SQL. One for every driver: each driver registers an <see cref="ISchemaInitializationRunner"/>
+/// for what it initializes, and this service runs every one of them, in registration order, before it opens
+/// the gate.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Non-blocking (default, <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/> = true):</b>
+/// initialization runs in the background and <c>StartAsync</c> returns immediately, so the host
+/// binds its port and begins serving <em>while migrations are still running</em>. That is the most
+/// consequential fact about startup here, and it is why the availability gate and the readiness
+/// check exist: the gate stays closed until migrations succeed, so nothing reaches an unmigrated
+/// schema through them.
+/// </para>
+/// <para>
+/// <b>Blocking (opt in with <c>NonBlockingSchemaInit = false</c>):</b>
+/// migrations run inline in <c>StartAsync</c>, so the host does not finish starting (no HTTP port,
+/// no workers) until they complete, and a failure throws — aborting startup and keeping the system
+/// in a safe halted state.
+/// </para>
+/// <para>
+/// <b>In the non-blocking default:</b> initialization runs in the background; <c>StartAsync</c> returns
+/// immediately so the host binds and can answer a liveness probe, while the gate stays closed until
+/// migrations succeed. Workers — and a readiness check that reads the gate — hold off until then, so
+/// nothing touches an unmigrated schema. On failure (including a
+/// <see cref="SchemaInitializationOptions.MigrationTimeout"/>) the gate never opens (fail-closed):
+/// the pod is alive but never ready, so it stays out of traffic rotation and the rollout fails
+/// cleanly rather than being killed mid-migration by a startup probe.
+/// </para>
+/// <para>
+/// Partition recompute is best-effort: a failure does NOT block <see cref="ISchemaReadyGate.MarkReady"/>.
+/// It self-heals partition_number columns left inconsistent by a previous PartitionCount (e.g.,
+/// crossing a partition-count boundary on redeploy).
+/// </para>
+/// </remarks>
+/// <docs>data/turnkey-initialization</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Schema/SchemaInitializationRunnersTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangDatabaseInitializerServiceTests.cs</tests>
+internal sealed partial class WhizbangDatabaseInitializerService(
+    IServiceProvider serviceProvider,
+    IEnumerable<ISchemaInitializationRunner> runners,
+    ISchemaReadyGate schemaReadyGate,
+    IOptions<ClaimWorkerOptions> claimWorkerOptions,
+    IOptions<SchemaInitializationOptions> schemaInitOptions,
+    TimeProvider timeProvider,
+    ILogger<WhizbangDatabaseInitializerService> logger,
+    IEnumerable<ISchemaInitializationObserver> observers) : IHostedService, IDisposable {
+
+  private readonly ISchemaInitializationObserver[] _observers = [.. observers];
+
+  private readonly IServiceProvider _serviceProvider = serviceProvider;
+  // Materialized once: the registration order is the run order, and a lazily enumerated sequence would be
+  // re-enumerated on every attempt of the retry loop.
+  private readonly ISchemaInitializationRunner[] _runners = [.. runners];
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
+  private readonly IOptions<ClaimWorkerOptions> _claimWorkerOptions = claimWorkerOptions;
+  private readonly IOptions<SchemaInitializationOptions> _schemaInitOptions = schemaInitOptions;
+  private readonly TimeProvider _timeProvider = timeProvider;
+  private readonly ILogger<WhizbangDatabaseInitializerService> _logger = logger;
+
+  private Task? _backgroundInit;
+  private readonly CancellationTokenSource _stopCts = new();
+
+  /// <summary>
+  /// The background initialization task when <see cref="SchemaInitializationOptions.NonBlockingSchemaInit"/>
+  /// is enabled; <see langword="null"/> otherwise. Test seam: await this to deterministically observe
+  /// background init completion (success or fail-closed) without polling.
+  /// </summary>
+  internal Task? BackgroundInitTask => _backgroundInit;
+
+  public Task StartAsync(CancellationToken cancellationToken) {
+    if (_schemaInitOptions.Value.NonBlockingSchemaInit) {
+      // Non-blocking: return now so the host binds and answers liveness; migrate in the background.
+      // CancellationToken.None (not the startup token, which completes once StartAsync returns) —
+      // MigrationTimeout is the migration's ceiling instead.
+      _backgroundInit = Task.Run(_runInitializationLoggedAsync, CancellationToken.None);
+      return Task.CompletedTask;
+    }
+
+    // Blocking (default): the host waits for init; a failure throws and aborts startup.
+    return _runInitializationAsync(cancellationToken);
+  }
+
+  public Task StopAsync(CancellationToken cancellationToken) {
+    // Ends the background retry loop (it waits on this token between attempts).
+    _stopCts.Cancel();
+    return Task.CompletedTask;
+  }
+
+  public void Dispose() => _stopCts.Dispose();
+
+  private async Task _runInitializationLoggedAsync() {
+    // Self-healing loop: fail-closed WHILE retrying, but never give up. MarkReady is only reached
+    // on success, so the gate stays shut across failed attempts and no worker or readiness check
+    // ever sees a ready schema; the host stays alive (liveness green) and re-attempts on a cadence
+    // — a transient environment problem (connection exhaustion, a broken pool) recovers, and a pod
+    // that never re-attempts is a not-ready zombie only a human can fix. The lifecycle is
+    // deliberately NOT faulted here: FaultAsync drives Faulted -> Halted with no recovery API, so
+    // faulting on a transient failure would permanently halt a pipeline whose next attempt
+    // succeeds — the closed gate is the honest health signal while init re-attempts.
+    var attempt = 0;
+    while (true) {
+      try {
+        await _runInitializationAsync(CancellationToken.None);
+        if (attempt > 0) {
+          LogBackgroundInitializationRecovered(_logger, attempt + 1);
+        }
+        return;
+      } catch (Exception ex) {
+        attempt++;
+        var delay = _schemaInitOptions.Value.InitRetryDelay;
+        LogBackgroundInitializationRetrying(_logger, ex, attempt, delay.TotalSeconds);
+        try {
+          foreach (var observer in _observers) {
+            await observer.OnAttemptFailedAsync(attempt, ex, _stopCts.Token).ConfigureAwait(false);
+          }
+          await Task.Delay(delay, _timeProvider, _stopCts.Token).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          return;   // host shutdown ends the loop; the gate stays closed.
+        }
+      }
+    }
+  }
+
+  private async Task _runInitializationAsync(CancellationToken cancellationToken) {
+    await _runMigrationsAsync(cancellationToken);
+
+    // Best-effort: recompute partition_number columns that may have drifted across a PartitionCount
+    // change. NEVER blocks MarkReady — workers can run on a stale partition map (next claim cycle
+    // picks them up correctly via the live PartitionCount).
+    await TryRecomputePartitionsAsync(cancellationToken);
+
+    _schemaReadyGate.MarkReady();
+  }
+
+  private async Task _runMigrationsAsync(CancellationToken cancellationToken) {
+    if (_schemaInitOptions.Value.MigrationTimeout is not { } ceiling) {
+      await _runAllAsync(cancellationToken);
+      return;
+    }
+
+    // TimeProvider-driven so the timeout is deterministically testable (FakeTimeProvider.Advance).
+    using var timeoutCts = new CancellationTokenSource(ceiling, _timeProvider);
+    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+    try {
+      await _runAllAsync(linkedCts.Token);
+    } catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
+      // The migration blew past its configured ceiling (not host shutdown). Surface it as a failure
+      // so the gate never opens — the pod stays out of rotation and the rollout fails cleanly.
+      throw new TimeoutException($"Schema initialization exceeded the configured MigrationTimeout of {ceiling}.");
+    }
+  }
+
+  private async Task _runAllAsync(CancellationToken cancellationToken) {
+    foreach (var runner in _runners) {
+      await runner.RunAsync(cancellationToken);
+    }
+  }
+
+  // internal (not private) so tests can exercise the best-effort/cancellation contract directly
+  // without driving the static DbContextInitializationRegistry that initialization runs first.
+  internal async Task TryRecomputePartitionsAsync(CancellationToken cancellationToken) {
+    try {
+      await using var scope = _serviceProvider.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      if (coordinator is null) {
+        // No coordinator registered (e.g., test fixture without a driver) — nothing to do.
+        return;
+      }
+      var partitionCount = _claimWorkerOptions.Value.PartitionCount;
+      var result = await coordinator.RecomputePartitionNumbersAsync(partitionCount, cancellationToken);
+      if (result.AnyRecomputed) {
+        LogPartitionRecompute(_logger, partitionCount,
+          result.InboxRowsRecomputed, result.OutboxRowsRecomputed, result.ActiveStreamsRowsRecomputed);
+      }
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      // Query-level cancellation (e.g. a command timeout under startup load) — NOT host shutdown.
+      // Recompute is best-effort and self-heals on the next claim cycle, so swallowing it honors the
+      // documented "never blocks MarkReady" contract instead of letting the OCE escape and abort. A
+      // genuine host-shutdown cancellation (the token IS canceled) still propagates.
+      LogPartitionRecomputeFailed(_logger, ex);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogPartitionRecomputeFailed(_logger, ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 1, Level = LogLevel.Information,
+    Message = "Partition recompute on startup: PartitionCount={PartitionCount}, inbox={Inbox}, outbox={Outbox}, activeStreams={ActiveStreams}")]
+  static partial void LogPartitionRecompute(
+    ILogger logger, int partitionCount, long inbox, long outbox, long activeStreams);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "Partition recompute on startup failed; continuing without it (non-fatal)")]
+  static partial void LogPartitionRecomputeFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Error,
+    Message = "Background schema initialization attempt {Attempt} failed; the schema-ready gate stays closed and the next attempt runs in {DelaySeconds}s")]
+  static partial void LogBackgroundInitializationRetrying(ILogger logger, Exception ex, int attempt, double delaySeconds);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "Background schema initialization recovered on attempt {Attempt}; the schema-ready gate is now open")]
+  static partial void LogBackgroundInitializationRecovered(ILogger logger, int attempt);
+}

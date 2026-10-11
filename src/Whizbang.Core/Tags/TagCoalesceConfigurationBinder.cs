@@ -17,7 +17,7 @@ namespace Whizbang.Core.Tags;
 /// factory and <see cref="TagPolicyStartupValidator"/>) apply it, whichever runs first.
 /// </summary>
 /// <docs>operations/configuration/configuration-reference#coalesce-bindings</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagCoalesceConfigurationBinderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagCoalesceConfigurationBinderTests.cs</tests>
 internal static class TagCoalesceConfigurationBinder {
   /// <summary>Configuration section the coalesce bindings bind from.</summary>
   internal const string CONFIGURATION_SECTION = "Whizbang:Tags:Coalesce";

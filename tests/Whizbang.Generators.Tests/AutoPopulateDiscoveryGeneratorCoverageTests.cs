@@ -57,6 +57,42 @@ public class AutoPopulateDiscoveryGeneratorCoverageTests {
   /// generated extractor with no key to look up at all — the alternative is every
   /// [PopulateFromContext] property on every message silently staying null forever.
   /// </summary>
+  /// <summary>
+  /// A class's populator assigns in place, so it can reach only a property with a plain setter. A
+  /// get-only property carrying an auto-populate attribute has no setter at all; it is left out of the
+  /// populator rather than assigned, which would not compile, while its settable sibling is still populated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GetOnlyPropertyOnAClass_IsLeftOutOfThePopulatorAsync() {
+    const string source = """
+        namespace Whizbang.Core.Attributes {
+          public class PopulateTimestampAttribute : System.Attribute {
+            public PopulateTimestampAttribute(int kind) { }
+          }
+        }
+
+        namespace TestNamespace {
+          public class StampedEvent {
+            [Whizbang.Core.Attributes.PopulateTimestamp(0)]
+            public System.DateTimeOffset SentAt { get; set; }
+
+            [Whizbang.Core.Attributes.PopulateTimestamp(1)]
+            public System.DateTimeOffset QueuedAt { get; }
+          }
+        }
+        """;
+
+    var result = _runIsolated(source);
+
+    var populator = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populator).IsNotNull();
+    await Assert.That(populator).Contains("SentAt")
+      .Because("the settable property is assigned in place by the class's populator");
+    await Assert.That(populator).DoesNotContain("QueuedAt")
+      .Because("a get-only property has no setter, so a class populator cannot assign it");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ScopeTypeNotResolvable_FallsBackToPropertyNameAliasesAsync() {

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Sequencing;
 /// Implementations must be thread-safe and guarantee no gaps or duplicates.
 /// </summary>
 /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs</tests>
-/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Sequencing.Component.Tests/InMemorySequenceProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>

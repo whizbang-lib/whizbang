@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
     <WhizbangTestTags>Unit</WhizbangTestTags>
+    <!-- Unit: fast tests, no external infrastructure. Until #1264 this project declared no type, so
+         Run-Tests.ps1 never selected it and its tests ran in no CI suite. -->
+    <WhizbangTestType>Unit</WhizbangTestType>
     <OutputType>Exe</OutputType>
     <SonarQubeExclude>true</SonarQubeExclude>
   </PropertyGroup>

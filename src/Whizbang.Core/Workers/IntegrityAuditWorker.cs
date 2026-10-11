@@ -30,7 +30,7 @@ namespace Whizbang.Core.Workers;
 /// </list>
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityAuditWorkerTests.cs</tests>
 public sealed partial class IntegrityAuditWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
@@ -230,8 +230,7 @@ public sealed partial class IntegrityAuditWorker(
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var typeProvider = services.GetService<IEventTypeProvider>();
     var requester = instanceProvider?.ServiceName;
-    var topic = _options.RepairTopic
-      ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = RepairTopicResolver.Resolve(_options.RepairTopic, services);
     if (tracker is null || transport is null || serializer is null
         || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return false;   // no cross-service infrastructure — the local half already ran.

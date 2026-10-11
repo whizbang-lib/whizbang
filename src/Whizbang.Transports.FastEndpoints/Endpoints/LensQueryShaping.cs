@@ -21,6 +21,22 @@ namespace Whizbang.Transports.FastEndpoints;
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/LensQueryShapingTests.cs</tests>
 public static class LensQueryShaping {
   /// <summary>
+  /// The number of rows before the requested page: <c>(page - 1) * pageSize</c>, with a page below 1
+  /// read as the first page.
+  /// </summary>
+  /// <remarks>
+  /// The page comes from the caller. Computed in <see cref="int"/>, a large page wraps to a negative
+  /// offset, which a database rejects and an in-memory provider reads as the first page; the product
+  /// is computed in <see cref="long"/> and clamped to <see cref="int.MaxValue"/> instead, so a page past
+  /// the end is simply empty.
+  /// </remarks>
+  /// <param name="page">The 1-based page the caller asked for.</param>
+  /// <param name="pageSize">The page size, already clamped to at least 1.</param>
+  /// <returns>The rows to skip, never negative.</returns>
+  public static int Skip(int page, int pageSize) =>
+    (int)Math.Min((long)(Math.Max(1, page) - 1) * pageSize, int.MaxValue);
+
+  /// <summary>
   /// Parses a sort parameter: comma-separated field names, each optionally prefixed with
   /// <c>-</c> for descending or <c>+</c> for ascending.
   /// </summary>

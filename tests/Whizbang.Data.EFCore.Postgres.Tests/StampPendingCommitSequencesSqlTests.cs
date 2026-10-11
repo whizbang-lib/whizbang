@@ -287,7 +287,7 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: 1);
 
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
-      var stamped = await _stampAsync(conn, batchSize: 10);
+      var stamped = await _stampAtOneInstantAsync(conn, instanceId, foundWorkAtStamp: false);
       await Assert.That(stamped).IsEqualTo(1);
     });
 
@@ -315,18 +315,11 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     await _pinStreamAsync(conn, streamId, instanceId);
     await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.New(), streamId, version: 1);
 
-    // A fresh found-work watermark: this instance's claim just found perspective work, so it
-    // is draining (or lingering) and will discover the stamped row by polling.
-    await using (var wm = conn.CreateCommand()) {
-      wm.CommandText = @"INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at)
-                         VALUES (@id, 'perspective', NOW())
-                         ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = NOW()";
-      wm.Parameters.AddWithValue("id", instanceId);
-      await wm.ExecuteNonQueryAsync();
-    }
-
+    // A fresh found-work watermark, armed at the stamp's own instant: this instance's claim just
+    // found perspective work, so it is draining (or lingering) and will discover the stamped row
+    // by polling.
     var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
-      var stamped = await _stampAsync(conn, batchSize: 10);
+      var stamped = await _stampAtOneInstantAsync(conn, instanceId, foundWorkAtStamp: true);
       await Assert.That(stamped).IsEqualTo(1);
     });
 
@@ -375,6 +368,35 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
       ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()";
     reg.Parameters.AddWithValue("id", instanceId);
     await reg.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
+  /// Stamps inside ONE transaction that first refreshes the target's heartbeat and, when
+  /// <paramref name="foundWorkAtStamp"/>, arms its perspective found-work watermark.
+  /// </summary>
+  /// <remarks>
+  /// The debounce compares <c>last_work_at</c> and <c>last_heartbeat_at</c> against its own
+  /// <c>NOW()</c>, which is the transaction's start time. Seeded in separate statements, the gap
+  /// between seed and stamp is however long the test happened to take, raced against a 50 ms floor
+  /// window and a 30 s liveness window. Seeded in the stamp's transaction, every one of those
+  /// timestamps IS the stamp's <c>NOW()</c>: the elapsed time is zero by construction. The row being
+  /// stamped must already be committed before this transaction (the stamper's fence excludes its own
+  /// backend, so the enclosing transaction does not hold the row back).
+  /// </remarks>
+  private static async Task<int> _stampAtOneInstantAsync(NpgsqlConnection conn, Guid instanceId, bool foundWorkAtStamp) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await _registerInstanceAsync(conn, instanceId);
+    if (foundWorkAtStamp) {
+      await using var wm = conn.CreateCommand();
+      wm.CommandText = @"INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at)
+                         VALUES (@id, 'perspective', NOW())
+                         ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = NOW()";
+      wm.Parameters.AddWithValue("id", instanceId);
+      await wm.ExecuteNonQueryAsync();
+    }
+    var stamped = await _stampAsync(conn, batchSize: 10);
+    await tx.CommitAsync();
+    return stamped;
   }
 
   private static async Task<List<string>> _captureNotificationsAsync(

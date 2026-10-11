@@ -12,13 +12,13 @@ namespace Whizbang.Generators.Sagas;
 /// <param name="FrameworkMessageType">Fully qualified framework event type it handles, or <c>null</c>
 /// when it handles one of the saga's own generated events.</param>
 /// <param name="LifecycleStage">Fully qualified <c>LifecycleStage</c> enum member the emitted
-/// <c>[FireAt]</c> names, or <c>null</c> when the receptor carries no <c>[FireAt]</c> and takes the
-/// default stage.</param>
+/// <c>[FireAt]</c> names. Every recovery receptor declares its stage: each one has to run inline at a
+/// specific point, and the default stages are detached.</param>
 public sealed record SagaRecoveryReceptorShape(
     string ClassName,
     string? SagaEventClassName,
     string? FrameworkMessageType,
-    string? LifecycleStage);
+    string LifecycleStage);
 
 /// <summary>
 /// The compile-time shape of the three recovery receptors

@@ -29,8 +29,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Bounded, idempotent and done once per fleet. It does nothing unless the schema pass armed a column, so
 /// a service that promotes nothing never claims. Otherwise only the instance that wins the window's claim
 /// in <c>wh_unique_emission_claims</c> (the claim <c>PublishOnceAsync</c> uses) runs, and each run fills at
-/// most a bounded number of batches. A host with no claim store skips the step rather than have every
-/// instance fill.
+/// most a bounded number of batches. The claim goes through <see cref="FleetClaim"/>: the claim store when one is
+/// registered, the claim table directly otherwise, as on the Dapper driver.
 /// </para>
 /// </remarks>
 /// <param name="dbContextType">The DbContext whose schema this step looks in.</param>
@@ -63,12 +63,6 @@ public sealed partial class PhysicalColumnFillMaintenanceStep(
   /// <inheritdoc />
   public async Task RunAsync(IServiceProvider services, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    var claims = services.GetService<IClaimedEmissionStore>();
-    if (claims is null) {
-      LogNoClaimStore(_logger);
-      return;
-    }
-
     var context = (DbContext)services.GetRequiredService(_dbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     schema = string.IsNullOrWhiteSpace(schema) ? "public" : schema;
@@ -82,7 +76,9 @@ public sealed partial class PhysicalColumnFillMaintenanceStep(
       }
 
       var key = PhysicalColumnFill.ClaimKey(schema, _timeProvider.GetUtcNow());
-      if (!await claims.TryClaimAsync(key, Guid.CreateVersion7(), cancellationToken).ConfigureAwait(false)) {
+      if (!await FleetClaim.TryClaimAsync(
+          services.GetService<IClaimedEmissionStore>(), connection, quotedSchema, key, cancellationToken)
+          .ConfigureAwait(false)) {
         return;
       }
 
@@ -92,8 +88,4 @@ public sealed partial class PhysicalColumnFillMaintenanceStep(
       await context.Database.CloseConnectionAsync().ConfigureAwait(false);
     }
   }
-
-  [LoggerMessage(Level = LogLevel.Debug,
-    Message = "Physical-column fill step skipped: no claim store is registered to run it on one instance")]
-  private static partial void LogNoClaimStore(ILogger logger);
 }

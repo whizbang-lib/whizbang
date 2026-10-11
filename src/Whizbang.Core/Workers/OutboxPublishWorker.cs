@@ -376,15 +376,10 @@ public sealed partial class OutboxPublishWorker(
       _workChannelWriter.RemoveInFlight(work.MessageId);
       // Slice 3b: promote to DLQ first when attempts reached the cap; fall back to
       // failure-channel routing otherwise.
-      if (await _tryPromoteToDlqAsync(work, result.Error ?? "publish failed", ct)) {
+      if (await _tryPromoteToDlqAsync(work, result.ErrorText, ct)) {
         return;
       }
-      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, new MessageFailure {
-        MessageId = work.MessageId,
-        CompletedStatus = result.CompletedStatus,
-        Error = result.Error ?? "publish failed",
-        Reason = result.Reason
-      }, ct);
+      await _failureChannel.EnqueueAsync(WorkCategory.Outbox, result.ToFailure(work.MessageId), ct);
     }
   }
 

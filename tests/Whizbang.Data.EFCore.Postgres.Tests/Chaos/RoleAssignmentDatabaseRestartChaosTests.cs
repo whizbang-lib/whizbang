@@ -87,7 +87,7 @@ public class RoleAssignmentDatabaseRestartChaosTests {
   /// as it is written, so neither starting nor restarting waits on a guess.
   /// </summary>
   private sealed class DedicatedPostgresServer : IAsyncDisposable {
-    private const string IMAGE = "pgvector/pgvector:pg17";
+    private static readonly string _image = CiImages.Resolve(CiImages.PGVECTOR);
     private const string USER = "chaos_user";
     private const string DATABASE = "chaos";
     private const string READY = "database system is ready to accept connections";
@@ -113,7 +113,7 @@ public class RoleAssignmentDatabaseRestartChaosTests {
       }
       _ = await _dockerAsync(ct, "run", "--detach", "--name", server._name,
         "-e", $"POSTGRES_USER={USER}", "-e", $"POSTGRES_PASSWORD={server._password}", "-e", $"POSTGRES_DB={DATABASE}",
-        "--publish", $"127.0.0.1:{server._port}:5432", IMAGE);
+        "--publish", $"127.0.0.1:{server._port}:5432", _image);
       // The image's first start initializes the data directory on a temporary, socket-only server and
       // then starts the real one: ready is the first "ready" line after the init completes.
       await server._waitForLogAsync(null, "PostgreSQL init process complete", ct);

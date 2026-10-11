@@ -16,9 +16,9 @@ namespace Whizbang.Core.Tags;
 /// <c>AddWhizbang</c> could not guarantee.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#validation</docs>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:StartAsync_SysViolationInRegistrations_FailsHostStartAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorTests.cs:AddWhizbang_RegistersTheStartupValidatorAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Tags/TagPolicyValidatorRouteNamespaceTests.cs:StartAsync_RouteBindingOnUnknownSysTag_FailsHostStartAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:StartAsync_SysViolationInRegistrations_FailsHostStartAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorTests.cs:AddWhizbang_RegistersTheStartupValidatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Tags/TagPolicyValidatorRouteNamespaceTests.cs:StartAsync_RouteBindingOnUnknownSysTag_FailsHostStartAsync</tests>
 internal sealed class TagPolicyStartupValidator : IHostedService {
   private readonly TagOptions _options;
   private readonly SystemEvents.SystemEventOptions _systemEventOptions;

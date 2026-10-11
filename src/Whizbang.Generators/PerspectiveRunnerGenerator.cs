@@ -579,7 +579,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Member defaults register the same turnkey way: the collective predicate compiler reads them so a document
     // with no key for a member is filtered as the value a rebuild sees, rather than as SQL NULL (#1044).
     result = TemplateUtilities.ReplaceRegion(result, "MEMBER_DEFAULT_REGISTRATION",
-        perspective.MemberDefaults is { Length: > 0 } ? _buildMemberDefaultRegistration(perspective, modelTypeName) : "");
+        // Discovery records a model with no declared defaults as null, never as an empty list.
+        perspective.MemberDefaults is not null ? _buildMemberDefaultRegistration(perspective, modelTypeName) : "");
     // Issue #977: a Split model's promoted fields live only in their columns, so the store has to read them
     // back into the model the next event is applied to. The copy is generated here, where the fields are known.
     result = TemplateUtilities.ReplaceRegion(result, "SPLIT_PHYSICAL_FIELD_REGISTRATION",
@@ -1594,7 +1595,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           // An object, a collection or a dictionary is a jsonb column unless the author declared otherwise.
           ColumnType: columnType ?? PhysicalFieldScalar.DefaultColumnType(property.Type),
           TypeName: TypeNameUtilities.FullyQualifiedWithNullability(property.Type),
-          IsInitOnly: property.SetMethod?.IsInitOnly == true
+          // Not assignable on an instance that exists: an init setter, or no setter at all. Either way the field is
+          // set only through a copy, and a get-only one that stores a value makes the class uncopyable (WHIZ808).
+          IsInitOnly: property.SetMethod is not { IsInitOnly: false }
       );
     }
 

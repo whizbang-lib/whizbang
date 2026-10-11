@@ -22,6 +22,10 @@ public sealed class RabbitMQSubscription : ISubscription {
   // Always present: a subscription built without a logger discards through NullLogger, exactly as the
   // null-conditional calls it replaces did, and the fire-and-forget dispose then has no branch on it.
   private readonly ILogger _logger;
+  // Completed by the cleanup Dispose() starts, once the consumer is cancelled and the channel is
+  // disposed (or the failure is logged). Continuations run asynchronously so a caller awaiting it
+  // never runs inline on the cleanup task.
+  private readonly TaskCompletionSource _disposalCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
   private bool _isActive = true;
   private bool _disposed;
 
@@ -133,7 +137,28 @@ public sealed class RabbitMQSubscription : ISubscription {
     return Task.CompletedTask;
   }
 
+  /// <summary>
+  /// Completes when the cleanup started by <see cref="Dispose"/> has finished: the consumer has been
+  /// cancelled on the broker and the channel disposed. It stays pending until the subscription is
+  /// disposed. It never faults: a failure while cancelling or closing is logged, and the task then
+  /// completes, because there is nothing left for the caller to retry.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="Dispose"/> returns without waiting so a slow broker cannot block the caller. Await this
+  /// during graceful shutdown to know the broker connection resources are actually released.
+  /// </remarks>
+  /// <docs>messaging/transports/rabbitmq</docs>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:DisposalCompletion_BeforeDispose_IsPendingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:DisposalCompletion_AfterDispose_CompletesOnceConsumerCancelledAndChannelDisposedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionCoverageTests.cs:Dispose_WhenChannelDisposeThrows_LogsTheErrorInsteadOfLosingItAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQTransportTests.cs:Subscription_Dispose_CancelsConsumerAsync</tests>
+  public Task DisposalCompletion => _disposalCompletion.Task;
+
   /// <inheritdoc />
+  /// <remarks>
+  /// Returns without waiting for the broker. Observe <see cref="DisposalCompletion"/> to learn when the
+  /// consumer is cancelled and the channel disposed.
+  /// </remarks>
   public void Dispose() {
     if (_disposed) {
       return;
@@ -166,8 +191,11 @@ public sealed class RabbitMQSubscription : ISubscription {
           _logger.LogDebug("Disposed channel for queue {QueueName}", queueName);
         }
       } catch (Exception ex) {
+        // Logged, not rethrown: nothing awaits this cleanup to retry it, so the log is how an operator
+        // learns the channel may have leaked. DisposalCompletion still completes below.
         _logger.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
-        // Ignore errors during async disposal
+      } finally {
+        _disposalCompletion.TrySetResult();
       }
     }, CancellationToken.None);
   }

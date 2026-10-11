@@ -32,7 +32,7 @@ public class StreamAffinityWorkCoordinatorStrategyBranchCoverageTests {
     var tagOptions = new TagOptions();
     tagOptions.Coalesce("audit-digest", c => c.MaxDelaySeconds = 60);
     var resolver = new CoalesceGroupResolver(tagOptions, time,
-      () => [CoalesceGroupResolverTests.TagRegistration(typeof(EventAudited), "audit-digest")]);
+      () => [CoalesceTestTags.TagRegistration(typeof(EventAudited), "audit-digest")]);
     var auditOptions = new SystemEventOptions();
     auditOptions.EnableEventAudit();
     var batch = new RecordingBatchStrategy();

@@ -33,7 +33,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>internals/apply-batch-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/SlidingWindowApplyBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowApplyBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
   private readonly ApplyBulkFlushCallback _flush;
   private readonly SlidingWindowApplyOptions _options;

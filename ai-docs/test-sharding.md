@@ -94,13 +94,21 @@ unsharded for this reason: at 4m52 it is no longer the critical path, and three 
 ## Build slices
 
 Test jobs do not download the whole build. The build job uploads one **slice** per integration suite
-(`build-<suite>-<run>`): the `bin/Release` of the projects that suite runs, which already holds their
-whole dependency closure, plus a `test-slice-<suite>.txt` marker naming them. Sources come from the
-job's own checkout. The unit suite runs most projects, so it keeps the full build.
+and one for the component suite (`build-<suite>-<run>`): the `bin/Release` of the projects that suite
+runs, which already holds their whole dependency closure, plus a `test-slice-<suite>.txt` marker
+naming them. Sources come from the job's own checkout. The unit suite runs most projects, so it keeps
+the full build.
 
 `.github/scripts/Get-TestSlice.ps1` derives each slice the way `Run-Tests.ps1` selects the suite's
-projects: in the solution, `<WhizbangTestType>Integration</WhizbangTestType>`, and the suite's tag.
-A new project with that tag joins the slice on its own. Service Bus also carries the ECommerce
+projects: in the solution, the suite's `<WhizbangTestType>`, and for an integration suite its tag.
+The component suite runs `-Mode Component` with no tag, so its slice is every Component project. A
+new project joins its slice on its own. Every test type is either sliced or listed in the script's
+`$UnslicedTypes` with the reason, and `.github/scripts/Test-WhizbangTestType.ps1` fails on a type that
+is neither.
+
+The component suite is not sharded: it starts with one project. When it grows enough to set the pull
+request's critical path, shard it the way the Postgres suite is (a shard category per class, measured
+by `Measure-TestShards.ps1`), not by splitting projects. Service Bus also carries the ECommerce
 samples' output, because its Aspire app host starts those services.
 
 A slice that misses a project cannot pass silently: under `-NoBuild`, `Run-Tests.ps1` fails when a

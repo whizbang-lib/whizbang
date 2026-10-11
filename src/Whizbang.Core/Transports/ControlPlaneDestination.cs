@@ -13,7 +13,7 @@ namespace Whizbang.Core.Transports;
 /// which session-ordering transports translate into the broker session id.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/IntegrityCheckpointWorkerTests.cs</tests>
 public static class ControlPlaneDestination {
   /// <summary>A destination for <paramref name="address"/> carrying <paramref name="sessionStreamId"/> as the session key.</summary>
   public static TransportDestination For(string address, Guid sessionStreamId) =>

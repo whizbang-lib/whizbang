@@ -1,12 +1,20 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-// Test message types for TransportAutoDiscoveryTests
-// These simulate different namespace patterns for pattern matching tests
+// Test message types shared by the unit and component projects (one source, compiled into both).
+// The namespaced records simulate different namespace patterns for TransportAutoDiscoveryTests.
 
 namespace Whizbang.Transports.Tests {
   // Message with no namespace test (in Whizbang.Transports.Tests namespace)
   public record NoNamespaceMessage;
+
+  /// <summary>
+  /// Test message for the serializer and transport-manager publishing tests.
+  /// </summary>
+  public record TestMessage : Whizbang.Core.ICommand {
+    public required string Content { get; init; }
+    public required int Value { get; init; }
+  }
 }
 
 // MyApp.Orders.* pattern

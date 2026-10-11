@@ -1,0 +1,66 @@
+name: Mirror CI images
+
+# Copies every Docker Hub image the test jobs pull (.github/ci-images.txt) to
+# ghcr.io/whizbang-lib/ci-mirror/<name>:<tag>, so CI stops depending on Docker Hub's pull rate limit.
+# The test jobs switch to the mirror only while it holds every listed image at the listed digest
+# (.github/actions/use-ci-image-mirror), so a run of this workflow is never a precondition for green CI.
+# See ai-docs/ci-image-mirror.md.
+#
+#   - push to develop / pull request touching the manifest: the change's images are mirrored before
+#     its own test jobs start (they wait on the build), so the pull request proves the mirror path;
+#   - weekly: repairs a copy that was deleted or never completed;
+#   - dispatch: on demand.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  push:
+    branches: [develop]
+    paths:
+      - '.github/ci-images.txt'
+      - '.github/workflows/mirror-ci-images.yml'
+      - '.github/scripts/Copy-CiImages.ps1'
+      - 'scripts/lib/CiImages.psm1'
+  pull_request:
+    paths:
+      - '.github/ci-images.txt'
+      - '.github/workflows/mirror-ci-images.yml'
+      - '.github/scripts/Copy-CiImages.ps1'
+      - 'scripts/lib/CiImages.psm1'
+
+# The repository default is read-only; the one job below states what it needs.
+permissions: {}
+
+concurrency:
+  group: mirror-ci-images
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror · Docker Hub to GHCR
+    # A fork's pull request gets a read-only token and could not push; its CI falls back to Docker Hub.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write   # push the copies to ghcr.io/whizbang-lib/ci-mirror
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Copies by digest with `docker buildx imagetools create`: the whole multi-arch index, so each
+      # copy keeps its source's digest. Skips a copy that already matches; retries Docker Hub's 429s.
+      - name: Copy the manifest's images
+        shell: pwsh
+        run: ./.github/scripts/Copy-CiImages.ps1

@@ -465,6 +465,17 @@ public class AuditingEventStoreDecoratorTests {
     await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
   }
 
+  [Test]
+  public async Task AppendAsync_MarkedEvent_AuditCarriesTheAttributesReasonAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new MarkedEvent()));
+
+    var audit = channel.QueuedMessages.Single().Envelope.Payload.GetRawText();
+    await Assert.That(audit).Contains("Explicitly marked for audit")
+      .Because("the [AuditEvent] reason is what tells a reader why the event was audited");
+  }
+
   #endregion
 
   #region AuditTopicDestination Tests

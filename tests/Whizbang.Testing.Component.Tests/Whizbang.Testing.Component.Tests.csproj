@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: the testing library's awaiters, harnesses and transports driven by real threads and
+         hosted workers in one process, plus trace assertions that read and write baseline snapshot files; no external
+         infrastructure. The unit tests stay in Whizbang.Testing.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <RootNamespace>Whizbang.Testing.Tests</RootNamespace>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+  </ItemGroup>
+
+  <!-- The test doubles (fake host, transport, lifecycle context, receptor registry, envelopes and
+       messages) are shared with the unit project: one source, compiled into both test assemblies, so
+       the two copies cannot drift. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Testing.Tests/TestSupport/*.cs" Link="Shared/TestSupport/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

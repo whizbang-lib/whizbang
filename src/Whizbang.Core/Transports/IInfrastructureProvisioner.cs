@@ -20,8 +20,8 @@ namespace Whizbang.Core.Transports;
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_DefaultImplementation_CompletesWithoutThrowingAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithEmptyOwnedDomains_SkipsProvisioningAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithProvisionerAndOwnedDomains_CallsProvisionerBeforeSubscriptionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithEmptyOwnedDomains_SkipsProvisioningAsync</tests>
 public interface IInfrastructureProvisioner {
   /// <summary>
   /// Provisions infrastructure for domains this service owns.
@@ -80,7 +80,7 @@ public interface IInfrastructureProvisioner {
   /// </remarks>
   /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
   /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionManifestAsync_DefaultImplementation_IsNoOpAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithManifestResolvable_CallsProvisionManifestBeforeSubscriptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithManifestResolvable_CallsProvisionManifestBeforeSubscriptionsAsync</tests>
   Task ProvisionManifestAsync(
     Whizbang.Core.Routing.TopologyManifest manifest,
     CancellationToken cancellationToken = default) => Task.CompletedTask;

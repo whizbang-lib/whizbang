@@ -208,9 +208,10 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
   public IReadOnlyList<string> CollectiveEventTypeNamesFor(string modelTypeName) {
     ArgumentNullException.ThrowIfNull(modelTypeName);
     var name = modelTypeName.StartsWith("global::", StringComparison.Ordinal) ? modelTypeName["global::".Length..] : modelTypeName;
+    // A registered collective's model is the concrete model type a generated registration names with
+    // typeof, so it always has a CLR full name; there is no unnamed model to skip.
     return [.. _entries
-      .Where(e => TypeNameFormatter.TryFormatClrTypeName(e.ModelType, out var clr)
-        && string.Equals(clr.Replace('+', '.'), name, StringComparison.Ordinal))
+      .Where(e => string.Equals(TypeNameFormatter.FormatClrTypeName(e.ModelType).Replace('+', '.'), name, StringComparison.Ordinal))
       .Select(e => TypeNameFormatter.Format(e.EventType))
       .Distinct(StringComparer.Ordinal)];
   }

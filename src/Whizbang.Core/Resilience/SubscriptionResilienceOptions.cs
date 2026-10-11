@@ -85,6 +85,6 @@ public class SubscriptionResilienceOptions {
   /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:AllowPartialSubscriptions_Default_IsTrueAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:AllowPartialSubscriptions_SetFalse_ReturnsFalseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs:Worker_WithPartialFailures_ContinuesWithSuccessfulSubscriptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerResilienceTests.cs:Worker_WithPartialFailures_ContinuesWithSuccessfulSubscriptionsAsync</tests>
   public bool AllowPartialSubscriptions { get; set; } = true;
 }

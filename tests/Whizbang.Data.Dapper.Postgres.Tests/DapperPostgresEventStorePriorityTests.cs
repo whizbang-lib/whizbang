@@ -90,6 +90,42 @@ public sealed class DapperPostgresEventStorePriorityTests : IDisposable {
   }
 
   [Test]
+  public async Task AppendAsync_WithMessage_InsideATrace_RecordsTheTraceOnItsHopAsync() {
+    // A raw append made inside a trace carries that trace on the hop it is wrapped with, so the stored
+    // event can be joined back to the span that produced it.
+    var store = _store();
+    var streamId = Guid.NewGuid();
+    var previous = System.Diagnostics.Activity.Current;
+    using var activity = new System.Diagnostics.Activity("dapper-append-under-trace").Start();
+    try {
+      await store.AppendAsync(streamId, new TestEvent { StreamId = streamId, Payload = "traced" });
+    } finally {
+      activity.Stop();
+      System.Diagnostics.Activity.Current = previous;
+    }
+
+    var stored = await _firstAsync(store, streamId);
+    await Assert.That(stored.Hops[0].TraceParent).IsEqualTo(activity.Id);
+  }
+
+  [Test]
+  public async Task AppendAsync_WithMessage_OutsideAnyTrace_RecordsNoTraceAsync() {
+    // With no trace in progress there is nothing to record, and the hop says so rather than inventing one.
+    var store = _store();
+    var streamId = Guid.NewGuid();
+    var previous = System.Diagnostics.Activity.Current;
+    System.Diagnostics.Activity.Current = null;
+    try {
+      await store.AppendAsync(streamId, new TestEvent { StreamId = streamId, Payload = "untraced" });
+    } finally {
+      System.Diagnostics.Activity.Current = previous;
+    }
+
+    var stored = await _firstAsync(store, streamId);
+    await Assert.That(stored.Hops[0].TraceParent).IsNull();
+  }
+
+  [Test]
   public async Task AppendAsync_WithAnEnvelopeCarryingANumber_ReadsItBackAsync() {
     var store = _store();
     var streamId = Guid.NewGuid();

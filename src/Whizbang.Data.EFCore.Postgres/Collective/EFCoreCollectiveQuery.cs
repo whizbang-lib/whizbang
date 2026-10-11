@@ -31,11 +31,9 @@ internal sealed class EFCoreCollectiveQuery(DbContext dbContext) : ICollectiveQu
   public string TableFor(Type modelType) {
     ArgumentNullException.ThrowIfNull(modelType);
     var rowType = typeof(PerspectiveRow<>).MakeGenericType(modelType);
-    var entityType = dbContext.Model.FindEntityType(rowType)
-      ?? throw new InvalidOperationException(
-        $"No EF Core entity mapped for PerspectiveRow<{modelType.Name}> — a handler's Where referenced a " +
-        $"sibling perspective q.Of<{modelType.Name}>() whose DbSet is not registered in this DbContext.");
-    return entityType.GetTableName()
-      ?? throw new InvalidOperationException($"PerspectiveRow<{modelType.Name}> has no table name.");
+    return PerspectiveRowTable.Resolve(
+      dbContext.Model, rowType, modelType.Name,
+      $"a handler's Where referenced a sibling perspective q.Of<{modelType.Name}>() whose DbSet is not registered in this DbContext.")
+      .Table;
   }
 }

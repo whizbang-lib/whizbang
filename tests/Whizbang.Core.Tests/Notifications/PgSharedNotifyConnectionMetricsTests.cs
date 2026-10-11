@@ -122,7 +122,11 @@ public class PgSharedNotifyConnectionMetricsTests {
   }
 
   private static void _invokeSetAvailable(PgSharedNotifyConnection conn, bool available, string? failureReason) {
-    conn.SetAvailable(available, failureReason);
+    if (available) {
+      conn.MarkAvailable();
+    } else {
+      conn.MarkUnavailable(failureReason!);
+    }
   }
 
   /// <summary>

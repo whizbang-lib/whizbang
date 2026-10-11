@@ -31,8 +31,8 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rewind</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/RewindLiveApplyRaceTests.cs:Rewind_ConcurrentWithLiveApply_WithCoordinator_RetainsAllIncrementsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveApplyCoordinatorDiagnosticsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/RewindLiveApplyRaceTests.cs:Rewind_ConcurrentWithLiveApply_WithCoordinator_RetainsAllIncrementsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveApplyCoordinatorDiagnosticsTests.cs</tests>
 public sealed partial class PerspectiveApplyCoordinator(
     ILogger<PerspectiveApplyCoordinator> logger) : IPerspectiveApplyCoordinator {
   private readonly ILogger<PerspectiveApplyCoordinator> _logger =

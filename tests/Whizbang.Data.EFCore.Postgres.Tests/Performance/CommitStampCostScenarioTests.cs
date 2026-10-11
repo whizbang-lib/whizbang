@@ -16,7 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// <para>
 /// The stamp chose its batch by sorting every unstamped row by transaction id, which no index can serve, so every
 /// call read the whole backlog and a drain cost the backlog squared over the batch. Since migration 197 it walks an
-/// insertion-order index and stops at the batch.
+/// index and stops at the batch; since 205 that index holds the inserting transaction's id, so the walk reads only rows
+/// past the horizon (<c>RoleVoteBehindAHeldBackStampScenarioTests</c> measures rows an open transaction holds back).
 /// </para>
 /// <para>
 /// Blocks per stamped row are recorded and not gated: the update writes every index of the event store for each row

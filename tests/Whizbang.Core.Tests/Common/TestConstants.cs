@@ -12,7 +12,6 @@ public static class TestConstants {
   /// <para>Expected total receptor count across all test assemblies.</para>
   ///
   /// <para>Breakdown by source:
-  /// - 3 receptors from DispatcherTests.cs (DispatcherTestOrderReceptor, LogReceptor, ProcessReceptor)
   /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
   ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
   /// - 5 receptors from ReceptorTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
@@ -26,7 +25,6 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherVoidCascadeTests.cs (ProcessOrderReceptor, OrderProcessedEventTracker)
   /// - 5 receptors from DispatcherRpcExtractionTests.cs (TupleReturningReceptor, MultiEventReceptor,
   ///     SimpleReceptor, InventoryReservedTracker, PaymentInitiatedTracker)
-  /// - 3 receptors from DispatcherTests.cs (DispatcherTestOrderReceptor, LogReceptor, ProcessReceptor)
   /// - 2 receptors from DispatcherDeliveryReceiptTests.cs (CreateOrderReceptor, ProcessPaymentReceptor)
   /// - 1 receptor from DispatcherCascadeSecurityPropagationTests.cs (CascadeTestCommandReceptor)
   /// - 1 receptor from DispatcherSecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
@@ -39,7 +37,6 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherOptionsAndRoutingTests.cs (TestCommandReceptor, TestCommandVoidReceptor)
   /// - 2 receptors from DispatcherLocalInvokeAndSyncTests.cs (CreateOrderReceptor, VoidCommandReceptor)
   /// - 2 receptors from DispatcherLocalInvokeAndSyncCallbackTests.cs (CallbackTestCommandReceptor, CallbackTestCommandWithResultReceptor)
-  /// - 2 receptors from DispatcherLocalInvokeAndSyncTimingTests.cs (TimedCommandReceptor, TimedCommandWithResultReceptor)
   /// - 6 receptors from new test files added during cascade security context implementation
   /// - 3 receptors added during ScopeDelta/unified scope propagation changes
   /// - 6 receptors from DispatcherStreamIdGenerationTests.cs (GenerateStreamIdCommandReceptor,
@@ -110,7 +107,11 @@ public static class TestConstants {
   ///     (ObservedReceptor and ObservedFailingReceptor — the dispatch spans and dispatcher metrics of a
   ///     succeeding and a failing receptor)</para>
   ///
-  /// <para>Total: 130 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>DispatcherTests.cs (3 receptors) and DispatcherLocalInvokeAndSyncTimingTests.cs (2) moved to
+  /// Whizbang.Core.Component.Tests with the Core test separation (#1264), so their receptors are
+  /// discovered in that assembly, not this one.</para>
+  ///
+  /// <para>Total: 125 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 130;
+  public const int EXPECTED_RECEPTOR_COUNT = 125;
 }

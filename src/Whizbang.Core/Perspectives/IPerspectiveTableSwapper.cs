@@ -24,10 +24,16 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/BlueGreenRebuildIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/PostgresPerspectiveTableSwapperTests.cs</tests>
 public interface IPerspectiveTableSwapper {
-  /// <summary>The live table of the perspective, or null when the perspective has none registered.</summary>
-  /// <param name="perspectiveName">The perspective's CLR type name, as the rebuilder names it.</param>
+  /// <summary>The live table of the perspective's model, or null when it has none registered.</summary>
+  /// <remarks>
+  /// Keyed by the <strong>model</strong>, not the perspective: the schema pass writes the registry under the
+  /// model's type name, so a perspective name never matches a row. Accepts either rendering of that name, the
+  /// CLR form with '+' before a nested type or the generated fully-qualified form, dotted and optionally
+  /// 'global::'-prefixed.
+  /// </remarks>
+  /// <param name="modelTypeName">The model's type name, in either rendering.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  Task<string?> FindTableAsync(string perspectiveName, CancellationToken cancellationToken);
+  Task<string?> FindTableAsync(string modelTypeName, CancellationToken cancellationToken);
 
   /// <summary>
   /// Creates an empty table shaped like <paramref name="liveTable"/>, with its columns, defaults, constraints and

@@ -49,7 +49,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// half of a two-permit gate is a haircut, not a share); never the whole gate.
   /// </summary>
   /// <docs>fundamentals/messaging/message-priority#bulkheads</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs</tests>
   public int InteractiveReserve { get; }
 
   /// <summary>The reserve for <paramref name="maxConcurrent"/> permits: the configured value, else one tenth rounded down, capped so at least one shared permit remains.</summary>
@@ -285,13 +285,13 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   public readonly struct Releaser : IDisposable {
     private readonly SemaphoreSlim? _semaphore;
     private readonly Histogram<double>? _holdDurationHistogram;
-    private readonly string? _caller;
+    private readonly string _caller;
     private readonly long _startTicks;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, (string Caller, long StartTicks)>? _holders;
     private readonly long _holderId;
 
     internal Releaser(
-        SemaphoreSlim semaphore, Histogram<double>? holdDurationHistogram, string? caller,
+        SemaphoreSlim semaphore, Histogram<double>? holdDurationHistogram, string caller,
         System.Collections.Concurrent.ConcurrentDictionary<long, (string Caller, long StartTicks)>? holders = null, long holderId = 0) {
       _semaphore = semaphore;
       _holdDurationHistogram = holdDurationHistogram;
@@ -307,8 +307,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       _semaphore?.Release();
       if (_holdDurationHistogram is not null && _semaphore is not null) {
         var elapsedMs = (double)(Environment.TickCount64 - _startTicks);
-        _holdDurationHistogram.Record(elapsedMs,
-          new KeyValuePair<string, object?>("caller", _caller ?? "<unknown>"));
+        // A slot is only ever held through the constructor, whose caller AcquireAsync supplies
+        // (CallerMemberName, defaulting to "<unknown>"); a default Releaser holds no semaphore.
+        _holdDurationHistogram.Record(elapsedMs, new KeyValuePair<string, object?>("caller", _caller));
       }
     }
   }

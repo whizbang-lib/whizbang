@@ -57,6 +57,34 @@ public class MessagePublishStrategyTests {
   }
 
   [Test]
+  public async Task ToFailure_CarriesTheResultAsync() {
+    var messageId = Guid.NewGuid();
+    var result = new MessagePublishResult {
+      MessageId = messageId,
+      Success = false,
+      CompletedStatus = MessageProcessingStatus.Stored,
+      Error = "boom",
+      Reason = MessageFailureReason.TransportException
+    };
+
+    var failure = result.ToFailure(messageId);
+
+    await Assert.That(failure.MessageId).IsEqualTo(messageId);
+    await Assert.That(failure.CompletedStatus).IsEqualTo(MessageProcessingStatus.Stored);
+    await Assert.That(failure.Error).IsEqualTo("boom");
+    await Assert.That(failure.Reason).IsEqualTo(MessageFailureReason.TransportException);
+  }
+
+  [Test]
+  public async Task ToFailure_NoError_PublishFailedAsync() {
+    var result = new MessagePublishResult { MessageId = Guid.NewGuid(), Success = false, CompletedStatus = MessageProcessingStatus.None };
+
+    await Assert.That(result.ErrorText).IsEqualTo("publish failed");
+    await Assert.That(result.ToFailure(result.MessageId).Error).IsEqualTo("publish failed")
+      .Because("a failure record and a dead letter always say something about why");
+  }
+
+  [Test]
   public async Task IMessagePublishStrategy_Interface_ShouldHavePublishAsyncMethodAsync() {
     // Arrange - This is a compile-time test, but we verify the interface contract
     var strategyType = typeof(IMessagePublishStrategy);

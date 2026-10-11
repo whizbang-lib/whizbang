@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -28,10 +29,10 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerDropGateTests.cs:HandleMessage_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:StartAsync_WhenSubscribeFails_LogsAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerCoverageTests.cs:ExecuteAsync_WhenFatalErrorOccurs_LogsAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerDropGateTests.cs:HandleMessage_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
@@ -550,8 +551,7 @@ public partial class ServiceBusConsumerWorker(
         // security-context failure) would fail the detached stage invisibly. Resolve a logger from a
         // fresh scope (the work scope is already disposed) and record it via LoggerMessage.
         using var logScope = scopeFactory.CreateScope();
-        ILogger detachedLogger = logScope.ServiceProvider.GetService<ILogger<ServiceBusConsumerWorker>>()
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ServiceBusConsumerWorker>.Instance;
+        ILogger detachedLogger = logScope.ServiceProvider.GetLoggerOrNullLogger<ServiceBusConsumerWorker>();
         LogDetachedStageError(detachedLogger, ex, stage, envelope.MessageId.Value);
       }
     });

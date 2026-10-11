@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tags;
 /// and the binding's fan-out atomicity for the built composite to carry.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_BindingFactory_BuildsTheBindingsCompositeAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_BindingFactory_BuildsTheBindingsCompositeAsync</tests>
 public sealed record CoalesceFoldBatch {
   /// <summary>The coalesce group (tag string) being folded.</summary>
   public required string Group { get; init; }

@@ -78,13 +78,22 @@ public sealed partial class IndexStatisticsMaintenanceStep(
       return;
     }
 
-    await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-    try {
+    // ANALYZE needs the table owner's rights, which a least-privilege application role does not have; when a
+    // schema-initialization connection is configured, the role startup migrations use runs it.
+    if (SchemaInitConnection.For(services, _dbContextType) is { } initConnectionString) {
+      await using var initConnection = new NpgsqlConnection(initConnectionString);
+      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
       await IndexStatistics.AnalyzeMissingAsync(
-        (NpgsqlConnection)context.Database.GetDbConnection(), PgIdentifier.Quote(schema), maxTablesPerRun,
-        _logger, cancellationToken).ConfigureAwait(false);
-    } finally {
-      await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+        initConnection, PgIdentifier.Quote(schema), maxTablesPerRun, _logger, cancellationToken).ConfigureAwait(false);
+    } else {
+      await context.Database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+      try {
+        await IndexStatistics.AnalyzeMissingAsync(
+          (NpgsqlConnection)context.Database.GetDbConnection(), PgIdentifier.Quote(schema), maxTablesPerRun,
+          _logger, cancellationToken).ConfigureAwait(false);
+      } finally {
+        await context.Database.CloseConnectionAsync().ConfigureAwait(false);
+      }
     }
   }
 

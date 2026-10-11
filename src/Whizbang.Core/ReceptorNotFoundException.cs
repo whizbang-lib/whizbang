@@ -10,9 +10,9 @@ namespace Whizbang.Core;
 /// Initializes a new instance of the <see cref="ReceptorNotFoundException"/> class.
 /// </remarks>
 /// <param name="messageType">The message type that has no receptor</param>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs:Integration_UnregisteredMessage_ShouldThrowReceptorNotFoundAsync</tests>
 [Serializable]
 #pragma warning disable S3925 // ISerializable not needed — binary serialization is deprecated in modern .NET

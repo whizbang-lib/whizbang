@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: the CLI audit tests that read and write the real file system (a temporary audit workspace and its fixtures), in one process with no external infrastructure. The unit tests stay in Whizbang.CLI.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- project.assets.json files from a real `dotnet restore`, trimmed of file lists and with
+         machine paths replaced. Tests copy them into a temporary project's obj/ folder. -->
+    <None Include="Audit/Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The OSV handler double is shared with the unit project: one source, compiled into both test
+       assemblies. -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.CLI.Tests/Audit/StubOsvHandler.cs" Link="Shared/Audit/StubOsvHandler.cs" />
+  </ItemGroup>
+</Project>

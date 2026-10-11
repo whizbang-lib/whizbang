@@ -119,6 +119,35 @@ public class PinnedTypeRenameAnalyzerTests {
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ120")).IsEmpty();
   }
 
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task PerspectiveRename_NotAcknowledgedInLedger_ReportsWhiz120Async() {
+    // Perspectives carry pinned identities as messages do: a perspective's stored rows are keyed by its
+    // name, so renaming one without acknowledging it in the ledger is the same governance error.
+    const string source = """
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+      using Whizbang.Core.Perspectives;
+      namespace TestApp;
+      public record OrderPlacedEvent : IEvent;
+      public record OrderView { }
+      [PinnedId("11111111-2222-3333-4444-555555555555")]
+      public class OrderViewPerspective : IPerspectiveFor<OrderView, OrderPlacedEvent> {
+        public OrderView Apply(OrderView currentData, OrderPlacedEvent @event) => currentData;
+      }
+      """;
+    var ledger = _ledger(PINNED_ID, currentName: "TestApp.OrderSummaryPerspective");
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PinnedTypeRenameAnalyzer>(
+      source, [(LEDGER_PATH, ledger)]);
+
+    var matches = diagnostics.Where(d => d.Id == "WHIZ120").ToList();
+    await Assert.That(matches).Count().IsEqualTo(1);
+    var msg = matches[0].GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(msg).Contains("TestApp.OrderViewPerspective");
+    await Assert.That(msg).Contains("TestApp.OrderSummaryPerspective");
+  }
+
   private static string _ledger(string pinnedId, string currentName, string? formerNames = null) {
     var former = formerNames is null ? "" : $"\"{formerNames}\"";
     return $$"""

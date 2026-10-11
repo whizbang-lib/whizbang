@@ -78,8 +78,8 @@ public class CoalesceMintStampingTests {
     var tagOptions = new TagOptions();
     tagOptions.Coalesce(SystemTags.AUDIT, c => c.MaxDelaySeconds = 120);
     var resolver = new CoalesceGroupResolver(tagOptions, time, () => [
-      CoalesceGroupResolverTests.TagRegistration(typeof(TestTaggedEvent), "record-digest"),
-      CoalesceGroupResolverTests.TagRegistration(typeof(EventAudited), SystemTags.AUDIT)
+      CoalesceTestTags.TagRegistration(typeof(TestTaggedEvent), "record-digest"),
+      CoalesceTestTags.TagRegistration(typeof(EventAudited), SystemTags.AUDIT)
     ]);
     var systemEventOptions = new SystemEventOptions { AuditShipSlideSeconds = 0 };
     systemEventOptions.EnableEventAudit();
@@ -166,7 +166,7 @@ public class CoalesceMintStampingTests {
     options.Coalesce("record-digest", c => c.MaxDelaySeconds = 120);
     tagOptions = options;
     return new CoalesceGroupResolver(options, time,
-      () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestTaggedEvent), "record-digest")]);
+      () => [CoalesceTestTags.TagRegistration(typeof(TestTaggedEvent), "record-digest")]);
   }
 
   private static OutboxMessage _taggedMessage() => _message(typeof(TestTaggedEvent).AssemblyQualifiedName!);

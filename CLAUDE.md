@@ -102,6 +102,7 @@ dotnet clean && dotnet build
 dotnet test --max-parallel-test-modules 8
 pwsh scripts/Run-Tests.ps1                    # Default: Ai mode, ALL tests (8000+)
 pwsh scripts/Run-Tests.ps1 -Mode AiUnit       # Unit tests only (fast, ~5800 tests)
+pwsh scripts/Run-Tests.ps1 -Mode AiComponent    # Component tests only (real workers, no infrastructure)
 pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations  # Integration tests only
 pwsh scripts/Run-Tests.ps1 -Mode Unit         # Unit tests with verbose output
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres"
@@ -187,6 +188,9 @@ Navigation hub with scenario-based guidance. **Read this first** when unsure whi
 **Read when**: running or interpreting Stryker.NET mutation tests, or adding mutation
 testing to a project. Mutation testing verifies tests actually catch bugs (kills mutants),
 complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-mutation-tests.ps1.
+
+**Invoke the `testing` skill** (`.claude/skills/testing/SKILL.md`) before writing, moving or fixing a
+test: it decides whether the test is Unit, Component or Integration, and how to make it deterministic.
 
 ### 📖 **[testing-tunit.md](ai-docs/testing-tunit.md)** - CRITICAL
 **Read when**:
@@ -436,7 +440,7 @@ public interface IDispatcher {
 
 **Optional `<tests>` tags** for complex cases:
 ```csharp
-/// <tests>Whizbang.Core.Tests/DispatcherTests.cs:Dispatch_SendsMessageToCorrectReceptorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DispatcherTests.cs:Dispatch_SendsMessageToCorrectReceptorAsync</tests>
 public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
   // ...
 }

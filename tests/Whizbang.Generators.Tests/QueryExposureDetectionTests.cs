@@ -120,6 +120,39 @@ public class QueryExposureDetectionTests {
   }
 
   /// <summary>
+  /// A marker whose argument does not bind is read as its default, the widest exposure, not as none.
+  /// </summary>
+  /// <remarks>
+  /// Mid-edit source is where an analyzer runs, and a marker written with an argument of the wrong
+  /// type still marks the attribute as composing a query. Reading it as "no exposure" would silence
+  /// the advisory exactly while the author is working on the surface, so it errs toward reporting.
+  /// The compilation is not checked for unbound attributes here: the unbound argument is the point.
+  /// </remarks>
+  [Test]
+  public async Task AMarkerWhoseArgumentDoesNotBind_DeclaresOrderingAndFilteringAsync() {
+    var compilation = _compile("""
+      using System;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      [ComposesQueryFromRequest("everything")]
+      [AttributeUsage(AttributeTargets.Class)]
+      public sealed class HalfWrittenAttribute : Attribute { }
+
+      [HalfWritten]
+      public class Surface { }
+      """);
+    var surface = compilation.GetTypeByMetadataName("TestApp.Surface")!;
+    var marker = compilation.GetTypeByMetadataName("TestApp.HalfWrittenAttribute")!.GetAttributes()
+      .Single(a => a.AttributeClass?.Name == "ComposesQueryFromRequestAttribute");
+
+    await Assert.That(marker.ConstructorArguments).IsEmpty()
+      .Because("this is the shape under test: the marker resolves, its argument does not");
+    await Assert.That(SortableExposureDiscovery.ExposureOf(surface.GetAttributes(), [])).IsEqualTo(ORDERING | FILTERING);
+  }
+
+  /// <summary>
   /// A domain language over expressions declares the widest exposure there is.
   /// </summary>
   /// <remarks>

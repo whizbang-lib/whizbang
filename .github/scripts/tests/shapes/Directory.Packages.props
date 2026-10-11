@@ -1,0 +1,4 @@
+<Project>
+  <!-- The repository's central package versions, so the runners use the collector and TUnit CI uses. -->
+  <Import Project="$(MSBuildThisFileDirectory)../../../../Directory.Packages.props" />
+</Project>

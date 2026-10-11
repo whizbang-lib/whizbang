@@ -42,10 +42,10 @@ public static class SagaServiceCollectionExtensions {
   /// <see cref="AddSagaService{TService}"/> therefore needs nothing else to receive its ticks.
   /// </remarks>
   /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
-  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddWhizbangSagas_RegistersTheRouterRegistrarAsync</tests>
-  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddWhizbangSagas_DeclaresTheTickAsConsumed_OnceHoweverOftenItIsCalledAsync</tests>
-  /// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
-  /// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:HostWithItsOwnTickReceptor_SubscribesOnce_AndEachTickIsRecoveredOnceAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddWhizbangSagas_RegistersTheRouterRegistrarAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddWhizbangSagas_DeclaresTheTickAsConsumed_OnceHoweverOftenItIsCalledAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:HostWithItsOwnTickReceptor_SubscribesOnce_AndEachTickIsRecoveredOnceAsync</tests>
   public static IServiceCollection AddWhizbangSagas(this IServiceCollection services, Action<SagaOptions>? configure = null) {
     ArgumentNullException.ThrowIfNull(services);
 
@@ -114,8 +114,8 @@ public static class SagaServiceCollectionExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The same service collection.</returns>
   /// <docs>fundamentals/sagas/completion-orchestration#hand-written-sagas</docs>
-  /// <tests>tests/Whizbang.Sagas.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddSagaService_RegistersTheServiceAndItsWatchdogParticipationAsOneInstanceAsync</tests>
-  /// <tests>tests/Whizbang.Sagas.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/Services/SagaWatchdogTickRoutingTests.cs:AddSagaService_RegistersTheServiceAndItsWatchdogParticipationAsOneInstanceAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Component.Tests/SagaWatchdogTickSubscriptionIntegrationTests.cs:AddSagaServiceOnly_SubscribesToTheTicksTopic_AndAPublishedTickReachesTheSagaAsync</tests>
   // DynamicallyAccessedMembers keeps TService's public constructors through trimming so the container
   // can build it under native AOT — the same annotation AddScoped<TService> itself declares.
   public static IServiceCollection AddSagaService<

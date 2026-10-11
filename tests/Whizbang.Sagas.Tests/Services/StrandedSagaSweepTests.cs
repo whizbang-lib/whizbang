@@ -457,6 +457,20 @@ public class StrandedSagaSweepTests {
   }
 
   [Test]
+  public async Task Sweep_SagaWithNoEntity_ArmsWithAnEmptyEntityAsync() {
+    var sagaId = _id(13);
+    var saga = _saga(sagaId, _ago(TimeSpan.FromHours(2)));
+    saga.EntityId = null;
+    var emitter = new RecordingEmitter();
+    var svc = new SweptSagaService(emitter, itemRepository: null, [new IncompleteSaga(saga, null)]);
+
+    await svc.ArmStrandedSagasAsync(new FixedWakes(new HashSet<Guid>()), CancellationToken.None);
+
+    var tick = (SagaCompletionWatchdogTickEvent)emitter.Once.Single().Event;
+    await Assert.That(tick.EntityId).IsEqualTo(Guid.Empty);
+  }
+
+  [Test]
   public async Task ArmedTick_OnArrival_ResolvesTheStrandedItemAsync() {
     var sagaId = _id(13);
     var old = _ago(TimeSpan.FromHours(2));

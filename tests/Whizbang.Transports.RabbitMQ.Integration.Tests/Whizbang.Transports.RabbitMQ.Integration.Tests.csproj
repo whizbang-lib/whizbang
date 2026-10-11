@@ -31,4 +31,11 @@
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <!-- The RabbitMQ test doubles are shared with the unit project: one source, compiled into both
+       test assemblies. RabbitMQConnectionRetryTests uses them; it is here because some of its tests
+       dial a broker host that does not exist (network, so Integration). -->
+  <ItemGroup>
+    <Compile Include="../Whizbang.Transports.RabbitMQ.Tests/TestDoubles.cs" Link="Shared/TestDoubles.cs" />
+  </ItemGroup>
+
 </Project>

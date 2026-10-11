@@ -108,6 +108,30 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
     await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsNull();
   }
 
+  // A caller that names the schedule's id gets that id: it is how a caller makes creation idempotent
+  // across retries, and a generated id in its place would create a second schedule on every retry.
+  [Test]
+  [Timeout(60000)]
+  public async Task Create_WithACallerChosenId_UsesThatIdAsync(CancellationToken cancellationToken) {
+    var manager = _manager(ConnectionString);
+    var chosen = Guid.NewGuid();
+
+    var handle = await manager.CreateAsync(new ScheduleDefinition {
+      ScheduleId = chosen,
+      EventType = "AllOutcomesChosenId",
+      AuthorityPrincipalId = _authority,
+      StreamId = Guid.NewGuid(),
+      Kind = RecurrenceKind.Interval,
+      Interval = TimeSpan.FromHours(1),
+      CatchUpLookback = TimeSpan.FromMinutes(30),
+      StartAt = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero),
+    }, cancellationToken);
+
+    await Assert.That(handle.ScheduleId).IsEqualTo(chosen);
+    await Assert.That(await _statusAsync(chosen, cancellationToken)).IsEqualTo((short)0)
+      .Because("the row is stored under the caller's id, active");
+  }
+
   private static Task<ScheduleHandle> _createIntervalScheduleAsync(
       PgScheduleManager manager, string eventType, CancellationToken cancellationToken) =>
     manager.CreateAsync(new ScheduleDefinition {

@@ -38,6 +38,62 @@ internal static class IntegrityManifestTags {
   internal const string ORIGIN = "origin";
 }
 
+/// <summary>
+/// The decisions every integrity receptor makes the same way before it asks an origin to redeliver:
+/// which repair ledger bounds the asking, which topic the redelivery is sent back to, and which
+/// commit-sequence window the request covers. Taken once here so the checkpoint and manifest
+/// receptors cannot drift apart on any of them.
+/// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairSupportTests.cs</tests>
+internal static class IntegrityRepairSupport {
+  /// <summary>
+  /// The repair ledger: the registered <see cref="IIntegrityRepairLedger"/> (the coordinator-backed,
+  /// fleet-wide one) when a host has one, else the registered in-process
+  /// <see cref="IntegrityRepairLedger"/>, else a fresh in-process ledger so an unwired host still
+  /// gets bounded asking rather than none.
+  /// </summary>
+  /// <param name="services">The scope the receptor resolves from.</param>
+  /// <returns>The ledger to consult.</returns>
+  internal static IIntegrityRepairLedger ResolveLedger(IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(services);
+    return services.GetService<IIntegrityRepairLedger>()
+      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
+      ?? new IntegrityRepairLedger();
+  }
+
+  /// <summary>
+  /// The topic a redelivery is sent back to: the configured
+  /// <see cref="StreamIntegrityOptions.RepairTopic"/>, else this service's first consumer
+  /// destination, else null, which the callers read as "no return address, skip the request".
+  /// </summary>
+  /// <param name="options">The stream-integrity options.</param>
+  /// <param name="services">The scope the receptor resolves from.</param>
+  /// <returns>The reply topic, or null when the service has none.</returns>
+  internal static string? ResolveRepairTopic(StreamIntegrityOptions options, IServiceProvider services) {
+    ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(services);
+    if (options.RepairTopic is not null) {
+      return options.RepairTopic;
+    }
+    var consumer = services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>();
+    return consumer?.Destinations.FirstOrDefault()?.Address;
+  }
+
+  /// <summary>
+  /// Maps a manifest's compared window <c>[since, until)</c> onto a redelivery command's
+  /// exclusive-floor / inclusive-ceiling pair (#80-C range-bounded backfill). A manifest without a
+  /// window, or one starting at the beginning, leaves that side null: the whole-history semantics.
+  /// </summary>
+  /// <param name="manifest">The manifest whose window disagreed.</param>
+  /// <returns>The command's <c>FromCommitSequence</c> and <c>ToCommitSequence</c>.</returns>
+  internal static (long? From, long? To) RedeliveryWindow(IntegrityManifest manifest) {
+    ArgumentNullException.ThrowIfNull(manifest);
+    long? from = manifest.SinceSequence is long since && since > 0 ? since - 1 : null;
+    long? to = manifest.ComputedThrough is long through ? through - 1 : null;
+    return (from, to);
+  }
+}
+
 public sealed partial class IntegrityManifestRequestReceptor(
     IServiceScopeFactory scopeFactory,
     ILogger<IntegrityManifestRequestReceptor> logger) : IReceptor<RequestIntegrityManifest> {
@@ -353,9 +409,7 @@ public sealed partial class IntegrityManifestReceptor(
     // sound only while restarts are rare — and here the report storm is what CAUSES the restarts,
     // so every boot cleared the state that would have suppressed it. It is also per-replica, so
     // each pod reported the same divergence independently.
-    var ledger = services.GetService<IIntegrityRepairLedger>()
-      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
-      ?? new IntegrityRepairLedger();
+    var ledger = IntegrityRepairSupport.ResolveLedger(services);
     var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
     var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
     var now = DateTimeOffset.UtcNow;
@@ -590,8 +644,7 @@ public sealed partial class IntegrityManifestReceptor(
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;
     }
@@ -665,7 +718,7 @@ public sealed partial class IntegrityManifestReceptor(
     } else {
       local = message.Recomputed
         ? await coordinator.ComputeTypeDigestsAsync(message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false)
-        : await _tableDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, streamLevel: false, cancellationToken).ConfigureAwait(false);
+        : await _typeDigestsWithFallbackAsync(coordinator, message.OriginServiceId, types, settle, cancellationToken).ConfigureAwait(false);
     }
     var localByBucket = local.ToDictionary(d => (d.TenantScope, d.EventType));
 
@@ -708,8 +761,7 @@ public sealed partial class IntegrityManifestReceptor(
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
@@ -722,9 +774,7 @@ public sealed partial class IntegrityManifestReceptor(
     // stream-scoped repair gets, so audit cycles never re-ship a window already in flight.
     var bulkEscalated = new HashSet<string>(StringComparer.Ordinal);
     if (bulkCandidates.Count > 0 && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
-      var ledger = services.GetService<IIntegrityRepairLedger>()
-        ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
-        ?? new IntegrityRepairLedger();
+      var ledger = IntegrityRepairSupport.ResolveLedger(services);
       var now = DateTimeOffset.UtcNow;
       var cooldown = TimeSpan.FromMinutes(options.DivergenceReportCooldownMinutes);
       var backoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
@@ -820,23 +870,20 @@ public sealed partial class IntegrityManifestReceptor(
     LogDrillDown(logger, drillDown.Count, mismatched.Count, message.OriginServiceName);
   }
 
-  /// <summary>Table reads, falling back to the recompute when the table has no rows — either
+  /// <summary>Type-level table reads, falling back to the recompute when the table has no rows: either
   /// nothing was received (recompute is equally empty, cheap) or the provider lacks the digest
   /// table (the DIM default returns empty; the recompute is the honest source).</summary>
-  private static async Task<IReadOnlyList<StreamDigest>> _tableDigestsWithFallbackAsync(
+  /// <remarks>Type level only. The stream-level compare reads its table and falls back to the
+  /// chunk-bounded fold itself (#453), because a whole-store stream recompute is the shape that
+  /// memory-killed consumers.</remarks>
+  private static async Task<IReadOnlyList<StreamDigest>> _typeDigestsWithFallbackAsync(
       IWorkCoordinator coordinator, Guid originServiceId, List<string> types, TimeSpan settle,
-      bool streamLevel, CancellationToken cancellationToken) {
-    var table = streamLevel
-      ? await coordinator.GetStreamDigestsAsync(originServiceId, types, cancellationToken).ConfigureAwait(false)
-      : await coordinator.GetTypeDigestsAsync(originServiceId, types, cancellationToken).ConfigureAwait(false);
+      CancellationToken cancellationToken) {
+    var table = await coordinator.GetTypeDigestsAsync(originServiceId, types, cancellationToken).ConfigureAwait(false);
     if (table.Count > 0) {
       return table;
     }
-    // The recompute fallback (unpopulated digest lane) matches the requested level at the store:
-    // a types-level fallback materialized per-stream has memory-killed consumers.
-    return streamLevel
-      ? await coordinator.ComputeStreamDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false)
-      : await coordinator.ComputeTypeDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false);
+    return await coordinator.ComputeTypeDigestsAsync(originServiceId, types, settle, cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -868,6 +915,7 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
+    var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -881,8 +929,8 @@ public sealed partial class IntegrityManifestReceptor(
         Topic = topic,
         // Same [since, until) → exclusive-floor/inclusive-ceiling mapping as the per-stream
         // repair — the bulk ask stays bounded to the window that disagreed.
-        FromCommitSequence = manifest.SinceSequence is long since && since > 0 ? since - 1 : null,
-        ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
+        FromCommitSequence = fromSequence,
+        ToCommitSequence = toSequence,
         StateOnly = true,
       },
       Hops = [
@@ -905,8 +953,7 @@ public sealed partial class IntegrityManifestReceptor(
     var serializer = services.GetService<IEnvelopeSerializer>();
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var requester = instanceProvider?.ServiceName;
-    var topic = options.RepairTopic
-      ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
+    var topic = IntegrityRepairSupport.ResolveRepairTopic(options, services);
     if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // report already published; the repair rides the next cycle when infra exists.
     }
@@ -921,6 +968,7 @@ public sealed partial class IntegrityManifestReceptor(
       return;
     }
 
+    var (fromSequence, toSequence) = IntegrityRepairSupport.RedeliveryWindow(manifest);
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
       Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.New()),
@@ -934,8 +982,8 @@ public sealed partial class IntegrityManifestReceptor(
         // window — the origin re-ships the slice, not the streams' whole history. [since, until)
         // maps to the command's exclusive-floor / inclusive-ceiling pair; legacy (unwindowed)
         // manifests leave both null, the pre-existing whole-history semantics.
-        FromCommitSequence = manifest.SinceSequence is long since && since > 0 ? since - 1 : null,
-        ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
+        FromCommitSequence = fromSequence,
+        ToCommitSequence = toSequence,
       },
       Hops = [
         Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)

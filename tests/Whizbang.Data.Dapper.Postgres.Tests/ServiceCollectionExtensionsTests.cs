@@ -107,8 +107,9 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
       initializeSchema: true,
       perspectiveSchemaSql: null);
 
-    // Assert - Service registration succeeded
+    // Assert - Service registration succeeded; the schema is initialized at host start
     await Assert.That(services.Count).IsGreaterThan(0);
+    await using var provider = await SchemaStartup.StartAsync(services);
 
     // Verify infrastructure was initialized by connecting and querying
     await using var connection = new Npgsql.NpgsqlConnection(_connectionString);
@@ -149,8 +150,9 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
       initializeSchema: true,
       perspectiveSchemaSql: perspectiveSql);
 
-    // Assert - Service registration succeeded
+    // Assert - Service registration succeeded; the schema is initialized at host start
     await Assert.That(services.Count).IsGreaterThan(0);
+    await using var provider = await SchemaStartup.StartAsync(services);
 
     // Verify both infrastructure and perspective were initialized
     await using var connection = new Npgsql.NpgsqlConnection(_connectionString);

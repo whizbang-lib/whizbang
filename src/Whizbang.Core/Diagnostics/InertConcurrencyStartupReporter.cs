@@ -25,7 +25,7 @@ namespace Whizbang.Core.Diagnostics;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/concurrency-governor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/InertConcurrencyStartupReporterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/InertConcurrencyStartupReporterTests.cs</tests>
 /// <remarks>
 /// DI constructor. Resolves each option set the way its WORKER does.
 /// </remarks>

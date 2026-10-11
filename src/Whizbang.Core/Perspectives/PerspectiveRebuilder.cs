@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Messaging;
@@ -185,7 +186,7 @@ public sealed partial class PerspectiveRebuilder(
           await _replayStreamsAsync(run, streamIds, RebuildPhase.Replaying, ct);
         } else {
           var modelTypeName = registry.GetRegisteredPerspectives().FirstOrDefault(p => p.ClrTypeName == perspectiveName)?.ModelType;
-          await _rebuildBlueGreenAsync(run, sp, swapper, new ChangeQuery(sp, eventTypes, modelTypeName), streamIds, ct);
+          await _rebuildBlueGreenAsync(run, sp, swapper, new ChangeQuery(sp, eventTypes, modelTypeName), modelTypeName, streamIds, ct);
         }
       } finally {
         Current = previousMode;
@@ -305,11 +306,18 @@ public sealed partial class PerspectiveRebuilder(
   /// </remarks>
   private async Task _rebuildBlueGreenAsync(
       RebuildRun run, IServiceProvider sp, IPerspectiveTableSwapper swapper, ChangeQuery changes,
-      List<Guid> streamIds, CancellationToken ct) {
-    var table = await swapper.FindTableAsync(run.PerspectiveName, ct).ConfigureAwait(false)
+      string? modelTypeName, List<Guid> streamIds, CancellationToken ct) {
+    // The table registry is keyed by the MODEL's type name, which is what the schema pass writes (its
+    // generator says so in as many words), while a rebuild is named by its PERSPECTIVE. Asking for the
+    // perspective matched no row, so every blue-green rebuild threw "no registered table" before replaying
+    // anything (#1308). A perspective missing from the runner registry has no model name to ask by; it has
+    // no table either, so it falls back and fails below for the reason it would have anyway.
+    var tableKey = modelTypeName ?? run.PerspectiveName;
+    var table = await swapper.FindTableAsync(tableKey, ct).ConfigureAwait(false)
       ?? throw new InvalidOperationException(
-        $"Perspective '{run.PerspectiveName}' has no registered table, so there is nothing to rebuild blue-green.");
-    var options = sp.GetService<IOptions<BlueGreenRebuildOptions>>()?.Value ?? new BlueGreenRebuildOptions();
+        $"Perspective '{run.PerspectiveName}' (looked up as '{tableKey}') has no registered table, so there is " +
+        "nothing to rebuild blue-green.");
+    var options = sp.GetOptionsValue<BlueGreenRebuildOptions>() ?? new BlueGreenRebuildOptions();
 
     var mark = await changes.WatermarkAsync(ct).ConfigureAwait(false);
     var shadow = await swapper.CreateShadowAsync(table, ct).ConfigureAwait(false);

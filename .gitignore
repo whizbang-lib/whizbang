@@ -180,6 +180,13 @@ coverage*.info
 *.coverage
 *.coveragexml
 
+# Coverage output is never committed, wherever it lands: the Cobertura report each test process writes
+# (<guid>.cobertura.xml), and merged block data. The coverage gate's tests produce theirs at test time
+# (.github/scripts/tests/shapes/New-ShapesCoverage.ps1).
+*.cobertura.xml
+*.blocks.xml
+merged-blocks.xml
+
 # NCrunch
 _NCrunch_*
 .NCrunch_*
@@ -454,7 +461,10 @@ coverage_files.txt
 .sonar-scan-origin.json
 .mcp.json
 coverage-report/
-coverage/
+# Anchored: a bare `coverage/` matches a directory of that name ANYWHERE, so it silently
+# swallowed a new test folder (and would swallow anything added under scripts/coverage/).
+# This rule is for the repo-root coverage output; per-project output lands under bin/.
+/coverage/
 
 # PR readiness script history files
 logs/

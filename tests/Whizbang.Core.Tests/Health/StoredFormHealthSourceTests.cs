@@ -65,6 +65,18 @@ public class StoredFormHealthSourceTests {
     await Assert.That(health.Detail).Contains("$.At", StringComparison.Ordinal);
   }
 
+  /// <summary>A refusal that names no path still reports, saying the path is unknown.</summary>
+  [Test]
+  public async Task NoPath_SaysSoAsync() {
+    var registry = new StoredFormFailureRegistry(new FakeTimeProvider());
+    StoredFormUnreadable.TryClassify(new JsonException("bad"), out var failure);
+    registry.Record("Orders", Guid.CreateVersion7(), failure!);
+
+    var health = await new StoredFormHealthSource(registry).ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.Detail).Contains("at (path not reported): bad", StringComparison.Ordinal);
+  }
+
   /// <summary>The worker pipeline registers the source and the registry it reads.</summary>
   [Test]
   public async Task TheWorkerPipelineRegistersTheSourceAsync() {

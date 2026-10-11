@@ -10,8 +10,8 @@ namespace Whizbang.Core.Messaging;
 /// it from the source work table.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AttemptsAtCap_PublishFails_PromotesToDlqAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AtCap_NoDeadLetterStoreWired_FallsBackToFailureChannelAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AttemptsAtCap_PublishFails_PromotesToDlqAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxPublishWorkerDlqPromotionTests.cs:SingularPublish_AtCap_NoDeadLetterStoreWired_FallsBackToFailureChannelAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ScopedEFCoreDeadLetterStoreTests.cs:MoveAsync_OutboxRow_AdapterOpensScopeAndDelegatesToInnerStoreAsync</tests>
 public interface IDeadLetterStore {
   /// <summary>True when a real implementation is registered. The framework's null default returns false so

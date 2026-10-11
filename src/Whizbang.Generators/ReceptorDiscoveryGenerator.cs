@@ -200,7 +200,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           ClassName: $"{sagaFullyQualifiedName}.{shape.ClassName}",
           MessageType: messageType,
           ResponseType: null,
-          LifecycleStages: shape.LifecycleStage is null ? [] : [shape.LifecycleStage],
+          LifecycleStages: [shape.LifecycleStage],
           IsSync: false,
           DefaultRouting: null,
           SyncAttributes: null,
@@ -421,7 +421,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var stage = _tryExtractFireAtStage(attribute);
+      var stage = _qualifiedEnumArgument(attribute);
       if (stage is not null) {
         stages.Add(stage);
       }
@@ -431,36 +431,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Parses a single <c>[FireAt(LifecycleStage.X)]</c> attribute and returns the fully-qualified
-  /// enum member name (e.g. <c>Whizbang.Core.LifecycleStage.PostPerspectiveDetached</c>). Returns
-  /// null when the constructor argument is missing, isn't an int, or the attribute's first
-  /// parameter isn't a discoverable enum — callers silently skip those instead of emitting
-  /// garbage into the generated routing.
+  /// The fully qualified enumeration member an attribute's first constructor argument names, as generated
+  /// routing writes it (e.g. <c>global::Whizbang.Core.Messaging.LifecycleStage.PostPerspectiveDetached</c>).
+  /// Returns null when the argument is missing, is not an enumeration value, or names no member — callers
+  /// silently skip those instead of emitting garbage into the generated routing. Shared by
+  /// <c>[FireAt]</c> and <c>[DefaultRouting]</c>.
   /// </summary>
-  private static string? _tryExtractFireAtStage(AttributeData attribute) {
-    if (attribute.ConstructorArguments.Length == 0
-        || attribute.ConstructorArguments[0].Value is not int stageValue
-        || attribute.AttributeClass is null) {
-      return null;
-    }
-
-    var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
-        .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-        ?.Parameters.FirstOrDefault()?.Type;
-
-    if (stageType is not INamedTypeSymbol enumType) {
-      return null;
-    }
-
-    var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
-
-    if (enumMember is null) {
-      return null;
-    }
-
-    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
-  }
+  private static string? _qualifiedEnumArgument(AttributeData attribute) =>
+    AttributeUtilities.FirstArgumentEnumMember(attribute) is { } member
+      ? $"{TypeNameUtilities.FullyQualified(member.ContainingType)}.{member.Name}"
+      : null;
 
   /// <summary>
   /// Extracts [AwaitPerspectiveSync] attributes from a receptor class.
@@ -669,46 +649,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string DEFAULT_ROUTING_ATTRIBUTE = "Whizbang.Core.Dispatch.DefaultRoutingAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass is not { } attributeClass || !TypeNameUtilities.IsNamed(attributeClass, DEFAULT_ROUTING_ATTRIBUTE)) {
-        continue;
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, DEFAULT_ROUTING_ATTRIBUTE)) {
+        return _qualifiedEnumArgument(attribute);
       }
-
-      if (attribute.ConstructorArguments.Length == 0) {
-        continue;
-      }
-
-      var modeArg = attribute.ConstructorArguments[0];
-      if (modeArg.Value is not int modeValue) {
-        continue;
-      }
-
-      return _resolveEnumValueName(attributeClass, modeValue);
     }
 
     return null;
-  }
-
-  /// <summary>
-  /// Resolves an enum constant value back to its fully qualified member name.
-  /// Inspects the first constructor parameter type of the attribute class to find the enum.
-  /// </summary>
-  private static string? _resolveEnumValueName(INamedTypeSymbol attributeClass, int modeValue) {
-    var modeType = attributeClass.GetMembers().OfType<IMethodSymbol>()
-        .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-        ?.Parameters.FirstOrDefault()?.Type;
-
-    if (modeType is not INamedTypeSymbol enumType) {
-      return null;
-    }
-
-    var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-        .FirstOrDefault(f => Equals(f.ConstantValue, modeValue));
-
-    if (enumMember is null) {
-      return null;
-    }
-
-    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
   }
 
   /// <summary>

@@ -14,6 +14,28 @@ TUnit is a modern, source-generation-based testing framework that works fundamen
 4. [Bogus Fake Data Generation](#bogus-fake-data-generation)
 5. [Property Tests with FsCheck](#property-tests-with-fscheck)
 6. [Common Mistakes](#common-mistakes) (includes **Mistake 7: NEVER use Task.Delay in tests**)
+7. [Which Project a Test Belongs In](#which-project-a-test-belongs-in)
+
+---
+
+## Which Project a Test Belongs In
+
+Every test project declares `<WhizbangTestType>` (and `<WhizbangTestTags>`) in its `.csproj`, and the
+type decides which runs select it. Put a test in a project of the right type: the `testing` skill
+(`.claude/skills/testing/SKILL.md`) classifies it, and docs/TEST-PROJECTS.md has the full rules.
+
+| Type | What the test may do | Project naming | Run it |
+|------|----------------------|----------------|--------|
+| `Unit` | One deterministic flow: an injected fake clock (`FakeTimeProvider`), no background threads or hosted workers, no real I/O | `<Source>.Tests` | `-Mode AiUnit` |
+| `Component` | Real workers and threads in one process, no external infrastructure. Every interleaving fixed by signals; every asynchronous assertion waits on the signal for the exact transition it asserts (never a delay, a poll, or a timeout used as the wait) | `<Source>.Component.Tests` | `-Mode AiComponent` |
+| `Integration` | Containers and real infrastructure, selected per suite by tag (`Postgres`, `RabbitMQ`, `AzureServiceBus`, `AzureBlob`, `InMemory`, `Integration`) | `<Source>.Integration.Tests` | `-Mode AiIntegrations -Tag <tag>` |
+| `Benchmark`, `Soak` | Measurements; never part of the gate | | BenchmarkDotNet, `scripts/Run-Soak.ps1` |
+
+A test that starts a worker with `StartAsync`, runs `Task.Run` or a `Thread`, touches the file system or
+starts a process is not a unit test. One that only sleeps or reads `TimeProvider.System` is a unit test
+with a race in it: give it a fake clock rather than moving it. Moving an existing test
+between projects goes through `scripts/Move-TestReference.ps1`, which relinks every `<tests>` tag and
+doc reference that names it (#1264).
 
 ---
 

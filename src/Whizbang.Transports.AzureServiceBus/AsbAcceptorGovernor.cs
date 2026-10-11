@@ -33,7 +33,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </remarks>
 /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
 public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGovernor {
   // Window-gated growth fires when active sessions occupy ≥ 80% of the current pool —
   // near-saturation means pending sessions are probably queueing behind the acceptor cap. A pool
@@ -154,7 +154,7 @@ public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGo
   /// </summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs:Evaluate_QuietWindowElapsed_WhileASessionIsHeld_HoldsConcurrencyAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs:Evaluate_QuietWindowElapsed_DecaysOnceTheLastHeldSessionClosesAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs:SessionClosing_WithSiblingSessionsStillHeld_NeverShrinksTheRunningProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AsbAcceptorAdaptiveWiringTests.cs:SessionClosing_WithSiblingSessionsStillHeld_NeverShrinksTheRunningProcessorAsync</tests>
   public bool Evaluate() {
     var now = _timeProvider.GetUtcNow();
     lock (_sync) {

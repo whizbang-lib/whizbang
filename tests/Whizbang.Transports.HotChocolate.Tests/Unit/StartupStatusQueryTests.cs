@@ -56,6 +56,25 @@ public class StartupStatusQueryTests {
   }
 
   [Test]
+  public async Task WhizbangStartup_ExtensionAddedWithoutTheHelper_KeepsReasonsHiddenAsync() {
+    // WhizbangStartupQueries is public, so a host can contribute it with AddTypeExtension directly and
+    // skip AddWhizbangStartupStatus, which is what registers the options. With no options there was no
+    // opt-in, so the field serves the terse report: reasons stay behind the disclosure line.
+    var services = new ServiceCollection();
+    services.AddSingleton<IStartupPipelineState>(await _stateWithFailedMigrateAsync());
+    var result = await services
+      .AddGraphQL()
+      .AddQueryType(d => d.Name("Query"))
+      .AddTypeExtension<WhizbangStartupQueries>()
+      .ExecuteRequestAsync(QUERY);
+
+    var json = result.ToJson();
+    await Assert.That(json).Contains("FAILED");
+    await Assert.That(json).DoesNotContain("tenant_secrets")
+      .Because("without the registration there is no opt-in, and an exception message is never shown by default");
+  }
+
+  [Test]
   public async Task WhizbangStartup_ReasonsStayBehindTheOptInAsync() {
     var services = new ServiceCollection();
     services.AddSingleton<IStartupPipelineState>(await _stateWithFailedMigrateAsync());

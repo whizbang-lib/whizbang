@@ -55,7 +55,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
-/// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
 public sealed partial class PgCommitOrderStamperWorker(
   IOptions<WhizbangNotificationOptions> notificationOptions,
@@ -82,6 +82,9 @@ public sealed partial class PgCommitOrderStamperWorker(
   // synchronization of its own.
   // Initializers run in order: _stamperOptions above has already thrown for missing options.
   private int _batchSize = stamperOptions.Value.BatchSize;
+  // The size the last timeout backed off to (#1217): growth stops there until a short batch shows the pending set
+  // drained. Null while no call has timed out since then. Read and written by the same loop as _batchSize.
+  private int? _timeoutCap;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
@@ -120,13 +123,20 @@ public sealed partial class PgCommitOrderStamperWorker(
   public event Action<int>? OnStampCompleted;
 
   /// <summary>
+  /// Fires when a stamp call timed out, with the batch size the next call will ask for (#1217). The leader keeps the
+  /// role and retries at once with that size.
+  /// </summary>
+  public event Action<int>? OnStampTimedOut;
+
+  /// <summary>
   /// Fires when a wake found nothing unstamped and the stamp was not run.
   /// </summary>
   /// <remarks>
   /// The stamp used to run on every wake whether or not anything was unstamped, and its eligibility
   /// query then sorted every unstamped row before taking a batch: about half a core per busy database
-  /// on the backstop tick under a bulk load. The stamp now walks an index and stops at its batch
-  /// (migration 197), and the partial-index existence probe still decides whether it runs at all.
+  /// on the backstop tick under a bulk load. The stamp now walks an index of eligible rows and stops at
+  /// its batch (migrations 197 and 205), and the partial-index existence probe still decides whether it
+  /// runs at all.
   /// </remarks>
   public event Action? OnStampSkipped;
 
@@ -308,14 +318,15 @@ public sealed partial class PgCommitOrderStamperWorker(
         // The database refused this holder's epoch: another instance holds the role now.
         LogFenced(_logger);
         return;
+      } catch (Exception ex) when (IsTimeout(ex)) {
+        // #1217: retry at once, still leading: giving up the lock would come back with the same size.
+        _backOffAfterTimeout();
+        skipWakeWait = true;
+        continue;
       }
       _ = Interlocked.Add(ref _totalStamped, stamped);
       OnStampCompleted?.Invoke(stamped);
-
-      // Resized from the count the call returned rather than from a count of what is left: a probe for
-      // the backlog size would be another scan of the set that is already too expensive to scan.
-      _batchSize = CommitOrderStampBatch.Next(
-        _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize);
+      _resizeAfter(stamped);
 
       if (stamped > 0) {
         // A full batch may have left more behind — drain immediately instead of
@@ -584,6 +595,46 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "PgCommitOrderStamperWorker released the stamper role to a newer-version instance that asked for it")]
   static partial void LogRoleDrained(ILogger logger);
+
+  /// <summary>
+  /// Halves the batch after a call that timed out (#1217) and holds growth at the new size until the backlog drains.
+  /// </summary>
+  /// <remarks>
+  /// A canceled call rolled back everything it did, so the same size can never succeed: one stamper repeated a 30 s
+  /// timeout for ten hours after an import had grown its batch, because the size changed only after a call returned.
+  /// </remarks>
+  private void _backOffAfterTimeout() {
+    var timedOutAt = _batchSize;
+    _batchSize = CommitOrderStampBatch.AfterTimeout(_batchSize);
+    _timeoutCap = _batchSize;
+    LogStampTimedOut(_logger, timedOutAt, _batchSize);
+    OnStampTimedOut?.Invoke(_batchSize);
+  }
+
+  /// <summary>
+  /// Sizes the next call from the count this one returned rather than from a count of what is left: a probe for the
+  /// backlog size would be another read of the set a stamp exists to avoid reading.
+  /// </summary>
+  private void _resizeAfter(int stamped) {
+    var asked = _batchSize;
+    _batchSize = CommitOrderStampBatch.Next(
+      _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap);
+    if (stamped < asked) {
+      // Drained to the fence: the next burst starts at the configured size and may grow past the old timeout again.
+      _timeoutCap = null;
+    }
+  }
+
+  /// <summary>
+  /// Whether a stamp call failed because it ran out of time: the client's command timeout (Npgsql cancels the
+  /// statement and reports a <see cref="TimeoutException"/>) or the server's statement timeout (57014).
+  /// </summary>
+  internal static bool IsTimeout(Exception ex) =>
+    ex is NpgsqlException { InnerException: TimeoutException }
+      || ex is PostgresException { SqlState: PostgresErrorCodes.QueryCanceled };
+
+  [LoggerMessage(EventId = 18, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: a stamp of {TimedOutAt} rows timed out and stamped nothing; the next asks for {NextBatch}")]
+  private static partial void LogStampTimedOut(ILogger logger, int timedOutAt, int nextBatch);
 
   [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: the epoch fence refused a stamp; another instance holds the stamper role")]
   static partial void LogFenced(ILogger logger);

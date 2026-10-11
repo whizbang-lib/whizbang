@@ -26,6 +26,7 @@ on:
 # The repository default is read-only; stated here so no job can silently gain more.
 permissions:
   contents: read
+  packages: read   # pull the Docker Hub images CI mirrors to GHCR (.github/ci-images.txt)
 
 jobs:
   postgres-tests:
@@ -41,6 +42,11 @@ jobs:
         uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: '10.0.x'
+
+      # Docker Hub rate-limits unauthenticated pulls; take its images from the GHCR mirror when it is
+      # complete (ai-docs/ci-image-mirror.md). Before the tests, so every container pull goes there.
+      - name: Use the CI image mirror
+        uses: ./.github/actions/use-ci-image-mirror
 
       - name: Download Build Artifacts
         if: inputs.artifact-name != ''
@@ -76,6 +82,12 @@ jobs:
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -ModuleCoverage -Configuration Release -Tag Postgres -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
+
+      # The drift guard: a Docker Hub image the manifest does not list was pulled unmirrored.
+      - name: Check pulled images against the CI image manifest
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/scripts/Test-CiImagePulls.ps1
 
       - name: Upload TRX Results
         if: always()

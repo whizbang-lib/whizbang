@@ -11,8 +11,9 @@ namespace Whizbang.Core.Notifications;
 /// Each call to <c>stamp_pending_commit_sequences</c> used to cost a scan and a sort of the unstamped set,
 /// because the column that ordered it was a system column no index can cover, so draining a backlog of N
 /// rows in fixed steps of B cost about N/B of those scans (#1060). Since migration 197 the stamp walks an
-/// insertion-order index and stops at its batch, so a call costs what it stamps (#1062) and the number of
-/// calls no longer multiplies a scan.
+/// index and stops at its batch, so a call costs what it stamps (#1062) and the number of calls no longer
+/// multiplies a scan; since 205 the walk reads only rows past the visibility horizon, so rows an open
+/// transaction holds back cost a call nothing either (#1217).
 /// </para>
 /// <para>
 /// The batch still grows while there is clearly more work and returns to the configured size once there
@@ -42,7 +43,22 @@ public static class CommitOrderStampBatch {
   /// <param name="configured">The steady-state size, which a drained set returns to.</param>
   /// <param name="ceiling">The largest size to grow to.</param>
   /// <returns>The size for the next call, never below <paramref name="configured"/>.</returns>
-  public static int Next(int current, int stamped, int configured, int ceiling) {
+  public static int Next(int current, int stamped, int configured, int ceiling) =>
+    Next(current, stamped, configured, ceiling, timeoutCap: null);
+
+  /// <summary>
+  /// The size for the next call, with growth held at or below the size a timeout backed off to.
+  /// </summary>
+  /// <param name="current">The size the last call asked for.</param>
+  /// <param name="stamped">How many rows that call stamped.</param>
+  /// <param name="configured">The steady-state size, which a drained set returns to.</param>
+  /// <param name="ceiling">The largest size to grow to.</param>
+  /// <param name="timeoutCap">
+  /// The size the last timeout backed off to (<see cref="AfterTimeout"/>), or null when no call has timed out since the
+  /// pending set last drained. The caller drops it when a short batch returns the size to <paramref name="configured"/>.
+  /// </param>
+  /// <returns>The size for the next call.</returns>
+  public static int Next(int current, int stamped, int configured, int ceiling, int? timeoutCap) {
     // A short batch means the pending set is drained to the fence, so latency matters again rather
     // than throughput. Reset rather than decay: the next burst should be served immediately at the
     // size the operator configured, not somewhere on the way back down to it.
@@ -53,6 +69,11 @@ public static class CommitOrderStampBatch {
     // The ceiling can be configured below the steady-state size; honor the larger so that raising
     // the steady size is never silently capped by a ceiling nobody revisited.
     var top = Math.Max(configured, ceiling);
+    // A size that timed out cannot complete, and doubling back to it costs another full timeout on every climb, so
+    // growth stops at the size the backoff found. This holds below the configured size too, when even that timed out.
+    if (timeoutCap is int cap && cap < top) {
+      top = cap;
+    }
     if (current >= top) {
       return top;
     }
@@ -60,4 +81,18 @@ public static class CommitOrderStampBatch {
     var grown = (long)current * GROWTH;
     return grown >= top ? top : (int)grown;
   }
+
+  /// <summary>
+  /// The size for the next call after one timed out (#1217): half, and never below one.
+  /// </summary>
+  /// <remarks>
+  /// A call that times out is canceled and rolls back everything it did, so the same size can never succeed. On a
+  /// deployed environment a stamper whose batch an import had grown repeated a 30 s timeout for ten hours, because
+  /// the size was changed only after a call returned. Halving finds a size that completes in a few steps; it may go
+  /// below the configured size, because a call that cannot finish stamps nothing at any size. One row is the smallest
+  /// call that still makes progress.
+  /// </remarks>
+  /// <param name="current">The size the call that timed out asked for.</param>
+  /// <returns>The size for the next call.</returns>
+  public static int AfterTimeout(int current) => Math.Max(1, current / GROWTH);
 }

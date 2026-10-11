@@ -25,7 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// The expiry is called by every bridged instance that could not take the legacy lock, on every vote cycle, and almost
 /// always finds nothing to end. It now reads the row without locks first and returns at once when there is no lapsed
 /// bridge. The holder's renewal still waits for its own fenced work, by design; what bounds that wait is the fenced
-/// work itself, which since migration 197 costs what its batch stamps.
+/// work itself, which since migration 197 costs what its batch stamps, and since 205 reads nothing an open transaction
+/// holds back (#1217): before it, a stamp held back by an import read every row behind the horizon on each fenced retry,
+/// and the holder's vote waited behind that.
 /// </para>
 /// </remarks>
 /// <docs>proposals/duty-role-assignment</docs>
@@ -89,7 +91,7 @@ public class RoleFenceWaitSqlTests : EFCoreTestBase {
       .Because("a holder's renewal writes the role row that its own fenced work holds FOR SHARE, so it waits for that "
         + "work to commit. This is the fence working: no vote may change the row between a fenced writer's epoch check "
         + "and its commit. The wait is bounded by the fenced work, which is why the stamp has to cost what its batch "
-        + "stamps (197). IF THIS ASSERTION FAILS BECAUSE THE VOTE NO LONGER WAITS, check that the fence still stops a "
+        + "stamps (197, 205). IF THIS ASSERTION FAILS BECAUSE THE VOTE NO LONGER WAITS, check that the fence still stops a "
         + "reassignment mid-write before accepting it");
 
     await _execAsync(fenced, "ROLLBACK");

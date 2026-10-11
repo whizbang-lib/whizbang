@@ -41,9 +41,7 @@ public class CursorInversionDetectorTests {
   public async Task FindCursorInversionAnchor_AllEventsAfterCursor_ReturnsNullAsync() {
     // Normal forward-apply path: cursor at A, pending events all > A.
     var cursor = _uuidv7();
-    await Task.Delay(2);
     var newer1 = _uuidv7();
-    await Task.Delay(2);
     var newer2 = _uuidv7();
 
     var events = new List<MessageEnvelope<IEvent>> { _envelope(newer1), _envelope(newer2) };
@@ -57,9 +55,7 @@ public class CursorInversionDetectorTests {
     // Inversion: cursor at C, pending events include B (< C) and D (> C).
     // Anchor = B (the violator).
     var older = _uuidv7();
-    await Task.Delay(2);
     var cursor = _uuidv7();
-    await Task.Delay(2);
     var newer = _uuidv7();
 
     var events = new List<MessageEnvelope<IEvent>> { _envelope(older), _envelope(newer) };
@@ -73,11 +69,8 @@ public class CursorInversionDetectorTests {
     // Multiple violators: anchor = earliest. Picking any later one would risk a
     // snapshot already past one of the other violators.
     var oldest = _uuidv7();
-    await Task.Delay(2);
     var older = _uuidv7();
-    await Task.Delay(2);
     var cursor = _uuidv7();
-    await Task.Delay(2);
     var newer = _uuidv7();
 
     var events = new List<MessageEnvelope<IEvent>> { _envelope(older), _envelope(oldest), _envelope(newer) };
@@ -107,7 +100,6 @@ public class CursorInversionDetectorTests {
     // Mixed case: the equal one is benign cursor-lag; the strictly-older one IS a real
     // inversion. Anchor must be the strictly-older event, not the equal one.
     var older = _uuidv7();
-    await Task.Delay(2);
     var cursor = _uuidv7();
 
     var events = new List<MessageEnvelope<IEvent>> { _envelope(cursor), _envelope(older) };
@@ -280,9 +272,7 @@ public class CursorInversionDetectorTests {
     // Must fall back to event_id detector for SOME inversion protection. Imperfect (UUIDv7
     // false positives possible) but better than no protection at all.
     var older = _uuidv7();
-    await Task.Delay(2);
     var cursor = _uuidv7();
-    await Task.Delay(2);
     var newer = _uuidv7();
 
     var anchor = PerspectiveWorker._resolveInversionAnchor(
@@ -316,7 +306,6 @@ public class CursorInversionDetectorTests {
     // already-applied events safely at apply time.
     var streamId = (Guid)TrackedGuid.New();
     var older = _uuidv7();   // pending — lex-less than cursor
-    await Task.Delay(2);
     var cursor = _uuidv7();
 
     var rawLookup = _lookup(_raw(streamId, older, commitSequence: 1000));
@@ -336,7 +325,6 @@ public class CursorInversionDetectorTests {
     // When NEITHER side has commit_sequence (pre-slice-26 legacy data, or stamper is way
     // behind), event_id detector is still the only signal we have — preserve that behavior.
     var older = _uuidv7();
-    await Task.Delay(2);
     var cursor = _uuidv7();
 
     var anchor = PerspectiveWorker._resolveInversionAnchor(

@@ -67,11 +67,11 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
     var instance = await _registerLiveInstanceAsync(conn);
 
     // The first ring creates the row; each later one is presented with a gap inside the rapid
-    // threshold by writing last_attempt_at, so the run advances regardless of how fast this runs.
+    // threshold by writing last_attempt_at in the ring's own transaction, so the run advances
+    // regardless of how fast this runs.
     await _ringAsync(conn, instance);
     for (var i = 0; i < CHURN_RUN; i++) {
-      await _setLastAttemptGapAsync(conn, instance, milliseconds: 10);
-      await _ringAsync(conn, instance);
+      await _ringAfterGapAsync(conn, instance, milliseconds: 10);
     }
 
     var state = await _readStateAsync(conn, instance);
@@ -104,8 +104,7 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
     await _ringAsync(conn, instance);
     for (var i = 0; i < CHURN_RUN * 2; i++) {
       // Twenty seconds: the inter-ring gap per target a fleet was measured at.
-      await _setLastAttemptGapAsync(conn, instance, milliseconds: 20_000);
-      await _ringAsync(conn, instance);
+      await _ringAfterGapAsync(conn, instance, milliseconds: 20_000);
     }
 
     var state = await _readStateAsync(conn, instance);
@@ -138,14 +137,12 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
     // Escalate first, so the window is at its widest and cannot be the reason nothing is suppressed.
     await _ringAsync(conn, instance);
     for (var i = 0; i < CHURN_RUN; i++) {
-      await _setLastAttemptGapAsync(conn, instance, milliseconds: 10);
-      await _ringAsync(conn, instance);
+      await _ringAfterGapAsync(conn, instance, milliseconds: 10);
     }
     await _clearWatermarkAsync(conn, instance);
     var before = await _readStateAsync(conn, instance);
 
-    await _setLastAttemptGapAsync(conn, instance, milliseconds: 10);
-    await _ringAsync(conn, instance);
+    await _ringAfterGapAsync(conn, instance, milliseconds: 10);
 
     var after = await _readStateAsync(conn, instance);
     await Assert.That(after.SuppressedCount).IsEqualTo(before.SuppressedCount)
@@ -175,14 +172,12 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
 
     await _ringAsync(conn, instance);
     for (var i = 0; i < CHURN_RUN; i++) {
-      await _setLastAttemptGapAsync(conn, instance, milliseconds: 10);
-      await _ringAsync(conn, instance);
+      await _ringAfterGapAsync(conn, instance, milliseconds: 10);
     }
-    await _armWatermarkAsync(conn, instance);
     var before = await _readStateAsync(conn, instance);
 
-    await _setLastAttemptGapAsync(conn, instance, milliseconds: 10);
-    await _ringAsync(conn, instance);
+    // Armed at the ring's own instant: the state claim_work leaves when the instance has just found work.
+    await _ringAfterGapAsync(conn, instance, milliseconds: 10, armWatermark: true);
 
     var after = await _readStateAsync(conn, instance);
     await Assert.That(after.SuppressedCount).IsGreaterThan(before.SuppressedCount)
@@ -228,25 +223,41 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Presents the next ring with a chosen gap by writing the column the mechanism computes it from.
-  /// This is why nothing here sleeps: the gap is an input, so it can be stated rather than waited for.
+  /// Rings with a chosen gap since the last attempt, by writing the column the mechanism computes it
+  /// from. This is why nothing here sleeps: the gap is an input, so it can be stated rather than waited for.
   /// </summary>
-  private static async Task _setLastAttemptGapAsync(
-      NpgsqlConnection conn, Guid instance, int milliseconds) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = @"
-      UPDATE wh_notify_state
-      SET last_attempt_at = NOW() - (@ms * INTERVAL '1 millisecond')
-      WHERE instance_id = @id AND payload_kind = @kind";
-    cmd.Parameters.AddWithValue("id", instance);
-    cmd.Parameters.AddWithValue("kind", KIND);
-    cmd.Parameters.AddWithValue("ms", milliseconds);
-    await cmd.ExecuteNonQueryAsync();
+  /// <remarks>
+  /// The write and the ring share ONE transaction, and with it one <c>NOW()</c>: the mechanism measures
+  /// the gap against its transaction's start time, so a gap written by an earlier statement would be the
+  /// stated gap plus however long the test took to reach the ring, raced against the 100 ms rapid
+  /// threshold. Here the gap it reads is exactly <paramref name="milliseconds"/>. The heartbeat (the 30 s
+  /// liveness check) and, when <paramref name="armWatermark"/>, the found-work watermark are stamped at
+  /// the same instant for the same reason.
+  /// </remarks>
+  private static async Task _ringAfterGapAsync(
+      NpgsqlConnection conn, Guid instance, int milliseconds, bool armWatermark = false) {
+    await using var tx = await conn.BeginTransactionAsync();
+    await using (var heartbeat = conn.CreateCommand()) {
+      heartbeat.CommandText = "UPDATE wh_service_instances SET last_heartbeat_at = NOW() WHERE instance_id = @id";
+      heartbeat.Parameters.AddWithValue("id", instance);
+      await heartbeat.ExecuteNonQueryAsync();
+    }
+    await using (var gap = conn.CreateCommand()) {
+      gap.CommandText = @"
+        UPDATE wh_notify_state
+        SET last_attempt_at = NOW() - (@ms * INTERVAL '1 millisecond')
+        WHERE instance_id = @id AND payload_kind = @kind";
+      gap.Parameters.AddWithValue("id", instance);
+      gap.Parameters.AddWithValue("kind", KIND);
+      gap.Parameters.AddWithValue("ms", milliseconds);
+      await gap.ExecuteNonQueryAsync();
+    }
+    if (armWatermark) {
+      await _setWatermarkAsync(conn, instance, armed: true);
+    }
+    await _ringAsync(conn, instance);
+    await tx.CommitAsync();
   }
-
-  /// <summary>The state claim_work leaves when the instance has just found work.</summary>
-  private static async Task _armWatermarkAsync(NpgsqlConnection conn, Guid instance) =>
-    await _setWatermarkAsync(conn, instance, armed: true);
 
   /// <summary>The state an instance that has never drained is in.</summary>
   private static async Task _clearWatermarkAsync(NpgsqlConnection conn, Guid instance) =>

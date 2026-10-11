@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild#blue-green</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveTableRedirectTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveTableRedirectTests.cs</tests>
 public static class PerspectiveTableRedirect {
   private static readonly AsyncLocal<Redirect?> _current = new();
 

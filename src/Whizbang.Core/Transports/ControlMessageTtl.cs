@@ -32,7 +32,7 @@ namespace Whizbang.Core.Transports;
 /// <docs>fundamentals/dispatcher/routing#control-class</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/CheckpointMintTests.cs:Stamp_ThenRead_RoundTripsAsync</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbControlClassTtlTests.cs:PublishAsync_TtlStampedDestination_SetsMessageTimeToLiveAsync</tests>
-/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQControlClassTtlTests.cs:PublishAsync_TtlStampedDestination_SetsExpirationInMillisecondsAsync</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQControlClassTtlTests.cs:PublishAsync_TtlStampedDestination_SetsExpirationInMillisecondsAsync</tests>
 public static class ControlMessageTtl {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>

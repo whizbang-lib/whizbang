@@ -8,8 +8,8 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>messaging/transports/azure-service-bus</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
-/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs:AddAzureServiceBusTransport_OptionsCallback_ReceivesFreshDefaultsAsync</tests>
 public class AzureServiceBusOptions {
   /// <summary>
@@ -28,7 +28,7 @@ public class AzureServiceBusOptions {
   /// TimeoutException. Guards against the Azure Service Bus emulator's occasional
   /// first-send hang (a plain CancellationToken also hangs there). Default 30 seconds.
   /// </summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusErrorHandlingTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusErrorHandlingTests.cs</tests>
   public TimeSpan SendTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
   /// <summary>
@@ -55,7 +55,7 @@ public class AzureServiceBusOptions {
   public int MaxConcurrentCalls { get; set; } = 200;
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishMaxConcurrency_DefaultsTo200Async</tests>
   /// How many stream groups are sent to Azure Service Bus in parallel during a batch publish.
   /// Azure Service Bus requires all messages in a single <c>ServiceBusMessageBatch</c> to share
   /// the same <c>SessionId</c>, so <see cref="ITransport.BulkPublishAsync"/> groups outgoing
@@ -167,15 +167,15 @@ public class AzureServiceBusOptions {
   #region Session / FIFO Ordering
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:EnableSessions_DefaultsToTrueAsync</tests>
   /// When true, subscriptions are created with RequiresSession = true and messages with
   /// a StreamId will have their SessionId set for FIFO ordering within a stream.
   /// Existing subscriptions without sessions are auto-migrated (delete + recreate).
   /// Default: true (FIFO ordering works out of the box)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithEnableSessions_CreatesSessionProcessorAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithoutEnableSessions_CreatesStandardProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithEnableSessions_CreatesSessionProcessorAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:SubscribeAsync_WithoutEnableSessions_CreatesStandardProcessorAsync</tests>
   public bool EnableSessions { get; set; } = true;
 
   /// <summary>
@@ -217,7 +217,7 @@ public class AzureServiceBusOptions {
   /// Default: 200
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#sessions</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:MaxConcurrentSessions_DefaultsTo200Async</tests>
   public int MaxConcurrentSessions { get; set; } = 200;
 
   /// <summary>
@@ -247,11 +247,11 @@ public class AzureServiceBusOptions {
   /// the default 200 sessions)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToSixtySecondsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToSixtySecondsAsync</tests>
   public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
   /// <summary>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
   /// Number of messages the client buffers locally ahead of processing, <b>per session receiver</b>
   /// (session mode) or per processor (non-session mode). Without prefetch (count = 0), every message
   /// requires a synchronous AMQP round-trip — typically the dominant bottleneck at scale.
@@ -303,8 +303,8 @@ public class AzureServiceBusOptions {
   /// Default: true
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableAdaptiveAcceptors_DefaultsToTrueAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:EnableAdaptiveAcceptors_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
   public bool EnableAdaptiveAcceptors { get; set; } = true;
 
   /// <summary>
@@ -315,7 +315,7 @@ public class AzureServiceBusOptions {
   /// Default: 4 (≈0.07 idle ops/sec per subscription at the default 60s idle timeout)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorFloor_DefaultsToFourAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorFloor_DefaultsToFourAsync</tests>
   public int AcceptorFloor { get; set; } = 4;
 
   /// <summary>
@@ -328,7 +328,7 @@ public class AzureServiceBusOptions {
   /// Default: 30 seconds
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync</tests>
   public TimeSpan AcceptorEvaluationInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   #endregion
@@ -345,7 +345,7 @@ public class AzureServiceBusOptions {
   /// Default: true
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableOpsRateSelfCheck_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:EnableOpsRateSelfCheck_DefaultsToTrueAsync</tests>
   public bool EnableOpsRateSelfCheck { get; set; } = true;
 
   /// <summary>
@@ -359,7 +359,7 @@ public class AzureServiceBusOptions {
   /// Default: 100
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:OpsRateWarningThreshold_DefaultsTo100Async</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:OpsRateWarningThreshold_DefaultsTo100Async</tests>
   public double OpsRateWarningThresholdPerSecond { get; set; } = 100;
 
   #endregion
@@ -393,7 +393,7 @@ public class AzureServiceBusOptions {
   /// Default: true
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableReceiveLivenessWatchdog_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:EnableReceiveLivenessWatchdog_DefaultsToTrueAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportLivenessWiringTests.cs</tests>
   public bool EnableReceiveLivenessWatchdog { get; set; } = true;
 
@@ -403,7 +403,7 @@ public class AzureServiceBusOptions {
   /// Default: 60 seconds
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessProbeInterval_DefaultsToSixtySecondsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessProbeInterval_DefaultsToSixtySecondsAsync</tests>
   public TimeSpan ReceiveLivenessProbeInterval { get; set; } = TimeSpan.FromSeconds(60);
 
   /// <summary>
@@ -414,7 +414,7 @@ public class AzureServiceBusOptions {
   /// Default: 5 minutes
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#receive-liveness</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessSilenceThreshold_DefaultsToFiveMinutesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:ReceiveLivenessSilenceThreshold_DefaultsToFiveMinutesAsync</tests>
   public TimeSpan ReceiveLivenessSilenceThreshold { get; set; } = TimeSpan.FromMinutes(5);
 
   #endregion

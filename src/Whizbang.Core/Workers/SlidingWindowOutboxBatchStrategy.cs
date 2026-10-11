@@ -33,7 +33,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>extending/internals/event-ordering-invariant</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/SlidingWindowOutboxBatchStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowOutboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
   private static readonly Guid _defaultStreamKey = Guid.Empty;
 

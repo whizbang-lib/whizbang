@@ -174,4 +174,41 @@ public class ApplicationSchemaObjectsTests : IAsyncDisposable {
       .Because("the second start has to recognize what the first one applied, or every start would "
              + "re-run every object an application owns");
   }
+
+  /// <summary>
+  /// An object whose SQL changed since the last start is applied again, and the ledger says it was a
+  /// re-apply rather than a first one.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task AChangedObjectIsReappliedOnTheNextStartAsync(CancellationToken cancellationToken) {
+    var first = new ApplicationSchemaObject("fold_label", """
+      CREATE OR REPLACE FUNCTION fold_label(value text) RETURNS text
+        LANGUAGE sql IMMUTABLE AS $$ SELECT lower(btrim(value)) $$;
+      """);
+    var changed = new ApplicationSchemaObject("fold_label", """
+      CREATE OR REPLACE FUNCTION fold_label(value text) RETURNS text
+        LANGUAGE sql IMMUTABLE AS $$ SELECT upper(btrim(value)) $$;
+      """);
+
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([first], []))
+      .InitializeSchemaAsync(cancellationToken);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    var firstStatus = await db.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name = 'app:before:fold_label'");
+    await Assert.That(firstStatus).IsEqualTo("First apply");
+
+    await new PostgresSchemaInitializer(_connectionString, [], null, null, new Objects([changed], []))
+      .InitializeSchemaAsync(cancellationToken);
+
+    var status = await db.ExecuteScalarAsync<string>(
+      "SELECT status_description FROM wh_schema_migrations WHERE file_name = 'app:before:fold_label'");
+    await Assert.That(status).IsEqualTo("Re-applied after change")
+      .Because("a changed object has to reach the database, and the ledger has to say it was a change");
+    var folded = await db.ExecuteScalarAsync<string>("SELECT fold_label('  Mixed ')");
+    await Assert.That(folded).IsEqualTo("MIXED")
+      .Because("the second start applied the changed definition, not the first one");
+  }
 }

@@ -4,6 +4,7 @@
 #nullable disable
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
@@ -167,6 +168,84 @@ public class PostgresDriverExtensionsTests {
     var steps = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
       .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().ToList();
     await Assert.That(steps).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A host that has logging gets the prune step's report in its own log: the registration hands the
+  /// step the host's logger and falls back to a null one only where the host has none.
+  /// </summary>
+  [Test]
+  public async Task Postgres_TheClaimPruneStepLogsThroughTheHostsLoggerAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    var hostLogger = new CapturingPruneLogger();
+    services.AddSingleton<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>(hostLogger);
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    var step = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().Single();
+
+    // The step prunes through whatever claim store the run's services hold; this one reports three.
+    var runServices = new ServiceCollection()
+      .AddSingleton<IClaimedEmissionStore>(new PrunesThreeClaimedEmissionStore())
+      .BuildServiceProvider();
+    await step.RunAsync(runServices, CancellationToken.None);
+
+    await Assert.That(hostLogger.Messages).Count().IsEqualTo(1);
+    await Assert.That(hostLogger.Messages[0]).Contains("Pruned 3 claimed-emission claim(s)");
+  }
+
+  /// <summary>
+  /// A host without logging still gets a working prune step: the registration falls back to a logger that
+  /// discards, where the step itself refuses a missing one.
+  /// </summary>
+  [Test]
+  public async Task Postgres_TheClaimPruneStepWorksInAHostWithoutLoggingAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
+    services.RemoveAll(typeof(ILogger<>));
+    services.RemoveAll<ILoggerFactory>();
+
+    await using var sp = services.BuildServiceProvider();
+    using var scope = sp.CreateScope();
+    await Assert.That(scope.ServiceProvider.GetService<ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep>>()).IsNull();
+    var step = scope.ServiceProvider.GetServices<Whizbang.Core.Workers.IMaintenanceStep>()
+      .OfType<Whizbang.Core.Workers.ClaimedEmissionPruneStep>().Single();
+
+    var store = new PrunesThreeClaimedEmissionStore();
+    var runServices = new ServiceCollection().AddSingleton<IClaimedEmissionStore>(store).BuildServiceProvider();
+    await step.RunAsync(runServices, CancellationToken.None);
+
+    await Assert.That(store.PruneCalls).IsEqualTo(1)
+      .Because("the step is built and prunes although the host registered no logging");
+  }
+
+  private sealed class PrunesThreeClaimedEmissionStore : IClaimedEmissionStore {
+    public int PruneCalls { get; private set; }
+
+    public Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken)
+      => Task.FromResult(true);
+
+    public Task<int> PruneExpiredAsync(
+        DateTimeOffset expiredBefore, IReadOnlyCollection<string> retainedKeyPrefixes, int maxClaims, CancellationToken cancellationToken) {
+      PruneCalls++;
+      return Task.FromResult(3);
+    }
+  }
+
+  private sealed class CapturingPruneLogger : ILogger<Whizbang.Core.Workers.ClaimedEmissionPruneStep> {
+    public List<string> Messages { get; } = [];
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception exception, Func<TState, Exception, string> formatter)
+      => Messages.Add(formatter(state, exception));
   }
 
   [Test]

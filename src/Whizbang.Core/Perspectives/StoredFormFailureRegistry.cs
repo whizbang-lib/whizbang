@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="timeProvider">The clock, or the system clock.</param>
 /// <docs>operations/infrastructure/migrations</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormFailureRegistryTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs</tests>
 public sealed class StoredFormFailureRegistry(TimeProvider? timeProvider = null) {
   /// <summary>What is remembered about one perspective and stream.</summary>
   /// <param name="PerspectiveName">The perspective that could not read.</param>

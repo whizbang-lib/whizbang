@@ -115,23 +115,20 @@ public class PerspectiveApplyExactlyOnceTests {
     var eventStore = new ApplyTestEventStore { StreamEnvelopes = { [streamId] = [envelope] } };
     var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
-    // Act — drive the worker.
+    // Act — both items are in the channels before the worker starts, so its one consumer reads them
+    // into ONE batch by construction. Fed by the pump instead, the consumer could wake between the
+    // pump's two writes and split them across batches, which is not the condition under test.
     using var cts = new CancellationTokenSource();
-    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore, o => o.MaxConcurrentDrainConsumers = 1);
+    var idle = _whenIdleAsync(worker);
+    await harness.EnqueueWorkAsync(perspectiveWork, cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
-    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
 
-    // First wait on the DISPATCH itself. Waiting only on a cycle count was racy: the coordinator
-    // increments its cycle at the top of a poll, so cycle 2 can begin before cycle 1's dispatched
-    // work has actually run — the worker would then be canceled with zero invocations recorded and
-    // the "at least one path fired" assertion would fail for reasons unrelated to the contract.
-    await runner.WaitForInvocationsAsync(1, TimeSpan.FromSeconds(10));
-
-    // THEN let cycle 1 finish draining (drain branch + standard branch + completion reporting), so
-    // that if the guard is broken and BOTH paths fire, the second invocation is recorded before we
-    // assert. Without this the test could pass vacuously by asserting too early.
-    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    // Idle is the completion signal: the batch, both its branches and their reporting are done and no
+    // batch is in flight, so a second invocation from a broken guard would already be recorded.
+    await idle.WaitAsync(TimeSpan.FromSeconds(10));
     await _stopWorkerAsync(worker, cts);
 
     // Assert — at most ONE invocation recorded for (streamId, perspectiveName) across all
@@ -218,11 +215,15 @@ public class PerspectiveApplyExactlyOnceTests {
     // Act — wait deterministically on the runner having processed the (deduped) terminal event,
     // not on a claim-cycle count that races the async drain.
     using var cts = new CancellationTokenSource();
-    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore, o => o.MaxConcurrentDrainConsumers = 1);
+    var idle = _whenIdleAsync(worker);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
+    // The terminal event says the first pass ran; idle says every pass has (a drain refetch included),
+    // so a duplicate dispatched by a later pass is recorded before the count is read.
+    await idle.WaitAsync(TimeSpan.FromSeconds(10));
     await _stopWorkerAsync(worker, cts);
 
     // Assert — exactly ONE Apply dispatch per (streamId, eventId) despite the upstream duplicate.
@@ -299,11 +300,15 @@ public class PerspectiveApplyExactlyOnceTests {
     var registry = new SingleRegistry(runner, perspectiveName, [typeof(FakeApplyEvent)]);
 
     using var cts = new CancellationTokenSource();
-    var (worker, harness) = _createWorker(coordinator, registry, eventStore);
+    var (worker, harness) = _createWorker(coordinator, registry, eventStore, o => o.MaxConcurrentDrainConsumers = 1);
+    var idle = _whenIdleAsync(worker);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
+    // The terminal event says the first pass ran; idle says every pass has (a drain refetch included),
+    // so a duplicate dispatched by a later pass is recorded before the count is read.
+    await idle.WaitAsync(TimeSpan.FromSeconds(10));
     await _stopWorkerAsync(worker, cts);
 
     foreach (var (eventId, multiplicity) in new[] { (eventIdA, 1), (eventIdB, 2), (eventIdC, 3) }) {
@@ -379,6 +384,7 @@ public class PerspectiveApplyExactlyOnceTests {
         gateParked.TrySetResult();
       }
     };
+    var releases = new GateReleases(worker, streamId, perspectiveName);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
 
@@ -403,14 +409,16 @@ public class PerspectiveApplyExactlyOnceTests {
       runner.Release();
     }
 
-    // A now returns, marks cooldown, and releases the gate BEFORE B can acquire it (the finally runs after
-    // the apply). B then acquires, sees the event cooled, and skips. Waiting for A's apply to return
-    // guarantees the cooldown mark (its next, synchronous step) happens before we tear down.
-    await runner.FirstReturned.WaitAsync(TimeSpan.FromSeconds(10));
-    await _stopWorkerAsync(worker, cts);
+    // A's apply returns, marks the event processed, and releases the gate; B takes it, finds the event
+    // processed, skips and releases it. Wait for both releases themselves, with the worker running: the
+    // runner returning is not the release, and stopping the worker here would race the apply it stops.
+    var released = await releases.WaitForCountAsync(2).WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(runner.Entries).IsEqualTo(1).Because(
       "with the affinity gate the event is applied exactly once across both drain consumers");
+    await Assert.That(released.All(r => !r.Abandoned)).IsTrue()
+      .Because("both applies ended on their own; neither consumer gave up on one");
+    await _stopWorkerAsync(worker, cts);
   }
 
   /// <summary>
@@ -477,6 +485,7 @@ public class PerspectiveApplyExactlyOnceTests {
         gateParked.TrySetResult();
       }
     };
+    var releases = new GateReleases(worker, streamId, perspectiveName);
     await worker.StartAsync(cts.Token);
 
     try {
@@ -503,12 +512,16 @@ public class PerspectiveApplyExactlyOnceTests {
       runner.Release();
     }
 
-    // A's apply returns, marks the event processed, and only then lets the gate go; B takes it and skips.
-    await drainChannel.SecondDrained.WaitAsync(TimeSpan.FromSeconds(10));
-    await _stopWorkerAsync(worker, cts);
+    // A's apply returns, marks the event processed, and only then lets the gate go; B takes it, skips the
+    // event and releases it in turn. Both releases are waited for themselves.
+    var released = await releases.WaitForCountAsync(2).WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(runner.Entries).IsEqualTo(1).Because(
       "the event is applied once: the second consumer runs only after the abandoned apply marked it processed");
+    await Assert.That(released.Select(r => r.Abandoned).ToList()).IsEquivalentTo([true, false],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the abandoned apply released the gate when it ended, and only then did the second consumer take it");
+    await _stopWorkerAsync(worker, cts);
   }
 
   /// <summary>The drain apply's lease window under the default options: lease seconds less the grace.</summary>
@@ -590,6 +603,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
+    var idle = _whenIdleAsync(worker);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
@@ -598,9 +612,9 @@ public class PerspectiveApplyExactlyOnceTests {
     // waiting for "2 cycles" could cancel the worker mid-flight before cycle 1's work dispatched,
     // and the count came back 0 under parallel load. Wait for the dispatch itself...
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
-    // ...then let a FURTHER cycle run, so "exactly once" is proven against a coordinator that has
-    // had another opportunity to hand the same work out again, rather than merely not-yet-observed.
-    await coordinator.WaitForCyclesAsync(minCycles: 3, timeout: TimeSpan.FromSeconds(10));
+    // ...then for the worker to go idle: everything the coordinator handed out has been processed and
+    // nothing is in flight, so a second dispatch would already be recorded.
+    await idle.WaitAsync(TimeSpan.FromSeconds(10));
     await _stopWorkerAsync(worker, cts);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
@@ -659,6 +673,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
+    var idle = _whenIdleAsync(worker);
     // Awaited, so ExecuteTask is populated before anything touches the worker.
     await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
@@ -666,6 +681,8 @@ public class PerspectiveApplyExactlyOnceTests {
     // asynchronously, so cycle counting would race the drain. Times out (and fails) if the gap-#6
     // fix doesn't surface the __collective__ sink through the drain expansion.
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    // Then idle: every pass is done, so "exactly once" is read after any second dispatch would land.
+    await idle.WaitAsync(TimeSpan.FromSeconds(10));
     await _stopWorkerAsync(worker, cts);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
@@ -727,7 +744,8 @@ public class PerspectiveApplyExactlyOnceTests {
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      // One consumer, so the worker going idle means no batch is in flight (see _whenIdleAsync).
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50, MaxConcurrentDrainConsumers = 1 }),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       completionStrategy: strategy,
@@ -778,8 +796,6 @@ public class PerspectiveApplyExactlyOnceTests {
 
     private readonly ConcurrentBag<Invocation> _invocations = [];
     private readonly TaskCompletionSource _terminalSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly ConcurrentDictionary<int, TaskCompletionSource> _countWaiters = new();
-    private int _invocationCount;
 
     public IReadOnlyCollection<Invocation> Invocations => [.. _invocations];
 
@@ -788,31 +804,10 @@ public class PerspectiveApplyExactlyOnceTests {
     /// cycle-count waits that race drain completion.</summary>
     public Task TerminalProcessed => _terminalSeen.Task;
 
-    /// <summary>
-    /// Completes once at least <paramref name="count"/> invocations have been recorded on ANY path.
-    /// Unlike <see cref="TerminalProcessed"/> — which only fires for the drain path, since the
-    /// standard path records <c>Guid.Empty</c> as its event id — this is path-agnostic, so a test
-    /// that does not know which path will win can still wait on the dispatch itself instead of on a
-    /// cycle boundary (a cycle can tick over before the dispatched work has actually run).
-    /// </summary>
-    public Task WaitForInvocationsAsync(int count, TimeSpan timeout) {
-      var tcs = _countWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
-      if (Volatile.Read(ref _invocationCount) >= count) {
-        tcs.TrySetResult();   // already reached before this waiter registered
-      }
-      return tcs.Task.WaitAsync(timeout);
-    }
-
     private void _record(Invocation invocation) {
       _invocations.Add(invocation);
       if (invocation.EventId == AdvanceToEventId) {
         _terminalSeen.TrySetResult();
-      }
-      var seen = Interlocked.Increment(ref _invocationCount);
-      foreach (var waiter in _countWaiters) {
-        if (seen >= waiter.Key) {
-          waiter.Value.TrySetResult();
-        }
       }
     }
 
@@ -938,18 +933,50 @@ public class PerspectiveApplyExactlyOnceTests {
   }
 
   /// <summary>
-  /// Drain channel that signals each time a drain consumer finishes a stream. <c>MarkDrained</c> runs in
+  /// Records the worker's affinity-gate releases for one (stream, perspective) through its public
+  /// <see cref="PerspectiveWorker.OnStreamAffinityGateReleased"/> event, and completes a wait once a given
+  /// number has happened: the release itself is the signal, not a stop or a report that correlates with it.
+  /// </summary>
+  private sealed class GateReleases {
+    private readonly List<PerspectiveWorker.AffinityGateRelease> _releases = [];
+    private readonly Dictionary<int, TaskCompletionSource<IReadOnlyList<PerspectiveWorker.AffinityGateRelease>>> _waiters = [];
+
+    public GateReleases(PerspectiveWorker worker, Guid streamId, string perspectiveName) {
+      worker.OnStreamAffinityGateReleased += release => {
+        if (release.StreamId != streamId || release.PerspectiveName != perspectiveName) {
+          return;
+        }
+        lock (_releases) {
+          _releases.Add(release);
+          if (_waiters.Remove(_releases.Count, out var waiter)) {
+            waiter.TrySetResult([.. _releases]);
+          }
+        }
+      };
+    }
+
+    public Task<IReadOnlyList<PerspectiveWorker.AffinityGateRelease>> WaitForCountAsync(int count) {
+      lock (_releases) {
+        if (_releases.Count >= count) {
+          return Task.FromResult<IReadOnlyList<PerspectiveWorker.AffinityGateRelease>>([.. _releases.Take(count)]);
+        }
+        var waiter = new TaskCompletionSource<IReadOnlyList<PerspectiveWorker.AffinityGateRelease>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters[count] = waiter;
+        return waiter.Task;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Drain channel that signals when a drain consumer first finishes the watched stream. <c>MarkDrained</c> runs in
   /// the consumer's <c>finally</c>, after the affinity gate scope, so it proves the consumer has left the
   /// gate scope and returned to its loop.
   /// </summary>
   private sealed class DrainedSignalingChannel(Guid watchedStreamId) : IPerspectiveDrainChannel {
     private readonly PerspectiveDrainChannel _inner = new();
     private readonly TaskCompletionSource _firstDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _secondDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _drained;
 
     public Task FirstDrained => _firstDrained.Task;
-    public Task SecondDrained => _secondDrained.Task;
 
     public System.Threading.Channels.ChannelReader<Guid> Reader => _inner.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _inner.WriteAsync(streamId, cancellationToken);
@@ -959,13 +986,8 @@ public class PerspectiveApplyExactlyOnceTests {
 
     public void MarkDrained(Guid streamId) {
       _inner.MarkDrained(streamId);
-      if (streamId != watchedStreamId) {
-        return;
-      }
-      if (Interlocked.Increment(ref _drained) == 1) {
+      if (streamId == watchedStreamId) {
         _firstDrained.TrySetResult();
-      } else {
-        _secondDrained.TrySetResult();
       }
     }
   }
@@ -977,28 +999,14 @@ public class PerspectiveApplyExactlyOnceTests {
   /// </summary>
   private sealed class DualPathCoordinator : IWorkCoordinator {
     private int _cycleCount;
-    private readonly ConcurrentDictionary<int, TaskCompletionSource> _cycleWaiters = new();
 
     public List<Guid> StreamIdsToReturnOnce { get; set; } = [];
     public List<PerspectiveWork> PerspectiveWorkToReturnOnce { get; set; } = [];
     public List<StreamEventData> StreamEventsToReturn { get; set; } = [];
     public int GetStreamEventsCallCount { get; private set; }
 
-    public Task WaitForCyclesAsync(int minCycles, TimeSpan timeout) {
-      var tcs = _cycleWaiters.GetOrAdd(minCycles, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
-      if (Volatile.Read(ref _cycleCount) >= minCycles) {
-        tcs.TrySetResult();   // cycle already passed before this waiter registered — don't hang
-      }
-      return tcs.Task.WaitAsync(timeout);
-    }
-
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
-      foreach (var kvp in _cycleWaiters) {
-        if (current >= kvp.Key) {
-          kvp.Value.TrySetResult();
-        }
-      }
 
       if (current == 1) {
         // First cycle returns both, simulating the overlap condition.
@@ -1168,6 +1176,18 @@ public class PerspectiveApplyExactlyOnceTests {
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
     return (worker, harness);
+  }
+
+  /// <summary>
+  /// Completes when the worker next goes idle. Subscribe before work is handed over: the worker starts
+  /// idle and raises <see cref="PerspectiveWorker.OnWorkProcessingIdle"/> only on the move from active to
+  /// idle, after consecutive empty polls. With a single consumer loop an empty poll happens only between
+  /// batches, so idle means every batch handed over has been processed and none is in flight.
+  /// </summary>
+  private static Task _whenIdleAsync(PerspectiveWorker worker) {
+    var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idle.TrySetResult();
+    return idle.Task;
   }
 
   /// <summary>

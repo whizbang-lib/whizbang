@@ -156,6 +156,59 @@ public class BodyOffloadCipherTests {
   }
 
   [Test]
+  public async Task Rehydrate_UnsealedClaim_WhenTheReceiverRequiresSealing_DeadLettersWithoutDownloadingAsync() {
+    // Whoever can write the store and send a claim could otherwise hand an encrypting receiver a body
+    // in the clear: the hash in the claim is the sender's, so it proves nothing about who wrote it.
+    var jsonOptions = _jsonOptions();
+    var (_, store, _) = _buildReceiver();
+    var claim = await store.UploadAsync("{\"x\":1}"u8.ToArray(), "application/json");
+    var receiver = _buildRequiringReceiver(store, requireSealed: true);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, jsonOptions, receiver, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsTrue();
+    await Assert.That(result.FailureReason).IsEqualTo(MessageFailureReason.BodyClaimUnsealed);
+    await Assert.That(result.RawBody).IsNull().Because("an unsealed body is refused before it is fetched");
+    await Assert.That(store.DownloadCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task Rehydrate_SealedClaim_WhenTheReceiverRequiresSealing_OpensAsync() {
+    var jsonOptions = _jsonOptions();
+    var (_, store, cipher) = _buildReceiver();
+    var body = JsonSerializer.SerializeToUtf8Bytes(_originalEnvelope(), jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
+    var sealedBody = await cipher.SealAsync(body);
+    var claim = (await store.UploadAsync(sealedBody.Bytes, "application/json")) with { Cipher = sealedBody.Descriptor };
+    var receiver = _buildRequiringReceiver(store, requireSealed: true);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, jsonOptions, receiver, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsFalse();
+  }
+
+  [Test]
+  public async Task Rehydrate_UnsealedClaim_ByDefault_StillRehydratesAsync() {
+    // Off by default so a fleet can turn sealing on sender by sender; each receiver opts in once
+    // every sender it hears from seals.
+    var jsonOptions = _jsonOptions();
+    var (_, store, _) = _buildReceiver();
+    var body = JsonSerializer.SerializeToUtf8Bytes(_originalEnvelope(), jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
+    var claim = await store.UploadAsync(body, "application/json");
+    var receiver = _buildRequiringReceiver(store, requireSealed: false);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, jsonOptions, receiver, CancellationToken.None);
+
+    await Assert.That(result.IsDeadLetter).IsFalse();
+    await Assert.That(new MessageBodyOffloadOptions().RequireSealedBodies).IsFalse();
+  }
+
+  [Test]
   public async Task Claim_WithADescriptor_RoundTripsThroughTheInfrastructureJsonContextAsync() {
     var jsonOptions = _jsonOptions();
     var descriptor = new MessageBodyCipherDescriptor("kv", AesGcmEnvelopeCipher.ALGORITHM, "kek-1", RandomNumberGenerator.GetBytes(12), RandomNumberGenerator.GetBytes(60));
@@ -245,6 +298,14 @@ public class BodyOffloadCipherTests {
     return (services.BuildServiceProvider(), store, cipher);
   }
 
+  private static ServiceProvider _buildRequiringReceiver(HashingStore store, bool requireSealed) {
+    var services = new ServiceCollection();
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => store);
+    services.AddWhizbangAesGcmBodyCipher("kv", "kek-1", _kek);
+    services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.RequireSealedBodies = requireSealed);
+    return services.BuildServiceProvider();
+  }
+
   private static JsonSerializerOptions _jsonOptions() => Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
   private static PostSerializeContext _buildContext(byte[] bytes) {
@@ -314,8 +375,12 @@ public class BodyOffloadCipherTests {
       return Task.FromResult(new MessageBodyClaim(ProviderName, key, copy.Length, hash, contentType, DateTimeOffset.UtcNow));
     }
 
-    public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default) =>
-      Task.FromResult<ReadOnlyMemory<byte>>(_bodies[claim.StorageKey]);
+    public int DownloadCount { get; private set; }
+
+    public Task<ReadOnlyMemory<byte>> DownloadAsync(MessageBodyClaim claim, MessageBodyDownloadOptions? options = null, CancellationToken cancellationToken = default) {
+      DownloadCount++;
+      return Task.FromResult<ReadOnlyMemory<byte>>(_bodies[claim.StorageKey]);
+    }
 
     public Task DeleteAsync(MessageBodyClaim claim, MessageBodyDeleteOptions? options = null, CancellationToken cancellationToken = default) {
       _bodies.Remove(claim.StorageKey);

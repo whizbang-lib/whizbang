@@ -23,8 +23,8 @@ namespace Whizbang.Core.Observability;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messages/envelope-registry</docs>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Unregister_ByMessage_RemovesFromRegistryAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
+/// <tests>tests/Whizbang.Observability.Component.Tests/EnvelopeRegistryTests.cs:Unregister_ByMessage_RemovesFromRegistryAsync</tests>
 public interface IEnvelopeRegistry {
   /// <summary>
   /// Registers an envelope in the registry.

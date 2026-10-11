@@ -142,28 +142,16 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
   /// If no [FireAt] attributes, returns the default Inline stages.
   /// Returns empty if all stages are Detached (safe).
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Reads one attribute's arguments in every form the compiler allows.")]
   private static (string[] InlineStages, bool IsDefault) _getInlineStages(INamedTypeSymbol classSymbol) {
     var fireAtStages = new System.Collections.Generic.List<string>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass is not { } attributeClass || !TypeNameUtilities.IsNamed(attributeClass, FIRE_AT_ATTRIBUTE)) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, FIRE_AT_ATTRIBUTE)) {
         continue;
       }
 
-      if (attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int stageValue) {
-        var stageType = attributeClass.GetMembers().OfType<IMethodSymbol>()
-            .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-            ?.Parameters.FirstOrDefault()?.Type;
-
-        if (stageType is INamedTypeSymbol enumType) {
-          var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-              .FirstOrDefault(f => Equals(f.ConstantValue, stageValue));
-
-          if (enumMember is not null) {
-            fireAtStages.Add(enumMember.Name);
-          }
-        }
+      if (AttributeUtilities.FirstArgumentEnumMember(attribute) is { } stage) {
+        fireAtStages.Add(stage.Name);
       }
     }
 

@@ -27,7 +27,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs</code-under-test>
 [Category("Unit")]
 public class SubscriptionExpansionWorkerPriorityTests {
-  private static readonly string _expandedType = TypeNameFormatter.FormatClrTypeName(typeof(SubscriptionExpansionWorkerTests.ExpandedEvent));
+  private static readonly string _expandedType = TypeNameFormatter.FormatClrTypeName(typeof(SubscriptionExpansionTestEvents.ExpandedEvent));
 
   [Test]
   public async Task Expansion_TheBackfillRequestIsBackgroundAsync() {
@@ -80,7 +80,7 @@ public class SubscriptionExpansionWorkerPriorityTests {
   }
 
   private sealed class TypeProvider : IEventTypeProvider {
-    public IReadOnlyList<Type> GetEventTypes() => [typeof(SubscriptionExpansionWorkerTests.ExpandedEvent)];
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(SubscriptionExpansionTestEvents.ExpandedEvent)];
   }
 
   private sealed class InstanceProvider(string serviceName) : IServiceInstanceProvider {

@@ -31,7 +31,7 @@ public class CoalesceGroupResolverTests {
     var time = new FakeTimeProvider(new DateTimeOffset(2026, 8, 18, 12, 0, 0, TimeSpan.Zero));
     var options = new TagOptions();
     options.Coalesce("record-digest", c => c.MaxDelaySeconds = 120);
-    var resolver = new CoalesceGroupResolver(options, time, () => [TagRegistration(typeof(TestDigestEvent), "record-digest")]);
+    var resolver = new CoalesceGroupResolver(options, time, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")]);
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!);
 
     var stamped = resolver.ApplyCoalescePolicy(message);
@@ -47,7 +47,7 @@ public class CoalesceGroupResolverTests {
   public async Task Apply_UnboundTag_PassesThroughUntouchedAsync() {
     var options = new TagOptions();
     options.Coalesce("record-digest", c => { });
-    var resolver = new CoalesceGroupResolver(options, null, () => [TagRegistration(typeof(TestDigestEvent), "some-other-tag")]);
+    var resolver = new CoalesceGroupResolver(options, null, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "some-other-tag")]);
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!);
 
     var result = resolver.ApplyCoalescePolicy(message);
@@ -75,7 +75,7 @@ public class CoalesceGroupResolverTests {
     // shipping, exactly the SystemEventOptions.AuditShipSlideSeconds = 0 bypass generalized.
     var options = new TagOptions();
     options.Coalesce("record-digest", c => c.SlideSeconds = 0);
-    var resolver = new CoalesceGroupResolver(options, null, () => [TagRegistration(typeof(TestDigestEvent), "record-digest")]);
+    var resolver = new CoalesceGroupResolver(options, null, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")]);
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!);
 
     var result = resolver.ApplyCoalescePolicy(message);
@@ -91,7 +91,7 @@ public class CoalesceGroupResolverTests {
     var explicitSchedule = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
     var options = new TagOptions();
     options.Coalesce("record-digest", c => { });
-    var resolver = new CoalesceGroupResolver(options, null, () => [TagRegistration(typeof(TestDigestEvent), "record-digest")]);
+    var resolver = new CoalesceGroupResolver(options, null, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")]);
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!) with { ScheduledFor = explicitSchedule };
 
     var result = resolver.ApplyCoalescePolicy(message);
@@ -106,7 +106,7 @@ public class CoalesceGroupResolverTests {
     var floor = time.GetUtcNow().AddSeconds(60);
     var options = new TagOptions();
     options.Coalesce("record-digest", c => c.MaxDelaySeconds = 999);
-    var resolver = new CoalesceGroupResolver(options, time, () => [TagRegistration(typeof(TestDigestEvent), "record-digest")]);
+    var resolver = new CoalesceGroupResolver(options, time, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")]);
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!) with {
       CoalesceGroup = "record-digest",
       ScheduledFor = floor
@@ -124,7 +124,7 @@ public class CoalesceGroupResolverTests {
     // resolver must match every form BuildTypeLookup covers, never hand-rolled comparisons.
     var options = new TagOptions();
     options.Coalesce("record-digest", c => { });
-    var resolver = new CoalesceGroupResolver(options, null, () => [TagRegistration(typeof(TestDigestEvent), "record-digest")]);
+    var resolver = new CoalesceGroupResolver(options, null, () => [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")]);
     var fullNameForm = $"{typeof(TestDigestEvent).FullName}, {typeof(TestDigestEvent).Assembly.GetName().Name}";
 
     var viaAqn = resolver.ApplyCoalescePolicy(_outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!));
@@ -143,7 +143,7 @@ public class CoalesceGroupResolverTests {
     options.Coalesce("record-digest", c => { });
     var resolver = new CoalesceGroupResolver(options, null, () => {
       enumerations++;
-      return [TagRegistration(typeof(TestDigestEvent), "record-digest")];
+      return [CoalesceTestTags.TagRegistration(typeof(TestDigestEvent), "record-digest")];
     });
     var message = _outboxMessage(typeof(TestDigestEvent).AssemblyQualifiedName!);
 
@@ -177,14 +177,6 @@ public class CoalesceGroupResolverTests {
   }
 
   #region Helpers
-
-  internal static MessageTagRegistration TagRegistration(Type messageType, string tag) => new() {
-    MessageType = messageType,
-    AttributeType = typeof(SignalTagAttribute),
-    Tag = tag,
-    PayloadBuilder = _ => JsonSerializer.SerializeToElement(new { }),
-    AttributeFactory = () => new SignalTagAttribute { Tag = tag }
-  };
 
   private static OutboxMessage _outboxMessage(string messageType) {
     var envelope = new MessageEnvelope<JsonElement> {

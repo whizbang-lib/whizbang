@@ -38,7 +38,7 @@ namespace Whizbang.Testing.Containers;
     "across test processes requires stable credentials.")]
 public static class SharedRabbitMqContainer {
   private const string CONTAINER_NAME = "whizbang-test-rabbitmq";
-  private const string IMAGE_NAME = "rabbitmq:3.13-management-alpine";
+  private const string IMAGE_NAME = CiImages.RABBITMQ;
   private const string USERNAME = "guest";
   private const string PASSWORD = "guest";
   private const int AMQP_PORT = 5672;
@@ -281,7 +281,7 @@ public static class SharedRabbitMqContainer {
                   $"--publish 0:{AMQP_PORT} " +
                   $"--publish 0:{MANAGEMENT_PORT} " +
                   "--restart no " +
-                  IMAGE_NAME,
+                  CiImages.Resolve(IMAGE_NAME),
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,

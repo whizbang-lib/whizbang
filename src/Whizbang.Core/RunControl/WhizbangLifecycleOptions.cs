@@ -10,7 +10,7 @@ namespace Whizbang.Core.RunControl;
 /// record/report before the machine reaches <see cref="LifecyclePhase.Halted"/>.
 /// </summary>
 /// <docs>resilience/managed-resource-run-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleCoordinatorTests.cs:Transition_Timeout_RaisesAckTimeoutAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/RunControl/WhizbangLifecycleCoordinatorTests.cs:Transition_Timeout_RaisesAckTimeoutAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangLifecycleStateTests.cs:FaultAsync_DrivesFaultedThenHaltsAfterRecordWindowAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/RunControl/WhizbangRunControlDiTests.cs:AddWhizbangRunControl_RegistersCoordinatorAndStateAsync</tests>
 public sealed class WhizbangLifecycleOptions {

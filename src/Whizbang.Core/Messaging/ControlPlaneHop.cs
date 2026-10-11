@@ -41,7 +41,7 @@ public static class ControlPlaneHop {
     return new MessageHop {
       Type = HopType.Current,
       Timestamp = timestamp,
-      ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+      ServiceInstance = instanceProvider.ToInfoOrUnknown(),
       Scope = SystemScopeResolver.ForUnscoped(payloadType),
     };
   }

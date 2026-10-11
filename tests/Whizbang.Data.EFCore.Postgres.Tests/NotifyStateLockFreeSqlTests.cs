@@ -138,15 +138,23 @@ public class NotifyStateLockFreeSqlTests : EFCoreTestBase {
     var streamId = (Guid)TrackedGuid.New();
     await _registerInstanceAsync(conn, target);
     await _ownStreamAsync(conn, streamId, target);
-    await _execAsync(conn,
-      "INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at, last_attempt_at, rapid_run) VALUES (@i, 'inbox', NOW() - INTERVAL '2 seconds', NOW() - INTERVAL '30 milliseconds', 4) ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = EXCLUDED.last_work_at, last_attempt_at = EXCLUDED.last_attempt_at, rapid_run = EXCLUDED.rapid_run",
-      ("i", target));
 
+    // Primed and rung in ONE transaction, so one NOW(): the debounce measures the 30 ms gap (against
+    // its 100 ms rapid threshold), the 2 s watermark age and the heartbeat against its transaction's
+    // start time. Primed by an earlier statement, each would grow by however long the test took to
+    // reach the ring; here each is exactly what was written, by construction.
     var received = await _captureNotificationsAsync(conn, target, async () => {
-      await using var cmd = conn.CreateCommand();
-      cmd.CommandText = "SELECT notify_instance_owners('inbox', ARRAY[@sid]::uuid[])";
-      cmd.Parameters.AddWithValue("sid", streamId);
-      await cmd.ExecuteNonQueryAsync();
+      await using var tx = await conn.BeginTransactionAsync();
+      await _registerInstanceAsync(conn, target);
+      await _execAsync(conn,
+        "INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at, last_attempt_at, rapid_run) VALUES (@i, 'inbox', NOW() - INTERVAL '2 seconds', NOW() - INTERVAL '30 milliseconds', 4) ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = EXCLUDED.last_work_at, last_attempt_at = EXCLUDED.last_attempt_at, rapid_run = EXCLUDED.rapid_run",
+        ("i", target), tx);
+      await using (var cmd = conn.CreateCommand()) {
+        cmd.CommandText = "SELECT notify_instance_owners('inbox', ARRAY[@sid]::uuid[])";
+        cmd.Parameters.AddWithValue("sid", streamId);
+        await cmd.ExecuteNonQueryAsync();
+      }
+      await tx.CommitAsync();
     });
 
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{target}")).IsFalse()

@@ -38,7 +38,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <typeparam name="T">The item type — typically a transport message envelope or work item.</typeparam>
 /// <docs>internals/stream-affinity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerStreamSerializerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerStreamSerializerTests.cs</tests>
 public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   private readonly Func<T, Guid?> _streamIdSelector;
   private readonly Func<T, CancellationToken, Task> _processor;

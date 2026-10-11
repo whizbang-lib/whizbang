@@ -28,7 +28,7 @@ public class TransportNamespaceResolverTests {
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");
     var resolver = new TransportNamespaceResolver(
-      options, () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
+      options, () => [CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
 
     var key = resolver.ResolveNamespaceKey(typeof(TestBulkEvent).AssemblyQualifiedName!);
 
@@ -40,7 +40,7 @@ public class TransportNamespaceResolverTests {
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");
     var resolver = new TransportNamespaceResolver(
-      options, () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "some-other-tag")]);
+      options, () => [CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "some-other-tag")]);
 
     var key = resolver.ResolveNamespaceKey(typeof(TestBulkEvent).AssemblyQualifiedName!);
 
@@ -62,7 +62,7 @@ public class TransportNamespaceResolverTests {
   public async Task Resolve_NoBindingsAtAll_ReturnsDefaultAsync() {
     // The spec's key promise: with no routing bindings, everything uses default.
     var resolver = new TransportNamespaceResolver(
-      new TagOptions(), () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
+      new TagOptions(), () => [CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
 
     var key = resolver.ResolveNamespaceKey(typeof(TestBulkEvent).AssemblyQualifiedName!);
 
@@ -89,7 +89,7 @@ public class TransportNamespaceResolverTests {
     options.RouteNamespace("bulk-import", "bulk");
     var resolver = new TransportNamespaceResolver(options, () => {
       calls++;
-      return [CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "bulk-import")];
+      return [CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "bulk-import")];
     });
     var typeName = typeof(TestBulkEvent).AssemblyQualifiedName!;
 
@@ -107,7 +107,7 @@ public class TransportNamespaceResolverTests {
     var options = new TagOptions();
     options.RouteNamespace("bulk-import", "bulk");
     var resolver = new TransportNamespaceResolver(
-      options, () => [CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
+      options, () => [CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "bulk-import")]);
 
     var key = resolver.ResolveNamespaceKey(typeof(TestBulkEvent).FullName!);
 
@@ -123,9 +123,9 @@ public class TransportNamespaceResolverTests {
     options.RouteNamespace("bulk-import", "bulk");
     options.RouteNamespace("sys-control", "control");
     var resolver = new TransportNamespaceResolver(options, () => [
-      CoalesceGroupResolverTests.TagRegistration(typeof(TestBulkEvent), "bulk-import"),
-      CoalesceGroupResolverTests.TagRegistration(typeof(TestOtherBulkEvent), "bulk-import"),
-      CoalesceGroupResolverTests.TagRegistration(typeof(TestControlCommand), "sys-control")
+      CoalesceTestTags.TagRegistration(typeof(TestBulkEvent), "bulk-import"),
+      CoalesceTestTags.TagRegistration(typeof(TestOtherBulkEvent), "bulk-import"),
+      CoalesceTestTags.TagRegistration(typeof(TestControlCommand), "sys-control")
     ]);
 
     var keys = resolver.ResolveConsumeNamespaceKeys([

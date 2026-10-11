@@ -28,7 +28,7 @@ namespace Whizbang.Core.DependencyInjection;
 /// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/registration-validation</docs>
-/// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationStartupTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/DependencyInjection/RegistrationValidationStartupTests.cs</tests>
 /// <remarks>Creates the startup check.</remarks>
 /// <param name="services">The collection to validate, as it stands at startup.</param>
 /// <param name="requirements">The generated manifest of constructor dependencies.</param>

@@ -11,9 +11,9 @@ using System.Reflection;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Three-pass cascade implementation of <see cref="IMessageTypeBinder"/>. Caches every
-/// successful resolution per process so subsequent lookups are O(1) regardless of which
-/// pass produced the original hit.
+/// Three-pass cascade implementation of <see cref="IMessageTypeBinder"/>. Caches each
+/// resolution, hit or miss, up to <see cref="Capacity"/> names, so repeat lookups are O(1)
+/// regardless of which pass produced the original answer.
 /// </summary>
 /// <remarks>
 /// Reflection over loaded assemblies is contained to the binder. Whizbang.Core is otherwise
@@ -28,7 +28,31 @@ namespace Whizbang.Core.Messaging;
 [SuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCode'",
   Justification = "Type lookup over loaded assemblies is the binder's whole job; assemblies are AOT-included.")]
 public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
+  /// <summary>The most names a binder remembers unless constructed with another capacity.</summary>
+  public const int DEFAULT_CAPACITY = 4096;
+
   private readonly ConcurrentDictionary<string, (Type? Type, MessageTypeBinderPass Pass)> _cache = new(StringComparer.Ordinal);
+
+  /// <summary>Creates a binder that remembers at most <see cref="DEFAULT_CAPACITY"/> names.</summary>
+  public MultiPassMessageTypeBinder() : this(DEFAULT_CAPACITY) {
+  }
+
+  /// <summary>Creates a binder that remembers at most <paramref name="capacity"/> names.</summary>
+  /// <param name="capacity">The most names cached; past it, names still resolve but are not remembered.</param>
+  /// <remarks>
+  /// The names come from message senders, and one type has endless spellings (pass 3 ignores the
+  /// assembly part), so an unbounded cache would let a sender grow memory without limit.
+  /// </remarks>
+  public MultiPassMessageTypeBinder(int capacity) {
+    ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+    Capacity = capacity;
+  }
+
+  /// <summary>The most names this binder caches.</summary>
+  public int Capacity { get; }
+
+  /// <summary>How many names are cached now.</summary>
+  internal int CachedCount => _cache.Count;
 
   /// <inheritdoc />
   public Type? Bind(string assemblyQualifiedName) => BindWithDiagnostics(assemblyQualifiedName).Type;
@@ -44,7 +68,11 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
     }
 
     var result = _resolve(assemblyQualifiedName);
-    _cache[assemblyQualifiedName] = result;
+    // Count is a snapshot, so concurrent callers can overshoot by a few entries; the bound holds to
+    // within the number of threads binding at once.
+    if (_cache.Count < Capacity) {
+      _cache[assemblyQualifiedName] = result;
+    }
     return result;
   }
 

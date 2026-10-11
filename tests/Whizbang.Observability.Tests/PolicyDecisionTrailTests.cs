@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -84,12 +85,11 @@ public class PolicyDecisionTrailTests {
   [Test]
   public async Task RecordDecision_AddsDecisionWithAllPropertiesAsync() {
     // Arrange
-    var trail = new PolicyDecisionTrail();
-    var before = DateTimeOffset.UtcNow;
+    var now = new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+    var trail = new PolicyDecisionTrail(new FakeTimeProvider(now));
 
     // Act
     trail.RecordDecision("TestPolicy", "TestRule", true, "TestConfig", "Test reason");
-    var after = DateTimeOffset.UtcNow;
 
     // Assert
     await Assert.That(trail.Decisions).Count().IsEqualTo(1);
@@ -99,8 +99,8 @@ public class PolicyDecisionTrailTests {
     await Assert.That(decision.Matched).IsTrue();
     await Assert.That(decision.Configuration).IsEqualTo("TestConfig");
     await Assert.That(decision.Reason).IsEqualTo("Test reason");
-    await Assert.That(decision.Timestamp).IsGreaterThanOrEqualTo(before);
-    await Assert.That(decision.Timestamp).IsLessThanOrEqualTo(after);
+    await Assert.That(decision.Timestamp).IsEqualTo(now)
+      .Because("the decision is stamped from the trail's clock");
   }
 
   [Test]
@@ -118,9 +118,7 @@ public class PolicyDecisionTrailTests {
     // Arrange
     var trail = new PolicyDecisionTrail();
     trail.RecordDecision("Policy1", "Rule1", true, null, "First");
-    await Task.Delay(10); // Ensure different timestamps
     trail.RecordDecision("Policy2", "Rule2", true, null, "Second");
-    await Task.Delay(10);
     trail.RecordDecision("Policy3", "Rule3", true, null, "Third");
 
     // Act
@@ -138,9 +136,7 @@ public class PolicyDecisionTrailTests {
     // Arrange
     var trail = new PolicyDecisionTrail();
     trail.RecordDecision("Policy1", "Rule1", false, null, "First unmatched");
-    await Task.Delay(10); // Ensure different timestamps
     trail.RecordDecision("Policy2", "Rule2", false, null, "Second unmatched");
-    await Task.Delay(10);
     trail.RecordDecision("Policy3", "Rule3", false, null, "Third unmatched");
 
     // Act

@@ -45,7 +45,6 @@ public class MessageIdAdditionalTests {
   [Test]
   public async Task RelationalOperators_AcrossPairAsync() {
     var a = MessageId.New();
-    await Task.Delay(2);
     var b = MessageId.New();
     await Assert.That(a < b).IsTrue();
     await Assert.That(a <= b).IsTrue();
@@ -62,7 +61,6 @@ public class MessageIdAdditionalTests {
   [Test]
   public async Task CompareToIWhizbangId_WithOther_DelegatesToGuidCompareAsync() {
     var a = MessageId.New();
-    await Task.Delay(2);
     var b = MessageId.New();
     IWhizbangId bRef = b;
     await Assert.That(a.CompareTo(bRef)).IsLessThan(0);

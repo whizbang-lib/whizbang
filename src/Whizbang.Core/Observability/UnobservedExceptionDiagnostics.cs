@@ -160,9 +160,9 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
 
 /// <summary>Configuration for <see cref="UnobservedExceptionDiagnostics"/>.</summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceAllowList_NonMatchingType_IsExcludedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceAllowList_NullOrEmpty_MatchesAllTypesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceException_EnabledWithMatchingAllowList_LogsAtDebugAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceAllowList_NonMatchingType_IsExcludedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceAllowList_NullOrEmpty_MatchesAllTypesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/UnobservedExceptionDiagnosticsTests.cs:FirstChanceException_EnabledWithMatchingAllowList_LogsAtDebugAsync</tests>
 public sealed class UnobservedExceptionDiagnosticsOptions {
   /// <summary>
   /// When true, subscribes <see cref="AppDomain.FirstChanceException"/> and logs at Debug.

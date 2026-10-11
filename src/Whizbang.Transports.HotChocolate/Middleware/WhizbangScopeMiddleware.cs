@@ -14,7 +14,8 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 
 /// <summary>
 /// ASP.NET Core middleware that extracts scope from HTTP context and sets it in the scope context accessor.
-/// Supports extraction from JWT claims and custom headers.
+/// The tenant, user, organization and customer come from the authenticated principal's claims. A request
+/// header is read only where the application names one, which is safe only behind a trusted gateway.
 /// </summary>
 /// <docs>apis/graphql/scoping#middleware</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Integration.Tests/ScopedQueryTests.cs</tests>
@@ -26,7 +27,6 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// // Or with custom options
 /// app.UseWhizbangScope(options => {
 ///     options.TenantIdClaimType = "tenant_id";
-///     options.TenantIdHeaderName = "X-Tenant-Id";
 /// });
 /// </example>
 public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
@@ -107,10 +107,11 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   }
 
   /// <summary>
-  /// Extracts a value trying multiple claim types in order (for fallback scenarios).
-  /// Tries each claim type until one is found, then falls back to header.
+  /// Extracts a value trying multiple claim types in order (for fallback scenarios). Falls back to a request
+  /// header only when the application named one: a header is written by the caller, so it is never read as an
+  /// identity unless the application has opted in.
   /// </summary>
-  private static string? _extractValueWithFallback(HttpContext context, IEnumerable<string> claimTypes, string headerName) {
+  private static string? _extractValueWithFallback(HttpContext context, IEnumerable<string> claimTypes, string? headerName) {
     // Try each claim type in order
     foreach (var claimType in claimTypes) {
       var claimValue = context.User.FindFirst(claimType)?.Value;
@@ -119,8 +120,9 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
       }
     }
 
-    // Then try header
-    if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
+    // Then the header, only where the application opted in
+    if (!string.IsNullOrEmpty(headerName) &&
+        context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
         !string.IsNullOrEmpty(headerValue)) {
       return headerValue;
     }
@@ -222,7 +224,6 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
 /// <example>
 /// services.Configure&lt;WhizbangScopeOptions&gt;(options => {
 ///     options.TenantIdClaimType = "tenant_id";
-///     options.TenantIdHeaderName = "X-Tenant-Id";
 ///     options.ExtensionClaimMappings["region"] = "Region";
 /// });
 /// </example>
@@ -245,9 +246,15 @@ public class WhizbangScopeOptions {
   public List<string> TenantIdClaimTypes { get; set; } = ["tenant_id"];
 
   /// <summary>
-  /// Header name for tenant ID. Default: "X-Tenant-Id".
+  /// Request header to read the tenant id from when the authenticated principal has no tenant id claim, or
+  /// <see langword="null"/> (the default) to never read one.
   /// </summary>
-  public string TenantIdHeaderName { get; set; } = "X-Tenant-Id";
+  /// <remarks>
+  /// A header is written by the caller. Set this only when every request reaches the application through a
+  /// trusted gateway that authenticates the caller and sets the header itself (removing any the caller sent);
+  /// otherwise a caller chooses its own tenant id by sending the header. For example, <c>"X-Tenant-Id"</c>.
+  /// </remarks>
+  public string? TenantIdHeaderName { get; set; }
 
   /// <summary>
   /// Claim types for user ID, tried in order until one is found.
@@ -272,9 +279,15 @@ public class WhizbangScopeOptions {
   }
 
   /// <summary>
-  /// Header name for user ID. Default: "X-User-Id".
+  /// Request header to read the user id from when the authenticated principal has no user id claim, or
+  /// <see langword="null"/> (the default) to never read one.
   /// </summary>
-  public string UserIdHeaderName { get; set; } = "X-User-Id";
+  /// <remarks>
+  /// A header is written by the caller. Set this only when every request reaches the application through a
+  /// trusted gateway that authenticates the caller and sets the header itself (removing any the caller sent);
+  /// otherwise a caller chooses its own user id by sending the header. For example, <c>"X-User-Id"</c>.
+  /// </remarks>
+  public string? UserIdHeaderName { get; set; }
 
   /// <summary>
   /// Primary claim type for organization ID. Default: "org_id". Backwards-compatible
@@ -291,9 +304,15 @@ public class WhizbangScopeOptions {
   public List<string> OrganizationIdClaimTypes { get; set; } = ["org_id"];
 
   /// <summary>
-  /// Header name for organization ID. Default: "X-Organization-Id".
+  /// Request header to read the organization id from when the authenticated principal has no organization id claim, or
+  /// <see langword="null"/> (the default) to never read one.
   /// </summary>
-  public string OrganizationIdHeaderName { get; set; } = "X-Organization-Id";
+  /// <remarks>
+  /// A header is written by the caller. Set this only when every request reaches the application through a
+  /// trusted gateway that authenticates the caller and sets the header itself (removing any the caller sent);
+  /// otherwise a caller chooses its own organization id by sending the header. For example, <c>"X-Organization-Id"</c>.
+  /// </remarks>
+  public string? OrganizationIdHeaderName { get; set; }
 
   /// <summary>
   /// Primary claim type for customer ID. Default: "customer_id". Backwards-compatible
@@ -310,9 +329,15 @@ public class WhizbangScopeOptions {
   public List<string> CustomerIdClaimTypes { get; set; } = ["customer_id"];
 
   /// <summary>
-  /// Header name for customer ID. Default: "X-Customer-Id".
+  /// Request header to read the customer id from when the authenticated principal has no customer id claim, or
+  /// <see langword="null"/> (the default) to never read one.
   /// </summary>
-  public string CustomerIdHeaderName { get; set; } = "X-Customer-Id";
+  /// <remarks>
+  /// A header is written by the caller. Set this only when every request reaches the application through a
+  /// trusted gateway that authenticates the caller and sets the header itself (removing any the caller sent);
+  /// otherwise a caller chooses its own customer id by sending the header. For example, <c>"X-Customer-Id"</c>.
+  /// </remarks>
+  public string? CustomerIdHeaderName { get; set; }
 
   /// <summary>
   /// Header name for the inbound correlation id. Default: "X-Correlation-ID". When present and parseable as a
@@ -375,7 +400,12 @@ public class WhizbangScopeOptions {
   public Dictionary<string, string> ExtensionClaimMappings { get; } = [];
 
   /// <summary>
-  /// Custom header name to extension key mappings.
+  /// Custom header name to extension key mappings. Empty by default.
   /// </summary>
+  /// <remarks>
+  /// A mapped header's value becomes part of the caller's scope, and a header is written by the caller. Map one
+  /// only when a trusted gateway sets it; anything the scope is used to authorize or filter by belongs in
+  /// <see cref="ExtensionClaimMappings"/>.
+  /// </remarks>
   public Dictionary<string, string> ExtensionHeaderMappings { get; } = [];
 }

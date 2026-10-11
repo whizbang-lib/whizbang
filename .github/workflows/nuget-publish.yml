@@ -39,6 +39,12 @@ on:
         type: string
         default: ''
     secrets:
+      # Required, so a caller without them fails at the call, before anything reaches NuGet, rather
+      # than at the tag step after the packages are already public.
+      RELEASE_APP_ID:
+        required: true
+      RELEASE_APP_PRIVATE_KEY:
+        required: true
       PUSHOVER_API_TOKEN:
         required: false
       PUSHOVER_USER_KEY_1:
@@ -79,6 +85,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A manual publish takes any ref. Only a commit already on a protected branch (develop, main, a release
+      # branch) has passed review and CI, so anything else is refused before it is built. This guards the ref
+      # input; the environment's deployment-branch policy is what guards a dispatch from an unprotected branch,
+      # since that run uses the branch's own copy of this file.
+      - name: Refuse a ref no protected branch contains
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          git fetch --quiet --no-tags origin \
+            '+refs/heads/develop:refs/remotes/origin/develop' \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/release/*:refs/remotes/origin/release/*'
+          for branch in $(git for-each-ref --format='%(refname)' refs/remotes/origin/develop refs/remotes/origin/main 'refs/remotes/origin/release/*'); do
+            if git merge-base --is-ancestor "$sha" "$branch"; then
+              echo "$sha is on ${branch#refs/remotes/origin/}; publishing."
+              exit 0
+            fi
+          done
+          echo "::error title=Unreviewed ref::$sha is not on develop, main or a release branch. Merge it through a pull request first."
+          exit 1
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
@@ -132,13 +161,26 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # tag + GitHub release creation (only job that needs write)
+      contents: write   # GitHub release creation (only job that needs write); the tag goes through the app
     steps:
+      # The release app pushes the tag: the tag ruleset lets only that app create v* tags, and GitHub Actions
+      # cannot be a ruleset bypass actor. Workflows: GitHub refuses an app a ref whose commit changes
+      # .github/workflows without it.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Download packages artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

@@ -114,6 +114,13 @@ internal sealed class RecordingTransportLogger : ILogger<AzureServiceBusTranspor
     }
   }
 
+  /// <summary>How many entries at <paramref name="level"/> contain <paramref name="fragment"/>.</summary>
+  public int Count(LogLevel level, string fragment) {
+    lock (_sync) {
+      return _entries.Count(e => e.Level == level && e.Message.Contains(fragment, StringComparison.Ordinal));
+    }
+  }
+
   IDisposable? ILogger.BeginScope<TState>(TState state) => null;
 
   public bool IsEnabled(LogLevel logLevel) => true;

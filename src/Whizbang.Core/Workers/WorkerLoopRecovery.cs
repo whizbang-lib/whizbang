@@ -32,7 +32,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/workers/transient-database-failures</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerLoopRecoveryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/WorkerLoopRecoveryTests.cs</tests>
 public sealed class WorkerLoopRecovery {
 #pragma warning disable CA1707 // Repo style: public const/static-readonly fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>The wait after the first failure of a run.</summary>

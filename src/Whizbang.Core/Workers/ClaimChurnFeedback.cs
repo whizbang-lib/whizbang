@@ -34,7 +34,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimChurnFeedbackTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimChurnFeedbackTests.cs</tests>
 public sealed class ClaimChurnFeedback {
 
   private int _observed;

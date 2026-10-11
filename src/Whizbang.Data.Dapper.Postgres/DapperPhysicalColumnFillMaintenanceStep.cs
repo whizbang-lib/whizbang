@@ -73,10 +73,9 @@ public sealed class DapperPhysicalColumnFillMaintenanceStep(
     }
 
     var key = PhysicalColumnFill.ClaimKey(SCHEMA, _timeProvider.GetUtcNow());
-    var claimed = services.GetService<IClaimedEmissionStore>() is { } claims
-      ? await claims.TryClaimAsync(key, Guid.CreateVersion7(), cancellationToken).ConfigureAwait(false)
-      : await PhysicalColumnFill.TryClaimAsync(connection, QUOTED_SCHEMA, key, cancellationToken).ConfigureAwait(false);
-    if (!claimed) {
+    if (!await FleetClaim.TryClaimAsync(
+        services.GetService<IClaimedEmissionStore>(), connection, QUOTED_SCHEMA, key, cancellationToken)
+        .ConfigureAwait(false)) {
       return;
     }
 

@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>operations/workers/perspective-worker#rewind-replay</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveReplayReaderTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathReplayTests.cs:Worker_RewindWithoutReplayReader_FallsBackToTriggerEnvelopeLookupAsync</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/Perspectives/RewindScenarioTests.cs:Rewind_PostAllPerspectivesAndLifecycle_FireOncePerIsNewEvent_Async</tests>
 public interface IPerspectiveReplayReader {
 

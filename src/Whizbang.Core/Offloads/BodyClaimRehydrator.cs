@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -57,8 +58,14 @@ public static class BodyClaimRehydrator {
         $"Receiver does not have an IMessageBodyStore registered under provider name '{claim.ProviderName}'. Register the matching AddWhizbang*Offload(name) (e.g., AddWhizbangInMemoryOffload, AddWhizbangAzureBlobOffload) on the receiver service.");
     }
 
-    var downloadTimeout = serviceProvider.GetService<IOptions<MessageBodyOffloadOptions>>()?.Value?.DownloadTimeout
-      ?? TimeSpan.FromSeconds(100);
+    var offloadOptions = serviceProvider.GetOptionsValue<MessageBodyOffloadOptions>();
+    if (claim.Cipher is null && offloadOptions?.RequireSealedBodies == true) {
+      return RehydrateResult.DeadLetter(
+        MessageFailureReason.BodyClaimUnsealed,
+        $"Body claim for storage key '{claim.StorageKey}' on provider '{claim.ProviderName}' is not sealed, and this receiver requires sealed bodies (MessageBodyOffloadOptions.RequireSealedBodies). Configure a cipher on the sender.");
+    }
+
+    var downloadTimeout = offloadOptions?.DownloadTimeout ?? TimeSpan.FromSeconds(100);
     ReadOnlyMemory<byte> downloaded;
     using (var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)) {
       downloadCts.CancelAfter(downloadTimeout);
@@ -186,7 +193,7 @@ public sealed record RehydrateResult {
   /// Null when the body was never obtained (unknown provider, hash mismatch, unopenable cipher).
   /// </summary>
   /// <docs>fundamentals/offloads/message-body-store</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:OffloadedBodyUnreadable_DeadLetteredWithDownloadedBodyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs:OffloadedBodyUnreadable_DeadLetteredWithDownloadedBodyAsync</tests>
   public string? RawBody { get; init; }
 
   /// <summary>True when the input envelope carried a body claim and was successfully rehydrated.</summary>

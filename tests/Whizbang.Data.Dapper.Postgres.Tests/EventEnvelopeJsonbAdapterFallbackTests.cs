@@ -163,4 +163,45 @@ public class EventEnvelopeJsonbAdapterFallbackTests {
     await Assert.That(scope!.Scope.TenantId).IsEqualTo("legacy-tenant");
     await Assert.That(scope.Scope.UserId).IsEqualTo("legacy-user");
   }
+
+  // A row whose metadata column holds JSON null has no envelope to rebuild. Reading it must fail
+  // loudly, naming the column, rather than hand back an envelope with an invented message id.
+  [Test]
+  public async Task FromJsonb_MetadataIsJsonNull_FailsNamingTheMetadataAsync() {
+    var adapter = _createAdapter();
+    var real = adapter.ToJsonb(_envelope());
+    var row = new JsonbPersistenceModel { DataJson = real.DataJson, MetadataJson = "null", ScopeJson = real.ScopeJson };
+
+    await Assert.That(() => adapter.FromJsonb<TestEvent>(row))
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("metadata");
+  }
+
+  // The message id is the envelope's identity. Metadata without one cannot be read back as an
+  // envelope, because any id put in its place would make the event a different message.
+  [Test]
+  public async Task FromJsonb_MetadataWithoutAMessageId_FailsNamingTheMissingIdAsync() {
+    var adapter = _createAdapter();
+    var real = adapter.ToJsonb(_envelope());
+    var metadata = JsonNode.Parse(real.MetadataJson)!.AsObject();
+    metadata.Remove("message_id");
+    var row = new JsonbPersistenceModel { DataJson = real.DataJson, MetadataJson = metadata.ToJsonString(), ScopeJson = real.ScopeJson };
+
+    await Assert.That(() => adapter.FromJsonb<TestEvent>(row))
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("message_id not found");
+  }
+
+  // An event whose data column holds JSON null has no payload, and an envelope with a null payload
+  // would fail later in a receptor that cannot say which row it came from.
+  [Test]
+  public async Task FromJsonb_DataIsJsonNull_FailsNamingTheEventDataAsync() {
+    var adapter = _createAdapter();
+    var real = adapter.ToJsonb(_envelope());
+    var row = new JsonbPersistenceModel { DataJson = "null", MetadataJson = real.MetadataJson, ScopeJson = real.ScopeJson };
+
+    await Assert.That(() => adapter.FromJsonb<TestEvent>(row))
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("event data");
+  }
 }

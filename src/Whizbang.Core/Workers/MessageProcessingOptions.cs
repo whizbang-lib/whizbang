@@ -47,7 +47,7 @@ public sealed class MessageProcessingOptions {
   /// <docs>messaging/transports/transport-consumer#concurrency</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:DefaultValues_MatchDocumentedDefaultsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessageProcessingOptionsTests.cs:MaxConcurrentMessages_ZeroDisablesSemaphoreAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ServiceBusConsumerWorkerGapTests.cs:HandleMessage_ConcurrencyLimitDisabled_ProcessesWithoutSemaphoreAsync</tests>
   public int MaxConcurrentMessages { get; set; } = 40;
 
   /// <summary>

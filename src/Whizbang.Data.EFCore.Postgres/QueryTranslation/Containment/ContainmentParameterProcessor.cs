@@ -81,6 +81,21 @@ public class ContainmentParameterProcessor(
         ? (column, key, candidates)
         : null;
 
+  /// <summary>Whether the candidate list bound to <paramref name="parameterName"/> includes a null.</summary>
+  /// <remarks>
+  /// Only a list can include a null. A parameter the values do not hold, a list that is itself null,
+  /// and a string (enumerable, but one value rather than a list of them) all answer no, which leaves
+  /// the filter as compiled.
+  /// </remarks>
+  /// <param name="values">The query's parameter values.</param>
+  /// <param name="parameterName">The candidate list's parameter.</param>
+  /// <returns>True when the list holds at least one null candidate.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/ContainmentNullCandidateTests.cs</tests>
+  internal static bool HoldsNullCandidate(IReadOnlyDictionary<string, object?> values, string parameterName) =>
+    values.TryGetValue(parameterName, out var value)
+    && value is IEnumerable candidates and not string
+    && candidates.Cast<object?>().Any(candidate => candidate is null);
+
   /// <summary>Whether a candidate list that could hold a null appears anywhere in the query.</summary>
   private sealed class NullableCandidateSetFinder : ExpressionVisitor {
     public bool Found { get; private set; }
@@ -110,10 +125,7 @@ public class ContainmentParameterProcessor(
       return _holdsNull(membership.Candidates.Name) ? _guarded(node, membership.Column, membership.Key) : node;
     }
 
-    private bool _holdsNull(string parameterName) =>
-      _values!.TryGetValue(parameterName, out var value)
-      && value is IEnumerable candidates and not string
-      && candidates.Cast<object?>().Any(candidate => candidate is null);
+    private bool _holdsNull(string parameterName) => HoldsNullCandidate(_values!, parameterName);
 
     /// <summary>The membership test, or the row simply not carrying the key at all.</summary>
     private static SqlBinaryExpression _guarded(Expression membership, ColumnExpression column, string key) =>

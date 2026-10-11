@@ -261,10 +261,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     string className;
     var containingTypeDeclaration = invocation.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault();
     if (containingTypeDeclaration is not null) {
-      className = semanticModel.GetDeclaredSymbol(containingTypeDeclaration, cancellationToken)
-          is INamedTypeSymbol declaredTypeSymbol
-          ? TypeNameHelper.GetFullyQualifiedName(declaredTypeSymbol)
-          : "<unknown>";
+      // Every type declaration in a tree of the compilation binds to a type symbol, even one written where
+      // C# does not allow it: the compiler's error recovery binds a class inside a method body as a member of
+      // the enclosing type. So the declared symbol is always there to name.
+      className = TypeNameHelper.GetFullyQualifiedName(
+          (ITypeSymbol)semanticModel.GetDeclaredSymbol(containingTypeDeclaration, cancellationToken)!);
     } else {
       // Top-level statements: ask the semantic model for the enclosing symbol, which is the
       // compiler-synthesized entry point, and it always lives in the synthesized Program type.

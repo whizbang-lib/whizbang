@@ -78,4 +78,34 @@ public class ProviderCapabilitiesTests {
     await Assert.That(description).Contains(ProviderCapabilities.NpgsqlProviderVersion.ToString());
     await Assert.That(description).Contains("verified");
   }
+
+  // ── The ranges themselves, against any pair (the loaded pair answers only one way) ──
+
+  [Test]
+  [Arguments("10.0.0", "10.0.0", true)]
+  [Arguments("10.9.9", "10.9.9", true)]
+  [Arguments("9.9.9", "10.0.0", false)]
+  [Arguments("11.0.0", "10.0.0", false)]
+  [Arguments("10.0.0", "9.9.9", false)]
+  [Arguments("10.0.0", "11.0.0", false)]
+  public async Task IsValidated_IsTrueOnlyWhenBothVersionsAreInsideTheirRangesAsync(string efCore, string npgsql, bool expected) {
+    await Assert.That(ProviderCapabilities.IsValidated(Version.Parse(efCore), Version.Parse(npgsql))).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task Describe_ForAnUnverifiedPairWithNoRewrite_SaysSoAsync() {
+    var description = ProviderCapabilities.Describe(new Version(11, 0, 0), new Version(10, 0, 0), rewriteRequired: false);
+
+    await Assert.That(description).Contains("EF Core 11.0.0");
+    await Assert.That(description).Contains("containment rewrite not required");
+    await Assert.That(description).Contains("combination NOT verified");
+  }
+
+  [Test]
+  public async Task Describe_ForAVerifiedPairNeedingTheRewrite_SaysSoAsync() {
+    var description = ProviderCapabilities.Describe(new Version(10, 0, 1), new Version(10, 0, 1), rewriteRequired: true);
+
+    await Assert.That(description).Contains("containment rewrite required");
+    await Assert.That(description).Contains("combination verified");
+  }
 }

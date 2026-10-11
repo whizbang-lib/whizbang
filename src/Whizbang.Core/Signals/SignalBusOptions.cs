@@ -8,7 +8,7 @@ namespace Whizbang.Core.Signals;
 /// Defaults are production-safe; tests shrink the timeout for deterministic failure paths.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
-/// <tests>tests/Whizbang.Core.Tests/Signals/SignalBusProbeBackoffTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Signals/SignalBusProbeBackoffTests.cs</tests>
 public sealed class SignalBusOptions {
   /// <summary>
   /// How long a single transport's loopback probe may take before the wire route is marked failed.

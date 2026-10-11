@@ -180,7 +180,6 @@ public class WhizbangIdTests {
   public async Task WhizbangId_CompareTo_OrdersChronologicallyAsync() {
     // Arrange
     var earlier = WhizbangId.New();
-    await Task.Delay(10);
     var later = WhizbangId.New();
 
     // Act & Assert
@@ -192,7 +191,6 @@ public class WhizbangIdTests {
   public async Task WhizbangId_ComparisonOperators_WorkCorrectlyAsync() {
     // Arrange
     var earlier = WhizbangId.New();
-    await Task.Delay(10);
     var later = WhizbangId.New();
 
     // Act & Assert

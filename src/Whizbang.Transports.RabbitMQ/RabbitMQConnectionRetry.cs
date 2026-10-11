@@ -12,7 +12,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// Handles RabbitMQ connection establishment with retry and exponential backoff.
 /// </summary>
 /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
-/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMQConnectionRetryTests.cs</tests>
 public sealed partial class RabbitMQConnectionRetry {
   private readonly RabbitMQOptions _options;
   private readonly ILogger? _logger;

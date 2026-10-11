@@ -772,10 +772,10 @@ public static class VectorSearchExtensions {
     return Expression.MakeMemberAccess(holderExpr, _vectorHolderValueProperty);
   }
 
-  // AOT-safe: Extract PropertyInfo from compile-time expression
+  // AOT-safe: Extract PropertyInfo from compile-time expression. Value is a property, so the member
+  // of its access expression is always a PropertyInfo; the cast states that rather than testing it.
   private static readonly System.Reflection.PropertyInfo _vectorHolderValueProperty =
-      ((MemberExpression)((Expression<Func<VectorHolder, Vector>>)(h => h.Value)).Body).Member as System.Reflection.PropertyInfo
-      ?? throw new InvalidOperationException("Failed to extract VectorHolder.Value property");
+      (System.Reflection.PropertyInfo)((MemberExpression)((Expression<Func<VectorHolder, Vector>>)(h => h.Value)).Body).Member;
 
   /// <summary>
   /// Helper class to hold Vector values for parameterization.

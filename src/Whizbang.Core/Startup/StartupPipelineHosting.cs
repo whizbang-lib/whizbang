@@ -17,7 +17,7 @@ namespace Whizbang.Core.Startup;
 /// the behaviour gains a name, an outcome, and a barrier others can declare a dependency on.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class FrameworkStartupSteps {
 #pragma warning disable CA1707
   /// <summary>The assessment step — where this instance stands, before anything changes.</summary>
@@ -37,7 +37,7 @@ public static class FrameworkStartupSteps {
 /// (<c>IStartupPipelineState.WaitForAsync("Migrate")</c>) rather than all sharing one boolean.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public sealed class MigrateStartupStep : IStartupStep {
   private readonly ISchemaReadyGate _schemaReadyGate;
 
@@ -69,7 +69,7 @@ public sealed class MigrateStartupStep : IStartupStep {
 /// gate keeps the availability filter refusing writes today.
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public sealed partial class StartupPipelineWorker : BackgroundService {
   private readonly StartupPipelineRunner _runner;
   private readonly ILogger<StartupPipelineWorker> _logger;

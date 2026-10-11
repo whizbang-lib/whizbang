@@ -238,7 +238,6 @@ public class TransportPublishStrategyThrottleRetryTests {
   [Test]
   public async Task PublishAsync_SuccessFirstTry_NoSleepAsync() {
     var transport = new ThrottleNTimesTransport(throttleCount: 0);
-    var sw = System.Diagnostics.Stopwatch.StartNew();
     var strategy = new TransportPublishStrategy(
       transport: transport,
       readinessCheck: new DefaultTransportReadinessCheck(),
@@ -248,7 +247,6 @@ public class TransportPublishStrategyThrottleRetryTests {
       throttleRetryOptions: _fastOpts());
 
     var result = await strategy.PublishAsync(_work(), CancellationToken.None);
-    sw.Stop();
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(transport.PublishCalls).IsEqualTo(1)

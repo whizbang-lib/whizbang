@@ -675,17 +675,15 @@ public partial class TransportPublishStrategy(
       TransportDestination destination,
       CancellationToken cancellationToken) {
     var runtimeType = work.Envelope.GetType();
-    var typeInfo = _jsonOptions!.GetTypeInfo(runtimeType)
-      ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for {runtimeType.Name}. Register MessageEnvelope<T> via JsonContextRegistry before enabling post-serialize hooks.");
+    // GetTypeInfo never returns null: a type with no registered metadata throws NotSupportedException.
+    var typeInfo = _jsonOptions!.GetTypeInfo(runtimeType);
 
     // Single serialize-once pass. The body-path (inline vs offload) decision reads the size off
     // this result; no re-serialization downstream.
     var serialized = Whizbang.Core.Serialization.WireEnvelopeSerializer.Serialize(
       work.Envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
 
-    var envelopeTypeName = work.EnvelopeType
-      ?? TypeNameFormatter.AssemblyQualifiedName(runtimeType);
+    var envelopeTypeName = work.EnvelopeType;
 
     var context = new Whizbang.Core.Offloads.PostSerializeContext(
       Envelope: work.Envelope,

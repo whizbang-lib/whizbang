@@ -22,7 +22,7 @@ namespace Whizbang.Core.Workers;
 /// honest answer while the read models cannot be trusted.
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline#seams</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ReadModelsReadyDriverTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ReadModelsReadyDriverTests.cs</tests>
 public sealed partial class ReadModelsReadyDriver : BackgroundService {
   private readonly IReadModelsReadyGate _readModelsGate;
   private readonly ISchemaReadyGate _schemaReadyGate;

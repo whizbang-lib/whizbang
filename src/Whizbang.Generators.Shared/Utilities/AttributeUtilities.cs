@@ -152,4 +152,30 @@ public static class AttributeUtilities {
 
     return null;
   }
+
+  /// <summary>
+  /// The enumeration member an attribute's first constructor argument names, such as
+  /// <c>LifecycleStage.PostInboxInline</c> in <c>[FireAt(LifecycleStage.PostInboxInline)]</c>.
+  /// </summary>
+  /// <param name="attribute">The attribute data to read.</param>
+  /// <returns>
+  /// The member, or null when the attribute has no constructor argument, its first argument is not an
+  /// enumeration value, or the value is one the enumeration does not name (a cast of an undefined number).
+  /// </returns>
+  /// <remarks>
+  /// The argument is read as the compiler bound it: an enumeration-typed argument carries its enumeration type.
+  /// Asking the attribute class for its first declared constructor instead finds the wrong parameter as soon
+  /// as the class declares a second constructor ahead of the enumeration one.
+  /// </remarks>
+  public static IFieldSymbol? FirstArgumentEnumMember(AttributeData attribute) {
+    if (attribute.ConstructorArguments.Length == 0
+        || attribute.ConstructorArguments[0].Kind != TypedConstantKind.Enum) {
+      return null;
+    }
+
+    // An enumeration-kind constant always carries its enumeration type; only a null literal has none.
+    var argument = attribute.ConstructorArguments[0];
+    return argument.Type!.GetMembers().OfType<IFieldSymbol>()
+        .FirstOrDefault(member => Equals(member.ConstantValue, argument.Value));
+  }
 }

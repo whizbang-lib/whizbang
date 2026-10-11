@@ -82,13 +82,8 @@ public static class MigratorDutyStaging {
     // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
     var log = logger ?? NullLogger.Instance;
 
-    if (elector is null) {
-      // A deployment that never wired the notification services. The lock is the only guard, as
-      // it always was.
-      MigratorDutyStagingLog.NoElector(log, schema);
-      return new SchemaStaging(SchemaStage.Unstaged, null, "no elector is registered");
-    }
-
+    // Joining the registry comes first, elector or not: an instance that starts after this one reads this one's
+    // managed-object declarations only while it is registered, and the Dapper driver registers at start the same way.
     try {
       await registerAsync(cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -96,6 +91,13 @@ public static class MigratorDutyStaging {
       // what actually went wrong. Report the real reason and fall back.
       MigratorDutyStagingLog.RegistrationFailed(log, ex, schema);
       return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
+    }
+
+    if (elector is null) {
+      // A deployment that never wired the notification services. The lock is the only guard, as
+      // it always was.
+      MigratorDutyStagingLog.NoElector(log, schema);
+      return new SchemaStaging(SchemaStage.Unstaged, null, "no elector is registered");
     }
 
     DutyAttempt attempt;

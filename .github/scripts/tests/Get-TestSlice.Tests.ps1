@@ -32,6 +32,16 @@ Describe 'Get-TestSliceProject' {
     @(Get-TestSliceProject -Root $repo -Tag 'Postgres') | Should -Be @('tests/A.Integration.Tests')
   }
 
+  It 'selects every project of a type when no tag is given' {
+    $repo = Build-FakeRepo -Projects @(
+      @{ Dir = 'tests/A.Component.Tests'; Type = 'Component'; Tags = 'Component' },
+      @{ Dir = 'tests/B.Component.Tests'; Type = 'Component'; Tags = 'Anything' },
+      @{ Dir = 'tests/C.Tests'; Type = 'Unit'; Tags = 'Component' },
+      @{ Dir = 'tests/D.Component.Tests'; Type = 'Component'; Tags = 'Component' }    # not in the solution
+    ) -InSolution @('tests/A.Component.Tests', 'tests/B.Component.Tests', 'tests/C.Tests')
+    @(Get-TestSliceProject -Root $repo -Tag '' -Type 'Component') | Should -Be @('tests/A.Component.Tests', 'tests/B.Component.Tests')
+  }
+
   It 'matches a whole tag, not a prefix' {
     $repo = Build-FakeRepo -Projects @(@{ Dir = 'tests/A.Integration.Tests'; Type = 'Integration'; Tags = 'PostgresExtra' }) -InSolution @('tests/A.Integration.Tests')
     @(Get-TestSliceProject -Root $repo -Tag 'Postgres').Count | Should -Be 0
@@ -44,11 +54,21 @@ Describe 'the suite slices in this repository' {
       ForEach-Object { [regex]::Matches((Get-Content $_.FullName -Raw), '-Mode Integration [^\n]*-Tag (\w+)') } |
       ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     $tags.Count | Should -BeGreaterThan 3 -Because 'the scan must find the suites for this check to mean anything'
-    $sliceTags = @($script:Suites.Values | ForEach-Object { $_.Tag } | Sort-Object -Unique)
+    $sliceTags = @($script:Suites.Values | Where-Object { $_.Type -eq 'Integration' } | ForEach-Object { $_.Tag } | Sort-Object -Unique)
     $sliceTags | Should -Be $tags -Because 'a suite without a slice would download nothing it can run'
     foreach ($suite in $script:Suites.Keys) {
-      @(Get-TestSliceProject -Root $Root -Tag $script:Suites[$suite].Tag).Count | Should -BeGreaterThan 0 -Because "the $suite slice must hold the projects its suite runs"
+      @(Get-TestSliceProject -Root $Root -Tag $script:Suites[$suite].Tag -Type $script:Suites[$suite].Type).Count | Should -BeGreaterThan 0 -Because "the $suite slice must hold the projects its suite runs"
     }
+  }
+
+  It 'slices each untagged suite by the type its workflow runs, with no tag' {
+    # The component suite runs every Component project (-Mode Component, no -Tag), so its slice must be
+    # every Component project; a -Tag in the workflow would make the suite run less than its slice holds.
+    $workflow = Get-Content (Join-Path -Path $Root -ChildPath '.github/workflows/reusable-test-component.yml') -Raw
+    $workflow | Should -Match 'Run-Tests\.ps1 -Mode Component '
+    $workflow | Should -Not -Match '-Tag '
+    $script:Suites.component.Type | Should -Be 'Component'
+    $script:Suites.component.Tag | Should -BeNullOrEmpty
   }
 
   It 'leaves no integration project without a suite that runs it' {

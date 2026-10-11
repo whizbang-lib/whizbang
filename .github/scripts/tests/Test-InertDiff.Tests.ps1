@@ -43,10 +43,11 @@ Describe 'inert-paths.txt' {
   It 'matches only inert kinds of file in the real tree' {
     $files = @(git -C (Join-Path -Path $PSScriptRoot -ChildPath '../../..') ls-files)
     $files.Count | Should -BeGreaterThan 1000 -Because 'the job needs a full checkout for this test to mean anything'
-    # Known and checked: editor settings, the license, and the banner source, which the build never reads
-    # (it reads the generated WhizbangBanner.Generated.cs under src/).
+    # Known and checked: editor settings, the license, the banner source, which the build never reads
+    # (it reads the generated WhizbangBanner.Generated.cs under src/), and the #1264 test-separation
+    # worklist, a CSV beside its markdown that only people and phase 2 pull requests read.
     $known = @('.vscode/extensions.json', '.vscode/launch.json', '.vscode/settings.json', '.vscode/tasks.json',
-      'LICENSE', 'logo/whizbang-banner.txt')
+      'LICENSE', 'logo/whizbang-banner.txt', 'plans/test-separation-inventory.csv')
     $unexpected = @($files | Where-Object { (Test-Inert $_) -and $_ -notmatch '\.(md|png|svg|jpe?g|gif|ico)$' -and $_ -notin $known })
     $unexpected | Should -BeNullOrEmpty -Because 'a new kind of file under an inert path must be checked by hand, then listed here'
   }

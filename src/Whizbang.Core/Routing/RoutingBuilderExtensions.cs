@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 
 namespace Whizbang.Core.Routing;
 
@@ -125,7 +126,7 @@ public static class RoutingBuilderExtensions {
       // Control class (topology arc phase 9): adopt the DI-bound instance so the strategy, the
       // mint and the receive boundary all read ONE object — a second copy is how a class ends up
       // provisioned sessionless while the receive path still writes inbox rows for it.
-      if (sp.GetService<IOptions<ControlClassOptions>>()?.Value is { } controlClass) {
+      if (sp.GetOptionsValue<ControlClassOptions>() is { } controlClass) {
         options.ControlClass = controlClass;
       }
       // Startup validation (topology arc phase 7): retiring the shared inbox is valid ONLY

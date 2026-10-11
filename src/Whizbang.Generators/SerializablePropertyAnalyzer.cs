@@ -107,10 +107,10 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
       IPropertySymbol? parentProperty,
       string typeName,
       DiagnosticDescriptor descriptor) {
-    // Determine if this is a nested type issue
-    var isNested = !SymbolEqualityComparer.Default.Equals(currentType, rootType);
-
-    if (isNested) {
+    // A nested type issue is one found below the root. The walk passes a parent property exactly when it
+    // descends into a property's type, and the visited set keeps it from returning to the root, so "there is a
+    // parent property" and "this is not the root type" are the same fact.
+    if (parentProperty is not null) {
       // WHIZ063: Nested type violation
       var location = LocationUtilities.FirstOrNone(parentProperty);
       var diagnostic = Diagnostic.Create(
@@ -118,7 +118,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
           location,
           currentType.Name,           // Nested type name
           rootType.Name,              // Root type name
-          parentProperty?.Name ?? "", // Property on root that references nested type
+          parentProperty.Name,        // Property on root that references nested type
           property.Name,              // Property on nested type with issue
           typeName                    // The problematic type
       );

@@ -12,6 +12,7 @@ using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests.BranchCoverage;
 
@@ -317,6 +318,33 @@ public class AsbTransportBranchCoverageTests {
     var sent = client.LastSender!.Sent.Single();
     await Assert.That(sent.SessionId).IsEqualTo(AsbSessionKey.For(null, envelope.MessageId.Value));
     await Assert.That(sent.ApplicationProperties["StreamId"]).IsNull();
+  }
+
+  /// <summary>
+  /// A stream id that is a GUID becomes the session key, so every message of one stream shares a session
+  /// and keeps its order. The other outcome of the conversion <see cref="PublishAsync_NullStreamId_UsesStreamlessSessionAsync"/>
+  /// takes; both live here so one test process takes both.
+  /// </summary>
+  [Test]
+  public async Task PublishAsync_GuidStreamId_UsesTheStreamAsTheSessionAsync() {
+    var client = new RaisableServiceBusClient();
+    var transport = new AzureServiceBusTransport(
+      client,
+      AsbTransportTestData.CombinedOptions,
+      new AzureServiceBusOptions { AutoProvisionInfrastructure = false },
+      NullLogger<AzureServiceBusTransport>.Instance);
+    var envelope = AsbTransportTestData.CreateEnvelope();
+    Guid streamId = TrackedGuid.New();
+    var metadata = new Dictionary<string, JsonElement> {
+      ["StreamId"] = AsbTransportTestData.Json($"\"{streamId}\"")
+    };
+
+    await transport.PublishAsync(envelope, new TransportDestination(TOPIC, "orders.created", metadata));
+
+    var sent = client.LastSender!.Sent.Single();
+    await Assert.That(sent.SessionId).IsEqualTo(AsbSessionKey.For(streamId, envelope.MessageId.Value));
+    await Assert.That(sent.SessionId).IsNotEqualTo(AsbSessionKey.For(null, envelope.MessageId.Value))
+      .Because("a parsed stream must key the session by the stream, not fall back to the streamless key");
   }
 
   // ========================================

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Component</WhizbangTestTags>
+    <!-- Component: the configuration-key manifest check starts hosted services (StartAsync) and reads the manifest file in tests/Whizbang.Documentation.Tests/Baselines, in one process with no external infrastructure. The unit tests stay in Whizbang.Documentation.Tests (docs/TEST-PROJECTS.md). -->
+    <WhizbangTestType>Component</WhizbangTestType>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- Every package that binds configuration, so the key manifest test can record what each reads. -->
+    <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Hosting.AspNet/Whizbang.Hosting.AspNet.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Offloads.AzureBlob/Whizbang.Offloads.AzureBlob.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Rocks" />
+    <PackageReference Include="Bogus" />
+  </ItemGroup>
+</Project>

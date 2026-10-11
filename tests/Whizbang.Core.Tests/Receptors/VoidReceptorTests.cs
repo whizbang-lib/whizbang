@@ -55,11 +55,15 @@ public class VoidReceptorTests : DiagnosticTestBase {
     public TaskCompletionSource? Gate { get; set; }
 
     public async ValueTask HandleAsync(SendEmailCommand message, CancellationToken cancellationToken = default) {
-      // Simulate async I/O — deterministic when gated, timer-based otherwise.
+      // Simulate async I/O: wait on the gate when a test supplies one; otherwise honor cancellation
+      // the way cancelable I/O does (a canceled task) and yield, without waiting on the clock.
       if (Gate is not null) {
         await Gate.Task.WaitAsync(cancellationToken);
       } else {
-        await Task.Delay(1, cancellationToken);
+        if (cancellationToken.IsCancellationRequested) {
+          await Task.FromCanceled(cancellationToken);
+        }
+        await Task.Yield();
       }
 
       EmailsSent++;

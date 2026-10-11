@@ -75,4 +75,52 @@ public class StartupStatusReporterFleetTests {
       .Because("no shutdown means the caller is still waiting for an answer, and unavailable is "
              + "the honest one");
   }
+
+  [Test]
+  public async Task NotStarted_NamesTheInstanceAndReadinessAsync() {
+    var id = Guid.NewGuid();
+    var signal = new StartupReadySignal();
+    signal.MarkReady();
+
+    var report = await StartupStatusReporter.BuildAsync(
+      state: null, readySignal: signal, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(id, "svc", "h", 1),
+      fleetSource: null, includeReasons: false, cancellationToken: CancellationToken.None);
+
+    await Assert.That(report.Instance.Started).IsFalse();
+    await Assert.That(report.Instance.InstanceId).IsEqualTo(id);
+    await Assert.That(report.Instance.ServiceName).IsEqualTo("svc");
+    await Assert.That(report.Instance.Ready).IsTrue();
+  }
+
+  [Test]
+  public async Task Started_NoInstanceOrSignal_StatesThemAbsentAsync() {
+    var state = new StartupPipelineState();
+    await state.OnRunStartingAsync(new StartupRunPlan([new StartupStepDescriptor { Name = "S" }]), CancellationToken.None);
+
+    var report = await StartupStatusReporter.BuildAsync(
+      state, readySignal: null, instanceProvider: null,
+      fleetSource: null, includeReasons: false, cancellationToken: CancellationToken.None);
+
+    await Assert.That(report.Instance.Started).IsTrue();
+    await Assert.That(report.Instance.InstanceId).IsNull();
+    await Assert.That(report.Instance.ServiceName).IsNull();
+    await Assert.That(report.Instance.Ready).IsFalse()
+      .Because("with no ready signal registered the instance never claims to be ready");
+  }
+
+  [Test]
+  public async Task Started_NamesTheInstanceAndReadinessAsync() {
+    var state = new StartupPipelineState();
+    await state.OnRunStartingAsync(new StartupRunPlan([new StartupStepDescriptor { Name = "S" }]), CancellationToken.None);
+    var signal = new StartupReadySignal();
+    signal.MarkReady();
+
+    var report = await StartupStatusReporter.BuildAsync(
+      state, readySignal: signal, instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(Guid.Empty, "svc", "h", 1),
+      fleetSource: null, includeReasons: false, cancellationToken: CancellationToken.None);
+
+    await Assert.That(report.Instance.ServiceName).IsEqualTo("svc");
+    await Assert.That(report.Instance.InstanceId).IsEqualTo(Guid.Empty);
+    await Assert.That(report.Instance.Ready).IsTrue();
+  }
 }

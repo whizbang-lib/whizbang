@@ -69,6 +69,19 @@ public class UpdateStreamScopeCommandTests {
   }
 
   [Test]
+  public async Task MergeWith_EveryScalar_OverwritesAsync() {
+    var existing = new PerspectiveScope { TenantId = "t-1", UserId = "u-1", CustomerId = "c-1", OrganizationId = "o-1" };
+    var update = new PerspectiveScope { TenantId = "t-2", UserId = "u-2", CustomerId = "c-2", OrganizationId = "o-2" };
+
+    var merged = existing.MergeWith(update);
+
+    await Assert.That(merged.TenantId).IsEqualTo("t-2");
+    await Assert.That(merged.UserId).IsEqualTo("u-2");
+    await Assert.That(merged.CustomerId).IsEqualTo("c-2");
+    await Assert.That(merged.OrganizationId).IsEqualTo("o-2");
+  }
+
+  [Test]
   public async Task MergeWith_NullFieldsOnOther_PreserveExistingAsync() {
     var existing = new PerspectiveScope { TenantId = "t-1", UserId = "u-1" };
     var update = new PerspectiveScope();

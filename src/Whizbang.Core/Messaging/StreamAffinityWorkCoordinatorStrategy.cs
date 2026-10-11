@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>internals/outbox-batch-strategy</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamAffinityWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/StreamAffinityWorkCoordinatorStrategyTests.cs</tests>
 public sealed class StreamAffinityWorkCoordinatorStrategy(
     IWorkCoordinatorStrategy inner,
     IOutboxBatchStrategy outboxBatch,

@@ -27,7 +27,8 @@ internal static class EFCorePerspectiveTableSwapperFactory {
     using var scope = services.CreateScope();
     var context = (DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
     var schema = context.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var connections = SchemaBoundaryConnections.Resolve(context, initConnectionString: null, services);
+    var connections = SchemaBoundaryConnections.Resolve(
+      context, SchemaInitConnection.For(services, dbContextType), services);
     if (connections is null) {
       return null;
     }

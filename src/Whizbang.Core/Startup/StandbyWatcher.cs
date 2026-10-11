@@ -55,7 +55,7 @@ public sealed class StandbyWatcherOptions {
 /// </para>
 /// </remarks>
 /// <docs>operations/startup/rolling-upgrades#the-standby-handshake</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StandbyWatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StandbyWatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
@@ -193,9 +193,12 @@ public sealed partial class StandbyWatcher : BackgroundService {
     return requested.CompareTo(mine) > 0;
   }
 
+  // #1286: a requester holding its alive-lock is alive whatever its heartbeat's age (it beats on the slow cadence);
+  // otherwise its heartbeat decides.
   private bool _requesterIsAlive(StandbyRequest request) =>
-    request.RequesterLastHeartbeatAt is { } heardAt
-      && DateTimeOffset.UtcNow - heardAt <= _options.RequesterLivenessWindow;
+    request.RequesterAliveLockHeld
+      || (request.RequesterLastHeartbeatAt is { } heardAt
+          && DateTimeOffset.UtcNow - heardAt <= _options.RequesterLivenessWindow);
 
   private async Task _watchOutcomeAsync(StandbyRequest? request, CancellationToken cancellationToken) {
     if (request is not null && _requesterIsAlive(request)) {

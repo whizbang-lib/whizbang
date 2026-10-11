@@ -40,7 +40,7 @@ public sealed record BacklogAgeFinding(
 /// clears itself the moment the entity drains, which is what makes it a state and not an event log.
 /// </remarks>
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_EmptyEntity_ClearsAPreviousFindingAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_EmptyEntity_ClearsAPreviousFindingAsync</tests>
 public sealed class BacklogAgeState {
   private volatile IReadOnlyList<BacklogAgeFinding> _findings = [];
   private readonly ConcurrentDictionary<string, bool> _unknownAgeSurfaces = new(StringComparer.Ordinal);

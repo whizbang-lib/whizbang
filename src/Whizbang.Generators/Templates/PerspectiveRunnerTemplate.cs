@@ -405,7 +405,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // commit_sequence when both sides have one, compare event ids only when both are UUIDv7, and
     // otherwise defer — an event that cannot be shown to be applied is passed to Apply, because a
     // double-apply is visible and recoverable while a discarded event is neither.
-    var existingMetadata = !modelLoadedFromDb
+    // A rebuild re-derives the row from its events, so the row's own recorded position is the one thing
+    // it must not consult: every event IS already applied by that measure, the filter below drops the
+    // whole batch, and the stream returns Completed having folded nothing while the rebuilder reports
+    // success (#1313). Blue-green escaped this only because it writes into a fresh shadow table, where
+    // no row loads and there is no position to compare against. The ambient mode is how the rebuilder
+    // already tells generated runners what it is doing, which is what ProcessingModeAccessor is for.
+    var rebuilding = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current
+        is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild;
+    if (rebuilding) {
+      // Re-derive, do not fold on top. A rebuild reads the stream whole, so starting from the stored row
+      // applies every event a second time: an assignment survives that, an additive fold (Balance += Amount)
+      // does not. Blue-green has always started empty, because it writes into a shadow table where no row
+      // loads; this is the same thing for the modes that write the live table. modelLoadedFromDb is left
+      // alone on purpose: it still describes the DATABASE, which is what decides insert versus update below.
+      currentModel = CreateEmptyModel(streamId);
+    }
+    var existingMetadata = !modelLoadedFromDb || rebuilding
         ? null
         : rowVersion.IsChecked
             ? applyRead.Metadata
@@ -1397,7 +1413,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Bounded by MAX_REWIND_CATCH_UP_ITERATIONS as a safety against pathological
     // append rates; in practice 1-2 iterations cover the bulk-import case.
     // <docs>fundamentals/perspectives/rewind-invariants</docs>
-    // <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
+    // <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRewindCompletionGapTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/ReconcileRewindScenarioTests.cs</tests>
     // <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcileRewindDeclarationSqlTests.cs</tests>
     const int MAX_REWIND_CATCH_UP_ITERATIONS = 100;

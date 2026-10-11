@@ -120,6 +120,26 @@ public record MessagePublishResult {
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Success_ShouldHaveCorrectPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:MessagePublishResult_Failure_ShouldHaveErrorMessageAsync</tests>
   public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
+
+  /// <summary>
+  /// <see cref="Error"/>, or <c>publish failed</c> when the strategy reported a failure without
+  /// saying why, so a failed message never reaches the failure record or the dead-letter queue
+  /// without an error.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_NoError_PublishFailedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
+  internal string ErrorText => Error ?? "publish failed";
+
+  /// <summary>The failure record for a message this result reports as not published.</summary>
+  /// <param name="messageId">The outbox message the result is for.</param>
+  /// <returns>The failure, carrying this result's status, reason and <see cref="ErrorText"/>.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:ToFailure_CarriesTheResultAsync</tests>
+  internal MessageFailure ToFailure(Guid messageId) => new() {
+    MessageId = messageId,
+    CompletedStatus = CompletedStatus,
+    Error = ErrorText,
+    Reason = Reason,
+  };
 }
 
 /// <summary>

@@ -112,6 +112,18 @@ public class PerspectiveDocumentSerializationTests {
     await Assert.That((PerspectiveScope)scope.ConvertFromProvider(storedScope)!).IsNotNull();
   }
 
+  /// <summary>
+  /// A stored document that is JSON null is refused with a reason rather than handed back as a null
+  /// document, which the model types do not allow and which would fail later, further from the cause.
+  /// </summary>
+  [Test]
+  public async Task AStoredJsonNullDocumentIsRefusedAsync() {
+    var thrown = Assert.Throws<JsonException>(
+      () => PerspectiveDocumentSerialization.Deserialize<PerspectiveScope>("null"));
+
+    await Assert.That(thrown.Message).Contains("PerspectiveScope document was null");
+  }
+
   /// <summary>A rendering an older release wrote reads through the converter too.</summary>
   [Test]
   public async Task AConverterReadsARenderingAsync() {

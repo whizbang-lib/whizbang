@@ -23,7 +23,7 @@ namespace Whizbang.Core.Transports;
 /// <param name="OldestAge">Age of the oldest waiting message, or null when the transport cannot
 /// supply one (capability honesty — reported, never silently treated as zero).</param>
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public readonly record struct BacklogSample(string Entity, long Depth, TimeSpan? OldestAge) {
   /// <summary>The short transport tag (<c>asb</c>, <c>rabbitmq</c>); defaults to unknown.</summary>
   public string Transport { get; init; } = "unknown";
@@ -59,7 +59,7 @@ public static class TrafficClasses {
 /// an expensive observer would be the same bug wearing a different hat.
 /// </remarks>
 /// <docs>resilience/managed-resource-health#backlog-age</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public interface IBacklogPeek {
   /// <summary>The short transport tag this peek reports under (<c>asb</c>, <c>rabbitmq</c>).</summary>
   string TransportName { get; }

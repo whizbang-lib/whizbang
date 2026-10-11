@@ -17,7 +17,7 @@ namespace Whizbang.Core.Diagnostics;
 /// </para>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private readonly DebuggerAwareClockOptions _options;
   private readonly Channel<bool> _pauseStateChannel;

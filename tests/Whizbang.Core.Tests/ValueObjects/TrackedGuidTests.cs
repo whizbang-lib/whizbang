@@ -406,9 +406,8 @@ public class TrackedGuidTests {
 
   [Test]
   public async Task TrackedGuid_CompareTo_OrdersChronologicallyAsync() {
-    // Arrange - Create IDs with small delay to ensure different timestamps
+    // Arrange - ids from one generator are ordered by construction, even within one millisecond
     var earlier = TrackedGuid.New();
-    await Task.Delay(10); // Ensure different timestamp
     var later = TrackedGuid.New();
 
     // Act & Assert
@@ -421,7 +420,6 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_ComparisonOperators_WorkCorrectlyAsync() {
     // Arrange
     var earlier = TrackedGuid.New();
-    await Task.Delay(10);
     var later = TrackedGuid.New();
 
     // Act & Assert

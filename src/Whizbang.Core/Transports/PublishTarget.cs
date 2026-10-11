@@ -15,9 +15,9 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_Equality_WithDifferentValues_ShouldNotBeEqualAsync</tests>
 /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_WithExpression_ShouldCreateNewInstanceAsync</tests>
 /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_ToString_ShouldContainPropertyValuesAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync</tests>
+/// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
 public record PublishTarget {
   /// <summary>
   /// Type of transport to publish to
@@ -42,6 +42,6 @@ public record PublishTarget {
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_ShouldAllowNullRoutingKeyAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_Equality_WithSameValues_ShouldBeEqualAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs:PublishTarget_WithExpression_ShouldCreateNewInstanceAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Component.Tests/TransportManagerPublishingTests.cs:PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync</tests>
   public string? RoutingKey { get; init; }
 }

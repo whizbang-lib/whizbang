@@ -1,0 +1,24 @@
+name: 'Use the CI image mirror'
+description: >-
+  Logs in to GHCR and, when the mirror holds every image in .github/ci-images.txt, sets
+  TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX for the rest of the job so Docker Hub images are pulled from
+  ghcr.io/whizbang-lib/ci-mirror/ instead (Docker Hub's pull rate limit). Otherwise the job pulls from
+  Docker Hub as before, with a warning. Records the images the runner already holds for the pull check
+  (Test-CiImagePulls.ps1). Needs `packages: read`. See ai-docs/ci-image-mirror.md.
+
+runs:
+  using: 'composite'
+  steps:
+    # A failed login (no packages permission, GHCR outage) must not fail the suite: the selection
+    # below then cannot read the mirror and falls back to Docker Hub.
+    - name: Log in to GHCR
+      continue-on-error: true
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Pull Docker Hub images from the mirror
+      shell: pwsh
+      run: ./.github/scripts/Select-CiImageSource.ps1

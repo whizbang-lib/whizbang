@@ -62,6 +62,38 @@ public class EnumPhysicalFieldGenerationTests {
     }
     """;
 
+  private const string EMPTY_ENUM_MODEL = """
+    using System;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public enum Pending { }
+
+    public record TicketEvent : IEvent;
+
+    [PerspectiveStorage(FieldStorageMode.Split)]
+    public record TicketModel {
+      [StreamId]
+      public Guid Id { get; init; }
+
+      [PhysicalField]
+      public Pending Pending { get; init; }
+    }
+
+    public class TicketPerspective : IPerspectiveFor<TicketModel, TicketEvent> {
+      public TicketModel Apply(TicketModel currentData, TicketEvent @event) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
   private const string WIDE_MODEL = """
     using System;
     using Whizbang.Core;
@@ -169,5 +201,21 @@ public class EnumPhysicalFieldGenerationTests {
       "\"Size\", \"size\", global::Whizbang.Core.Perspectives.FieldStorageMode.Split, isVector: false, scalarType: typeof(global::System.Int16));");
     await Assert.That(runner).Contains(
       "\"Tags\", \"tags\", global::Whizbang.Core.Perspectives.FieldStorageMode.Split, isVector: false, columnType: \"jsonb\");");
+  }
+
+  /// <summary>
+  /// An enumeration with no members still gets its column and its rewrite, with an empty name-to-number
+  /// mapping: there is no name to convert, and the generated array must still compile.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ServiceRegistration_EnumWithNoMembers_IsRewrittenWithAnEmptyMappingAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(EMPTY_ENUM_MODEL);
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    await Assert.That(sql).Contains("ADD COLUMN IF NOT EXISTS pending INTEGER;");
+    await Assert.That(sql).Contains(
+      "(\"enum-column:wh_per_ticket.pending\", global::Whizbang.Data.Postgres.EnumColumnRewriteSql.Build(\"testapp\", \"wh_per_ticket\", \"pending\", \"Pending\", \"INTEGER\", new (string Name, string Value)[] {  }))")
+      .Because("A member-less enumeration has nothing to map, so its rewrite carries an empty, still well-typed, mapping.");
   }
 }

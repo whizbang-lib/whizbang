@@ -57,8 +57,7 @@ public class ImmediateUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests
 
     // Act
     var unitId1 = await strategy.QueueMessageAsync(message1);
-    // Small delay to ensure time ordering
-    await Task.Delay(10, CancellationToken.None);
+    // Unit ids come from the monotonic UUIDv7 generator, so they are time-ordered without waiting.
     var unitId2 = await strategy.QueueMessageAsync(message2);
 
     // Assert - Uuid7 should be time-ordered
@@ -94,20 +93,27 @@ public class ImmediateUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests
     var strategy = _createStrategy();
     var callbackStarted = false;
     var callbackCompleted = false;
+    // The callback's async work waits on a gate the test opens, so whether QueueMessageAsync
+    // awaited it is observable without timing: it must still be pending while the gate is closed.
+    var gate = new TaskCompletionSource();
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackStarted = true;
-      await Task.Delay(50, ct); // Simulate async work
+      await gate.Task.WaitAsync(ct);
       callbackCompleted = true;
     };
 
     var message = new TestMessage { Value = "test" };
 
     // Act
-    await strategy.QueueMessageAsync(message);
+    var queued = strategy.QueueMessageAsync(message);
 
     // Assert - QueueMessageAsync should not return until callback completes
     await Assert.That(callbackStarted).IsTrue();
+    await Assert.That(queued.IsCompleted).IsFalse()
+      .Because("QueueMessageAsync must await the flush callback, which is still waiting on the gate");
+    gate.SetResult();
+    await queued;
     await Assert.That(callbackCompleted).IsTrue();
   }
 

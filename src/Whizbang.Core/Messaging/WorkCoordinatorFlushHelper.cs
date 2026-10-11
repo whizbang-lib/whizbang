@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Workers;
@@ -209,7 +210,7 @@ internal static class WorkCoordinatorFlushHelper {
     if (scopedProvider is null) {
       return fallback.PartitionCount > 0 ? fallback.PartitionCount : 10000;
     }
-    var claimOptions = scopedProvider.GetService<IOptions<ClaimWorkerOptions>>()?.Value;
+    var claimOptions = scopedProvider.GetOptionsValue<ClaimWorkerOptions>();
     if (claimOptions?.PartitionCount > 0) {
       return claimOptions.PartitionCount;
     }

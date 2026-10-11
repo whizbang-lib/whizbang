@@ -293,15 +293,23 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Determines if a Service Bus exception indicates a connection-level error
   /// that warrants triggering subscription recovery.
   /// </summary>
-  private static bool _isConnectionError(Exception ex) {
-    if (ex is ServiceBusException sbEx) {
-      return sbEx.Reason is
-        ServiceBusFailureReason.ServiceCommunicationProblem or
-        ServiceBusFailureReason.ServiceBusy or
-        ServiceBusFailureReason.ServiceTimeout;
-    }
-    return false;
+  /// <param name="ex">The processor's error.</param>
+  /// <param name="connectionError">The error as a <see cref="ServiceBusException"/> when it is a connection-level one, so the caller can report its reason without casting again.</param>
+  private static bool _isConnectionError(Exception ex, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ServiceBusException? connectionError) {
+    connectionError = ex as ServiceBusException;
+    return connectionError?.Reason is
+      ServiceBusFailureReason.ServiceCommunicationProblem or
+      ServiceBusFailureReason.ServiceBusy or
+      ServiceBusFailureReason.ServiceTimeout;
   }
+
+  /// <summary>
+  /// The subscription a destination names: its routing key, or the configured default subscription
+  /// when it carries none. Every receive path, log line and session key reads it through here, so the
+  /// fallback is decided in one place.
+  /// </summary>
+  private string _subscriptionOf(TransportDestination destination) =>
+    destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
   /// <summary>
   /// Returns true when an exception thrown from
@@ -458,8 +466,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithEnableSessions_IncludesOrderedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:Capabilities_WithoutEnableSessions_ExcludesOrderedAsync</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
@@ -467,7 +475,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     (_options.EnableSessions ? TransportCapabilities.Ordered : TransportCapabilities.None);
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:MaxMessageSizeBytes_Returns256KB_StandardTierCeilingAsync</tests>
   // Azure Service Bus Standard tier hard limit: 256 KB per message including envelope+headers.
   // Premium supports up to 100 MB — consumers running Premium can override at the options layer —
   // we ship the conservative Standard default so out-of-the-box deployments don't silently exceed.
@@ -928,7 +936,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     } catch (Exception ex) {
       _logger.LogError(ex,
         "Failed to create batch subscription to {TopicName}/{SubscriptionName}",
-        destination.Address, destination.RoutingKey ?? _options.DefaultSubscriptionName);
+        destination.Address, _subscriptionOf(destination));
       throw;
 #pragma warning restore S2139
     }
@@ -975,7 +983,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// (batch and non-batch) create their processor here so neither keeps a standing army.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
   private ServiceBusSessionProcessor _createGovernedSessionProcessor(
     string topicName,
     string subscriptionName,
@@ -1231,7 +1239,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// processor re-accepts under a fresh lock and FIFO resumes where it left off.
   /// </summary>
   private string _sessionKey(TransportDestination destination, string sessionId) =>
-    $"{destination.Address}/{destination.RoutingKey ?? _options.DefaultSubscriptionName}/{sessionId}";
+    $"{destination.Address}/{_subscriptionOf(destination)}/{sessionId}";
 
   private void _rotateSessionIfPastBudget(ProcessSessionMessageEventArgs args, TransportDestination destination) =>
     RotateSessionIfPastBudget(args, destination, DateTimeOffset.UtcNow);
@@ -1252,7 +1260,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         "Rotating session {SessionId} on {TopicName}/{SubscriptionName} after {BudgetSeconds}s continuous occupancy — releasing ahead of the lock-renewal window",
         args.SessionId,
         destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        _subscriptionOf(destination),
         _sessionGovernor.OccupancyBudget.TotalSeconds);
     }
   }
@@ -1325,8 +1333,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// (#921). The throw is not handed back to the collector, whose in-memory re-queue would retry the
   /// batch without the broker counting a delivery, so the delivery limit would never bound it.
   /// </remarks>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerReportsBatchFailed_AbandonsNeverCompletesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportBatchPipelineTests.cs:NonSessionBatch_HandlerFailsAtMaxDeliveryCount_DeadLettersNeverCompletesAsync</tests>
   private TransportBatchCollector<PendingServiceBusMessage> _buildPendingMessageCollector(
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
     TransportBatchOptions batchOptions,
@@ -1450,7 +1458,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
               args.Message.MessageId,
               destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
+              _subscriptionOf(destination)
             );
             await _safeAbandonAsync(args);
             return;
@@ -1492,7 +1500,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
               args.Message.MessageId,
               destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
+              _subscriptionOf(destination)
             );
             await _safeAbandonAsync(args);
             return;
@@ -1514,7 +1522,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       if (_logger.IsEnabled(LogLevel.Information)) {
         var topic = destination.Address;
-        var sub = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+        var sub = _subscriptionOf(destination);
         _logger.LogInformation(
           "Started subscription to {TopicName}/{SubscriptionName}",
           topic,
@@ -1529,7 +1537,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ex,
         "Failed to create subscription to {TopicName}/{SubscriptionName}",
         destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
+        _subscriptionOf(destination)
       );
       throw;
 #pragma warning restore S2139
@@ -1555,7 +1563,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
           args.Message.MessageId,
           destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName
+          _subscriptionOf(destination)
         );
       }
     } catch (Exception ex) {
@@ -1587,7 +1595,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           args.Message.MessageId,
           args.SessionId,
           destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName
+          _subscriptionOf(destination)
         );
       }
     } catch (Exception ex) {
@@ -1671,7 +1679,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
     }
 
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var subscription = _subscriptionOf(destination);
     var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
 
     var decision = DecisionMaker.Decide(
@@ -1756,7 +1764,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   ) {
     var json = args.Message.Body.ToString();
 
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var subscription = _subscriptionOf(destination);
     var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
 
     var decision = DecisionMaker.Decide(
@@ -1833,7 +1841,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       args.Message.MessageId,
       args.SessionId,
       destination.Address,
-      destination.RoutingKey ?? _options.DefaultSubscriptionName
+      _subscriptionOf(destination)
     );
 
     var deliveryCount = args.Message.DeliveryCount;
@@ -1854,7 +1862,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
       args.Message.MessageId,
       destination.Address,
-      destination.RoutingKey ?? _options.DefaultSubscriptionName
+      _subscriptionOf(destination)
     );
 
     var deliveryCount = args.Message.DeliveryCount;
@@ -1865,7 +1873,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         _options.MaxDeliveryAttempts,
         args.Message.MessageId,
         destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        _subscriptionOf(destination),
         ex.GetType().Name,
         ex.Message
       );
@@ -1877,7 +1885,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         _options.MaxDeliveryAttempts,
         args.Message.MessageId,
         destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        _subscriptionOf(destination),
         ex.GetType().Name,
         ex.Message
       );
@@ -1911,14 +1919,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       args.Exception,
       "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
       destination.Address,
-      destination.RoutingKey ?? _options.DefaultSubscriptionName,
+      _subscriptionOf(destination),
       args.ErrorSource
     );
 
-    if (_isConnectionError(args.Exception)) {
+    if (_isConnectionError(args.Exception, out var connectionError)) {
       _logger.LogWarning(
         "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
-        (args.Exception as ServiceBusException)?.Reason
+        connectionError.Reason
       );
       await _invokeRecoveryHandlerAsync();
     }
@@ -1929,35 +1937,36 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // governor answers with ONE exponentially-backed pause per streak; the pause runs detached
     // because StopProcessingAsync awaits in-flight handlers (including this one).
     if (args.Exception is ServiceBusException sbEx
-        && _throttlePolicy.RecordError(sbEx.Reason, DateTimeOffset.UtcNow) is { } pause
+        && _throttlePolicy.RecordError(sbEx.Reason, _timeProvider.GetUtcNow()) is { } pause
         && stopProcessingAsync is not null && startProcessingAsync is not null
         && _throttlePolicy.TryBeginPause()) {
       if (_logger.IsEnabled(LogLevel.Warning)) {
         _logger.LogWarning(
           "Namespace throttled (ServiceBusy) on {TopicName}/{SubscriptionName}; pausing accepts for {PauseSeconds}s to shed pressure",
           destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName,
+          _subscriptionOf(destination),
           pause.TotalSeconds);
       }
       // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
       // is signaled when the processor stops — which is exactly what the pause DOES first, so
       // flowing it here would cancel our own delay/resume and strand the processor stopped.
+      // The pause runs on the transport's clock, like every other time this transport measures.
       _ = Task.Run(async () => {
         try {
           await stopProcessingAsync();
-          await Task.Delay(pause, CancellationToken.None);
+          await Task.Delay(pause, _timeProvider, CancellationToken.None);
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(
               "Resumed Service Bus processor for {TopicName}/{SubscriptionName} after throttle pause",
               destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName);
+              _subscriptionOf(destination));
           }
         } catch (Exception ex) {
           _logger.LogError(ex,
             "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
             destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName);
+            _subscriptionOf(destination));
         } finally {
           _throttlePolicy.EndPause();
         }
@@ -2419,9 +2428,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Shared by both subscribe-path and publish-path auto-provisioning.
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Component.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
   private Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
       return Task.CompletedTask;

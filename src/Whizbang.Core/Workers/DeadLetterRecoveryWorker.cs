@@ -33,9 +33,9 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/dead-letter-queue/recovery</docs>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterCanaryCampaignTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterRecoveryWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterCanaryCampaignTests.cs</tests>
 #pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,

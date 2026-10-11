@@ -90,7 +90,7 @@ public interface IPriorityBatchHook {
 /// number, never rising above it by inheritance alone. An explicit declaration made earlier is kept.
 /// </summary>
 /// <docs>fundamentals/messaging/message-priority#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Priority/PriorityHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Priority/PriorityHooksTests.cs</tests>
 public sealed class ContextPriorityProducerHook : IPriorityProducerHook {
   /// <inheritdoc />
   public int Order => 1000;
@@ -114,7 +114,7 @@ public sealed class ContextPriorityProducerHook : IPriorityProducerHook {
 
 /// <summary>The framework's receive default: accept the declared number; an undeclared one is standard.</summary>
 /// <docs>fundamentals/messaging/message-priority#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Priority/PriorityHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Priority/PriorityHooksTests.cs</tests>
 public sealed class AcceptDeclaredPriorityReceiveHook : IPriorityReceiveHook {
   /// <inheritdoc />
   public int Order => 1000;
@@ -128,7 +128,7 @@ public sealed class AcceptDeclaredPriorityReceiveHook : IPriorityReceiveHook {
 
 /// <summary>Runs the registered hooks of each kind in order, threading each answer to the next.</summary>
 /// <docs>fundamentals/messaging/message-priority#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Priority/PriorityHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Priority/PriorityHooksTests.cs</tests>
 public sealed class PriorityHookChain {
   private readonly IPriorityProducerHook[] _producerHooks;
   private readonly IPriorityReceiveHook[] _receiveHooks;
@@ -185,7 +185,7 @@ public sealed class PriorityHookChain {
 /// into the work a handler starts.
 /// </summary>
 /// <docs>fundamentals/messaging/message-priority#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Priority/PriorityHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Priority/PriorityHooksTests.cs</tests>
 public static class PriorityContext {
   private static readonly AsyncLocal<int> _parent = new();
 

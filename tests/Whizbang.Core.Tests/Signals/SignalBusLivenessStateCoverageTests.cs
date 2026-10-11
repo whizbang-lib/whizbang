@@ -79,4 +79,23 @@ public class SignalBusLivenessStateCoverageTests {
     await Assert.That(state.DoorbellEvaluations).IsEqualTo(2)
       .Because("a missed doorbell is a judged edge just as much as a healthy wake");
   }
+
+  [Test]
+  public async Task Report_BeforeAnyProbe_OperationalButUnverifiedAsync() {
+    var health = new SignalBusLivenessState().Report();
+
+    await Assert.That(health.State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational);
+    await Assert.That(health.Detail).IsEqualTo("wire route not yet verified");
+  }
+
+  [Test]
+  public async Task Report_ProbePassed_OperationalWithNoDetailAsync() {
+    var state = new SignalBusLivenessState();
+    state.MarkProbeResult(success: true, DateTimeOffset.UnixEpoch);
+
+    var health = state.Report();
+
+    await Assert.That(health.State).IsEqualTo(Whizbang.Core.Health.ComponentState.Operational);
+    await Assert.That(health.Detail).IsNull();
+  }
 }

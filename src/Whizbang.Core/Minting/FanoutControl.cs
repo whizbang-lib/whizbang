@@ -12,7 +12,7 @@ namespace Whizbang.Core.Minting;
 /// <see cref="Auto"/>); overridable per composite via <c>CompositeEventBase.FanoutMode</c>.
 /// </summary>
 /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerTests.cs:CompositeFanoutMode_Manual_NoReceptorDirective_FansOutNothingAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerTests.cs:CompositeFanoutMode_Manual_NoReceptorDirective_FansOutNothingAsync</tests>
 public enum FanoutMode {
   /// <summary>Zero-config: the dispatch seam automatically fans out <c>InnerEvents</c>.</summary>
   Auto,
@@ -54,7 +54,7 @@ public enum FanoutAtomicity {
 /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:ReplaceWith_CarriesReplacementChildrenAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/DispatchFanoutControlTests.cs:Begin_CapturesDirectiveSetDuringWindowAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerTests.cs:CompositeDirective_ReplaceWith_FansOutReplacementSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDispatchWorkerTests.cs:CompositeDirective_ReplaceWith_FansOutReplacementSetAsync</tests>
 public sealed class FanoutDirective {
   private FanoutDirective(FanoutDirectiveKind kind, IReadOnlyList<IMessage>? replacement) {
     Kind = kind;

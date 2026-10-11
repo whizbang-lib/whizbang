@@ -288,6 +288,17 @@ public class DapperPhysicalFieldMoveTests : PostgresTestBase {
     await Assert.That(async () => await _step().RunAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
   }
 
+  /// <summary>A step built without a clock reads the system clock, and with nothing armed claims nothing.</summary>
+  [Test]
+  public async Task TheStep_WithoutAClock_UsesTheSystemClock_AndWithNothingArmedClaimsNothingAsync() {
+    await _execAsync("DELETE FROM wh_physical_column_fills");
+
+    await new DapperPhysicalColumnFillMaintenanceStep(ConnectionString).RunAsync(new ServiceCollection().BuildServiceProvider(), CancellationToken.None);
+
+    await Assert.That(await _scalarAsync(
+      "SELECT count(*) FROM wh_unique_emission_claims WHERE claim_key LIKE 'whizbang:physical-column-fill:%'")).IsEqualTo("0");
+  }
+
   /// <summary>A clock stopped at one instant, so every run of a test falls in the same claim window.</summary>
   private sealed class FixedTime(DateTimeOffset now) : TimeProvider {
     public override DateTimeOffset GetUtcNow() => now;

@@ -16,13 +16,13 @@ using Whizbang.Core.Validation;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:BatchSize_TakesPriorityOverDebounceAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:BatchSize_TakesPriorityOverDebounceAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Batch strategy - flushes when batch size is reached OR after a debounce quiet period.
 /// Combines count-based and time-based triggers for optimal throughput.
@@ -71,8 +71,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// For singleton usage, pass <c>null</c> for <paramref name="coordinator"/> and provide
   /// <paramref name="scopeFactory"/> — a new scope is created per flush to resolve IWorkCoordinator.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
 #pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public BatchWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
@@ -115,8 +115,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// Triggers immediate flush if batch size threshold is reached.
   /// Resets the debounce timer on each queue operation.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "BatchStrategy.QueueOutbox", message.MessageType);
@@ -248,8 +248,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   /// <docs>data/work-coordinator-strategies</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     return _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: false, ct);
   }
@@ -421,7 +421,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// <summary>
   /// Disposes the strategy, stops the debounce timer, and flushes any remaining queued operations.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;
@@ -576,9 +576,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 /// Identifies what triggered a batch flush.
 /// </summary>
 /// <docs>data/work-coordinator-strategies#flush-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_WithLogger_LogsDebounceTimerFiredAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_WithLogger_LogsDebounceTimerFiredAsync</tests>
 public enum FlushTrigger {
   /// <summary>Batch size threshold was reached.</summary>
   BatchSize,
@@ -592,7 +592,7 @@ public enum FlushTrigger {
 /// Event args for <see cref="BatchWorkCoordinatorStrategy.OnBatchFlushed"/>.
 /// </summary>
 /// <docs>data/work-coordinator-strategies#flush-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_BatchSizeTrigger_TriggerIsBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:OnBatchFlushed_ManualFlush_TriggerIsManualAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
 public sealed record WorkBatchFlushedArgs(WorkBatch Batch, FlushTrigger Trigger);

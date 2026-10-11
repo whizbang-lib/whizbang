@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 public sealed class ScopedEventTracker : IScopedEventTracker {
   private readonly ConcurrentBag<TrackedEvent> _trackedEvents = [];
 

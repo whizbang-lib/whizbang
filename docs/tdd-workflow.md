@@ -19,7 +19,7 @@ Every line of production code in Whizbang is written **only after** a failing te
 **Write tests that fail** - because the feature doesn't exist yet.
 
 ```csharp
-// File: tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs
+// File: tests/Whizbang.Partitioning.Component.Tests/HashPartitionRouterTests.cs
 
 [Test]
 public async Task HashPartitionRouter_ShouldRouteToSamePartitionForSameKey() {
@@ -231,7 +231,7 @@ Let's walk through implementing `SerialExecutor` using TDD.
 ### Step 1: Write First Test (RED)
 
 ```csharp
-// File: tests/Whizbang.Execution.Tests/SerialExecutorTests.cs
+// File: tests/Whizbang.Execution.Component.Tests/SerialExecutorTests.cs
 
 [Test]
 public async Task SerialExecutor_ShouldExecuteSingleMessage() {
@@ -434,7 +434,7 @@ Whizbang uses **contract tests** to ensure all implementations of an interface b
 ### Example: IPartitionRouter Contract Tests
 
 ```csharp
-// File: tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs
+// File: tests/Whizbang.Partitioning.Component.Tests/PartitionRouterContractTests.cs
 
 public abstract class PartitionRouterContractTests {
     protected abstract IPartitionRouter CreateRouter();
@@ -465,7 +465,7 @@ public abstract class PartitionRouterContractTests {
 ### Implementation Tests Inherit Contract Tests
 
 ```csharp
-// File: tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs
+// File: tests/Whizbang.Partitioning.Component.Tests/HashPartitionRouterTests.cs
 
 public class HashPartitionRouterTests : PartitionRouterContractTests {
     protected override IPartitionRouter CreateRouter() {
@@ -697,7 +697,7 @@ public async Task Test2_GetNext_ReturnsIncrementedValue() {
 dotnet test
 
 # Run tests for specific project
-dotnet test tests/Whizbang.Partitioning.Tests/
+dotnet test tests/Whizbang.Partitioning.Component.Tests/
 
 # Run specific test
 dotnet test --filter "FullyQualifiedName~HashPartitionRouter_ShouldBeConsistent"

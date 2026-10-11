@@ -136,6 +136,10 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
       options.ActiveCleanup = activeCleanup;
     }
 
+    if (bool.TryParse(section["RequireSealedBodies"], out var requireSealed)) {
+      options.RequireSealedBodies = requireSealed;
+    }
+
     var cipherName = section["CipherName"];
     if (!string.IsNullOrWhiteSpace(cipherName)) {
       options.CipherName = cipherName;

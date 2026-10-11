@@ -281,7 +281,8 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     public IDisposable OnPauseStateChanged(Action<bool> handler) => new NoOpDisposable();
 
-    public long GetCurrentTimestamp() => System.Diagnostics.Stopwatch.GetTimestamp();
+    // The awaiter never reads this; a fixed value keeps the stub off the real clock.
+    public long GetCurrentTimestamp() => 0;
 
     public void Dispose() { }
 

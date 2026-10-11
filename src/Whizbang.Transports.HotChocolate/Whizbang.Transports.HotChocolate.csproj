@@ -26,5 +26,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Transports.HotChocolate.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Transports.HotChocolate.Component.Tests" />
   </ItemGroup>
 </Project>

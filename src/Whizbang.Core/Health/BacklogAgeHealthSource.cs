@@ -27,7 +27,7 @@ namespace Whizbang.Core.Health;
 /// </para>
 /// </remarks>
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_AgedBacklog_DegradesHealthNamingTheEntityAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_AgedBacklog_DegradesHealthNamingTheEntityAsync</tests>
 public sealed class BacklogAgeHealthSource : IWhizbangHealthSource {
   private readonly BacklogAgeState _state;
 

@@ -153,4 +153,22 @@ public class ServiceInstanceProviderTests {
     await Assert.That(provider.ServiceName).IsEqualTo("WhizbangService")
       .Because("Whizbang:ServiceName should take precedence over ServiceName");
   }
+
+  [Test]
+  public async Task ResolveServiceName_NoEntryAssembly_UnknownAsync() {
+    var configuration = new ConfigurationBuilder().Build();
+
+    await Assert.That(ServiceInstanceProvider.ResolveServiceName(configuration, null)).IsEqualTo("Unknown");
+  }
+
+  [Test]
+  public async Task ResolveServiceName_NamelessEntry_UnknownAsync() {
+    var configuration = new ConfigurationBuilder().Build();
+
+    await Assert.That(ServiceInstanceProvider.ResolveServiceName(configuration, new NamelessAssembly())).IsEqualTo("Unknown");
+  }
+
+  private sealed class NamelessAssembly : System.Reflection.Assembly {
+    public override System.Reflection.AssemblyName GetName() => new();
+  }
 }

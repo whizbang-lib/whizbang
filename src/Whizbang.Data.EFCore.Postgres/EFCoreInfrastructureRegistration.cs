@@ -43,8 +43,8 @@ public static class EFCoreInfrastructureRegistration {
     services.AddScoped(storeInterfaceType, sp => {
       var context = (DbContext)sp.GetRequiredService(dbContextType);
       var storeType = typeof(EFCorePostgresPerspectiveStore<>).MakeGenericType(modelType);
-      return Activator.CreateInstance(storeType, context, tableName, upsertStrategy)
-          ?? throw new InvalidOperationException($"Failed to create {storeType.Name}");
+      // CreateInstance answers null only for a Nullable<T>; for a class it returns the instance or throws.
+      return Activator.CreateInstance(storeType, context, tableName, upsertStrategy)!;
     });
 
     // Register ILensQuery<TModel>
@@ -58,8 +58,8 @@ public static class EFCoreInfrastructureRegistration {
       var scopeContextAccessor = sp.GetRequiredService<IScopeContextAccessor>();
       var whizbangOptions = sp.GetRequiredService<IOptions<WhizbangCoreOptions>>();
       var queryType = typeof(EFCorePostgresLensQuery<>).MakeGenericType(modelType);
-      return Activator.CreateInstance(queryType, context, tableName, scopeContextAccessor, whizbangOptions)
-          ?? throw new InvalidOperationException($"Failed to create {queryType.Name}");
+      // CreateInstance answers null only for a Nullable<T>; for a class it returns the instance or throws.
+      return Activator.CreateInstance(queryType, context, tableName, scopeContextAccessor, whizbangOptions)!;
     });
   }
 

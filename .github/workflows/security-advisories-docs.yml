@@ -29,19 +29,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read   # every write goes through DOCS_REPO_PUSH_TOKEN, so the docs PR triggers its CI
+      contents: read   # every write goes through the release app, so the docs PR triggers its CI
     env:
-      DOCS_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+      HAVE_APP: ${{ secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
-      - name: Check for docs push token
+      - name: Check for the release app
         id: token
         run: |
-          if [ -n "$DOCS_TOKEN" ]; then
+          if [ "$HAVE_APP" = true ]; then
             echo "have=true" >> "$GITHUB_OUTPUT"
           else
             echo "have=false" >> "$GITHUB_OUTPUT"
-            echo "DOCS_REPO_PUSH_TOKEN not set — skipping the security advisories refresh"
+            echo "RELEASE_APP_ID or RELEASE_APP_PRIVATE_KEY not set — skipping the security advisories refresh"
           fi
+
+      # Scoped to the docs repository. Actions: the last step dispatches the docs site's start-release.
+      - name: Mint the release app token
+        id: app-token
+        if: steps.token.outputs.have == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: whizbang-lib.github.io
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
 
       - name: Checkout docs repo
         if: steps.token.outputs.have == 'true'
@@ -49,7 +63,7 @@ jobs:
         with:
           repository: whizbang-lib/whizbang-lib.github.io
           ref: develop
-          token: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: docs-repo
 
       # The generator needs no dependencies (Node's built-in fetch) and no token: it must stay
@@ -74,7 +88,7 @@ jobs:
         if: steps.gen.outputs.changed == 'true'
         working-directory: docs-repo
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config user.name "whizbang-ci"
           git config user.email "ci@whizba.ng"
@@ -106,7 +120,7 @@ jobs:
       - name: Release docs to main
         if: steps.publish.outputs.published == 'true'
         env:
-          GH_TOKEN: ${{ secrets.DOCS_REPO_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh workflow run start-release.yml \
             --repo whizbang-lib/whizbang-lib.github.io \

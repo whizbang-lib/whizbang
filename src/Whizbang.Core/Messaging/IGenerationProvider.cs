@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Reflection;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -46,10 +46,7 @@ public sealed class DefaultGenerationProvider : IGenerationProvider {
 
   /// <summary>Initializes the provider, capturing the version once at construction.</summary>
   public DefaultGenerationProvider() {
-    var version = typeof(DefaultGenerationProvider).Assembly
-      .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-      ?? typeof(DefaultGenerationProvider).Assembly.GetName().Version?.ToString()
-      ?? "unknown";
+    var version = AssemblyVersionText.Of(typeof(DefaultGenerationProvider).Assembly);
     _value = $"whizbang/{version}";
   }
 

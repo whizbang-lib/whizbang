@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// registered alongside the workers); inert on defaults (enabled, no overrides).
 /// </summary>
 /// <docs>fundamentals/perspectives/row-retention</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowRetentionConfiguratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Perspectives/PerspectiveRowRetentionConfiguratorTests.cs</tests>
 public sealed partial class PerspectiveRowRetentionConfigurator(
     IOptions<PerspectiveRowRetentionOptions> options,
     ILogger<PerspectiveRowRetentionConfigurator> logger) : IHostedService {

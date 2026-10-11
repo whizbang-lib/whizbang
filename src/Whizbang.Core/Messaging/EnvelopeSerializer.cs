@@ -49,8 +49,8 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     // MessageEnvelope<IEvent> instead of MessageEnvelope<ConcreteEvent>. The receiving service
     // won't have JsonTypeInfo for MessageEnvelope<IEvent>, only for concrete types.
     // FIX: Always use the payload's runtime type to construct the envelope type name.
-    var messageTypeName = TypeNameFormatter.AssemblyQualifiedNameOrNull(payloadType)
-      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+    // A payload's runtime type is always closed, so it always has an assembly-qualified name.
+    var messageTypeName = TypeNameFormatter.AssemblyQualifiedName(payloadType);
     var envelopeTypeName = EnvelopeTypeNameHelper.Format(messageTypeName);
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
@@ -64,7 +64,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = payloadJson,
-      Hops = envelope.Hops?.ToList() ?? [],
+      Hops = envelope.CopyHops(),
       ReceptorInvocations = envelope.ReceptorInvocations?.ToList(),
       DispatchContext = envelope.DispatchContext,
       // A directed envelope stays directed through the conversion — dropping Target here would

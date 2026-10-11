@@ -6,7 +6,7 @@ BeforeAll {
   # A run where every job the gate looks at succeeded, with no reuse. Tests override from here.
   function Get-GreenNeed {
     $needs = @{}
-    foreach ($job in @('changes', 'format', 'build', 'unit-tests', 'postgres-integration', 'inmemory-integration',
+    foreach ($job in @('changes', 'format', 'build', 'unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration',
         'rabbitmq-integration', 'servicebus-integration', 'azureblob-integration', 'general-integration', 'quality', 'pack')) {
       $needs[$job] = @{ result = 'success'; outputs = @{} }
     }
@@ -21,7 +21,7 @@ BeforeAll {
     foreach ($job in $jobs) { $needs[$job].result = 'skipped' }
   }
 
-  $script:AllSuites = @('unit-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
+  $script:AllSuites = @('unit-tests', 'component-tests', 'postgres-integration', 'inmemory-integration', 'rabbitmq-integration',
     'servicebus-integration', 'azureblob-integration', 'general-integration')
 }
 
@@ -33,7 +33,7 @@ Describe 'tested here' {
   }
 
   It 'fails when <suite> is skipped with nothing proving the tree was tested elsewhere' -ForEach @(
-      @{ suite = 'unit-tests' }, @{ suite = 'postgres-integration' }, @{ suite = 'inmemory-integration' },
+      @{ suite = 'unit-tests' }, @{ suite = 'component-tests' }, @{ suite = 'postgres-integration' }, @{ suite = 'inmemory-integration' },
       @{ suite = 'rabbitmq-integration' }, @{ suite = 'servicebus-integration' }, @{ suite = 'azureblob-integration' }, @{ suite = 'general-integration' }) {
     $n = Get-GreenNeed; Skip-Job $n @($suite)
     $v = Get-CiVerdict -NeedsTable $n -EventName pull_request

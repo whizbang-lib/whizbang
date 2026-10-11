@@ -100,7 +100,7 @@ public interface IStartupPipelineState {
 /// released when it does, and late waiters return immediately.
 /// </remarks>
 /// <docs>operations/startup/startup-pipeline#hooks</docs>
-/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineHooksTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupPipelineHooksTests.cs</tests>
 public sealed class StartupPipelineState : IStartupPipelineState, IStartupStepObserver {
   private readonly Lock _lock = new();
   private readonly Dictionary<string, StartupStepStatus> _statuses = new(StringComparer.Ordinal);

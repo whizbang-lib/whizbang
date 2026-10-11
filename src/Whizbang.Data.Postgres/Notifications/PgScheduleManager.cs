@@ -81,7 +81,7 @@ public sealed class PgScheduleManager(
     cmd.Parameters.Add(new NpgsqlParameter("part", NpgsqlDbType.Integer) { Value = definition.PartitionNumber });
     cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = (short)definition.Kind });
     cmd.Parameters.Add(new NpgsqlParameter("interval", NpgsqlDbType.Bigint) {
-      Value = definition.Interval is { } iv ? (long)iv.TotalMilliseconds : (object)DBNull.Value
+      Value = _millisecondsOrNull(definition.Interval)
     });
     cmd.Parameters.Add(new NpgsqlParameter("cron", NpgsqlDbType.Text) { Value = (object?)definition.Cron ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("tz", NpgsqlDbType.Text) { Value = (object?)definition.TimeZone ?? DBNull.Value });
@@ -94,7 +94,7 @@ public sealed class PgScheduleManager(
     cmd.Parameters.Add(new NpgsqlParameter("edata", NpgsqlDbType.Jsonb) { Value = (object?)definition.EventDataJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)definition.ScopeJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlDbType.Bigint) {
-      Value = definition.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
+      Value = _millisecondsOrNull(definition.CatchUpLookback)
     });
     cmd.Parameters.Add(new NpgsqlParameter("authority", NpgsqlDbType.Uuid) { Value = definition.AuthorityPrincipalId });
     cmd.Parameters.Add(new NpgsqlParameter("claims", NpgsqlDbType.Jsonb) {
@@ -178,7 +178,7 @@ public sealed class PgScheduleManager(
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Smallint) { Value = (short)update.Kind });
     cmd.Parameters.Add(new NpgsqlParameter("interval", NpgsqlDbType.Bigint) {
-      Value = update.Interval is { } iv ? (long)iv.TotalMilliseconds : (object)DBNull.Value
+      Value = _millisecondsOrNull(update.Interval)
     });
     cmd.Parameters.Add(new NpgsqlParameter("cron", NpgsqlDbType.Text) { Value = (object?)update.Cron ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("tz", NpgsqlDbType.Text) { Value = (object?)update.TimeZone ?? DBNull.Value });
@@ -190,7 +190,7 @@ public sealed class PgScheduleManager(
     cmd.Parameters.Add(new NpgsqlParameter("edata", NpgsqlDbType.Jsonb) { Value = (object?)update.EventDataJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Jsonb) { Value = (object?)update.ScopeJson ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("lookback", NpgsqlDbType.Bigint) {
-      Value = update.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
+      Value = _millisecondsOrNull(update.CatchUpLookback)
     });
 
     DateTimeOffset nextFire;
@@ -237,4 +237,11 @@ public sealed class PgScheduleManager(
     }
     return await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
   }
+
+  /// <summary>
+  /// A span as the whole-millisecond bigint the schedule functions take, or SQL NULL when it is not
+  /// set. Interval and catch-up lookback both travel this way, on create and on update alike.
+  /// </summary>
+  private static object _millisecondsOrNull(TimeSpan? span) =>
+    span is { } value ? (long)value.TotalMilliseconds : DBNull.Value;
 }

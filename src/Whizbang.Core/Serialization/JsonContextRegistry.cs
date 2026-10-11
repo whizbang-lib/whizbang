@@ -1062,7 +1062,7 @@ public static class JsonContextRegistry {
       _createProperty<ValueObjects.MessageId, MessageEnvelope<TBase>>(_options, "MessageId", obj => obj.MessageId, null),
       // CRITICAL: Use the polymorphic type info for the Payload property
       _createPropertyWithTypeInfo(_options, "Payload", (MessageEnvelope<TBase> obj) => obj.Payload, _payloadTypeInfo),
-      _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(_options, "Hops", obj => obj.Hops?.ToList() ?? [], null),
+      _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(_options, "Hops", obj => obj.CopyHops(), null),
       // Priority step 1: omitted when zero, like the attribute-honoring shape.
       _createProperty<int, MessageEnvelope<TBase>>(_options, "Priority", obj => obj.Priority, (obj, value) => obj.Priority = value),
       _createProperty<string?, MessageEnvelope<TBase>>(_options, "Target", obj => obj.Target, (obj, value) => obj.Target = value),
