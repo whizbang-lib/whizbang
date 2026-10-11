@@ -63,6 +63,16 @@ public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
   }
 
   [Test]
+  public async Task DrainBatchSize_ParsesIntAsync() {
+    var bound = _bind(new Dictionary<string, string?> {
+      ["Whizbang:Database:Stamper:DrainBatchSize"] = "4000",
+    });
+    await Assert.That(bound.DrainBatchSize).IsEqualTo(4000)
+      .Because("the drain ceiling bounds how long one stamp holds its rows and the role fence, so an operator whose "
+        + "database cannot finish the default ceiling inside its command timeout has to be able to lower it (#1217)");
+  }
+
+  [Test]
   public async Task DisableStamper_ParsesBoolAsync() {
     var bound = _bind(new Dictionary<string, string?> {
       ["Whizbang:Database:Stamper:DisableStamper"] = "true",

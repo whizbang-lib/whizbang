@@ -43,7 +43,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       TimeSpan? leaderElectionRetry = null,
       bool disable = false,
       INotifySignalingGate? gate = null,
-      string? searchPath = null) {
+      string? searchPath = null,
+      int batchSize = 100) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -52,7 +53,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     var stamperOptions = new CommitOrderStamperOptions {
       PollingInterval = pollingInterval ?? TimeSpan.FromMilliseconds(100),
       LeaderElectionRetry = leaderElectionRetry ?? TimeSpan.FromMilliseconds(100),
-      BatchSize = 100,
+      BatchSize = batchSize,
       DisableStamper = disable,
     };
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
@@ -438,6 +439,58 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(gate.Subscribers).IsEqualTo(0)
       .Because("a stopped stamper unsubscribes, so a live gate cannot wake a worker that no longer runs");
+  }
+
+  /// <summary>
+  /// #1217: a stamp that times out halves the batch and the leader retries at once, still leading, until a call
+  /// completes.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A canceled call rolls back everything it did, so the same size can never succeed. The batch used to be resized
+  /// only after a call that returned: a timeout left it where it was, the leader dropped its lock and came back with
+  /// the same size, and on a deployed environment one stamper repeated a 30 s timeout for ten hours after an import
+  /// had grown its batch, while every read model of that service stood still.
+  /// </para>
+  /// <para>
+  /// The timeout is made certain rather than likely: a <c>SHARE</c> lock on the event store lets the stamp choose and
+  /// lock its rows and stops its update, so with a one-second command timeout the call cannot finish until the lock is
+  /// released. The test waits on the worker's own signals, never on time.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Worker_AStampTimesOut_HalvesTheBatchAndKeepsStampingAsLeaderAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    var eventId = (Guid)TrackedGuid.New();
+    await _insertEventStoreRowAsync((Guid)TrackedGuid.New(), eventId, version: 1);
+
+    await using var blocker = new NpgsqlConnection(ConnectionString);
+    await blocker.OpenAsync(cts.Token);
+    await using (var begin = new NpgsqlCommand("BEGIN; LOCK TABLE wh_event_store IN SHARE MODE", blocker)) {
+      await begin.ExecuteNonQueryAsync(cts.Token);
+    }
+
+    var worker = _newWorker(ConnectionString + ";Command Timeout=1", batchSize: 8);
+    var leaderships = 0;
+    worker.OnBecameLeader += () => Interlocked.Increment(ref leaderships);
+    var timedOut = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStampTimedOut += next => timedOut.TrySetResult(next);
+    var stamped = _whenStampCount(worker, minStamped: 1);
+    await worker.StartAsync(cts.Token);
+
+    var nextBatch = await timedOut.Task.WaitAsync(cts.Token);
+    await using (var commit = new NpgsqlCommand("COMMIT", blocker)) {
+      await commit.ExecuteNonQueryAsync(cts.Token);
+    }
+    await stamped.Task.WaitAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(nextBatch).IsEqualTo(4)
+      .Because("the call that timed out asked for 8, and a canceled call stamps nothing, so the next asks for half");
+    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+      .Because("once a call can complete, the backed-off batch stamps the pending row");
+    await Assert.That(leaderships).IsEqualTo(1)
+      .Because("a timeout is answered by a smaller batch, not by giving up the stamper's lock and electing again");
   }
 
   // ============================================================================

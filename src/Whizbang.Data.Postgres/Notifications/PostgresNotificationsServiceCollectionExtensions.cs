@@ -438,6 +438,11 @@ internal sealed class ConfigureCommitOrderStamperOptionsFromConfiguration(IConfi
       options.BatchSize = batch;
     }
 
+    if (int.TryParse(section["DrainBatchSize"], System.Globalization.NumberStyles.Integer,
+        System.Globalization.CultureInfo.InvariantCulture, out var drain)) {
+      options.DrainBatchSize = drain;
+    }
+
     if (bool.TryParse(section["DisableStamper"], out var disable)) {
       options.DisableStamper = disable;
     }

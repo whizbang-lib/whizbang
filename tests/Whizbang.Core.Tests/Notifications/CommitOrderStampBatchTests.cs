@@ -74,4 +74,54 @@ public class CommitOrderStampBatchTests {
       .IsEqualTo(CEILING)
       .Because("the growth is computed wide and clamped, so a size near the maximum cannot wrap to a "
         + "negative batch — which the database would reject rather than ignore");
+
+  // ------------------------------------------------------------------
+  // #1217: a call that times out is canceled and stamps nothing, so the same size can never succeed.
+
+  /// <summary>The sizes a backoff from the ceiling falls through, so the expectation is not a constant array argument.</summary>
+  private static readonly int[] _backoff = [12_500, 6_250, 3_125, 1_562, 781, 390, 195, 97, 48, 24, 12, 6, 3, 1, 1];
+
+  [Test]
+  public async Task AfterTimeout_HalvesTheBatchAsync() =>
+    await Assert.That(CommitOrderStampBatch.AfterTimeout(CEILING)).IsEqualTo(12_500)
+      .Because("a canceled call rolls back everything it did, so retrying the same size repeats the same timeout; "
+        + "on a deployed environment one stamper did that every 30 s for ten hours after an import");
+
+  [Test]
+  public async Task AfterTimeout_FallsBelowTheConfiguredSizeAndStopsAtOneAsync() {
+    var sizes = new List<int>();
+    var size = CEILING;
+    for (var i = 0; i < _backoff.Length; i++) {
+      size = CommitOrderStampBatch.AfterTimeout(size);
+      sizes.Add(size);
+    }
+
+    await Assert.That(sizes).IsEquivalentTo(_backoff)
+      .Because("the backoff looks for a size that completes, so it passes the configured size when it must, and a "
+        + "batch of one is the smallest call that can still make progress");
+  }
+
+  [Test]
+  public async Task Next_AfterATimeout_DoesNotGrowBackToTheSizeThatTimedOutAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(12_500, 12_500, CONFIGURED, CEILING, timeoutCap: 12_500))
+      .IsEqualTo(12_500)
+      .Because("the size that timed out was twice this one, so doubling back to it would time out again and cost "
+        + "another full timeout on every climb");
+
+  [Test]
+  public async Task Next_AfterATimeoutBelowTheConfiguredSize_StaysBelowItAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(500, 500, CONFIGURED, CEILING, timeoutCap: 500)).IsEqualTo(500)
+      .Because("when even the configured size timed out, a full batch must not climb back to it");
+
+  [Test]
+  public async Task Next_ACapAboveTheGrowth_DoesNotHoldItBackAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(1_000, 1_000, CONFIGURED, CEILING, timeoutCap: 12_500))
+      .IsEqualTo(2_000)
+      .Because("the cap bounds the climb, it does not set its pace");
+
+  [Test]
+  public async Task Next_AShortBatchAfterATimeout_ReturnsToTheConfiguredSizeAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(500, 3, CONFIGURED, CEILING, timeoutCap: 500)).IsEqualTo(CONFIGURED)
+      .Because("a short batch means the backlog is drained to the fence; the next burst starts at the configured "
+        + "size, and the caller drops the cap with it");
 }
