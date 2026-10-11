@@ -20,22 +20,22 @@ Record each item's outcome here (what was checked, what was found, the PR or iss
 
 ## Decisions for the owner
 
-Repository settings, not code, so each needs the owner's go:
+Approved by the owner on 2026-10-10, all as suggested. State:
 
-1. **Publish environments have no deployment-branch policy, and `PUBLISH_WITHOUT_APPROVAL=true` routes manual
-   publishes to `nuget-publish-auto`, which has no reviewers.** Any maintainer can dispatch `nuget-publish` from an
-   unreviewed branch, whose own copy of the workflow skips the new ref check. Restrict `nuget-publish`,
-   `nuget-publish-auto` and `release-approval` to develop, main and `release/**`.
-2. **No tag ruleset.** Any writer can create, move or delete `v*` tags. Add one: creation by the release workflow
-   only, no update, no deletion.
-3. **`release/**` allows direct pushes with no required checks**, and beta and rc publish from it. Require a pull
-   request and the CI checks.
-4. **Actions settings.** Turn on SHA-pinning enforcement (every workflow already pins) and stop `GITHUB_TOKEN`
-   approving pull requests.
-5. **`RELEASE_PAT` and `DOCS_REPO_PUSH_TOKEN` are personal access tokens.** Their scopes and expiry are not visible
-   to the workflows; replace each with a GitHub App installation token, as the lock-file job already does.
-6. **Offloaded bodies are stored unencrypted unless `CipherName` is set.** Keep opt-in (documented), or warn at
-   startup when offload is on with no cipher.
+1. **Publish environments limited to develop, main and `release/**`.** `release.yml` now starts from the push to main
+   (a pull_request run's ref is `refs/pull/N/merge`, which a branch policy cannot admit safely); the policies on
+   `nuget-publish`, `nuget-publish-auto` and `release-approval` are applied once that change is on develop.
+2. **Tag ruleset "Protect release tags"** (id 24862485) is live: no actor may move or delete a `v*` tag. Restricting
+   creation to the release workflow waits on item 5: GitHub does not accept GitHub Actions as a bypass actor, so
+   the release jobs must create tags with an app token that the ruleset can name.
+3. **`release/**` requires a pull request and the CI gate** (live; checks not enforced on creation, so Start Release
+   and a hotfix cut still push the new branch). F7 hotfixes now arrive as a PR into the hotfix branch, like F8.
+4. **SHA pinning enforced; `GITHUB_TOKEN` can no longer approve pull requests** (live).
+5. **Replace `RELEASE_PAT` and `DOCS_REPO_PUSH_TOKEN` with a GitHub App token.** Waiting on the owner to create the app
+   (contents, pull requests and workflows write; installed on this repository and the docs repository) and store its
+   id and private key as secrets. Then the workflows switch to `actions/create-github-app-token`, the PATs are
+   revoked, and the tag ruleset's creation rule names the app as its only bypass.
+6. **Offload encryption stays opt-in; a store with no cipher logs a warning at start** (`UnsealedOffloadStartupWarning`).
 
 ## Hunt list (highest risk first)
 
