@@ -30,6 +30,9 @@
   build time and never reads it from that file (except as a last-ditch fallback if GitVersion fails).
 - **Publishing to nuget.org waits for your approval** (the `nuget-publish` environment), unless the
   repository variable `PUBLISH_WITHOUT_APPROVAL` is `true`.
+- **Only reviewed code publishes.** The publish environments admit runs from `develop`, `main` and
+  `release/**` only, and each of those takes changes through a pull request with the CI gate. A
+  published `v*` tag cannot be moved or deleted.
 - **Claude sessions follow the `release` skill** (`.claude/skills/release/SKILL.md`), which maps any
   situation to the flow below and its recovery. Keep it in step with this document.
 
@@ -48,7 +51,7 @@ the enforcement points named in the last column refuse it.
 | F4 | Fix something in an open release | PR from `fix/*` (or `bugfix/*`, `hotfix/*`) into `release/vX.Y.Z` | The branch re-tests; publish the next beta or rc when ready (F3); the fix reaches develop after release (F5) | gitflow check |
 | F5 | Ship the **stable** release | Merge the release PR (merge commit) and approve `nuget-publish` | Promotes the release branch's tested packages as **`X.Y.Z`**, tags `main`, syncs `main` back to `develop` by PR; CI 5 released reuses the release branch's results | release PR must come from `release/vX.Y.Z` with its own stable number; tested tree must equal the tagged tree |
 | F6 | Abandon a release | Close the release PR, delete the branch | Nothing publishes. A re-cut with `auto` reuses the same number if betas or rcs already shipped for it | — |
-| F7 | Hotfix the **current** line | Branch `release/vX.Y.(Z+1)` from tag `vX.Y.Z`, push it, then push the fix | The push run opens the release PR into `main` itself; continue with F3/F5 | release guard |
+| F7 | Hotfix the **current** line | Branch `release/vX.Y.(Z+1)` from tag `vX.Y.Z` and push it; put the fix on `fix/*` and PR it **into** `release/vX.Y.(Z+1)` | The push run opens the release PR into `main` itself; continue with F3/F5 | release guard; `release/**` ruleset: a direct push is refused |
 | F8 | Patch an **older** line | Branch `release/vA.B.(C+1)` from tag `vA.B.C` and push it; put the fix on `fix/*` and PR it **into** `release/vA.B.(C+1)` | Merging the fix PR publishes **`A.B.(C+1)`**, then opens a develop-only back-merge PR; never touches `main` | release guard: a direct push is refused; the fix PR's coverage/Sonar gate must have passed |
 | F9 | Recover a stuck release | See [Recovery](#recovery) | — | — |
 
@@ -266,6 +269,7 @@ flowchart LR
 - A **manual/override** version is still reflected, because it is what gets tagged.
 - `release.yml` **fails if the tag already exists** — you can never re-publish a version, and the
   tag history can never silently disagree with GitVersion.
+- The **Protect release tags** ruleset refuses moving or deleting any `v*` tag, for every actor.
 - A **lower** version (a backport tag `< highest`) will not advance the mainline base — correct.
 
 ---
@@ -275,7 +279,21 @@ flowchart LR
 The `push` job in `nuget-push.yml` declares `environment: nuget-publish`, which has a **required
 reviewer**. Every publish path funnels through it, so **nothing reaches nuget.org without an approval**
 in the GitHub Actions UI. (`release-approval`, used by release.yml's "Approve Release" job, has no
-rules today and auto-passes — the real gate is `nuget-publish`.)
+reviewers and auto-passes — the real gate is `nuget-publish`.)
+
+### Where a publish may run from
+
+`nuget-publish`, `nuget-publish-auto` and `release-approval` each carry a deployment-branch policy
+admitting `develop`, `main` and `release/**`. A run from any other ref, including a manual
+`nuget-publish` dispatched from an unreviewed branch, is refused before the job starts, so no branch's
+own copy of a workflow can reach the publishing identity. `nuget-publish.yml` also refuses a `ref`
+input no protected branch contains.
+
+That is why `release.yml` starts from the **push** a merged release PR makes to `main`, not from the
+`pull_request` event: GitHub evaluates the policy against the run's ref, and a `pull_request` run's
+ref is `refs/pull/N/merge`. The push run finds the release PR through the merge commit
+(`repos/…/commits/<sha>/pulls`) and applies the same title and branch checks as before. Admitting
+`refs/pull/*/merge` instead would let any pull request's workflow in.
 
 ### What a stable GitHub release carries
 
@@ -674,6 +692,9 @@ and publishes nothing.
 - **A `pull_request` trigger filters on the BASE branch only.** There is no head-branch filter, so a
   release PR always starts a CI run. Its jobs can yield (release-pr), but the run itself cannot be
   prevented, which is why a release PR still shows a row per yielded job.
+- **`release/**` requires a pull request and the CI gate** (`Gate · CI result`, `Gate · Gitflow branch
+  direction`), like `develop`. The checks are not enforced on creation, so Start Release and a hotfix
+  cut can still push the new branch; every change after that arrives as a PR.
 - **`main` is protected by a ruleset, not classic branch protection.** `.../branches/main/protection`
   returns 404 "Branch not protected"; the required checks are at
   `gh api repos/<owner>/<repo>/rules/branches/main`.
