@@ -175,15 +175,43 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
       .Because("rows that become eligible together are numbered in the order they were inserted (#1225's decision)");
   }
 
+  [Test]
+  public async Task Stamp_StreamsInDifferentBatches_FollowTheOrderTheirTransactionsBeganInAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using var first = await dataSource.OpenConnectionAsync();
+    await using var second = await dataSource.OpenConnectionAsync();
+    var a = Guid.CreateVersion7();
+    var b = Guid.CreateVersion7();
+
+    // The same shape as above: the second transaction began first, and inserts after the first one commits.
+    await _execAsync(second, "BEGIN");
+    _ = await _xidAsync(second);
+    await _execAsync(first, "BEGIN");
+    await _appendAsync(first, a, Guid.CreateVersion7(), version: 1);
+    await _execAsync(first, "COMMIT");
+    await _appendAsync(second, b, Guid.CreateVersion7(), version: 1);
+    await _execAsync(second, "COMMIT");
+
+    // A batch of one, so the two streams cannot be numbered together.
+    _ = await _stampAsync(first, 1);
+    _ = await _stampAsync(first, 1);
+
+    await Assert.That(await _stampedAsync(first, b)).IsLessThan(await _stampedAsync(first, a))
+      .Because("across streams that are not numbered together, the batch takes the rows whose transactions began "
+        + "first (205, #1217): the walk reads only rows past the horizon, and it can only find those through the "
+        + "transaction that wrote them. Insertion order is kept within a batch, and a stream's versions keep their "
+        + "order whatever the batch");
+  }
+
   /// <summary>
   /// #1062: the drain reads its batch in insertion order through an index and stops at the batch, so a call costs
   /// what it stamps. The candidate query used to sort every unstamped row by transaction id before its LIMIT, so the
   /// same batch cost more as the backlog behind it grew.
   /// </summary>
   /// <remarks>
-  /// Measured as the same batch at two backlog depths rather than against a fixed ceiling: the update itself touches
-  /// every index of the event store for each row it stamps, which is the work the batch buys and the same at any
-  /// depth. What must not change between the depths is everything else.
+  /// Measured as the same batch at two backlog depths, in index entries read inside the call's own transaction. The
+  /// plan's shared-buffer count was used before and does not follow the walk: a call that read 1,000 entries visited
+  /// 910 buffers and one that read 20,000 visited 530, so it could not have caught the walk reading the backlog.
   /// </remarks>
   [Test]
   public async Task Stamp_ABacklog_CostsWhatTheBatchStampsNotWhatTheBacklogHoldsAsync() {
@@ -192,17 +220,55 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
     await _execAsync(conn, "ALTER TABLE wh_event_store SET (autovacuum_enabled = false)");
 
     await _fillBacklogAsync(conn, SHALLOW_STREAMS);
-    var shallow = await _stampCostAsync(conn);
+    var shallow = await _entriesReadAsync(conn);
     await _fillBacklogAsync(conn, DEEP_STREAMS - SHALLOW_STREAMS);
-    var deep = await _stampCostAsync(conn);
-    Console.WriteLine($"stamp of {BATCH}: {shallow} buffers behind {SHALLOW_STREAMS * BACKLOG_VERSIONS} rows, {deep} behind {DEEP_STREAMS * BACKLOG_VERSIONS}");
+    var deep = await _entriesReadAsync(conn);
+    Console.WriteLine($"stamp of {BATCH}: read {shallow.Entries} index entries behind {SHALLOW_STREAMS * BACKLOG_VERSIONS} rows, {deep.Entries} behind {DEEP_STREAMS * BACKLOG_VERSIONS} ({deep.ByIndex})");
 
-    await Assert.That(deep).IsLessThanOrEqualTo(shallow + (shallow / 4))
-      .Because($"stamping {BATCH} rows visited {shallow} shared buffers behind a backlog of "
-        + $"{SHALLOW_STREAMS * BACKLOG_VERSIONS} rows and {deep} behind {DEEP_STREAMS * BACKLOG_VERSIONS}. A call that "
-        + "reads the backlog to choose its batch makes a drain cost the backlog squared over the batch");
+    await Assert.That(deep.Stamped).IsEqualTo(BATCH);
+    await Assert.That(deep.Entries).IsLessThanOrEqualTo(shallow.Entries + (shallow.Entries / 4))
+      .Because($"stamping {BATCH} rows read {shallow.Entries} index entries behind a backlog of "
+        + $"{SHALLOW_STREAMS * BACKLOG_VERSIONS} rows and {deep.Entries} behind {DEEP_STREAMS * BACKLOG_VERSIONS} ({deep.ByIndex}). "
+        + "A call that reads the backlog to choose its batch makes a drain cost the backlog squared over the batch");
   }
 
+  /// <summary>
+  /// #1217: rows behind an open transaction are not eligible, and a call that finds none must not have read them all
+  /// to find that out. An import's oldest transaction holds the horizon while the rest of it commits behind, and the
+  /// stamper retries every fenced interval while rows are pending, under the role fence.
+  /// </summary>
+  /// <remarks>
+  /// Measured as index entries read inside the call's own transaction, which do not depend on the machine, so the
+  /// ceiling is absolute: a call may read what a batch could stamp, never the rows it cannot.
+  /// </remarks>
+  [Test]
+  public async Task Stamp_RowsBehindAnOpenTransaction_AreNotReadToFindNothingEligibleAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using var import = await dataSource.OpenConnectionAsync();
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await _execAsync(conn, "ALTER TABLE wh_event_store SET (autovacuum_enabled = false)");
+
+    // The import's oldest transaction, open with a write, holds the horizon below everything committed after it.
+    await _execAsync(import, "BEGIN");
+    await _appendAsync(import, Guid.CreateVersion7(), Guid.CreateVersion7(), version: 1);
+
+    await _fillBacklogAsync(conn, HELD_BACK_SHALLOW_STREAMS);
+    var shallow = await _entriesReadAsync(conn);
+    await _fillBacklogAsync(conn, HELD_BACK_DEEP_STREAMS - HELD_BACK_SHALLOW_STREAMS);
+    var deep = await _entriesReadAsync(conn);
+    await _execAsync(import, "ROLLBACK");
+    Console.WriteLine($"held-back stamp of {BATCH}: read {shallow.Entries} index entries behind {HELD_BACK_SHALLOW_STREAMS * BACKLOG_VERSIONS} rows, {deep.Entries} behind {HELD_BACK_DEEP_STREAMS * BACKLOG_VERSIONS} ({deep.ByIndex})");
+
+    await Assert.That(deep.Stamped).IsEqualTo(0)
+      .Because("every row was committed after the open transaction began, so none is past the horizon");
+    await Assert.That(deep.Entries).IsLessThanOrEqualTo(BATCH)
+      .Because($"finding nothing to stamp read {shallow.Entries} index entries behind {HELD_BACK_SHALLOW_STREAMS * BACKLOG_VERSIONS} "
+        + $"rows and {deep.Entries} behind {HELD_BACK_DEEP_STREAMS * BACKLOG_VERSIONS} ({deep.ByIndex}). A walk that reads every row behind the "
+        + "horizon to learn none is eligible repeats that read on every fenced retry of an import");
+  }
+
+  private const int HELD_BACK_SHALLOW_STREAMS = 100;
+  private const int HELD_BACK_DEEP_STREAMS = 2_000;
   private const int SHALLOW_STREAMS = 1_000;
   private const int DEEP_STREAMS = 16_000;
   private const int BACKLOG_VERSIONS = 10;
@@ -219,12 +285,34 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
     ANALYZE wh_event_store;
     """);
 
-  /// <summary>One stamp of <see cref="BATCH"/> rows, rolled back, so both depths stamp the same kind of batch.</summary>
-  private static async Task<long> _stampCostAsync(NpgsqlConnection conn) {
+  /// <summary>
+  /// One stamp of <see cref="BATCH"/>, rolled back, with the index entries it read on the event store's indexes: counted
+  /// inside the call's own transaction, so the number is the same on any machine and names the index that did the reading.
+  /// </summary>
+  private static async Task<(int Stamped, long Entries, string ByIndex)> _entriesReadAsync(NpgsqlConnection conn) {
+    const string READ = """
+      SELECT i.indexrelid::regclass::text AS name, pg_stat_get_xact_tuples_returned(i.indexrelid) AS entries
+      FROM pg_index i WHERE i.indrelid = 'wh_event_store'::regclass
+      """;
     await _execAsync(conn, "BEGIN");
-    var plan = await QueryPlan.CaptureAsync(conn, $"SELECT stamp_pending_commit_sequences({BATCH})");
+    var before = await _readByIndexAsync(conn, READ);
+    var stamped = await _stampAsync(conn, BATCH);
+    var after = await _readByIndexAsync(conn, READ);
     await _execAsync(conn, "ROLLBACK");
-    return plan.SharedBuffersVisited;
+    var delta = after.ToDictionary(kv => kv.Key, kv => kv.Value - before.GetValueOrDefault(kv.Key));
+    var byIndex = string.Join(", ", delta.Where(kv => kv.Value > 0).Select(kv => $"{kv.Key} {kv.Value}"));
+    return (stamped, delta.Values.Sum(), byIndex.Length == 0 ? "no index read" : byIndex);
+  }
+
+  private static async Task<Dictionary<string, long>> _readByIndexAsync(NpgsqlConnection conn, string sql) {
+    var read = new Dictionary<string, long>(StringComparer.Ordinal);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      read[reader.GetString(0)] = reader.GetInt64(1);
+    }
+    return read;
   }
 
   // ------------------------------------------------------------------
