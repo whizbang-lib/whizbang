@@ -318,16 +318,19 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// A rebuild of a row that is already at its stream's head must still re-derive it. The generated runner's
   /// idempotency filter compares each event against the row's own recorded position, which is right for the
   /// live drain re-claiming a batch after a crash and exactly wrong here: by that measure every event is
   /// already applied, so the whole batch was dropped, the stream returned Completed, and the rebuilder
   /// reported success having written nothing (#1313).
-  ///
+  /// </para>
+  /// <para>
   /// The row is corrupted out of band first, because that is the only way to tell a rebuild that re-derived
   /// the row from one that skipped it: with no corruption both produce the same number and the test would
   /// pass against the defect. Asserting the exact balance also pins the other half of the fix, that a rebuild
   /// starts from an empty model: folding the stream onto the stored row would give 999 + 100, not 100.
+  /// </para>
   /// </summary>
   [Test]
   public async Task RebuildStreamsAsync_WhenTheRowIsAlreadyAtTheStreamHead_StillRederivesItAsync() {

@@ -171,8 +171,9 @@ public class DutyElectionE2ETests : EFCoreTestBase {
       runnerA.RunAsync(cancellationToken), runnerB.RunAsync(cancellationToken));
 
     await Assert.That(stepA.Executions + stepB.Executions).IsEqualTo(1)
-      .Because($"a step requiring a duty runs on the one instance that wins it — the pipeline's "
-             + $"exclusivity is the capability's, not a mode it enters. A=${stepA.Executions} B=${stepB.Executions}: "
+      .Because("a step requiring a duty runs on the one instance that wins it — the pipeline's "
+             + "exclusivity is the capability's, not a mode it enters. "
+             + $"A={stepA.Executions} B={stepB.Executions}: "
              + "two means the exclusivity leaked, zero means neither instance won and the fence refused both");
     var outcomes = new[] { results[0][0].Outcome, results[1][0].Outcome };
     await Assert.That(outcomes.Count(o => o == StartupStepOutcome.Completed)).IsEqualTo(1);
