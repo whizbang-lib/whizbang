@@ -44,6 +44,9 @@ public class PerStreamSerializerCoverageTests {
     var item1 = new StreamItem(streamId, _idProvider.NewGuid());
     var item2 = new StreamItem(streamId, _idProvider.NewGuid());
 
+    var window = TimeSpan.FromMilliseconds(500);
+    var clock = new DrainWindowClock(window);
+
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: x => x.StreamId,
       processor: (item, _) => {
@@ -57,22 +60,62 @@ public class PerStreamSerializerCoverageTests {
       },
       logger: NullLogger.Instance,
       options: new PerStreamSerializerOptions {
-        DrainBatchWindow = TimeSpan.FromMilliseconds(500),
-      });
+        DrainBatchWindow = window,
+        // Far above the window, so the sweep's own timer can never be mistaken for a window wait.
+        IdleSweepInterval = TimeSpan.FromMinutes(5),
+      },
+      timeProvider: clock);
 
     await sut.EnqueueAsync(item1, cancellationToken);
-    // Real, short delay so the drain worker has certainly consumed item1 and entered its
-    // Task.WhenAny wait before item2 shows up -- otherwise both items land in the initial
-    // synchronous read burst and the wait-then-arrive loop-back this test targets never runs.
-    // 50ms against a 500ms window leaves a wide, non-flaky margin.
-    await Task.Delay(50, cancellationToken);
+
+    // Wait for the SIGNAL that the worker is inside the window's race, not for a duration. This
+    // used to sleep 50ms and call it "a wide, non-flaky margin"; it is not one. When a loaded
+    // runner did not get the worker into its wait within 50ms, both items landed in the first
+    // synchronous read burst, the loop-back never ran, and the two lines this test exists to
+    // cover went unexecuted -- silently, because the items are coalesced either way and the
+    // assertion below still passed. The gap showed up only as a coverage flip across CI runs.
+    await clock.EnteredWindow.WaitAsync(cancellationToken);
     await sut.EnqueueAsync(item2, cancellationToken);
+
+    // The loop-back's own wait. Reaching it is the claim: a second window wait exists only if the
+    // mid-window arrival won its race and the loop went around to collect it. If that stops
+    // happening this now fails by timeout rather than passing with the path unexecuted.
+    await clock.LoopedBack.WaitAsync(cancellationToken);
+
+    // Close the window on the fake clock so the batch flushes. Nothing here waits on wall time.
+    clock.Advance(window);
 
     await bothProcessed.Task.WaitAsync(cancellationToken);
 
     await Assert.That(seen).IsEquivalentTo([item1.MessageId, item2.MessageId])
       .Because("both items belong to the same stream and arrived inside one open drain window, "
              + "so they must be coalesced into a single batch rather than flushed separately");
+  }
+
+  /// <summary>
+  /// A fake clock that reports when the drain window's race starts. A delay asks its time provider
+  /// for a timer, so a timer whose due time falls inside the window is the worker arriving at the
+  /// race: the first is the window opening, the second is the loop-back after a mid-window arrival.
+  /// The idle sweep's timer is excluded by its far larger due time.
+  /// </summary>
+  /// <param name="window">The drain window, the upper bound on a due time that counts as a wait.</param>
+  private sealed class DrainWindowClock(TimeSpan window) : FakeTimeProvider {
+    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _waits;
+
+    /// <summary>Completes once the worker is inside the drain window's race.</summary>
+    public Task EnteredWindow => _first.Task;
+
+    /// <summary>Completes once the worker has gone around and reopened the race.</summary>
+    public Task LoopedBack => _second.Task;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      if (dueTime > TimeSpan.Zero && dueTime <= window) {
+        if (Interlocked.Increment(ref _waits) == 1) { _first.TrySetResult(); } else { _second.TrySetResult(); }
+      }
+      return base.CreateTimer(callback, state, dueTime, period);
+    }
   }
 
   // ============================================================
