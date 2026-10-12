@@ -53,6 +53,25 @@ public class DoorbellRingerTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RingAsync_MoreQueuedThanOneBatch_KeepsRingingUntilTheQueueIsEmptyAsync() {
+    await using var conn = await _openAsync();
+    await using (var queue = conn.CreateCommand()) {
+      // Distinct payloads, so coalescing cannot shrink the count below what was queued.
+      queue.CommandText = "SELECT count(_queue_doorbell('wh_ringer_test', g::text)) FROM generate_series(1, 2500) g";
+      _ = await queue.ExecuteScalarAsync();
+    }
+
+    var rung = await DoorbellRinger.RingAsync(conn, "ring_doorbells", logger: null, CancellationToken.None);
+
+    await Assert.That(rung).IsEqualTo(2_500)
+      .Because("a batch bounds one commit, not the drain: while a pass rings anything the ringer passes again, because "
+        + "other callers that found the turn taken left their doorbells to it (#1336)");
+    await using var left = conn.CreateCommand();
+    left.CommandText = "SELECT count(*) FROM wh_doorbell_queue";
+    await Assert.That(Convert.ToInt64(await left.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(0L);
+  }
+
+  [Test]
   public async Task RingAsync_UnknownFunction_ReturnsMinusOneAndWarns_NeverThrowsAsync() {
     await using var conn = await _openAsync();
     var logger = new ListLogger();
