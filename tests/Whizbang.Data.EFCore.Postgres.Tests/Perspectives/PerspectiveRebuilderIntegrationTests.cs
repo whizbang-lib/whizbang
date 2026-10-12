@@ -375,6 +375,72 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RebuildStreamsAsync_WhenTheFirstEventCreatesNoRow_StillFoldsTheRestOfTheStreamAsync() {
+    // The stream opens with an event the perspective folds but which declines to create a row, and a
+    // later event is the one that would create it. Measured in a deployed environment: the rebuild
+    // checkpointed such a stream at its FIRST event with 48 events still ahead of it, wrote no row,
+    // reported the stream processed and logged no warning.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull()
+      .Because("the creating event is second in the stream, so declining the first must not end the replay");
+    await Assert.That(row!.Data.Balance).IsEqualTo(100m)
+      .Because("every event in the stream is folded, not only those up to the first that creates no row");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheFirstEventCreatesNoRow_CheckpointsAtTheStreamHeadAsync() {
+    // The same defect read from the cursor rather than the row, which is how it was found: a stream
+    // whose head was version 49 checkpointed at version 1. The cursor is what a later pass trusts, so
+    // a checkpoint short of the head is what makes the skip permanent rather than merely silent.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    Guid lastEventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 40m });
+      lastEventId = await _appendAndGetEventIdAsync(
+          eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 60m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(lastEventId)
+      .Because("the checkpoint records the replay frontier, and a frontier short of the head makes the gap permanent");
+  }
+
+  [Test]
   public async Task RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync() {
     // Arrange: seed five streams with events. Do NOT project ahead of time — this keeps the
     // test focused on per-stream isolation without tripping over the rebuild's replay-on-top
