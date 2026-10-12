@@ -1119,8 +1119,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// command runs on its own connection outside any ambient transaction. Callers only ever pass
   /// names this coordinator itself returned from <see cref="GetTablesNeedingRewriteAsync"/>, but
   /// the check is here rather than at the call site because that is where the injection risk
-  /// actually lands.
+  /// actually lands. The rewrite runs on the schema-initialization connection when one is configured: a
+  /// least-privilege application role cannot rewrite a table it does not own.
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteUnderDataOnlyRoleTests.cs</tests>
   public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     if (!_isFrameworkTableName(tableName)) {
@@ -1136,20 +1138,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
 
-    await using (var vacuum = conn.CreateCommand().WithCoordinatorTimeout()) {
-#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ above; VACUUM takes no parameters
-      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
-#pragma warning restore S2077
-      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
-      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    // Re-measure so the caller can verify the rewrite actually helped rather than assuming it did.
-    await using (var analyze = conn.CreateCommand().WithCoordinatorTimeout()) {
-#pragma warning disable S2077
-      analyze.CommandText = $"ANALYZE {qualified}";
-#pragma warning restore S2077
-      await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    // VACUUM FULL and ANALYZE need the table owner's rights, which a least-privilege application role does not
+    // have, and Postgres does not refuse them: it warns and skips the table. So when a schema-initialization
+    // connection is configured, the role startup migrations use runs them.
+    // The application's services come from the context itself: registered through DI, it carries them. Every
+    // configured context has the core extension (the options builder adds it), so only the provider can be absent.
+    var applicationServices = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+      .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)
+      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()!.ApplicationServiceProvider;
+    if (applicationServices is not null && SchemaInitConnection.For(applicationServices, typeof(TDbContext)) is { } initConnectionString) {
+      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      await _vacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    } else {
+      await _vacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
 
     await using var measure = conn.CreateCommand().WithCoordinatorTimeout();
@@ -1157,9 +1159,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
     // effectiveness comparison then races the collector — a real rewrite read as
     // "ineffective" under load. reltuples is written by VACUUM/ANALYZE transactionally in
-    // the catalog, so the re-measure sees exactly the rewrite it performed.
+    // the catalog, so the re-measure sees exactly the rewrite it performed. Rounded exactly as
+    // wh_tables_needing_rewrite rounds the ratio it is compared with: unrounded, a rewrite that
+    // reclaimed nothing (7.6386 against 7.64) measured as an improvement and cleared its request.
     measure.CommandText = """
-      SELECT (pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1)
+      SELECT round((pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1), 2)
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN LATERAL (
@@ -1171,6 +1175,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
     measure.Parameters.AddWithValue("t", tableName);
     var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return scalar is decimal d ? (double)d : null;
+  }
+
+  // The rewrite itself, then ANALYZE so the caller's re-measure sees what the rewrite did rather than assuming it.
+  private static async Task _vacuumFullAndAnalyzeAsync(
+      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
+    await using (var vacuum = conn.CreateCommand().WithCoordinatorTimeout()) {
+#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ by the caller; VACUUM takes no parameters
+      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
+#pragma warning restore S2077
+      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
+      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    await using var analyze = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077
+    analyze.CommandText = $"ANALYZE {qualified}";
+#pragma warning restore S2077
+    await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
