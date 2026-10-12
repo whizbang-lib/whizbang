@@ -37,7 +37,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
   IServiceInstanceProvider? instanceProvider = null,
-  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null,
+  IServiceProvider? serviceProvider = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -1119,8 +1120,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// command runs on its own connection outside any ambient transaction. Callers only ever pass
   /// names this coordinator itself returned from <see cref="GetTablesNeedingRewriteAsync"/>, but
   /// the check is here rather than at the call site because that is where the injection risk
-  /// actually lands.
+  /// actually lands. The rewrite runs on the schema-initialization connection when one is configured: a
+  /// least-privilege application role cannot rewrite a table it does not own.
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteUnderDataOnlyRoleTests.cs</tests>
   public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     if (!_isFrameworkTableName(tableName)) {
@@ -1136,20 +1139,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
 
-    await using (var vacuum = conn.CreateCommand().WithCoordinatorTimeout()) {
-#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ above; VACUUM takes no parameters
-      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
-#pragma warning restore S2077
-      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
-      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    // Re-measure so the caller can verify the rewrite actually helped rather than assuming it did.
-    await using (var analyze = conn.CreateCommand().WithCoordinatorTimeout()) {
-#pragma warning disable S2077
-      analyze.CommandText = $"ANALYZE {qualified}";
-#pragma warning restore S2077
-      await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    // VACUUM FULL and ANALYZE need the table owner's rights, which a least-privilege application role does not
+    // have, and Postgres does not refuse them: it warns and skips the table. So when a schema-initialization
+    // connection is configured, the role startup migrations use runs them.
+    if (serviceProvider is not null && SchemaInitConnection.For(serviceProvider, typeof(TDbContext)) is { } initConnectionString) {
+      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      await _vacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    } else {
+      await _vacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
 
     await using var measure = conn.CreateCommand().WithCoordinatorTimeout();
@@ -1171,6 +1169,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
     measure.Parameters.AddWithValue("t", tableName);
     var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return scalar is decimal d ? (double)d : null;
+  }
+
+  // The rewrite itself, then ANALYZE so the caller's re-measure sees what the rewrite did rather than assuming it.
+  private static async Task _vacuumFullAndAnalyzeAsync(
+      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
+    await using (var vacuum = conn.CreateCommand().WithCoordinatorTimeout()) {
+#pragma warning disable S2077 // Table name validated against ^wh_[a-z0-9_]+$ by the caller; VACUUM takes no parameters
+      vacuum.CommandText = $"VACUUM (FULL) {qualified}";
+#pragma warning restore S2077
+      vacuum.CommandTimeout = 0;   // a large table can take minutes; the operator opted into this
+      await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    await using var analyze = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077
+    analyze.CommandText = $"ANALYZE {qualified}";
+#pragma warning restore S2077
+    await analyze.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <inheritdoc />
