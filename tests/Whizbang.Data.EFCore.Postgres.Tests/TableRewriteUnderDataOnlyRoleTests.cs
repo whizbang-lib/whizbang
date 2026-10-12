@@ -74,16 +74,20 @@ public class TableRewriteUnderDataOnlyRoleTests : EFCoreTestBase {
       var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
         applicationContext, JsonContextRegistry.CreateCombinedOptions(), serviceProvider: provider);
       var before = await _heapBytesAsync();
+      var candidate = (await coordinator.GetTablesNeedingRewriteAsync(cancellationToken)).Single(c => c.TableName == "wh_settings");
 
-      await coordinator.RewriteTableAsync("wh_settings", cancellationToken);
+      var ratioAfter = await coordinator.RewriteTableAsync("wh_settings", cancellationToken);
 
       var after = await _heapBytesAsync();
       if (withInitConnection) {
         await Assert.That(after).IsLessThan(before / 2)
           .Because("the init connection, which owns the table, rewrote it and the deleted rows' space came back");
+        await Assert.That(ratioAfter!.Value).IsLessThan(candidate.BloatRatio);
       } else {
         await Assert.That(after).IsEqualTo(before)
           .Because("Postgres skips VACUUM FULL for a role that does not own the table, so nothing is reclaimed");
+        await Assert.That(ratioAfter!.Value).IsGreaterThanOrEqualTo(candidate.BloatRatio)
+          .Because("a rewrite that reclaimed nothing must not measure as an improvement, or the step reports it done and clears the request");
       }
     } finally {
       await _execAsync($"DROP OWNED BY {role}; DROP ROLE {role};");

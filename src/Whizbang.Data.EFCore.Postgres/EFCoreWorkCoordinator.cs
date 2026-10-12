@@ -1155,9 +1155,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
     // effectiveness comparison then races the collector — a real rewrite read as
     // "ineffective" under load. reltuples is written by VACUUM/ANALYZE transactionally in
-    // the catalog, so the re-measure sees exactly the rewrite it performed.
+    // the catalog, so the re-measure sees exactly the rewrite it performed. Rounded exactly as
+    // wh_tables_needing_rewrite rounds the ratio it is compared with: unrounded, a rewrite that
+    // reclaimed nothing (7.6386 against 7.64) measured as an improvement and cleared its request.
     measure.CommandText = """
-      SELECT (pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1)
+      SELECT round((pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1), 2)
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN LATERAL (
