@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -12,8 +13,10 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
@@ -22,8 +25,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// A service started the way a consumer starts it, with an application role that has data rights only and the
-/// owner as the <c>-init</c> connection. Startup migrates, every startup and maintenance step runs, and nothing on
-/// the way needs schema rights from the application role. The control start, with no <c>-init</c> connection,
+/// owner as the <c>-init</c> connection. Startup migrates, every startup and maintenance step runs, a published event
+/// is applied to its perspective, and nothing on the way needs schema rights from the application role. The control start, with no <c>-init</c> connection,
 /// fails: that is what shows the role is really restricted.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/SchemaInitConnection.cs</code-under-test>
@@ -91,6 +94,8 @@ public class DataOnlyRoleE2ETests {
     builder.Services.Configure<MaintenanceWorkerOptions>(o => o.AllowTableRewrite = true);
     builder.Services.AddSingleton<ITransport>(new InProcessTransport());
     _ = builder.Services.AddWhizbang().WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres;
+    // The published event carries no caller: allowed, as a test host with no authentication allows it.
+    builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
     return builder.Build();
   }
 
@@ -134,6 +139,26 @@ public class DataOnlyRoleE2ETests {
         await step.RunAsync(scope.ServiceProvider, cancellationToken);
       }
     }
+    // A message through the running service: published, stored, claimed and applied to a perspective row.
+    var perspectives = second.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
+    var streamId = (Guid)TrackedGuid.New();
+    var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    perspectives.OnPerspectiveEventProcessed += e => {
+      if (e.StreamId == streamId) {
+        applied.TrySetResult();
+      }
+    };
+    await second.Services.GetRequiredService<IDispatcher>()
+      .PublishAsync(new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = 42m });
+    await applied.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+    await using (var db = new NpgsqlConnection(_database.ConnectionString)) {
+      await db.OpenAsync(cancellationToken);
+      await using var row = new NpgsqlCommand("SELECT count(*) FROM wh_per_order WHERE id = @id", db);
+      row.Parameters.AddWithValue("id", streamId);
+      await Assert.That((long)(await row.ExecuteScalarAsync(cancellationToken))!).IsEqualTo(1L)
+        .Because("the application role wrote the perspective row");
+    }
+
     // Checked before stopping: a shutdown error says nothing about the role's rights.
     var runningErrors = restartErrors.Entries.ToArray();
     await second.StopAsync(cancellationToken);
@@ -160,7 +185,7 @@ public class DataOnlyRoleE2ETests {
     private sealed class Logger(string category, ConcurrentQueue<string> entries) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
       public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
-      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
         if (IsEnabled(logLevel)) {
           entries.Enqueue($"{category}: {formatter(state, exception)} {exception?.Message}");
         }
