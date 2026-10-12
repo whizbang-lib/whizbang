@@ -46,7 +46,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       INotifySignalingGate? gate = null,
       string? searchPath = null,
       int batchSize = 100,
-      ILogger<PgCommitOrderStamperWorker>? logger = null) {
+      ILogger<PgCommitOrderStamperWorker>? logger = null,
+      TimeProvider? timeProvider = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -77,7 +78,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       shared,
       logger ?? NullLogger<PgCommitOrderStamperWorker>.Instance,
       dutyElector: null,
-      notifySignalingGate: gate);
+      notifySignalingGate: gate,
+      timeProvider: timeProvider);
   }
 
   /// <summary>
@@ -528,15 +530,17 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull();
   }
 
-  /// <summary>Completes on the worker's timeout warning, so a test can act on it without subscribing to the event.</summary>
-  private sealed class TimeoutSignalingLogger : ILogger<PgCommitOrderStamperWorker> {
-    private const int STAMP_TIMED_OUT = 18;
+  /// <summary>
+  /// Completes on one of the worker's warnings (the timeout by default), so a test can act on it without subscribing
+  /// to the event.
+  /// </summary>
+  private sealed class TimeoutSignalingLogger(int eventIdToSignal = 18) : ILogger<PgCommitOrderStamperWorker> {
     public TaskCompletionSource<string> TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (eventId.Id == STAMP_TIMED_OUT) {
+      if (eventId.Id == eventIdToSignal) {
         TimedOut.TrySetResult(formatter(state, exception));
       }
     }
@@ -545,6 +549,77 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
   // ============================================================================
   // helpers
   // ============================================================================
+
+  /// <summary>
+  /// #1327: a full call that took longer than the call budget halves the next one, and the drain still finishes as
+  /// leader. A clock that moves ten seconds on every reading makes every call look slow without any call being slow.
+  /// </summary>
+  [Test]
+  public async Task Worker_AFullStampRunsPastTheCallBudget_HalvesTheBatchAndStillDrainsAsLeaderAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    var eventIds = new List<Guid>();
+    for (var i = 0; i < ROWS; i++) {
+      var eventId = (Guid)TrackedGuid.New();
+      eventIds.Add(eventId);
+      await _insertEventStoreRowAsync((Guid)TrackedGuid.New(), eventId, version: 1);
+    }
+
+    var worker = _newWorker(ConnectionString, batchSize: 8, timeProvider: new TenSecondsPerReadingClock());
+    var leaderships = 0;
+    worker.OnBecameLeader += () => Interlocked.Increment(ref leaderships);
+    var ranLong = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStampRanLong += next => ranLong.TrySetResult(next);
+    var drained = _whenStampCount(worker, minStamped: ROWS);
+    await worker.StartAsync(cts.Token);
+
+    var nextBatch = await ranLong.Task.WaitAsync(cts.Token);
+    await drained.Task.WaitAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(nextBatch).IsEqualTo(4)
+      .Because("the first call filled its batch of 8 and took ten seconds, past the 2.5 s budget, so the next asks for half");
+    foreach (var eventId in eventIds) {
+      await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+        .Because("a call that ran long still committed what it stamped; the smaller calls stamp the rest");
+    }
+    await Assert.That(leaderships).IsEqualTo(1)
+      .Because("a slow call is answered by a smaller batch, not by giving up the stamper's lock");
+  }
+
+  /// <summary>
+  /// The same slow call with nothing subscribed to <see cref="PgCommitOrderStamperWorker.OnStampRanLong"/>: the batch
+  /// still halves, and the operator is told what ran long, against what budget, and what the next call asks for.
+  /// </summary>
+  [Test]
+  public async Task Worker_AFullStampRunsPastTheCallBudget_WithNoObserver_LogsTheBackoffAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    for (var i = 0; i < ROWS; i++) {
+      await _insertEventStoreRowAsync((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New(), version: 1);
+    }
+
+    var logger = new TimeoutSignalingLogger(eventIdToSignal: STAMP_RAN_LONG);
+    var worker = _newWorker(ConnectionString, batchSize: 8, logger: logger, timeProvider: new TenSecondsPerReadingClock());
+    var drained = _whenStampCount(worker, minStamped: ROWS);
+    await worker.StartAsync(cts.Token);
+
+    var logged = await logger.TimedOut.Task.WaitAsync(cts.Token);
+    await drained.Task.WaitAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(logged).Contains("a stamp of 8 rows took 10000 ms").And.Contains("2500 ms call budget")
+      .And.Contains("the next asks for 4")
+      .Because("a stamper sizing itself by time is visible as one: the warning names the call, the budget and the next size");
+  }
+
+  private const int ROWS = 20;
+  private const int STAMP_RAN_LONG = 19;
+
+  /// <summary>A clock whose every reading is ten seconds after the last, so every measured call took ten seconds.</summary>
+  private sealed class TenSecondsPerReadingClock : TimeProvider {
+    private long _ticks;
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    public override long GetTimestamp() => Interlocked.Add(ref _ticks, TimeSpan.TicksPerSecond * 10);
+  }
 
   private async Task _insertEventStoreRowAsync(Guid streamId, Guid eventId, int version) {
     await using var dbContext = CreateDbContext();
