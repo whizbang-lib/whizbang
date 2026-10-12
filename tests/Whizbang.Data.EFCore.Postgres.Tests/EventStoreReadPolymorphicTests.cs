@@ -243,7 +243,7 @@ public class EventStoreReadPolymorphicTests : EFCoreTestBase {
 
     var read = await _readAllAsync(store, streamId, null, BothProbeTypes);
 
-    var ordinals = read.Select(e => ((ReadProbeContracts.ProbeAlphaEvent)e.Payload).Ordinal).ToList();
+    var ordinals = read.ConvertAll(e => ((ReadProbeContracts.ProbeAlphaEvent)e.Payload).Ordinal);
     await Assert.That(ordinals).IsEquivalentTo(ReverseCommitOrder)
       .Because("the read orders by commit sequence, which is what makes a replay deterministic");
   }

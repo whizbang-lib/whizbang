@@ -3443,13 +3443,15 @@ public record PerspectiveCursorCompletion {
   /// streams you named" from "nothing to do" (#1162).
   /// </para>
   /// <para>
-  /// <strong>Required on purpose.</strong> An optional bool would default to <c>false</c>, so a path that
-  /// forgot to set it would report every write as a no-op — the same silent miscount this property exists
-  /// to end, pointing the other way. Required makes the compiler name every construction site instead.
+  /// <strong>It defaults to <c>false</c>, so set it wherever a row is written.</strong> Every production
+  /// construction site states it explicitly, including the ones that write nothing, because the default is
+  /// the dangerous direction: a path that forgets it reports a real write as a no-op, which is the same
+  /// silent miscount this property exists to end, pointing the other way. Making it <c>required</c> would
+  /// have the compiler enforce that, at the cost of breaking every caller that constructs this record.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
-  public required bool RowChanged { get; init; }
+  public bool RowChanged { get; init; }
 
   /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
