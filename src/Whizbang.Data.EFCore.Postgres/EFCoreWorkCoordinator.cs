@@ -1141,10 +1141,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // VACUUM FULL and ANALYZE need the table owner's rights, which a least-privilege application role does not
     // have, and Postgres does not refuse them: it warns and skips the table. So when a schema-initialization
     // connection is configured, the role startup migrations use runs them.
-    // The application's services come from the context itself: registered through DI, it carries them.
+    // The application's services come from the context itself: registered through DI, it carries them. Every
+    // configured context has the core extension (the options builder adds it), so only the provider can be absent.
     var applicationServices = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
       .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)
-      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()?.ApplicationServiceProvider;
+      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()!.ApplicationServiceProvider;
     if (applicationServices is not null && SchemaInitConnection.For(applicationServices, typeof(TDbContext)) is { } initConnectionString) {
       await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
       await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
