@@ -99,6 +99,19 @@ public class DataOnlyRoleE2ETests {
     return builder.Build();
   }
 
+  /// <summary>Bounds one phase, so a hang names where it happened instead of running into the test's timeout.</summary>
+  private static async Task _phaseAsync(string phase, Func<Task> work, IHost? host = null, ErrorLog? errors = null) {
+    try {
+      await work().WaitAsync(TimeSpan.FromSeconds(60));
+    } catch (TimeoutException ex) {
+      var steps = host?.Services.GetService<IStartupPipelineState>()?.SnapshotSteps()
+        .Select(s => $"{s.Name}={s.Status}/{s.Outcome}: {s.Reason}") ?? [];
+      throw new TimeoutException(
+        $"Phase '{phase}' did not finish within 60s. Startup steps: [{string.Join("; ", steps)}]. "
+        + $"Errors logged: [{string.Join(" | ", errors?.Entries ?? [])}]", ex);
+    }
+  }
+
   private static async Task<IReadOnlyList<StartupStepResult>> _startAsync(IHost host, CancellationToken cancellationToken) {
     await host.StartAsync(cancellationToken);
     await host.Services.GetRequiredService<IStartupReadySignal>().WaitForReadyAsync(cancellationToken);
@@ -114,11 +127,13 @@ public class DataOnlyRoleE2ETests {
 
     // First start: migrations run on the init connection and create everything the role is then granted.
     using (var first = _buildHost(withInitConnection: true, errors)) {
-      var steps = await _startAsync(first, cancellationToken);
+      IReadOnlyList<StartupStepResult> steps = [];
+      await _phaseAsync("first start", async () => steps = await _startAsync(first, cancellationToken), first, errors);
       await Assert.That(steps.Where(s => s.Outcome == StartupStepOutcome.Failed).Select(s => $"{s.Name}: {s.Reason}")).IsEmpty();
       await Assert.That(errors.Entries).IsEmpty()
         .Because("nothing a starting service does may need schema rights from its application role");
-      await first.StopAsync(cancellationToken);
+      await _phaseAsync("first stop", () => first.StopAsync(cancellationToken), first, errors);
+      await _phaseAsync("first dispose", () => Task.Run(first.Dispose), errors: errors);
     }
     // #1333: stopping and disposing a host logs nothing either; the batchers' last flush ran against a disposed
     // service provider until they were flushed while the host stops.
@@ -132,17 +147,19 @@ public class DataOnlyRoleE2ETests {
     // Second start: the rewrite step and every maintenance step run with the application role as the main connection.
     var restartErrors = new ErrorLog();
     using var second = _buildHost(withInitConnection: true, restartErrors);
-    var restart = await _startAsync(second, cancellationToken);
+    IReadOnlyList<StartupStepResult> restart = [];
+    await _phaseAsync("second start", async () => restart = await _startAsync(second, cancellationToken), second, restartErrors);
     await Assert.That(restart.Where(s => s.Outcome == StartupStepOutcome.Failed).Select(s => $"{s.Name}: {s.Reason}")).IsEmpty();
     var rewrite = restart.Single(s => s.Name == FrameworkStartupSteps.REWRITE);
     await Assert.That(rewrite.Reason).Contains("rewrote 1 table")
       .Because($"the owed rewrite ran through the init connection; the step reported {rewrite.Outcome}: {rewrite.Reason}");
 
-    await using (var scope = second.Services.CreateAsyncScope()) {
+    await _phaseAsync("maintenance steps", async () => {
+      await using var scope = second.Services.CreateAsyncScope();
       foreach (var step in scope.ServiceProvider.GetServices<IMaintenanceStep>()) {
         await step.RunAsync(scope.ServiceProvider, cancellationToken);
       }
-    }
+    });
     // A message through the running service: published, stored, claimed and applied to a perspective row.
     var perspectives = second.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
     var streamId = (Guid)TrackedGuid.New();
@@ -152,9 +169,11 @@ public class DataOnlyRoleE2ETests {
         applied.TrySetResult();
       }
     };
-    await second.Services.GetRequiredService<IDispatcher>()
-      .PublishAsync(new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = 42m });
-    await applied.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+    await _phaseAsync("publish and apply", async () => {
+      await second.Services.GetRequiredService<IDispatcher>()
+        .PublishAsync(new SampleOrderCreatedEvent { OrderId = new TestOrderId(streamId), Amount = 42m });
+      await applied.Task.WaitAsync(cancellationToken);
+    }, second, restartErrors);
     await using (var db = new NpgsqlConnection(_database.ConnectionString)) {
       await db.OpenAsync(cancellationToken);
       await using var row = new NpgsqlCommand("SELECT count(*) FROM wh_per_order WHERE id = @id", db);
@@ -166,8 +185,8 @@ public class DataOnlyRoleE2ETests {
     await Assert.That(restartErrors.Entries).IsEmpty()
       .Because("nothing a running service does may need schema rights from its application role");
 
-    await second.StopAsync(cancellationToken);
-    second.Dispose();
+    await _phaseAsync("second stop", () => second.StopAsync(cancellationToken), second, restartErrors);
+    await _phaseAsync("second dispose", () => Task.Run(second.Dispose), errors: restartErrors);
     await Assert.That(restartErrors.Entries).IsEmpty()
       .Because("a host stops and disposes without a flush running against a disposed service provider");
   }
