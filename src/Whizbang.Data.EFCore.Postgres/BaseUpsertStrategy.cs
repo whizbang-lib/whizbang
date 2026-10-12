@@ -165,6 +165,38 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion), cancellationToken);
 
 
+  /// <inheritdoc/>
+  /// <remarks>Reports <see langword="false"/> when the commit-sequence (or <see cref="IVersionedApplyTarget"/>) guard refused the write (#1342).</remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:TryUpsert_OnTheCurrentVersion_ThatTheCommitSequenceGuardRefuses_ReportsNotWrittenAsync</tests>
+  public Task<bool> TryUpsertPerspectiveRowAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, null, forceUpdateScope, expectedVersion), cancellationToken);
+
+  /// <inheritdoc/>
+  /// <remarks>The physical-fields twin of <see cref="TryUpsertPerspectiveRowAsync{TModel}"/>.</remarks>
+  public Task<bool> TryUpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class =>
+    _upsertCoreAsync(context, new UpsertRowArgs<TModel>(tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion), cancellationToken);
+
   /// <summary>
   /// Maximum number of retries for TOCTOU duplicate-key races.
   /// With drain-mode concurrent perspective processing, 3+ threads can race on the same row.
@@ -183,7 +215,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// <docs>extending/internals/event-ordering-invariant</docs>
   public static long DuplicateKeyRetriesRecovered => Interlocked.Read(ref _duplicateKeyRetriesRecovered);
 
-  private async Task _upsertCoreAsync<TModel>(
+  /// <summary>
+  /// Every upsert overload's body: resolves the apply hooks and the row TTL, then writes through the atomic path when it
+  /// applies and the Entity Framework path otherwise.
+  /// </summary>
+  /// <returns>Whether the write landed: false when the ordering guard refused it (#1342).</returns>
+  private async Task<bool> _upsertCoreAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       CancellationToken cancellationToken)
@@ -235,8 +272,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // race that slice 19's retry loop was built to recover from. Returns false to signal
     // the caller should fall back to the retry loop (another provider, an unresolvable type,
     // or any other unsupported case).
-    if (UsesAtomicUpsert && await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken)) {
-      return;
+    if (UsesAtomicUpsert && await _tryAtomicUpsertAsync(context, args, hookPlan, expiresAt, expiryAnchor.UtcDateTime, cancellationToken) is bool atomicLanded) {
+      return atomicLanded;
     }
     if (!string.Equals(args.TableName, mappedTable, StringComparison.Ordinal)) {
       throw new InvalidOperationException(
@@ -246,8 +283,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     }
 
     if (args.ExpectedVersion.IsChecked) {
-      await _upsertCheckedFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
-      return;
+      return await _upsertCheckedFallbackAsync(context, args, hookPlan, expiresAt, cancellationToken);
     }
 
     // Slice 19: retry loop for TOCTOU dup-key races. The SELECT-then-INSERT pattern in
@@ -261,11 +297,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var attempt = 0;
     while (true) {
       try {
-        await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
+        var landed = await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
         if (attempt > 0) {
           Interlocked.Increment(ref _duplicateKeyRetriesRecovered);
         }
-        return;
+        return landed;
       } catch (DbUpdateException ex) when (attempt < MAX_DUPLICATE_KEY_RETRIES && IsDuplicateKeyException(ex)) {
         // TOCTOU race: another thread inserted the row between our SELECT and INSERT.
         // Clear the failed change tracker state and retry as an UPDATE.
@@ -277,8 +313,9 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
 
   /// <summary>
   /// Attempts the Path 1 atomic <c>INSERT … ON CONFLICT (id) DO UPDATE</c> against the
-  /// underlying Npgsql connection. Returns false (no-op, no SQL issued) when the path is
-  /// not applicable so the caller can fall back to the legacy retry loop.
+  /// underlying Npgsql connection. Returns null (no-op, no SQL issued) when the path is
+  /// not applicable so the caller can fall back to the legacy retry loop; otherwise whether the
+  /// write landed (false when the ordering guard refused it).
   /// </summary>
   /// <remarks>
   /// Fall-back conditions: the caller didn't supply a non-empty table name, the provider is not
@@ -286,7 +323,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// cannot resolve the model, or Npgsql cannot bind a value.
   /// </remarks>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Single atomic UPSERT contains all the JSONB serialization + physical-field interpolation + retry-or-fallback control flow on purpose; splitting would force passing 6+ pieces of state across helpers and obscure the SQL composition.")]
-  private static async Task<bool> _tryAtomicUpsertAsync<TModel>(
+  private static async Task<bool?> _tryAtomicUpsertAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
@@ -295,7 +332,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CancellationToken cancellationToken)
       where TModel : class {
     if (string.IsNullOrEmpty(args.TableName)) {
-      return false;
+      return null;
     }
 
     // The atomic upsert path runs raw Postgres-specific SQL via Npgsql commands —
@@ -304,7 +341,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // for those providers (a Postgres-specific perspective store wired against an
     // InMemoryDb fixture would otherwise fail on the JSONB raw SQL).
     if (!_isNpgsqlProvider(context)) {
-      return false;
+      return null;
     }
 
     // Defense-in-depth identifier validation. args.TableName and the keys of
@@ -316,10 +353,10 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // (letter or underscore followed by letters, digits, or underscores). Reject
     // anything that doesn't pass — falls back to the SELECT-then-UPDATE retry path.
     if (!IsValidSqlIdentifier(args.TableName)) {
-      return false;
+      return null;
     }
     if (args.PhysicalFieldValues?.Keys.Any(k => !IsValidSqlIdentifier(k)) == true) {
-      return false;
+      return null;
     }
 
     var options = Perspectives.PerspectiveDocumentSerialization.Options;
@@ -335,7 +372,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var metadataInfo = resolver.GetTypeInfo(typeof(PerspectiveMetadata), options);
     var scopeInfo = resolver.GetTypeInfo(typeof(PerspectiveScope), options);
     if (modelInfo is null || metadataInfo is null || scopeInfo is null) {
-      return false;
+      return null;
     }
 
     var dataJson = JsonSerializer.Serialize(args.Model, modelInfo);
@@ -496,7 +533,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       if (affected == 0 && expected.IsChecked) {
         await _explainRefusedWriteAsync<TModel>(context, qualifiedTable, args.Id, expected, cancellationToken);
       }
-      return true;
+      // No row affected and no conflict thrown: the ordering guard refused the write (#1342).
+      return affected > 0;
     } catch (Exception ex) when (ex is InvalidCastException or NotSupportedException or System.Text.Json.JsonException) {
       // The atomic path couldn't serialize or bind this row — e.g. a CLR type Npgsql can't map to its
       // column (a WhizbangId physical-field value bound to a uuid column), or a model the persistence
@@ -504,7 +542,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       // whose EF value converters handle those CLR↔column mappings. INSERT … ON CONFLICT is a single
       // atomic statement, so a throw here means nothing was committed — falling back is safe (no
       // double-write). The atomic path stays a best-effort optimization.
-      return false;
+      return null;
     } finally {
       if (openedHere && connection.State == System.Data.ConnectionState.Open) {
         await connection.CloseAsync();
@@ -585,7 +623,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// written, which is what the guard promises. The stream-ownership claim keeps that to a second apply of
   /// the same stream.
   /// </remarks>
-  private async Task _upsertCheckedFallbackAsync<TModel>(
+  private async Task<bool> _upsertCheckedFallbackAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
@@ -594,17 +632,17 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       where TModel : class {
     var qualifiedTable = PerspectiveRowVersionSql.QualifiedTable<TModel>(context);
     if (context.Database.CurrentTransaction is not null) {
-      await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, cancellationToken);
-      return;
+      return await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, cancellationToken);
     }
-    await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
+    return await context.Database.CreateExecutionStrategy().ExecuteAsync(async ct => {
       await using var transaction = await context.Database.BeginTransactionAsync(ct);
-      await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, ct);
+      var landed = await _checkThenUpsertAsync(context, qualifiedTable, args, hookPlan, expiresAt, ct);
       await transaction.CommitAsync(ct);
+      return landed;
     }, cancellationToken);
   }
 
-  private async Task _checkThenUpsertAsync<TModel>(
+  private async Task<bool> _checkThenUpsertAsync<TModel>(
       DbContext context,
       string qualifiedTable,
       UpsertRowArgs<TModel> args,
@@ -616,7 +654,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (actual != args.ExpectedVersion) {
       throw new PerspectiveRowConflictException(typeof(TModel), args.Id, args.ExpectedVersion, actual);
     }
-    await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
+    return await _upsertCoreInnerAsync(context, args, hookPlan, expiresAt, cancellationToken);
   }
 
   /// <summary>
@@ -672,7 +710,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "An upsert decides between insert and update, and along the way whether the stored commit sequence is newer, whether the scope is a complex property, whether an expiry applies, whether the system timestamp column exists, and whether physical field values were supplied. Each is a property of the model being written rather than a step in a sequence.")]
-  private async Task _upsertCoreInnerAsync<TModel>(
+  private async Task<bool> _upsertCoreInnerAsync<TModel>(
       DbContext context,
       UpsertRowArgs<TModel> args,
       PerEventApplyHookPlan hookPlan,
@@ -728,7 +766,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
         if (ClearChangeTrackerAfterSave) {
           context.ChangeTracker.Clear();
         }
-        return;
+        return false;
       }
 
       // Create updated row with new complex type instances.
@@ -795,6 +833,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (ClearChangeTrackerAfterSave) {
       context.ChangeTracker.Clear();
     }
+    return true;
   }
 
   /// <summary>

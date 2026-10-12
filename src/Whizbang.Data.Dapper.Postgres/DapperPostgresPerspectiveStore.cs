@@ -133,6 +133,14 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken);
 
   /// <inheritdoc/>
+  /// <remarks>The checked write, reporting whether it landed: false when the ordering guard refused it (#1342).</remarks>
+  public Task<bool> TryUpsertAsync(
+      Guid streamId, TModel model, PerspectiveScope scope, bool forceUpdateScope,
+      PerspectiveMetadata metadata, PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken);
+
+  /// <inheritdoc/>
   public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope = null, CancellationToken cancellationToken = default) =>
@@ -156,6 +164,15 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
   /// <inheritdoc/>
   /// <remarks>The checked write's physical-fields twin: the same guard, with the physical columns in the same statement.</remarks>
   public Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope, bool forceUpdateScope, PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion, CancellationToken cancellationToken = default) =>
+    _upsertCoreAsync(streamId, model, scope ?? new PerspectiveScope(), forceUpdateScope, metadata,
+      expectedVersion, cancellationToken, physicalFieldValues);
+
+  /// <inheritdoc/>
+  /// <remarks>The physical-fields twin of the reporting checked write.</remarks>
+  public Task<bool> TryUpsertWithPhysicalFieldsAsync(
       Guid streamId, TModel model, IDictionary<string, object?> physicalFieldValues,
       PerspectiveScope? scope, bool forceUpdateScope, PerspectiveMetadata metadata,
       PerspectiveRowVersion expectedVersion, CancellationToken cancellationToken = default) =>
@@ -203,7 +220,7 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     PurgeAsync(_convertPartitionKeyToGuid(partitionKey), cancellationToken);
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The single implementation behind the perspective-store interface's upsert overload matrix: the row identity and model, the scope decision, the incoming metadata, the expected version and the physical columns. Every overload supplies some subset, so the parameters already are the write; a request type would exist only to be unpacked on the first line.")]
-  private async Task _upsertCoreAsync(
+  private async Task<bool> _upsertCoreAsync(
       Guid id, TModel model, PerspectiveScope scope, bool forceUpdateScope,
       PerspectiveMetadata? metadata,
       PerspectiveRowVersion expectedVersion,
@@ -322,6 +339,8 @@ public sealed class DapperPostgresPerspectiveStore<TModel>(
     if (affected == 0 && expectedVersion.IsChecked) {
       await _explainRefusedWriteAsync(conn, id, expectedVersion, cancellationToken);
     }
+    // No row affected and no conflict thrown: the ordering guard refused the write (#1342).
+    return affected > 0;
   }
 
   /// <summary>

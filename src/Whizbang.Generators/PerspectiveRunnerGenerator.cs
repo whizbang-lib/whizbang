@@ -864,9 +864,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static void _appendSimpleUpsertCode(StringBuilder sb) {
     sb.AppendLine("    // Upsert model (insert or update) — metadata.EventId records the last applied event so the");
     sb.AppendLine("    // next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
-    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928).");
+    sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928). The result says");
+    sb.AppendLine("    // whether the row was written: the store's ordering guard can refuse it quietly (#1342).");
     sb.AppendLine("    if (scope != null) {");
-    sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+    sb.AppendLine("      return await _perspectiveStore.TryUpsertAsync(");
     sb.AppendLine("          streamId,");
     sb.AppendLine("          model,");
     sb.AppendLine("          scope,");
@@ -876,7 +877,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("          cancellationToken");
     sb.AppendLine("      );");
     sb.AppendLine("    } else {");
-    sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+    sb.AppendLine("      return await _perspectiveStore.TryUpsertAsync(");
     sb.AppendLine("          streamId,");
     sb.AppendLine("          model,");
     sb.AppendLine("          new global::Whizbang.Core.Lenses.PerspectiveScope(),");
@@ -902,7 +903,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     sb.AppendLine("    // Upsert model with physical field values — metadata.EventId records the last applied event");
     sb.AppendLine("    // so the next run can skip already-applied events (see RunWithEventsAsync idempotency guard), and");
     sb.AppendLine("    // expectedVersion lands the write only on the row version the apply read (issue #928).");
-    sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
+    sb.AppendLine("    return await _perspectiveStore.TryUpsertWithPhysicalFieldsAsync(");
     sb.AppendLine("        streamId,");
     sb.AppendLine("        model,");
     sb.AppendLine("        physicalFieldValues,");
