@@ -100,6 +100,29 @@ public class DapperPerspectiveStoreBranchCoverageTests : PostgresTestBase {
   }
 
   /// <summary>
+  /// The checked physical-field overload given no scope writes with an empty scope. Generated runners now take the
+  /// reporting twin (#1342), so this overload's null-scope fallback is reached only by a direct caller.
+  /// </summary>
+  [Test]
+  public async Task UpsertWithPhysicalFieldsAsync_CheckedOverloadNullScope_WritesAnEmptyScopeAsync() {
+    var store = _store(_storeOptions);
+    var id = Guid.CreateVersion7();
+    var metadata = new PerspectiveMetadata {
+      EventType = "CoverageOccurred",
+      EventId = Guid.CreateVersion7().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, new DapperPostgresPerspectiveStoreTests.TestModel { Name = "checked" },
+      new Dictionary<string, object?>(), scope: null, forceUpdateScope: false, metadata, PerspectiveRowVersion.Absent);
+
+    var row = await _readAsync(id);
+    await Assert.That(row.Name).IsEqualTo("checked");
+    await Assert.That(row.TenantId).IsNull();
+  }
+
+  /// <summary>
   /// A per-event hook that clears <c>updated_at</c> leaves the write site's own clock in charge: the
   /// row is written with the time of the write, never with a null the column cannot hold.
   /// </summary>

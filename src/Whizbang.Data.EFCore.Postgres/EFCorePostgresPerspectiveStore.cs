@@ -259,7 +259,21 @@ public class EFCorePostgresPerspectiveStore<TModel>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:Upsert_WithAVersionReadBeforeACollective_IsRefused_AndTheCollectiveSurvivesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionIntegrationTests.cs:CollectiveCommittedBetweenReadAndWrite_IsNotOverwritten_FinalRowReflectsBothAsync</tests>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the versioned IPerspectiveStore overload, whose shape is fixed by the interface.")]
-  public async Task UpsertAsync(
+  public Task UpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) =>
+    TryUpsertAsync(streamId, model, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheStoreRefusesTheWrite_DoesNotCountTheStreamAsProcessedAsync</tests>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the reporting IPerspectiveStore overload, whose shape is fixed by the interface.")]
+  public async Task<bool> TryUpsertAsync(
       Guid streamId,
       TModel model,
       PerspectiveScope scope,
@@ -268,7 +282,7 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       PerspectiveRowVersion expectedVersion,
       CancellationToken cancellationToken = default) {
     try {
-      await _upsertStrategy.UpsertPerspectiveRowAsync(
+      return await _upsertStrategy.TryUpsertPerspectiveRowAsync(
           _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, expectedVersion, cancellationToken);
     } catch (Exception failure) {
       // Every write funnels through here, so this is the one place a refusal can be explained in
@@ -419,7 +433,21 @@ public class EFCorePostgresPerspectiveStore<TModel>(
       PerspectiveMetadata metadata,
       PerspectiveRowVersion expectedVersion,
       CancellationToken cancellationToken = default) =>
-    _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+    TryUpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken);
+
+  /// <inheritdoc/>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Implements the reporting IPerspectiveStore overload, whose shape is fixed by the interface.")]
+  public Task<bool> TryUpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.TryUpsertPerspectiveRowWithPhysicalFieldsAsync(
         _context, _tableName, streamId, model, metadata, scope ?? new PerspectiveScope(),
         physicalFieldValues, forceUpdateScope, expectedVersion, cancellationToken);
 

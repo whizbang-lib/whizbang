@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -130,5 +131,39 @@ public class DbUpsertStrategyDefaultsTests {
 
     await Assert.That(strategy.PlainCallCount).IsEqualTo(1);
     await Assert.That(strategy.PhysicalFieldsCallCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task TryUpsertPerspectiveRowAsync_Default_WritesAndReportsWrittenAsync() {
+    // A strategy written before the reporting member has no guard to refuse with: the default writes through the
+    // versioned overload (and from there the base one) and reports the row written (#1342).
+    var strategy = new RecordingUpsertStrategy();
+    IDbUpsertStrategy sut = strategy;
+    await using var context = new StubDbContext();
+    var id = Guid.CreateVersion7();
+
+    var written = await sut.TryUpsertPerspectiveRowAsync(
+        context, "order_summary", id, new TestModel { Name = "test" }, new PerspectiveMetadata(), new PerspectiveScope(),
+        forceUpdateScope: false, PerspectiveRowVersion.Of(7));
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(strategy.PlainCallCount).IsEqualTo(1);
+    await Assert.That(strategy.LastId).IsEqualTo(id);
+  }
+
+  [Test]
+  public async Task TryUpsertPerspectiveRowWithPhysicalFieldsAsync_Default_WritesAndReportsWrittenAsync() {
+    var strategy = new RecordingUpsertStrategy();
+    IDbUpsertStrategy sut = strategy;
+    await using var context = new StubDbContext();
+    var physicalFields = new Dictionary<string, object?> { ["total"] = 42 };
+
+    var written = await sut.TryUpsertPerspectiveRowWithPhysicalFieldsAsync(
+        context, "order_summary", Guid.CreateVersion7(), new TestModel { Name = "test" }, new PerspectiveMetadata(),
+        new PerspectiveScope(), physicalFields, forceUpdateScope: false, PerspectiveRowVersion.Absent);
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(strategy.PhysicalFieldsCallCount).IsEqualTo(1);
+    await Assert.That(strategy.LastPhysicalFieldValues).IsSameReferenceAs(physicalFields);
   }
 }

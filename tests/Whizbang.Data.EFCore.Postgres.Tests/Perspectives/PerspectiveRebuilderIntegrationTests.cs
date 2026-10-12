@@ -108,6 +108,10 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
         inner.GetLastSequenceAsync(streamId, cancellationToken);
+    // Forwarded, not left to the interface default (null): the runner writes this into the row's metadata, and the
+    // store's commit-sequence guard is never exercised when it is always null.
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+        inner.GetCommitSequenceAsync(eventId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
         inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -562,6 +566,50 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     await Assert.That(result.StreamsProcessed).IsEqualTo(0)
       .Because("a stream folded without writing a row is not a stream that was rebuilt, and a caller "
              + "given the same number either way cannot tell a repair from a no-op");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheStoreRefusesTheWrite_DoesNotCountTheStreamAsProcessedAsync() {
+    // Issue #1342. The store's ordering guard refuses a write whose commit sequence is older than the one the row
+    // records, and on the row version the apply read that refusal is a quiet skip by design. The runner marked the
+    // row changed before it asked the store, so a rebuild whose every write was refused reported each stream
+    // processed: three untouched rows were measured as StreamsProcessed = 3 in a deployed environment.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    Guid eventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      eventId = await _appendAndGetEventIdAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+    await using (var stampContext = CreateDbContext()) {
+      await stampContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_event_store SET commit_sequence = (SELECT COALESCE(MAX(commit_sequence), 0) + 1 FROM wh_event_store) WHERE event_id = {0}",
+        eventId);
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+    await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    // The row now records a position later than any event on its stream, so the guard refuses every rebuild write.
+    await using (var aheadContext = CreateDbContext()) {
+      await aheadContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET metadata = jsonb_set(metadata, '{{CommitSequence}}', '9000000000000000'), data = jsonb_set(data, '{{Balance}}', '7') WHERE id = {0}",
+        streamId);
+    }
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+    await Assert.That(row!.Data.Balance).IsEqualTo(7m)
+      .Because("the guard refused the write, so the row is exactly as it was left: the precondition of this test");
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0)
+      .Because("a write the store refused left the row untouched, and must not be counted as a row the rebuild wrote");
   }
 
   [Test]

@@ -798,11 +798,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             );
           }
         } else if (updatedModel != null && hasWrittenUpdate) {
-          rowChanged = true;
           var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
               lastSuccessfulEventId!.Value, cancellationToken);
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
-          await SaveModelAndCheckpointAsync(
+          // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
+          // left untouched is not a changed row (#1342).
+          rowChanged = await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
@@ -815,7 +816,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               rowVersion
           );
           // Forget the purge only once the resurrected row is written.
-          if (resurrected && startedPurged) {
+          if (rowChanged && resurrected && startedPurged) {
             await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
           }
         }
@@ -1143,7 +1144,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// PerspectiveWorker collects checkpoint completions and reports them to
   /// ProcessWorkBatchAsync, which persists them via complete_perspective_cursor_work SQL function.
   /// </summary>
-  private async Task SaveModelAndCheckpointAsync(
+  /// <returns>
+  /// Whether the row was written. False when the store's ordering guard refused the write, which leaves the row
+  /// untouched and must not be reported as a changed row (#1342).
+  /// </returns>
+  private async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
@@ -1173,7 +1178,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     if (scope != null) {
-      await _perspectiveStore.UpsertAsync(
+      return await _perspectiveStore.TryUpsertAsync(
           streamId,
           model,
           scope,
@@ -1183,7 +1188,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken
       );
     } else {
-      await _perspectiveStore.UpsertAsync(
+      return await _perspectiveStore.TryUpsertAsync(
           streamId,
           model,
           new global::Whizbang.Core.Lenses.PerspectiveScope(),
@@ -1612,11 +1617,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
         snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
-        await SaveModelAndCheckpointAsync(
+        rowChanged = await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
-        rowChanged = true;
-        if (resurrected && startedPurged) {
+        if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }
       }

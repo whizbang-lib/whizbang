@@ -124,6 +124,35 @@ public class PerspectiveRowVersionTests {
     await Assert.That(store.LastMetadata).IsSameReferenceAs(metadata);
   }
 
+  [Test]
+  public async Task TryUpsertAsync_Default_WritesAndReportsWrittenAsync() {
+    // A store written before the reporting overload has no guard to refuse with, so the default writes through the
+    // versioned overload and reports the row written (#1342).
+    var store = new MinimalStore();
+    var metadata = new PerspectiveMetadata { EventId = "e", EventType = "t" };
+
+    var written = await ((IPerspectiveStore<Model>)store).TryUpsertAsync(
+      Guid.CreateVersion7(), new Model(), new PerspectiveScope(), false, metadata, PerspectiveRowVersion.Of(3));
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(store.MetadataUpserts).IsEqualTo(1);
+    await Assert.That(store.LastMetadata).IsSameReferenceAs(metadata);
+  }
+
+  [Test]
+  public async Task TryUpsertWithPhysicalFieldsAsync_Default_WritesAndReportsWrittenAsync() {
+    var store = new MinimalStore();
+    var metadata = new PerspectiveMetadata { EventId = "e", EventType = "t" };
+
+    var written = await ((IPerspectiveStore<Model>)store).TryUpsertWithPhysicalFieldsAsync(
+      Guid.CreateVersion7(), new Model(), new Dictionary<string, object?>(), null, false, metadata,
+      PerspectiveRowVersion.Absent);
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(store.PhysicalMetadataUpserts).IsEqualTo(1);
+    await Assert.That(store.LastMetadata).IsSameReferenceAs(metadata);
+  }
+
   private sealed class Model {
     public string Name { get; set; } = string.Empty;
   }

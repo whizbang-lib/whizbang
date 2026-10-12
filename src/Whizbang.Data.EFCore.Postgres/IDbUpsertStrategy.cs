@@ -82,6 +82,30 @@ public interface IDbUpsertStrategy {
     UpsertPerspectiveRowAsync(context, tableName, id, model, metadata, scope, forceUpdateScope, cancellationToken);
 
   /// <summary>
+  /// The versioned upsert, reporting whether the write landed. A write the strategy's ordering guard refuses on the
+  /// row version the apply read is skipped, as it always was, and reported as <see langword="false"/>; a row that
+  /// changed still throws <see cref="PerspectiveRowConflictException"/>. The default performs the versioned upsert
+  /// and reports <see langword="true"/>, so a strategy written before this member keeps its behavior.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbUpsertStrategyDefaultsTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface: the reporting twin of the versioned upsert; same parameters, each a distinct upsert concern.")]
+  async Task<bool> TryUpsertPerspectiveRowAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class {
+    await UpsertPerspectiveRowAsync(context, tableName, id, model, metadata, scope, forceUpdateScope, expectedVersion, cancellationToken).ConfigureAwait(false);
+    return true;
+  }
+
+  /// <summary>
   /// Performs an atomic upsert (insert or update) of a perspective row with physical field values.
   /// Physical fields are stored in shadow properties configured by the EF Core model.
   /// </summary>
@@ -147,4 +171,27 @@ public interface IDbUpsertStrategy {
       CancellationToken cancellationToken = default)
       where TModel : class =>
     UpsertPerspectiveRowWithPhysicalFieldsAsync(context, tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, cancellationToken);
+
+  /// <summary>
+  /// The physical-fields twin of <see cref="TryUpsertPerspectiveRowAsync{TModel}"/>. The default performs the versioned
+  /// upsert and reports <see langword="true"/>.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbUpsertStrategyDefaultsTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface: the reporting twin of the versioned upsert; same parameters, each a distinct upsert concern.")]
+  async Task<bool> TryUpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      bool forceUpdateScope,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default)
+      where TModel : class {
+    await UpsertPerspectiveRowWithPhysicalFieldsAsync(context, tableName, id, model, metadata, scope, physicalFieldValues, forceUpdateScope, expectedVersion, cancellationToken).ConfigureAwait(false);
+    return true;
+  }
 }

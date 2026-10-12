@@ -166,6 +166,39 @@ public interface IPerspectiveStore<TModel> where TModel : class {
     => UpsertAsync(streamId, model, scope, forceUpdateScope, metadata, cancellationToken);
 
   /// <summary>
+  /// The versioned upsert, reporting whether the write landed.
+  /// </summary>
+  /// <remarks>
+  /// A write the store's ordering guard refuses on the row version the apply read is skipped, as it always was, and
+  /// reported as <see langword="false"/>; a row that changed still throws <see cref="PerspectiveRowConflictException"/>.
+  /// Generated runners use this so a row the store left untouched is not reported as changed (#1342). The default
+  /// performs the versioned upsert and reports <see langword="true"/>, so a store written before this member keeps
+  /// its behavior.
+  /// </remarks>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Whether the row was written.</returns>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertAsync_Default_WritesAndReportsWrittenAsync</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the reporting twin of the versioned upsert; same parameters, each a distinct write concern.")]
+  async Task<bool> TryUpsertAsync(
+      Guid streamId,
+      TModel model,
+      PerspectiveScope scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) {
+    await UpsertAsync(streamId, model, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken).ConfigureAwait(false);
+    return true;
+  }
+
+  /// <summary>
   /// Insert or update a read model with physical field values.
   /// Creates new row if id doesn't exist, updates if it does.
   /// Physical field values are applied to shadow properties or split columns.
@@ -242,6 +275,35 @@ public interface IPerspectiveStore<TModel> where TModel : class {
       PerspectiveRowVersion expectedVersion,
       CancellationToken cancellationToken = default)
     => UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, metadata, cancellationToken);
+
+  /// <summary>
+  /// The physical-fields twin of <see cref="TryUpsertAsync(Guid, TModel, PerspectiveScope, bool, PerspectiveMetadata, PerspectiveRowVersion, CancellationToken)"/>.
+  /// The default performs the versioned upsert and reports <see langword="true"/>.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID)</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="physicalFieldValues">Dictionary mapping column names to values for physical fields</param>
+  /// <param name="scope">The perspective scope (tenant/user context) extracted from event hops</param>
+  /// <param name="forceUpdateScope">When true, scope is written on UPDATE (for IScopeEvent).</param>
+  /// <param name="metadata">Metadata of the last applied event</param>
+  /// <param name="expectedVersion">The version <see cref="ReadForApplyAsync"/> returned for this apply.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Whether the row was written.</returns>
+  /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs:TryUpsertWithPhysicalFieldsAsync_Default_WritesAndReportsWrittenAsync</tests>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public store surface: the reporting twin of the versioned upsert; same parameters, each a distinct write concern.")]
+  async Task<bool> TryUpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      PerspectiveScope? scope,
+      bool forceUpdateScope,
+      PerspectiveMetadata metadata,
+      PerspectiveRowVersion expectedVersion,
+      CancellationToken cancellationToken = default) {
+    await UpsertWithPhysicalFieldsAsync(streamId, model, physicalFieldValues, scope, forceUpdateScope, metadata, expectedVersion, cancellationToken).ConfigureAwait(false);
+    return true;
+  }
 
   /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).
