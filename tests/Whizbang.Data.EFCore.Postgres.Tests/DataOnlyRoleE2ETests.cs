@@ -120,6 +120,10 @@ public class DataOnlyRoleE2ETests {
         .Because("nothing a starting service does may need schema rights from its application role");
       await first.StopAsync(cancellationToken);
     }
+    // #1333: stopping and disposing a host logs nothing either; the batchers' last flush ran against a disposed
+    // service provider until they were flushed while the host stops.
+    await Assert.That(errors.Entries).IsEmpty()
+      .Because("a host stops and disposes without a flush running against a disposed service provider");
 
     // A rewrite owed between starts, as a migration or the bloat detector records one.
     await TableBloat.ManufactureAsync(_database.ConnectionString, cancellationToken);
@@ -159,12 +163,13 @@ public class DataOnlyRoleE2ETests {
         .Because("the application role wrote the perspective row");
     }
 
-    // Checked before stopping: a shutdown error says nothing about the role's rights.
-    var runningErrors = restartErrors.Entries.ToArray();
-    await second.StopAsync(cancellationToken);
-
-    await Assert.That(runningErrors).IsEmpty()
+    await Assert.That(restartErrors.Entries).IsEmpty()
       .Because("nothing a running service does may need schema rights from its application role");
+
+    await second.StopAsync(cancellationToken);
+    second.Dispose();
+    await Assert.That(restartErrors.Entries).IsEmpty()
+      .Because("a host stops and disposes without a flush running against a disposed service provider");
   }
 
   [Test]
