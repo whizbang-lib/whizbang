@@ -35,6 +35,7 @@ public class PerspectiveRebuilderCoverageTests {
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
       RunCount++;
       return Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),

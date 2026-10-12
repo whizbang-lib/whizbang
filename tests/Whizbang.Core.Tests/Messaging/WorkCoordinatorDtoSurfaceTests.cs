@@ -113,6 +113,7 @@ public class WorkCoordinatorDtoSurfaceTests {
   public async Task PerspectiveCursorCompletion_ProcessedEventIds_DefaultsEmptyAndRoundTripsAsync() {
     var processedId = (Guid)TrackedGuid.New();
     var withDefaults = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = (Guid)TrackedGuid.New(),
       PerspectiveName = "OrderPerspective",
       LastEventId = (Guid)TrackedGuid.New(),

@@ -108,6 +108,7 @@ public record RebuildResult(
   /// <docs>fundamentals/perspectives/rebuild#terminal-purges</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildStreamsAsync_WhenTheLastEventAlwaysPurges_DeletesTheRowWithoutFoldingTheStreamAsync</tests>
   public int StreamsPurged { get; init; }
+
 }
 
 /// <summary>

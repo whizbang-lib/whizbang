@@ -34,6 +34,7 @@ public class BatchedCompletionStrategyLifecycleTests {
       PerspectiveName = perspectiveName,
       LastEventId = Guid.NewGuid(),
       Status = PerspectiveProcessingStatus.Completed,
+      RowChanged = true,
     };
 
   private static PerspectiveCursorFailure _failure() =>

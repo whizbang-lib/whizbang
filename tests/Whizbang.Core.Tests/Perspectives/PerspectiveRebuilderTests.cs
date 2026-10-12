@@ -411,6 +411,7 @@ public class PerspectiveRebuilderTests {
       }
 
       return Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),
