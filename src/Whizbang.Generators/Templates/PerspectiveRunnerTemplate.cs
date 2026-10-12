@@ -239,7 +239,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           PerspectiveName = perspectiveName,
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           LastEventId = Guid.Empty,
-          Status = PerspectiveProcessingStatus.None
+          Status = PerspectiveProcessingStatus.None,
+          RowChanged = false,  // no events for this perspective, so the row was never touched
         }
       };
     }
@@ -472,6 +473,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
             Status = PerspectiveProcessingStatus.Completed,
             EventsProcessed = 0,
+            RowChanged = false,  // every event was judged already applied, so the model was not touched
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
         } else {
@@ -1322,7 +1324,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = Guid.Empty,
         Status = PerspectiveProcessingStatus.None,
-        EventsProcessed = 0
+        EventsProcessed = 0,
+        RowChanged = false,  // the rewind was skipped, so nothing was written
       };
     } else {
       result = await RunFromModelAsync(
@@ -1381,6 +1384,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var resurrected = false;
     var purgedEventsSkipped = 0;
     PerspectiveScope? lastScope = null;
+    var rowChanged = false;  // True once this replay actually wrote or purged the row
     // The replay FRONTIER — max event id / max local commit_sequence across everything
     // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
     // event's stamp: after a replay everything at or below the frontier IS applied (that is
@@ -1613,6 +1617,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
         }
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+        rowChanged = true;
       } else if (updatedModel != null) {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
         var replayCheckpointCommitSequence = frontierCommitSequence
@@ -1623,6 +1628,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+        rowChanged = true;
         if (resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }
@@ -1667,6 +1673,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // already-replayed events as stragglers on the next work item.
       LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
       Status = resultStatus,
+      RowChanged = rowChanged,
       EventsProcessed = eventsProcessed
     };
   }

@@ -3742,6 +3742,7 @@ public partial class PerspectiveWorker(
         LastEventId = applied[^1].MessageId.Value,
         Status = PerspectiveProcessingStatus.Completed,
         EventsProcessed = applied.Count,
+        RowChanged = true,  // a collective apply reaching here has written its rows
         ProcessedEventIds = [.. applied.Select(e => e.MessageId.Value)],
       };
       await _reportCompletionAndSignalSyncAsync(
@@ -4199,7 +4200,8 @@ public partial class PerspectiveWorker(
             StreamId = streamId,
             PerspectiveName = perspectiveName,
             LastEventId = Guid.Empty,
-            Status = PerspectiveProcessingStatus.None
+            Status = PerspectiveProcessingStatus.None,
+            RowChanged = false,  // the lock was not acquired, so no rewind ran
           }, LockSkipped: true);
         }
       }
@@ -4231,7 +4233,8 @@ public partial class PerspectiveWorker(
             StreamId = streamId,
             PerspectiveName = perspectiveName,
             LastEventId = Guid.Empty,
-            Status = PerspectiveProcessingStatus.None
+            Status = PerspectiveProcessingStatus.None,
+            RowChanged = false,  // the rewind threw, so nothing was written
           }, LockSkipped: false);
         }
 

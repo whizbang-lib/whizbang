@@ -97,6 +97,7 @@ public class IPerspectiveRunnerDefaultsTests {
       Guid? lastProcessedEventId,
       CancellationToken cancellationToken = default)
       => Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = lastProcessedEventId ?? Guid.Empty,
@@ -111,6 +112,7 @@ public class IPerspectiveRunnerDefaultsTests {
       RewindCalls++;
       LastTriggerEventId = triggeringEventId;
       return Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = triggeringEventId,

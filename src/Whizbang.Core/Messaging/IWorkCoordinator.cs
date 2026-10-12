@@ -3441,9 +3441,15 @@ public record PerspectiveCursorCompletion {
   /// repaired a row and one that touched nothing report the same thing. Rebuild counters key off this
   /// instead, the way <c>RebuildResult.StreamsRequested</c> was added so a caller could tell "none of the
   /// streams you named" from "nothing to do" (#1162).
+  /// </para>
+  /// <para>
+  /// <strong>Required on purpose.</strong> An optional bool would default to <c>false</c>, so a path that
+  /// forgot to set it would report every write as a no-op — the same silent miscount this property exists
+  /// to end, pointing the other way. Required makes the compiler name every construction site instead.
+  /// </para>
   /// </remarks>
   /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
-  public bool RowChanged { get; init; }
+  public required bool RowChanged { get; init; }
 
   /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
