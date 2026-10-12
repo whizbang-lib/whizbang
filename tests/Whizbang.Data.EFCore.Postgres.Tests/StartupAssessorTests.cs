@@ -115,4 +115,25 @@ public class StartupAssessorTests : EFCoreTestBase {
     var serve = await _assessorRunning("999.0.0").AssessAsync(cancellationToken);
     await Assert.That(serve.Verdict).IsEqualTo(StartupVerdict.Serve);
   }
+
+  /// <summary>
+  /// On a fresh database the assessment can read the ledger while the first migration is still creating it:
+  /// the table exists and its <c>owner</c> column does not yet. That failed the step with 42703, and a failed
+  /// blocking step keeps the instance from ever reporting ready. A ledger without the column records no
+  /// framework version, so there is nothing newer to stand down for: migrate.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task ALedgerStillBeingCreated_VerdictIsMigrateAsync(CancellationToken cancellationToken) {
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync(cancellationToken);
+      await using var drop = new NpgsqlCommand("ALTER TABLE wh_schema_migrations DROP COLUMN owner CASCADE", conn);
+      await drop.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var assessment = await _assessorRunning("1.0.0").AssessAsync(cancellationToken);
+
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.Migrate)
+      .Because("a ledger that is still being created records nothing newer than this binary");
+  }
 }

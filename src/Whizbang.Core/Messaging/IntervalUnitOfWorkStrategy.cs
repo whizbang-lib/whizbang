@@ -19,6 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly TimeSpan _interval;
+  private readonly TimeProvider _timeProvider;
   private readonly Task _flushTask;
   private readonly CancellationTokenSource _disposeCts = new();
   private readonly SemaphoreSlim _unitLock = new(1, 1);
@@ -35,8 +36,10 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   /// Interval begins AFTER each flush completes (not fixed periodic timing).
   /// </summary>
   /// <param name="interval">Interval between flush completion and next flush</param>
-  public IntervalUnitOfWorkStrategy(TimeSpan interval) {
+  /// <param name="timeProvider">The clock the interval is measured on; the system clock when omitted.</param>
+  public IntervalUnitOfWorkStrategy(TimeSpan interval, TimeProvider? timeProvider = null) {
     _interval = interval;
+    _timeProvider = timeProvider ?? TimeProvider.System;
     _flushTask = _runFlushLoopAsync(_disposeCts.Token);
   }
 
@@ -140,7 +143,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
         ct.ThrowIfCancellationRequested();
 
         // Wait for interval (next flush starts AFTER previous completes)
-        await Task.Delay(_interval, ct);
+        await Task.Delay(_interval, _timeProvider, ct);
 
         // Flush current unit (if any)
         await _flushCurrentUnitAsync(ct);

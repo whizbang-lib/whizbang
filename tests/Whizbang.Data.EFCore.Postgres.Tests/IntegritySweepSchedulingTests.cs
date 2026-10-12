@@ -92,8 +92,11 @@ public class IntegritySweepSchedulingTests {
   }
 
   private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, CaptureScheduleManager Manager)
-      _build(string? cron, bool withManager = true, string serviceName = "auditor-svc") {
+      _build(string? cron, bool withManager = true, string serviceName = "auditor-svc", ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
+    if (gate is not null) {
+      services.AddSingleton(gate);
+    }
     var manager = new CaptureScheduleManager();
     if (withManager) {
       services.AddSingleton<IScheduleManager>(manager);
@@ -122,6 +125,57 @@ public class IntegritySweepSchedulingTests {
       .IsEqualTo(TypeNameFormatter.Format(typeof(ScheduledIntegritySweep)));
     await Assert.That(state.CronActive).IsTrue()
       .Because("the audit worker's counter stands down only once the cron actually owns the sweep");
+  }
+
+  /// <summary>
+  /// #1334: the schedule function arrives with the migrations, so registering before the schema is ready failed
+  /// with "function does not exist" and was never retried, leaving the sweep on the counter for the whole process.
+  /// </summary>
+  [Test]
+  public async Task Start_BeforeTheSchemaIsReady_RegistersOnceTheGateOpensAsync() {
+    var gate = new SchemaReadyGate();
+    var (scheduler, state, manager) = _build("0 3 * * *", gate: gate);
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.Created).IsNull()
+      .Because("the schedule function may not exist until the migrations have run");
+    await Assert.That(state.CronActive).IsFalse();
+
+    gate.MarkReady();
+    await scheduler.WhenRegisteredForTestsAsync();
+
+    await Assert.That(manager.Created).IsNotNull()
+      .Because("once the schema is ready the schedule is registered, so the cron owns the sweep");
+    await Assert.That(state.CronActive).IsTrue();
+    await scheduler.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Start_WithTheSchemaAlreadyReady_RegistersAtOnceAsync() {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var (scheduler, state, manager) = _build("0 3 * * *", gate: gate);
+
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await Assert.That(manager.Created).IsNotNull();
+    await Assert.That(state.CronActive).IsTrue();
+  }
+
+  [Test]
+  public async Task Stop_BeforeTheSchemaIsReady_RegistersNothingAsync() {
+    var gate = new SchemaReadyGate();
+    var (scheduler, state, manager) = _build("0 3 * * *", gate: gate);
+    await scheduler.StartAsync(CancellationToken.None);
+
+    await scheduler.StopAsync(CancellationToken.None);
+    gate.MarkReady();
+    await scheduler.WhenRegisteredForTestsAsync();
+
+    await Assert.That(manager.Created).IsNull()
+      .Because("a host that stops before its schema is ready never registers the schedule");
+    await Assert.That(state.CronActive).IsFalse();
   }
 
   [Test]
