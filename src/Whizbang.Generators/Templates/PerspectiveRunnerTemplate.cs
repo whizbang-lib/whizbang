@@ -267,11 +267,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
-    // Ordering invariant: sort by MessageId (UUIDv7 = chronological) before any processing.
-    // Defensive — callers should already pass sorted, but this is the apply boundary.
-    // See plans/ordered-stream-invariant.md.
+    // Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
+    // order the rewind uses (origin, then commit, then id): sorting it by id applied a stream's first committed
+    // event last whenever that event carried the highest id, and checkpointed on it (#1331). The live drain keeps
+    // id order; an inversion there is the rewind's to correct.
     if (events.Count > 1) {
-      events = events.OrderByMessageId().ToList();
+      events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
+          ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
+          : events.OrderByMessageId().ToList();
     }
 
     // Lost-update guard (issue #928). The apply reads the row, folds the batch in memory and writes the
@@ -1455,27 +1458,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
 
-      // Ordering invariant — one comparator per batch, chosen by what the batch can prove:
-      // 1) SINGLE-ORIGIN stream (every event carries the same non-empty SourceServiceId and a
-      //    positive SourceCommitSequence): replay in ORIGIN order. A reconciled straggler
-      //    keeps its original origin slot but lands with an arrival-fresh LOCAL sequence — a
-      //    local-order replay would apply it last, which is exactly the arrival-order failure
-      //    the rewind exists to correct.
-      // 2) Otherwise, COMMIT order when every event carries its local stamp — the inversion
-      //    detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can disagree
-      //    with commit order), and an id-ordered replay would silently undo newer writes.
-      // 3) Any unstamped event (stamper lag) falls the whole batch back to MessageId order —
-      //    a partial mix would interleave two orderings.
+      // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
+      // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
+      // would silently undo newer writes. The rule lives in ReplayEventOrder, which the rebuild shares.
       if (events.Count > 1) {
-        var firstOrigin = events[0].SourceServiceId;
-        if (firstOrigin != Guid.Empty
-            && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
-          events = events.OrderBy(e => e.SourceCommitSequence).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
-        } else if (events.All(e => e.LocalCommitSequence.HasValue)) {
-          events = events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
-        } else {
-          events = events.OrderByMessageId().ToList();
-        }
+        events = [.. global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)];
       }
 
       // A batch whose last event always purges the row (#1151) discards whatever the events before it fold: they
