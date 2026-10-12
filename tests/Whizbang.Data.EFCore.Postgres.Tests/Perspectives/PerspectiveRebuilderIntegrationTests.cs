@@ -441,6 +441,59 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RebuildStreamsAsync_WhenEventIdsDisagreeWithCommitOrder_CheckpointsAtTheCommitHeadAsync() {
+    // Issue #1331. The rebuild reads a stream in commit order and the runner then re-sorted it by event id, so
+    // a stream whose FIRST committed event carries its HIGHEST id folded that event last and checkpointed on it:
+    // measured in a deployed environment as a cursor at version 1 of a 49-event stream. Ids minted by one
+    // process and committed by another (a seed, an import, a slow transaction) need not agree with commit
+    // order; the rewind already replays in commit order for exactly that reason, and a rebuild must too.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    // Three ids in ascending order; the highest goes on the event committed first.
+    var ids = new[] { MessageId.New(), MessageId.New(), MessageId.New() }.OrderBy(m => m.Value).ToArray();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 1m }, ids[2]);
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 10m }, ids[0]);
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m }, ids[1]);
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(ids[1].Value)
+      .Because("the last event COMMITTED is the stream head; checkpointing on the highest id put the cursor on the first event");
+  }
+
+  /// <summary>
+  /// Appends an event with the given id and stamps it with the next commit sequence, so a test controls commit
+  /// order independently of id order.
+  /// </summary>
+  private async Task _appendCommittedAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload, MessageId messageId)
+      where TEvent : IEvent {
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await eventStore.AppendAsync(streamId, envelope);
+    await using var stampContext = CreateDbContext();
+    await stampContext.Database.ExecuteSqlRawAsync(
+      "UPDATE wh_event_store SET commit_sequence = (SELECT COALESCE(MAX(commit_sequence), 0) + 1 FROM wh_event_store) WHERE event_id = {0}",
+      messageId.Value);
+  }
+
+  [Test]
   public async Task PerspectiveStore_FindsARowWhoseScopeCarriesAUserAsync() {
     // The rebuild's write gate starts as "the store returned a row" (hasWrittenUpdate =
     // modelLoadedFromDb). If a scoped row were invisible to that read, a rebuild of it would fold,
