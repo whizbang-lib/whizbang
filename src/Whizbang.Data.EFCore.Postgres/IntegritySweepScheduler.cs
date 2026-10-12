@@ -67,7 +67,7 @@ public sealed partial class IntegritySweepScheduler(
     // #1334: the schedule function arrives with the migrations. Registering before the schema is ready failed
     // with "function does not exist" and was never retried, so wait for the gate, beside the host's start.
     var gate = services.GetService<ISchemaReadyGate>();
-    if (gate is null || gate.IsReady) {
+    if (gate?.IsReady != false) {   // no gate, or the schema is already ready
       await _registerAsync(manager, instanceProvider, cron, cancellationToken).ConfigureAwait(false);
       return;
     }
