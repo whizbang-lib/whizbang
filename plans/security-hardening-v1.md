@@ -37,8 +37,10 @@ Approved by the owner on 2026-10-10, all as suggested. State:
    repository and the extension). This repository's workflows mint per-job tokens instead of the PATs, tag pushes
    included (#1322). Ruleset "Restrict release tag creation" (24882819) lets only the app and repository admins
    create a `v*` tag. Verified: the first develop run after the merge published test status to the docs site as the
-   app and its docs release succeeded. Remaining: the extension repository's switch (whizbang-vscode#89) and its own
-   tag rulesets, then the owner revokes both PATs once a release cut has run on the app.
+   app and its docs release succeeded. **Done 2026-10-11.** The extension repository made the same switch
+   (whizbang-vscode#89) with its own two tag rulesets, and its publish now starts from the push to main behind a
+   reviewed environment holding the Marketplace token (whizbang-vscode#91). Both PATs are revoked. Release v0.2619.0
+   cut, tagged and published on the app; it needed no merge-back.
 6. **Offload encryption stays opt-in; a store with no cipher logs a warning at start** (`UnsealedOffloadStartupWarning`).
 
 ## Hunt list (highest risk first)
