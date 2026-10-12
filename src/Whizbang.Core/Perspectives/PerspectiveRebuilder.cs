@@ -205,7 +205,7 @@ public sealed partial class PerspectiveRebuilder(
       // A caller that names streams is asserting they exist. Rebuilding none of them is not success, whether every
       // one was refused or none had events: reporting it green is how 32 rows sat unrepaired through a clean run.
       if (requested > 0 && run.StreamsProcessed == 0) {
-        var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused);
+        var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused, run.StreamsUnchanged);
         LogRebuildNothingRebuilt(logger, mode, perspectiveName, requested, run.StreamsRefused);
         await _emitAsync(new PerspectiveRebuildFailed(
             rebuildStreamId, perspectiveName, mode, nothingRebuilt, 0, sw.Elapsed, origin));
@@ -243,10 +243,10 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <summary>Why a rebuild of named streams rebuilt none of them, in words an operator can act on.</summary>
-  private static string _nothingRebuiltError(int requested, int refused) =>
+  private static string _nothingRebuiltError(int requested, int refused, int unchanged) =>
     refused == requested
       ? $"None of the {requested} requested stream(s) was rebuilt: all {refused} are state-based (ephemeral or compacted) and not a rebuildable source of truth."
-      : $"None of the {requested} requested stream(s) was rebuilt: {refused} refused as state-based, {requested - refused} had no events for this perspective.";
+      : $"None of the {requested} requested stream(s) was rebuilt: {refused} refused as state-based, {unchanged} folded but left the row unchanged (the store refused the write, or no event produced a model), {requested - refused - unchanged} had no events for this perspective.";
 
   /// <summary>
   /// StateBased streams (ephemeral OR compacted) are NOT a rebuildable source of truth — an ephemeral
@@ -494,6 +494,10 @@ public sealed partial class PerspectiveRebuilder(
       // the same correction StreamsRequested made one layer up (#1162).
       if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
         run.StreamsProcessed++;
+      } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
+        // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
+        // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
+        run.StreamsUnchanged++;
       }
       foreach (var purged in completions.Where(c => c.PurgedBy is not null)) {
         run.StreamsPurged++;
@@ -564,6 +568,7 @@ public sealed partial class PerspectiveRebuilder(
     public int EventsReplayed { get; set; }
     public int StreamsRefused { get; set; }
     public int StreamsPurged { get; set; }
+    public int StreamsUnchanged { get; set; }
   }
 
   /// <summary>

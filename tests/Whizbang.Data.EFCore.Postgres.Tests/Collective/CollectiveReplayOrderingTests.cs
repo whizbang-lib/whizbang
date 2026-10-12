@@ -126,7 +126,52 @@ public class CollectiveReplayOrderingTests {
       .Because("Collectives on different streams are not ordered against each other; they keep the message-id order.");
   }
 
+  [Test]
+  public async Task Interleave_KeepsTheStreamsOwnEventsInTheOrderGiven_WhenTheirIdsRunBackwardAsync() {
+    // The runner hands the interleave a stream already in replay order (commit order). A stream's first event can
+    // carry its highest id; re-sorting the whole list by id folded it last and checkpointed on it (#1346).
+    var firstCommitted = _stamped(Guid.Parse("00000000-0000-7000-8000-000000000009"), 1);
+    var secondCommitted = _stamped(Guid.Parse("00000000-0000-7000-8000-000000000005"), 2);
+    var collectiveStream = Guid.CreateVersion7();
+    var (applier, _) = _applier(
+      records: [_record(collectiveStream, _unkeyedId, typeof(FlipCollectiveEvent), commitSequence: 3)],
+      streams: new() { [collectiveStream] = [_envelope(_unkeyedId, "u", localCommitSequence: 3)] });
+
+    var merged = await _interleaveAsync(applier, [firstCommitted, secondCommitted]);
+
+    await Assert.That(merged.Select(e => e.MessageId.Value)).IsEquivalentTo(
+      [firstCommitted.MessageId.Value, secondCommitted.MessageId.Value, _unkeyedId],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The stream's own events keep the order the runner gave them, and the collective, committed last, "
+        + "folds last whatever its id says.");
+  }
+
+  [Test]
+  public async Task Interleave_PlacesACollectiveByCommitSequence_WhenBothSidesCarryOneAsync() {
+    var firstCommitted = _stamped(Guid.Parse("00000000-0000-7000-8000-000000000009"), 1);
+    var lastCommitted = _stamped(Guid.Parse("00000000-0000-7000-8000-000000000005"), 3);
+    var collectiveStream = Guid.CreateVersion7();
+    var (applier, _) = _applier(
+      records: [_record(collectiveStream, _unkeyedId, typeof(FlipCollectiveEvent), commitSequence: 2)],
+      streams: new() { [collectiveStream] = [_envelope(_unkeyedId, "u", localCommitSequence: 2)] });
+
+    var merged = await _interleaveAsync(applier, [firstCommitted, lastCommitted]);
+
+    await Assert.That(merged.Select(e => e.MessageId.Value)).IsEquivalentTo(
+      [firstCommitted.MessageId.Value, _unkeyedId, lastCommitted.MessageId.Value],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Committed between the two, the collective folds between them, though its id is the lowest of the three.");
+  }
+
   // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
+
+  // A stream event of the tenant, stamped with the commit sequence the event store read carries.
+  private static MessageEnvelope<IEvent> _stamped(Guid eventId, long localCommitSequence) {
+    var envelope = _perStream()[0];
+    return new MessageEnvelope<IEvent>(new MessageId(eventId), envelope.Payload, [.. envelope.Hops]) {
+      LocalCommitSequence = localCommitSequence,
+    };
+  }
 
   private static async Task<IReadOnlyList<MessageEnvelope<IEvent>>> _interleaveAsync(
       CollectiveReplayApplier applier, IReadOnlyList<MessageEnvelope<IEvent>> streamEvents) {
@@ -167,8 +212,10 @@ public class CollectiveReplayOrderingTests {
     CommitSequence = commitSequence,
   };
 
-  private static MessageEnvelope<IEvent> _envelope(Guid eventId, string chosen) => new(
-    new MessageId(eventId), new FlipCollectiveEvent { Scope = _scope, Chosen = chosen }, []);
+  private static MessageEnvelope<IEvent> _envelope(Guid eventId, string chosen, long? localCommitSequence = null) => new(
+    new MessageId(eventId), new FlipCollectiveEvent { Scope = _scope, Chosen = chosen }, []) {
+    LocalCommitSequence = localCommitSequence,
+  };
 
   // The row's own event, carrying the tenant the replay scopes its collective lookup to.
   private static List<MessageEnvelope<IEvent>> _perStream() => [
