@@ -24,6 +24,17 @@ public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> optio
 [NotInParallel("ModelRegistrationRegistry tests share static state")]
 [Category("Shard2")]
 public class ModelRegistrationRegistryTests {
+  private IDisposable? _restore;
+
+  // Each test registers its own registrar, and the latest one wins. Without the reset and restore, the last fake
+  // registered here stayed the latest for the rest of the process, and every later turnkey host registered no
+  // coordinator, event store or flusher.
+  [Before(Test)]
+  public void ResetStaticState() => _restore = ModelRegistrationRegistry.ResetForTesting();
+
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
+
   [Test]
   public async Task RegisterModels_WithValidRegistrar_StoresCallbackAsync() {
     // Arrange

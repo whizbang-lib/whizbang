@@ -29,8 +29,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("DbContextInitializationRegistry")]
 [Category("Shard1")]
 public class ISchemaInitializationRunnerCoverageTests {
+  private IDisposable? _restore;
+
   [Before(Test)]
-  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
+  public void ResetStaticState() => _restore = DbContextInitializationRegistry.ResetForTesting();
+
+  // Puts back the generated initializers this class cleared: later tests in the same process rely on them.
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
 
   private sealed class FakeServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;

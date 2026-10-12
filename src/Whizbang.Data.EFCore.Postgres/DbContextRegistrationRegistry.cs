@@ -49,11 +49,28 @@ public static class DbContextRegistrationRegistry {
     }
   }
 
-  /// <summary>Clears registrations and the invoked set; for tests that share this process-wide registry.</summary>
-  internal static void ResetForTesting() {
+  /// <summary>
+  /// Clears registrations and the invoked set; for tests that share this process-wide registry. Disposing the
+  /// returned scope puts the registrations back: they come from module initializers, which never run again, so a
+  /// reset that is not undone silently unregisters every generated context for the rest of the process.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextRegistrationRegistryTests.cs:ResetForTesting_DisposingTheScope_PutsBackWhatWasRegisteredAsync</tests>
+  internal static IDisposable ResetForTesting() {
     lock (_lock) {
+      var saved = _registrations.ToArray();
       _registrations.Clear();
       _invoked.Clear();
+      return new RegistrationRestore(saved);
+    }
+  }
+
+  private sealed class RegistrationRestore(DbContextRegistration[] saved) : IDisposable {
+    public void Dispose() {
+      lock (_lock) {
+        _registrations.Clear();
+        _registrations.AddRange(saved);
+        _invoked.Clear();
+      }
     }
   }
 

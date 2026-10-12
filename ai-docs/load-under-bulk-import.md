@@ -279,6 +279,27 @@ prints every wait with the statement that held it. On the SQL before 197 to 199:
 duty's transaction is bounded by its batch; anything opportunistic inside a liveness call steps aside
 instead of waiting.
 
+## Finding 3, round three: the doorbell rings queued behind each other (#1336)
+
+The bulk-import capture for #1217 found the largest single source of blocked sessions was
+`ring_doorbells()` waiting on another `ring_doorbells()`: 3,111 waits in 20 minutes across 13 service
+databases, median 371 ms, p95 1,028 ms, longest 2.3 s, wait event `Lock/object`. 146 had moved the
+NOTIFY lock out of the hot transactions, but every hot call is followed by a ring and every ring that
+notifies commits on that one database-wide lock, so the contention moved to the rings and each hot
+caller waited for its own. (A 204 s "wait" in the same capture was a session in `Client/ClientRead`,
+waiting on its client; filter on `wait_event_type = 'Lock'` before quoting a lock wait.)
+
+206 lets one ringer per schema ring at a time. A ring checks the queue first and returns when it is
+empty, then tries a transaction-scoped advisory lock and returns when another ringer has it, then
+rings one batch; `DoorbellRinger` calls again while a call rang anything. The order of the first two
+steps is what makes it lossless: the holder stops only on a call whose empty check started after its
+previous commit, so after any doorbell a busy caller left to it. A ring inside a caller's transaction
+that has written never takes the turn, because it would hold it until that caller commits.
+
+**Rule:** a contended lock the caller does not need is not waited for. When any one of many callers
+can do the work, one does it and drains, and the rest return; the drainer's stopping condition must
+be a check that starts after every handoff it could have missed.
+
 ## Finding 4: DDL at startup under load deadlocks
 
 An autoscaler-started instance applied the bootstrap closure while the maintenance sweep and the

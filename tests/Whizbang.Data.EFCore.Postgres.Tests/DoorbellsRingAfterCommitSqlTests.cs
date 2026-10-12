@@ -182,4 +182,107 @@ public class DoorbellsRingAfterCommitSqlTests : EFCoreTestBase {
     var received = await _captureAsync(listener, channel, async () => await txA.CommitAsync());
     await Assert.That(received.Count).IsEqualTo(1).Because("exactly one ring reaches the listener, on the holder's commit");
   }
+
+  // ------------------------------------------------------------------
+  // #1336: every ringer that notified committed on the database-wide NOTIFY lock, so under load the
+  // ringers queued behind each other (3,111 waits in 20 minutes, up to 2.3 s). One ringer rings at a time.
+
+  [Test]
+  public async Task RingDoorbells_WhileAnotherRingerHasTheTurn_ReturnsAtOnceAndLeavesTheQueueToItAsync() {
+    await using var holder = await _openAsync();
+    await using var writer = await _openAsync();
+    await using var other = await _openAsync();
+    var channel = $"wh_work_i_{(Guid)TrackedGuid.New()}";
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'first')", ("c", channel));
+
+    // The holder rings inside an open transaction, so it keeps the turn until it commits.
+    await using var txHolder = await holder.BeginTransactionAsync();
+    var rungByHolder = await _scalarAsync(holder, "SELECT ring_doorbells(1000)", tx: txHolder);
+    // A doorbell committed after the holder took its batch: free for any ringer to take, row-wise.
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'second')", ("c", channel));
+
+    await _execAsync(other, "SET statement_timeout = 2000");
+    var rungByOther = await _scalarAsync(other, "SELECT ring_doorbells(1000)");
+
+    await Assert.That(rungByHolder).IsEqualTo(1L);
+    await Assert.That(rungByOther).IsEqualTo(0L)
+      .Because("a second ringer would commit its notifies on the same database-wide lock as the holder; it returns "
+        + "instead, so callers never queue behind each other's rings (#1336)");
+    var waiting = await _scalarAsync(writer, "SELECT count(*) FROM wh_doorbell_queue WHERE channel = @c AND payload = 'second'", ("c", channel));
+    await Assert.That(waiting).IsEqualTo(1L)
+      .Because("the doorbell is left for the holder, which rings again after every batch that rang anything");
+    await txHolder.RollbackAsync();
+  }
+
+  [Test]
+  public async Task RingDoorbells_TheHolderRingsWhatABusyRingerLeft_OnItsNextPassAsync() {
+    await using var holder = await _openAsync();
+    await using var writer = await _openAsync();
+    await using var listener = await _openAsync();
+    var channel = $"wh_work_i_{(Guid)TrackedGuid.New()}";
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'first')", ("c", channel));
+
+    await using var txHolder = await holder.BeginTransactionAsync();
+    _ = await _scalarAsync(holder, "SELECT ring_doorbells(1000)", tx: txHolder);
+    // A hot call commits its doorbell, then finds the turn taken and returns.
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'second')", ("c", channel));
+    var rungByWriter = await _scalarAsync(writer, "SELECT ring_doorbells(1000)");
+    await txHolder.CommitAsync();
+
+    // The holder's batch rang something, so it rings again: that pass starts after the writer's commit.
+    var received = await _captureAsync(listener, channel, async () => {
+      var next = await _scalarAsync(holder, "SELECT ring_doorbells(1000)");
+      await Assert.That(next).IsEqualTo(1L);
+      var last = await _scalarAsync(holder, "SELECT ring_doorbells(1000)");
+      await Assert.That(last).IsEqualTo(0L).Because("the drain ends on a pass that finds the queue empty");
+    });
+
+    await Assert.That(rungByWriter).IsEqualTo(0L);
+    await Assert.That(received.Select(r => r.Payload)).IsEquivalentTo(_secondOnly)
+      .Because("a doorbell queued while another ringer had the turn is rung by that ringer's next pass, with no "
+        + "poll involved, so a quiet target still wakes on it");
+  }
+
+  private static readonly string[] _secondOnly = ["second"];
+
+  [Test]
+  public async Task RingDoorbells_OnAnEmptyQueue_DoesNotTakeTheTurnAsync() {
+    await using var idle = await _openAsync();
+    await using var writer = await _openAsync();
+    var channel = $"wh_work_i_{(Guid)TrackedGuid.New()}";
+
+    // A ring with nothing queued, left open: it must not hold the turn against a ringer that has work.
+    await using var txIdle = await idle.BeginTransactionAsync();
+    var rungByIdle = await _scalarAsync(idle, "SELECT ring_doorbells(1000)", tx: txIdle);
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'work')", ("c", channel));
+    var rungByWriter = await _scalarAsync(writer, "SELECT ring_doorbells(1000)");
+
+    await Assert.That(rungByIdle).IsEqualTo(0L);
+    await Assert.That(rungByWriter).IsEqualTo(1L)
+      .Because("the queue is checked before the turn is taken: a pass that finds nothing never holds the turn, which "
+        + "is also what lets a holder's final empty pass see every doorbell committed before it");
+    await txIdle.RollbackAsync();
+  }
+
+  [Test]
+  public async Task RingDoorbells_InsideATransactionThatHasWritten_DoesNotTakeTheTurnAsync() {
+    await using var caller = await _openAsync();
+    await using var writer = await _openAsync();
+    await using var other = await _openAsync();
+    var channel = $"wh_work_i_{(Guid)TrackedGuid.New()}";
+
+    // A caller's own transaction: it writes (the hot call queues its doorbell), then rings before committing.
+    await using var txCaller = await caller.BeginTransactionAsync();
+    await _execAsync(caller, "SELECT _queue_doorbell(@c, 'mine')", ("c", channel), txCaller);
+    _ = await _scalarAsync(caller, "SELECT ring_doorbells(1000)", tx: txCaller);
+    await _execAsync(writer, "SELECT _queue_doorbell(@c, 'theirs')", ("c", channel));
+
+    await _execAsync(other, "SET statement_timeout = 2000");
+    var rungByOther = await _scalarAsync(other, "SELECT ring_doorbells(1000)");
+
+    await Assert.That(rungByOther).IsEqualTo(1L)
+      .Because("a ring inside a caller's open transaction would keep the turn until that caller commits, and would "
+        + "not pass again after it; so it rings as before 206 and leaves the turn to ringers that will drain");
+    await txCaller.RollbackAsync();
+  }
 }
