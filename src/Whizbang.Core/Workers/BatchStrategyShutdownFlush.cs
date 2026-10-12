@@ -18,7 +18,7 @@ namespace Whizbang.Core.Workers;
 /// inbox goes first, so received messages are stored before the outbox's last batch.
 /// </remarks>
 /// <docs>messaging/outbox-pattern</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/BatchStrategyShutdownFlushTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchStrategyShutdownFlushTests.cs</tests>
 public sealed partial class BatchStrategyShutdownFlush(
     IServiceProvider services,
     ILogger<BatchStrategyShutdownFlush> logger) : IHostedLifecycleService {
