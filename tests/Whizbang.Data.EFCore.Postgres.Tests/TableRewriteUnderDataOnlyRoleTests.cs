@@ -61,18 +61,20 @@ public class TableRewriteUnderDataOnlyRoleTests : EFCoreTestBase {
         Username = role,
         Password = "data-only",
       }.ConnectionString;
-      await using var applicationContext = new WorkCoordinationDbContext(
-        new DbContextOptionsBuilder<WorkCoordinationDbContext>()
-          .UseNpgsql(applicationConnection)
-          .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
-          .Options);
       var services = new ServiceCollection();
       if (withInitConnection) {
         services.AddKeyedSingleton<SchemaInitConnection>(typeof(WorkCoordinationDbContext), new SchemaInitConnection(ConnectionString));
       }
       await using var provider = services.BuildServiceProvider();
+      // As AddDbContext does: the context carries the application's services.
+      await using var applicationContext = new WorkCoordinationDbContext(
+        new DbContextOptionsBuilder<WorkCoordinationDbContext>()
+          .UseNpgsql(applicationConnection)
+          .UseApplicationServiceProvider(provider)
+          .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning))
+          .Options);
       var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
-        applicationContext, JsonContextRegistry.CreateCombinedOptions(), serviceProvider: provider);
+        applicationContext, JsonContextRegistry.CreateCombinedOptions());
       var before = await _heapBytesAsync();
       var candidate = (await coordinator.GetTablesNeedingRewriteAsync(cancellationToken)).Single(c => c.TableName == "wh_settings");
 

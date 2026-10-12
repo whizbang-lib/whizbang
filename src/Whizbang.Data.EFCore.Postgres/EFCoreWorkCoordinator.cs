@@ -37,8 +37,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   WorkCoordinatorMetrics? metrics = null,
   WorkCoordinatorGate? gate = null,
   IServiceInstanceProvider? instanceProvider = null,
-  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null,
-  IServiceProvider? serviceProvider = null
+  Microsoft.Extensions.Options.IOptions<Whizbang.Core.Configuration.WhizbangCoreOptions>? coreOptions = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -1142,7 +1141,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // VACUUM FULL and ANALYZE need the table owner's rights, which a least-privilege application role does not
     // have, and Postgres does not refuse them: it warns and skips the table. So when a schema-initialization
     // connection is configured, the role startup migrations use runs them.
-    if (serviceProvider is not null && SchemaInitConnection.For(serviceProvider, typeof(TDbContext)) is { } initConnectionString) {
+    // The application's services come from the context itself: registered through DI, it carries them.
+    var applicationServices = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+      .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)
+      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()?.ApplicationServiceProvider;
+    if (applicationServices is not null && SchemaInitConnection.For(applicationServices, typeof(TDbContext)) is { } initConnectionString) {
       await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
       await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
       await _vacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
