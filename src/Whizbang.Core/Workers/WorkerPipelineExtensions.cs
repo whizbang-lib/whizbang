@@ -983,6 +983,9 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<ImmediateInboxBatchStrategy>(sp => new ImmediateInboxBatchStrategy(
       flush: sp.GetRequiredService<InboxBulkFlushCallback>()));
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
+    // Both batchers flush while the host stops, after every hosted service and before the container is disposed:
+    // flushed only at disposal, their last batch ran against a service provider that was already gone (#1333).
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
 
     return services;
   }
