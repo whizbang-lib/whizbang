@@ -3431,6 +3431,21 @@ public record PerspectiveCursorCompletion {
   public required Guid LastEventId { get; init; }
 
   /// <summary>
+  /// Whether this batch actually changed the row: it was written, or it was purged.
+  /// </summary>
+  /// <remarks>
+  /// A fold can complete without touching the row. Every event may decline to produce a model, in which
+  /// case the save is skipped so a batch of pure <c>ApplyResult.None()</c> cannot insert a phantom default
+  /// row. That is right for the live path and invisible to the caller: <see cref="Status"/> reads
+  /// <c>Completed</c> and <see cref="EventsProcessed"/> counts the fold either way, so a rebuild that
+  /// repaired a row and one that touched nothing report the same thing. Rebuild counters key off this
+  /// instead, the way <c>RebuildResult.StreamsRequested</c> was added so a caller could tell "none of the
+  /// streams you named" from "nothing to do" (#1162).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  public bool RowChanged { get; init; }
+
+  /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
   /// </summary>
   public required PerspectiveProcessingStatus Status { get; init; }

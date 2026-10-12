@@ -485,7 +485,14 @@ public sealed partial class PerspectiveRebuilder(
       processed++;
       // A stream with no events for this perspective comes back as one placeholder completion with no position.
       // It was looked at, not rebuilt, so it does not count as processed.
-      if (completions.Any(c => c.LastEventId != Guid.Empty)) {
+      //
+      // Nor does a stream that was folded without its row being touched. A fold where every event declines
+      // to produce a model skips the save — right for the live path, where a batch of pure
+      // ApplyResult.None() must not insert a phantom default row — but it leaves a rebuild reporting the
+      // same StreamsProcessed as one that repaired the row, with nothing logged at any level to separate
+      // them. Counting the row rather than the fold is what lets a caller tell a repair from a no-op; it is
+      // the same correction StreamsRequested made one layer up (#1162).
+      if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
         run.StreamsProcessed++;
       }
       foreach (var purged in completions.Where(c => c.PurgedBy is not null)) {

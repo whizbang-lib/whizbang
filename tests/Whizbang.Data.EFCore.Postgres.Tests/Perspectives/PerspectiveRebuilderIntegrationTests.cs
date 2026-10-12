@@ -512,6 +512,27 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RebuildStreamsAsync_WhenItWritesTheRow_CountsItProcessedAndNotAsAFoldWithoutWritingAsync() {
+    // The other side of the same signal: a rebuild that really repairs a row must be distinguishable
+    // from one that touched nothing, which is the whole point of counting the row and not the fold.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var result = await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1)
+      .Because("a rebuild that really wrote the row must be distinguishable from one that touched nothing");
+  }
+
+  [Test]
   public async Task RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync() {
     // Arrange: seed five streams with events. Do NOT project ahead of time — this keeps the
     // test focused on per-stream isolation without tripping over the rebuild's replay-on-top

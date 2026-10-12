@@ -510,6 +510,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // True once Apply has contributed a concrete model OR the row came from DB.
     // When false at save time, updatedModel is only the scaffolded default and must not be written.
     var hasWrittenUpdate = modelLoadedFromDb;
+    var rowChanged = false;  // True once this batch actually wrote or purged the row
     var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
     Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
     string? purgeEventType = null;  // Its type, reported on the completion (#1151)
@@ -784,6 +785,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // on a live row (harmless), never a missing row a later event could recreate.
             await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
             await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+            rowChanged = true;
             _logger.LogDebug(
                 "Model purged for {PerspectiveName} stream {StreamId}",
                 perspectiveName,
@@ -791,6 +793,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             );
           }
         } else if (updatedModel != null && hasWrittenUpdate) {
+          rowChanged = true;
           var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
               lastSuccessfulEventId!.Value, cancellationToken);
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
@@ -928,6 +931,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = resultStatus,
         EventsProcessed = eventsProcessed,
+        RowChanged = rowChanged,
         ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
         PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
       };
