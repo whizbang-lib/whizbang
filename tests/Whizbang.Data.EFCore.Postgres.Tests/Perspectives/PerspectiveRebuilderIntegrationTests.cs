@@ -441,6 +441,77 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task PerspectiveStore_FindsARowWhoseScopeCarriesAUserAsync() {
+    // The rebuild's write gate starts as "the store returned a row" (hasWrittenUpdate =
+    // modelLoadedFromDb). If a scoped row were invisible to that read, a rebuild of it would fold,
+    // write nothing, and report success. The read is by stream id, so it must not be.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    // Give the row a scope the reader shares nothing with, then read it back through the store.
+    await using (var scopeContext = CreateDbContext()) {
+      await scopeContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET scope = '{{\"t\": \"tenant-probe\", \"u\": \"user-probe\"}}'::jsonb WHERE id = {0}",
+        streamId);
+    }
+
+    await using var readScope = sp.CreateAsyncScope();
+    var store = readScope.ServiceProvider.GetRequiredService<IPerspectiveStore<RebuildBalanceModel>>();
+    var model = await store.GetByStreamIdAsync(streamId, CancellationToken.None);
+
+    await Assert.That(model).IsNotNull()
+      .Because("the row is read by stream id, so a scope the reader does not share must not hide it");
+    await Assert.That(model!.Balance).IsEqualTo(100m);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenItWritesNoRow_DoesNotCountTheStreamAsProcessedAsync() {
+    // The gap this issue is about. A stream whose every event declines to produce a model folds to
+    // nothing: hasWrittenUpdate stays false, the save is skipped, no row is written and no line is
+    // logged at any level. The caller is handed StreamsProcessed = 1 and Success = true, which is
+    // the same answer a rebuild that repaired the row would give.
+    //
+    // StreamsRequested exists because of exactly this shape one layer up (#1162): a selected-streams
+    // rebuild reported success having rebuilt none of 32 named streams, and no caller could tell.
+    // This is the next layer down — streams folded, rows not written.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var result = await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNull()
+      .Because("every event declined, so there is correctly no row — the question is what the caller is told");
+
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0)
+      .Because("a stream folded without writing a row is not a stream that was rebuilt, and a caller "
+             + "given the same number either way cannot tell a repair from a no-op");
+  }
+
+  [Test]
   public async Task RebuildStreamsAsync_WithSubset_UpdatesOnlyTargetedStreamsAsync() {
     // Arrange: seed five streams with events. Do NOT project ahead of time — this keeps the
     // test focused on per-stream isolation without tripping over the rebuild's replay-on-top
