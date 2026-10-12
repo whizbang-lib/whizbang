@@ -17,8 +17,27 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("DbContextInitializationRegistry")]
 [Category("Shard3")]
 public class DbContextInitializationRegistryTests {
+  private IDisposable? _restore;
+
   [Before(Test)]
-  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
+  public void ResetStaticState() => _restore = DbContextInitializationRegistry.ResetForTesting();
+
+  // Puts back the generated initializers this class cleared: later tests in the same process start hosts that
+  // rely on them, and module initializers never run again.
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
+
+  [Test]
+  public async Task ResetForTesting_DisposingTheScope_PutsBackWhatWasRegisteredAsync() {
+    DbContextInitializationRegistry.Register<FakeDbContextA>((_, _, _) => Task.CompletedTask);
+
+    using (DbContextInitializationRegistry.ResetForTesting()) {
+      await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(0).Because("inside the scope the registry is empty");
+    }
+
+    await Assert.That(DbContextInitializationRegistry.Count).IsEqualTo(1)
+      .Because("a reset that is not undone unregisters every generated schema initializer for the rest of the process");
+  }
 
   [Test]
   public async Task Register_AddsInitializer_IncreasesCountAsync() {

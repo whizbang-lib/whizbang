@@ -37,8 +37,14 @@ public class WhizbangHostExtensionsTests {
 
   private sealed class FakeInitializedContext;
 
+  private IDisposable? _restore;
+
   [Before(Test)]
-  public void ResetStaticState() => DbContextInitializationRegistry.ResetForTesting();
+  public void ResetStaticState() => _restore = DbContextInitializationRegistry.ResetForTesting();
+
+  // Puts back the generated initializers this class cleared: later tests in the same process rely on them.
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
 
   private static IHost _host() => new HostBuilder()
       .ConfigureServices(services => services.AddLogging())
