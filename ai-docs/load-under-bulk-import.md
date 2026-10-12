@@ -236,6 +236,15 @@ before and 2 after (`CommitSequenceStreamOrderSqlTests`); the harness
 it may stamp. When more are eligible than one batch holds, the earlier transaction's rows go first; a
 batch is numbered in insertion order and a stream in version order, as before.
 
+**A batch is bounded by time, not only by rows (#1327).** After 205 a draining stamper still grew its
+batch by doubling while calls filled, whatever a call cost. On a store where a few thousand rows took
+longer than the role lease (15 s by default), a single-instance service lost the stamper role to its own
+lapse four times in two minutes: the holder renews only between calls, and nobody else could take the
+role, so each lapse cost a cool-down and nothing more. A full call that runs past the call budget (half
+the renewal interval, 2.5 s by default) now halves the next one and caps growth until the backlog drains;
+one past half the budget holds its size. The timeout backoff stays as the last resort. **Rule:** no
+single fenced call may outlast a renewal interval; it holds the role row for its whole duration.
+
 **Measure a function's work inside its own transaction, not from its plan.** `EXPLAIN (ANALYZE,
 BUFFERS)` of `SELECT stamp_pending_commit_sequences(…)` did not follow the walk: 910 buffers for a
 call that read 1,000 index entries and 530 for one that read 20,000. Index entries read come from

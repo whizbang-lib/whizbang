@@ -124,4 +124,64 @@ public class CommitOrderStampBatchTests {
     await Assert.That(CommitOrderStampBatch.Next(500, 3, CONFIGURED, CEILING, timeoutCap: 500)).IsEqualTo(CONFIGURED)
       .Because("a short batch means the backlog is drained to the fence; the next burst starts at the configured "
         + "size, and the caller drops the cap with it");
+
+  private static readonly TimeSpan _budget = TimeSpan.FromMilliseconds(2_500);
+
+  [Test]
+  public async Task Next_AFullBatchThatRanPastTheBudget_HalvesAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(16_000, 16_000, CONFIGURED, CEILING, timeoutCap: null,
+        took: TimeSpan.FromSeconds(10), budget: _budget))
+      .IsEqualTo(8_000)
+      .Because("a call holds the role row for as long as it runs, and the holder renews only between calls; a "
+        + "drain whose calls outlasted the lease lost the role to its own lapse four times in two minutes (#1327)");
+
+  [Test]
+  public async Task Next_AFullBatchPastHalfTheBudget_HoldsItsSizeAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(8_000, 8_000, CONFIGURED, CEILING, timeoutCap: null,
+        took: TimeSpan.FromMilliseconds(1_500), budget: _budget))
+      .IsEqualTo(8_000)
+      .Because("doubling a call that took more than half the budget would take about twice as long, past it");
+
+  [Test]
+  public async Task Next_AFullBatchWellInsideTheBudget_GrowsAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(8_000, 8_000, CONFIGURED, CEILING, timeoutCap: null,
+        took: TimeSpan.FromSeconds(1), budget: _budget))
+      .IsEqualTo(16_000)
+      .Because("a call that doubled would still finish inside the budget, so the drain pays the fixed cost fewer times");
+
+  [Test]
+  public async Task Next_AFullBatchExactlyAtTheBudget_HoldsItsSizeAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(8_000, 8_000, CONFIGURED, CEILING, timeoutCap: null,
+        took: _budget, budget: _budget))
+      .IsEqualTo(8_000)
+      .Because("the budget is the most a call may take, so a call that took exactly that is not shrunk");
+
+  [Test]
+  public async Task Next_AShortBatchThatRanLong_ReturnsToTheConfiguredSizeAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(16_000, 9, CONFIGURED, CEILING, timeoutCap: null,
+        took: TimeSpan.FromSeconds(10), budget: _budget))
+      .IsEqualTo(CONFIGURED)
+      .Because("a short batch means the backlog is drained; the next burst starts at the configured size whatever "
+        + "the last call cost");
+
+  [Test]
+  public async Task Next_ABatchOfOneThatRanLong_StaysAtOneAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(1, 1, CONFIGURED, CEILING, timeoutCap: null,
+        took: TimeSpan.FromSeconds(10), budget: _budget))
+      .IsEqualTo(1)
+      .Because("one row is the smallest call that still makes progress");
+
+  [Test]
+  public async Task Next_ARunLongCallWithinTheCap_StillGrowsNoFurtherThanTheCapAsync() =>
+    await Assert.That(CommitOrderStampBatch.Next(1_000, 1_000, CONFIGURED, CEILING, timeoutCap: 1_000,
+        took: TimeSpan.FromMilliseconds(100), budget: _budget))
+      .IsEqualTo(1_000)
+      .Because("a fast call does not lift the cap an earlier slow or timed-out call set; only a drained set does");
+
+  [Test]
+  public async Task DefaultCallBudget_IsHalfTheDefaultRenewalIntervalAsync() =>
+    await Assert.That(CommitOrderStampBatch.DefaultCallBudget)
+      .IsEqualTo(new Whizbang.Core.Startup.RoleAssignmentOptions().RenewInterval / 2)
+      .Because("a holder renews its lease only between calls, so calls within half the renewal interval keep every "
+        + "gap between renewals well inside the lease");
 }
