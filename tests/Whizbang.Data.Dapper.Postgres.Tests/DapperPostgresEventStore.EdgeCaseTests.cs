@@ -236,8 +236,8 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     Guid[] expected = fromAnEvent ? [second, third, fourth] : [first, second, third, fourth];
     await Assert.That(events.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("a replay applies a stream in the order it was written, whatever its ids and its stamps say");
-    await Assert.That(events.Select(e => e.LocalStreamVersion)).IsEquivalentTo(
-        fromAnEvent ? new long?[] { 1, 2, 3 } : new long?[] { 0, 1, 2, 3 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    long?[] expectedVersions = fromAnEvent ? [1, 2, 3] : [0, 1, 2, 3];
+    await Assert.That(events.Select(e => e.LocalStreamVersion)).IsEquivalentTo(expectedVersions, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }
 

@@ -70,7 +70,8 @@ public class InMemoryEventStoreReplayOrderTests {
 
     var read = await _readAsync(store, streamId, null);
 
-    await Assert.That(read.Select(e => e.LocalStreamVersion)).IsEquivalentTo(new long?[] { 0, 1, 2, 3 }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    long?[] expected = [0, 1, 2, 3];
+    await Assert.That(read.Select(e => e.LocalStreamVersion)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }
 
@@ -81,7 +82,8 @@ public class InMemoryEventStoreReplayOrderTests {
     // The anchor filters by id, as the SQL stores do: everything whose id sorts above it, in stream order.
     var read = await _readAsync(store, streamId, _appendOrder[2]);
 
-    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(new[] { _appendOrder[0], _appendOrder[1] }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    Guid[] expected = [_appendOrder[0], _appendOrder[1]];
+    await Assert.That(read.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the anchor keeps its id semantics and the read keeps the stream's order");
   }
 }
