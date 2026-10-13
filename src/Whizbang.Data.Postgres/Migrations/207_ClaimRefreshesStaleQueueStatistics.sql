@@ -34,8 +34,16 @@
 --              second lock timeout: a claimant that cannot get there in time logs a warning, keeps its statistics as
 --              they are, and claims; it is never worse off than before.
 --
---              A table the caller's role cannot analyze (not its owner) is never stale to this check, because the
---              ANALYZE would only skip it with a warning on every poll.
+--              Only a table's owner may analyze it, and a consumer can run its services as a role with data rights
+--              only, keeping the schema's owner on the -init connection (DataOnlyRoleE2ETests). The -init connection
+--              is schema-only and never used once a service is up, so the refresh does not borrow it: it is SECURITY
+--              DEFINER, created by the role that migrates the schema and so owns the tables, and runs ANALYZE with
+--              that role's rights whatever role the claim runs as. What it can do with them is fixed: analyze the
+--              tables listed below, and only when they are stale. search_path is pinned to pg_catalog and every
+--              object it names is schema-qualified. EXECUTE is left with PUBLIC, as on every framework function:
+--              claim_work calls it as the claiming role, and revoking it would fail every claim of a role that was
+--              granted only the defaults. A stale table that even the owner cannot analyze (the tables were
+--              reassigned to another role) is reported with a warning on every poll rather than skipped silently.
 --
 -- Dependencies: 204 (claim_work, which calls this before its acquisitions)
 -- Objects: _wh_queue_statistics_stale, wh_refresh_stale_queue_statistics
@@ -54,17 +62,15 @@ LANGUAGE sql
 STABLE
 AS $$
   -- Rows changed since the last analyze, against what the planner believes the table holds. reltuples is -1 for a
-  -- table never analyzed, which the planner sizes from its pages instead, so it counts as zero here. The caller's
-  -- role must own the table (or be a member of the owning role), or ANALYZE would skip it.
+  -- table never analyzed, which the planner sizes from its pages instead, so it counts as zero here.
   SELECT pg_stat_get_mod_since_analyze(c.oid) > GREATEST(1000, 4 * GREATEST(c.reltuples, 0)::BIGINT)
-         AND pg_has_role(c.relowner, 'MEMBER')
   FROM pg_class c
   WHERE c.oid = p_table;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_queue_statistics_stale(REGCLASS) IS
   'Whether a queue table has changed far more since its last analyze than autovacuum lets a healthy table drift (more '
-  'than 1,000 rows and more than four times what the planner believes it holds), and the caller may analyze it (207).';
+  'than 1,000 rows and more than four times what the planner believes it holds) (207).';
 
 -- ---------------------------------------------------------------------------------------------
 -- wh_refresh_stale_queue_statistics: analyze the queue tables whose statistics are stale.
@@ -76,9 +82,14 @@ SELECT __SCHEMA__.drop_all_overloads('wh_refresh_stale_queue_statistics');
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_FreshStatistics_AnalyzesNothingAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhileAPeerRefreshesTheTable_WaitsAndDoesNotAnalyzeAgainAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_WhileAnotherSessionHoldsTheTable_GivesUpWithinTheLockTimeoutAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkStaleStatisticsTests.cs:RefreshStaleQueueStatistics_AsADataOnlyRole_StillAnalyzesTheStaleTableAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_refresh_stale_queue_statistics()
 RETURNS INTEGER
 LANGUAGE plpgsql
+-- The rights of the role that migrated the schema, which owns the tables (see the header). Pinned search_path: every
+-- object below is schema-qualified, and nothing a caller puts on its path can be resolved in its place.
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   -- The tables claim_work acquires from or joins, each of which is empty between loads.
@@ -112,6 +123,12 @@ BEGIN
         -- The statistics reads above are cached for the transaction; a peer may have analyzed while this waited.
         PERFORM pg_stat_clear_snapshot();
         IF __SCHEMA__._wh_queue_statistics_stale(v_table) THEN
+          IF NOT pg_has_role((SELECT c.relowner FROM pg_class c WHERE c.oid = v_table), 'MEMBER') THEN
+            -- ANALYZE would skip it with a warning of its own; this one says what to do about it.
+            RAISE WARNING 'whizbang: the planner statistics of % are stale and % cannot analyze it; the tables must be owned by the role that migrates the schema (#1349)',
+              v_table, current_user;
+            CONTINUE;
+          END IF;
           EXECUTE format('ANALYZE %s', v_table);
           v_refreshed := v_refreshed + 1;
           RAISE LOG 'whizbang: analyzed % because its statistics were stale (#1349)', v_table;
@@ -128,6 +145,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_refresh_stale_queue_statistics() IS
-  'Analyzes the queue tables whose statistics are stale (207, #1349), one claimant per table at a time under a '
+  'Analyzes the queue tables whose statistics are stale (207, #1349), as the role that migrated the schema (SECURITY DEFINER), one claimant per table at a time under a '
   'transaction-scoped advisory lock and a five second lock timeout. Returns how many tables it analyzed. claim_work '
   'calls it before acquiring, so a backlog that arrived after the last analyze is planned as the backlog it is.';
