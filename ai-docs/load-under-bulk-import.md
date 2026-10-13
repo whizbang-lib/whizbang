@@ -182,13 +182,14 @@ are empty between loads, which is when autovacuum analyzes them, and under a loa
 may never come: autovacuum runs one worker per table, and that worker's vacuum needs a cleanup lock
 on each btree leaf page, which it cannot get while claim scans keep the page pinned. A deployed
 service sat for over an hour like this: the perspective-event table's statistics said one page and
-no rows (`reltuples` 0), it held 55,758 pending rows on 1,559 pages, and its vacuum had waited on
+no rows (`reltuples` 0), it held tens of thousands of pending rows on over a thousand pages, and its
+vacuum had waited on
 `BufferPin` the whole time.
 
 With one page and no rows the planner computes a density of zero, so every scan is estimated to
 return nothing and every candidate index looks free. It captured each selected stream by walking the
-whole pending set in event-id order (`ix_perspective_events_event_id_unprocessed`, 39 billion entries
-read since its last reset) and filtering on the stream, once per stream. `claim_work` ran past the
+whole pending set in event-id order (`ix_perspective_events_event_id_unprocessed`, which had read
+billions of entries, by far the most of any index on the table) and filtering on the stream, once per stream. `claim_work` ran past the
 caller's command timeout, was canceled, claimed nothing, and the next call met the same backlog. The
 service drained nothing for hours, and the scans that never stopped were what kept the vacuum stuck.
 

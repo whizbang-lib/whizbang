@@ -6,7 +6,7 @@
 --              one worker per table, and under a load that worker can be stuck in its vacuum: a btree vacuum needs a
 --              cleanup lock on each leaf page, and the claim scans that keep pinning those pages never stop. The
 --              worker never reaches its analyze. Measured on a deployed service: a perspective-event table analyzed
---              while empty (reltuples 0, one page) carried 55,758 pending rows on 1,559 pages an hour later, and the
+--              while empty (reltuples 0, one page) carried tens of thousands of pending rows an hour later, and the
 --              vacuum had waited on BufferPin for that whole hour.
 --
 --              On those statistics every candidate index looks free. The planner captured each selected stream by

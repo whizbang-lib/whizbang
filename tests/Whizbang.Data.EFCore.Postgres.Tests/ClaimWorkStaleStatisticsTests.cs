@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the next analyze can be a long time coming: autovacuum runs one worker per table, and a worker
 /// whose vacuum is waiting for a cleanup lock on a page the claim scans keep pinned never reaches its
 /// analyze. A deployed service sat for over an hour with statistics taken from an empty
-/// perspective-event table (<c>reltuples</c> 0, one page) over 55,758 pending rows on 1,559 pages.
+/// perspective-event table (<c>reltuples</c> 0, one page) over tens of thousands of pending rows.
 /// </para>
 /// <para>
 /// On those statistics every candidate index looks free, and the planner took the narrowest: it
