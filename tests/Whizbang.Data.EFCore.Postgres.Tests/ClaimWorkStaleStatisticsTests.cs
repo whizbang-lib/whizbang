@@ -112,7 +112,11 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
     await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the fill alone leaves the statistics stale, so the ANALYZE below is what makes them fresh");
     await _executeAsync(connection, "ANALYZE wh_perspective_events");
+    await Assert.That(await _isStaleAsync(connection)).IsFalse()
+      .Because("precondition: analyzed after the fill, the statistics describe the table");
     var analyzedBefore = await _analyzeCountAsync(connection);
 
     var refreshed = await _refreshAsync(connection);
@@ -139,6 +143,8 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
     await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the waiter must find the table stale, or it never queues for the turn and this proves nothing");
 
     await using var peer = new NpgsqlConnection(ConnectionString);
     await peer.OpenAsync(cancellationToken);
@@ -151,12 +157,14 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var waiterTransaction = await waiter.BeginTransactionAsync(cancellationToken);
     var waiterPid = await _backendPidAsync(waiter);
     var waiting = _refreshAsync(waiter);
-    await _untilWaitingOnAdvisoryLockAsync(connection, waiterPid, waiting, cancellationToken);
+    var waitedForTheTurn = await _untilWaitingOnAdvisoryLockAsync(connection, waiterPid, waiting, cancellationToken);
     await _executeAsync(peer, "ANALYZE wh_perspective_events");
     var analyzedByPeer = await _analyzeCountAsync(connection);
     await peerTransaction.CommitAsync(cancellationToken);
     var refreshedByWaiter = await waiting;
 
+    await Assert.That(waitedForTheTurn).IsTrue()
+      .Because("the waiter must have queued behind the peer's turn, or the count below proves nothing");
     await Assert.That(refreshedByWaiter).IsEqualTo(0)
       .Because("the peer analyzed the table while this claimant waited for its turn, so nothing was left stale");
     await Assert.That(await _analyzeCountAsync(connection)).IsEqualTo(analyzedByPeer)
@@ -175,6 +183,8 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext, cancellationToken);
     await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the table must be stale, or the refresh never reaches the lock and this proves nothing");
 
     await using var holder = new NpgsqlConnection(ConnectionString);
     await holder.OpenAsync(cancellationToken);
@@ -186,6 +196,8 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     var refreshed = await _refreshAsync(connection);
 
     await Assert.That(refreshed).IsEqualTo(0).Because("the table could not be analyzed while another session held it");
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("nothing was analyzed, so the next claim still finds the table stale and tries again");
     await Assert.That(notices.Any(n => n.Contains("could not refresh the planner statistics", StringComparison.Ordinal))).IsTrue()
       .Because($"giving up is reported, with what failed, never swallowed (notices: {string.Join(" | ", notices)})");
     await Assert.That(await _plannerRowEstimateAsync(connection)).IsLessThan(5_000 / 100)
@@ -255,6 +267,17 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
     fill.Parameters.AddWithValue("events", EVENTS_PER_PERSPECTIVE);
     fill.CommandTimeout = 300;
     await fill.ExecuteNonQueryAsync();
+    // The fill's change counts reach the shared statistics when this backend next reports them, about
+    // once a second; until then another session reads the table as unchanged. Report them now.
+    await _executeAsync(connection, "SELECT pg_stat_force_next_flush()");
+    await _executeAsync(connection, "SELECT 1");
+  }
+
+  /// <summary>Whether the refresh's own test says the perspective-event table's statistics are stale.</summary>
+  private static async Task<bool> _isStaleAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT _wh_queue_statistics_stale('wh_perspective_events'::regclass)";
+    return (bool)(await cmd.ExecuteScalarAsync())!;
   }
 
   /// <summary>What the planner estimates the pending set holds, from the statistics it has.</summary>
@@ -303,14 +326,18 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
   /// returns if the call that should be waiting has already finished, so a call that never waits fails
   /// the assertions after it instead of hanging the test.
   /// </summary>
-  private static async Task _untilWaitingOnAdvisoryLockAsync(
+  private static async Task<bool> _untilWaitingOnAdvisoryLockAsync(
       NpgsqlConnection observer, int pid, Task call, CancellationToken cancellationToken) {
     await using var cmd = observer.CreateCommand();
     cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND locktype = 'advisory' AND NOT granted)";
     cmd.Parameters.AddWithValue("pid", pid);
-    while (!call.IsCompleted && !(bool)(await cmd.ExecuteScalarAsync(cancellationToken))!) {
+    while (!call.IsCompleted) {
+      if ((bool)(await cmd.ExecuteScalarAsync(cancellationToken))!) {
+        return true;
+      }
       await Task.Yield();
     }
+    return false;
   }
 
   /// <summary>How many times the perspective-event table has been analyzed by hand, cluster counters flushed.</summary>
