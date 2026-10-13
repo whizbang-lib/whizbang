@@ -17,6 +17,7 @@ public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildCreditedEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildDebitedEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildNonCreatingEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildBalanceSetEvent>,
     IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
@@ -53,6 +54,11 @@ public class RebuildBalancePerspective :
     return null!;
   }
 
+  // The last write wins: the fold's result depends on the order it is applied in, which a sum does not (#1352).
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildBalanceSetEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance };
+  }
+
   // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
   // shape that 32 ended sessions in an upgraded environment sat in, still present, after a rebuild.
   public ApplyResult<RebuildBalanceModel> Apply(RebuildBalanceModel currentData, RebuildClosedEvent @event) {
@@ -82,6 +88,13 @@ public record RebuildDebitedEvent : IEvent {
 public record RebuildNonCreatingEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
+}
+
+/// <summary>Sets the balance outright, so the order a replay folds in decides the result.</summary>
+public record RebuildBalanceSetEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  public required decimal Balance { get; init; }
 }
 
 public record RebuildClosedEvent : IEvent {
