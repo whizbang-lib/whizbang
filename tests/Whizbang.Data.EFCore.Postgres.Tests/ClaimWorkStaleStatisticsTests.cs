@@ -387,7 +387,7 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
       NpgsqlConnection observer, int pid, Task call, CancellationToken cancellationToken) {
     await using var cmd = observer.CreateCommand();
     cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @pid AND locktype = 'advisory' AND NOT granted)";
-    cmd.Parameters.AddWithValue("pid", pid);
+    cmd.Parameters.AddWithValue(nameof(pid), pid);
     while (!call.IsCompleted) {
       if ((bool)(await cmd.ExecuteScalarAsync(cancellationToken))!) {
         return true;
