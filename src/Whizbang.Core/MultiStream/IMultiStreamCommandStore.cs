@@ -22,6 +22,41 @@ public interface IMultiStreamCommandStore {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True when this call recorded the run; false when it was already recorded.</returns>
   Task<bool> RecordRunAsync(MultiStreamRun run, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Claims pending streams this instance owns, by the rule the work claim uses: a stream whose lease this instance
+  /// holds; otherwise, unless a live sibling holds its lease, a stream whose partition belongs to this instance. Each
+  /// claimed stream is leased to this instance and counted as an attempt.
+  /// </summary>
+  /// <param name="claim">Who is claiming, how many, for how long, and under which partition assignment.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The claimed streams, oldest run first; empty when there is nothing for this instance.</returns>
+  Task<IReadOnlyList<MultiStreamWorkItem>> ClaimAsync(MultiStreamClaim claim, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Records how claimed streams ended. A success is final. A failure releases the stream for another attempt until it
+  /// has had <paramref name="maxAttempts"/>, then is final with its error. Only streams this instance still holds are
+  /// recorded. Runs left with no pending stream are completed, each exactly once.
+  /// </summary>
+  /// <param name="instanceId">The instance that worked the streams.</param>
+  /// <param name="outcomes">One outcome per worked stream.</param>
+  /// <param name="maxAttempts">The attempts a stream gets before a failure is final.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The runs this call completed.</returns>
+  Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
+    Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken);
+
+  /// <summary>Reads where a run stands.</summary>
+  /// <param name="runId">The run.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The run's status, or null when no such run is recorded (or it was purged).</returns>
+  Task<MultiStreamRunStatus?> ReadRunAsync(Guid runId, CancellationToken cancellationToken);
+
+  /// <summary>Deletes runs, with their streams, that completed before <paramref name="completedBefore"/>.</summary>
+  /// <param name="completedBefore">The cutoff.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many runs were deleted.</returns>
+  Task<int> PurgeCompletedAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -44,5 +79,22 @@ public sealed class NullMultiStreamCommandStore : IMultiStreamCommandStore, INul
 
   /// <inheritdoc/>
   public Task<bool> RecordRunAsync(MultiStreamRun run, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc/>
+  public Task<IReadOnlyList<MultiStreamWorkItem>> ClaimAsync(MultiStreamClaim claim, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc/>
+  public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc/>
+  public Task<MultiStreamRunStatus?> ReadRunAsync(Guid runId, CancellationToken cancellationToken) =>
+    throw new InvalidOperationException(NOT_REGISTERED);
+
+  /// <inheritdoc/>
+  public Task<int> PurgeCompletedAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken) =>
     throw new InvalidOperationException(NOT_REGISTERED);
 }

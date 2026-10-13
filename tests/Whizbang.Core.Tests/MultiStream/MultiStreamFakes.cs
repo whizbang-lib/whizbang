@@ -53,4 +53,17 @@ public sealed class RecordingMultiStreamStore : IMultiStreamCommandStore {
     Recorded.Add(run);
     return Task.FromResult(!AlreadyRecorded);
   }
+
+  public Task<IReadOnlyList<MultiStreamWorkItem>> ClaimAsync(MultiStreamClaim claim, CancellationToken cancellationToken) =>
+    throw new NotSupportedException("The intake never claims.");
+
+  public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) =>
+    throw new NotSupportedException("The intake never completes.");
+
+  public Task<MultiStreamRunStatus?> ReadRunAsync(Guid runId, CancellationToken cancellationToken) =>
+    throw new NotSupportedException("The intake never reads a run.");
+
+  public Task<int> PurgeCompletedAsync(DateTimeOffset completedBefore, CancellationToken cancellationToken) =>
+    throw new NotSupportedException("The intake never purges.");
 }
