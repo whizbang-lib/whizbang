@@ -175,6 +175,48 @@ peer.
 **Rule:** the same as round two, for every acquisition: the bound is on rows examined, not on rows
 found.
 
+## Finding 1, round four: the plans were bounded, the statistics were not (#1349)
+
+Every bound above is a plan property, and a planner chooses a plan from statistics. The queue tables
+are empty between loads, which is when autovacuum analyzes them, and under a load its next analyze
+may never come: autovacuum runs one worker per table, and that worker's vacuum needs a cleanup lock
+on each btree leaf page, which it cannot get while claim scans keep the page pinned. A deployed
+service sat for over an hour like this: the perspective-event table's statistics said one page and
+no rows (`reltuples` 0), it held tens of thousands of pending rows on over a thousand pages, and its
+vacuum had waited on
+`BufferPin` the whole time.
+
+With one page and no rows the planner computes a density of zero, so every scan is estimated to
+return nothing and every candidate index looks free. It captured each selected stream by walking the
+whole pending set in event-id order (`ix_perspective_events_event_id_unprocessed`, which had read
+billions of entries, by far the most of any index on the table) and filtering on the stream, once per stream. `claim_work` ran past the
+caller's command timeout, was canceled, claimed nothing, and the next call met the same backlog. The
+service drained nothing for hours, and the scans that never stopped were what kept the vacuum stuck.
+
+Reproduced by `ClaimWorkStaleStatisticsTests` on a container: 180,000 pending rows, one claim, 6,512
+tuples and 19 ms on fresh statistics, more than eight minutes (canceled) on statistics taken at one
+page and no rows. Statistics from a table that never had a page do not reproduce it: with no pages
+the planner sizes the table from its current pages and stays roughly right. A fixture has to put the
+table at one page and no rows, then fill it.
+
+No SQL shape fixes this. Once the planner believes a table is empty, a plan that reads every matching
+row before it sorts looks as cheap as one that walks an index and stops, for every query. Migration
+207 keeps the statistics true instead: before it acquires, `claim_work` calls
+`wh_refresh_stale_queue_statistics`, which analyzes any queue table that has changed by more than
+1,000 rows and four times what the planner believes it holds since its last analyze. Autovacuum
+analyzes at 50 rows plus a tenth of the table, so on a healthy database it always gets there first and
+the check costs a catalog read per table. A stale table is analyzed by one claimant at a time (a
+transaction-scoped advisory lock per table; a claimant that waited reads the counters again, which are
+cached for its transaction, and analyzes nothing a peer already did). ANALYZE needs no cleanup lock,
+and Postgres cancels an autovacuum that is not preventing wraparound once another session has waited
+on it for `deadlock_timeout`, so the stuck worker is ended rather than waited out. All of it runs under
+a five second lock timeout; a claimant that cannot get there logs a warning and claims as before.
+
+**Rule:** a cost bound that a plan provides holds only on statistics that describe the table. A
+queue table's statistics are part of the claim's correctness, and the claim keeps them true when
+autovacuum cannot. Any test that asserts a plan bound states which statistics it ran on; the fixtures
+above analyze after every fill on purpose, and that is why none of them could see this.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a
