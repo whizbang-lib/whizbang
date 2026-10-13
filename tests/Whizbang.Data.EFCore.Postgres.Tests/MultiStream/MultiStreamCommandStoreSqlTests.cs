@@ -370,6 +370,35 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task CompleteAsync_HoldsTheRunUntilItCommits_SoTwoLastOutcomesCannotBothMissTheCompletionAsync() {
+    var (a, b) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    var version = await _assignAsync(conn, [a, b]);
+    var forA = await _streamInPartitionShareAsync(conn, rank: 0, count: 2);
+    var forB = await _streamInPartitionShareAsync(conn, rank: 1, count: 2);
+    var store = _store();
+    var run = _run(forA, forB);
+    _ = await store.RecordRunAsync(run, CancellationToken.None);
+    _ = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
+    _ = await store.ClaimAsync(new MultiStreamClaim(b, 100, _lease, version), CancellationToken.None);
+    await using var first = await _openAsync();
+    await using var tx = await first.BeginTransactionAsync();
+    await _execAsync(first,
+      $"SELECT * FROM wh_complete_multi_stream_work('{a}'::uuid, ARRAY['{run.RunId}']::uuid[], ARRAY['{forA}']::uuid[], ARRAY[NULL]::text[], 3)");
+
+    // While a's outcome is uncommitted, b's completion must not be able to decide the run: it has to wait for a, or
+    // each sees the other's stream as pending and the run is never completed. The run row is that serialization point.
+    await using var second = await _openAsync();
+    var refused = await Assert.ThrowsAsync<PostgresException>(
+      () => _execAsync(second, $"SELECT 1 FROM wh_multi_stream_runs WHERE run_id = '{run.RunId}' FOR UPDATE NOWAIT"));
+    await tx.CommitAsync();
+    var completed = await store.CompleteAsync(b, [new MultiStreamOutcome(run.RunId, forB, null)], 3, CancellationToken.None);
+
+    await Assert.That(refused!.SqlState).IsEqualTo("55P03");
+    await Assert.That(completed.Single().Succeeded).IsEqualTo(2);
+  }
+
+  [Test]
   public async Task CompleteAsync_NoOutcomes_CompletesNothingAsync() {
     await Assert.That(await _store().CompleteAsync(Guid.CreateVersion7(), [], 3, CancellationToken.None)).IsEmpty();
   }

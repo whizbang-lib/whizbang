@@ -215,6 +215,8 @@ COMMENT ON FUNCTION __SCHEMA__.wh_claim_multi_stream_work(UUID, INTEGER, INTEGER
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AFailureBelowTheAttemptLimit_ReleasesTheStreamForAnotherAttemptAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AFailureAtTheAttemptLimit_RecordsTheStreamFailedWithItsErrorAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AStreamThisInstanceNoLongerHolds_IsNotRecordedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_HoldsTheRunUntilItCommits_SoTwoLastOutcomesCannotBothMissTheCompletionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandEndToEndTests.cs:ACommandOverManyStreams_IsWorkedOncePerStreamEachOnItsOwnerAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_complete_multi_stream_work(
   p_instance_id UUID,
   p_run_ids UUID[],
@@ -245,6 +247,17 @@ BEGIN
     AND rs.stream_id = o.stream_id
     AND rs.instance_id = p_instance_id
     AND rs.outcome IS NULL;
+
+  -- The run row serializes completion. Two instances recording a run's last two outcomes at once would each see the
+  -- other's item as still pending (uncommitted) and neither would complete the run. Taking the run row first makes the
+  -- second wait for the first to commit; under READ COMMITTED its next statement then sees that outcome. Runs are
+  -- locked in id order; items are never locked after a run, so the order cannot invert.
+  PERFORM 1
+  FROM __SCHEMA__.wh_multi_stream_runs r
+  WHERE r.run_id IN (SELECT DISTINCT x FROM unnest(p_run_ids) AS x)
+    AND r.completed_at IS NULL
+  ORDER BY r.run_id
+  FOR UPDATE;
 
   RETURN QUERY
   UPDATE __SCHEMA__.wh_multi_stream_runs r
