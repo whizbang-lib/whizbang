@@ -51,6 +51,50 @@ public class ReplayEventOrderTests {
   }
 
   [Test]
+  public async Task Order_WhenEveryCommitSequenceRunsBackward_FollowsTheVersionsAcrossALongStreamAsync() {
+    // Ten events stamped in exactly the reverse of the order they were written: the worst case, end to end.
+    var batch = Enumerable.Range(1, 10).Select(i => _versioned(i, version: i, local: 1_000 - i)).Reverse().ToArray();
+
+    var ordered = ReplayEventOrder.Order(batch);
+
+    await _assertOrderAsync(ordered, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+  }
+
+  [Test]
+  public async Task Order_WhenEventsComeFromDifferentOrigins_FollowsTheVersionsNotTheCommitSequencesAsync() {
+    // Origin order needs one origin; with two, the stream's own versions decide, not the local stamps.
+    var ordered = ReplayEventOrder.Order([
+      new(_id(1), new ProbeEvent(), []) { LocalStreamVersion = 1, LocalCommitSequence = 90, SourceServiceId = _originA, SourceCommitSequence = 1 },
+      new(_id(2), new ProbeEvent(), []) { LocalStreamVersion = 2, LocalCommitSequence = 10, SourceServiceId = _originB, SourceCommitSequence = 2 }]);
+
+    await _assertOrderAsync(ordered, 1, 2);
+  }
+
+  [Test]
+  public async Task Order_WhenSomeEventsAreUnstampedButAllHaveVersions_FollowsTheVersionsAsync() {
+    // The stamper lagging no longer degrades a replay to id order: the version does not depend on it.
+    var ordered = ReplayEventOrder.Order([
+      _versioned(3, version: 1, local: null),
+      _versioned(1, version: 2, local: 50),
+      _versioned(2, version: 3, local: null)]);
+
+    await _assertOrderAsync(ordered, 3, 1, 2);
+  }
+
+  [Test]
+  public async Task Order_GivesTheSameResultForEveryArrangementOfTheBatchAsync() {
+    MessageEnvelope<IEvent>[] batch = [
+      _versioned(4, version: 1, local: 40), _versioned(2, version: 2, local: 10),
+      _versioned(3, version: 3, local: 30), _versioned(1, version: 4, local: 20)];
+    int[][] arrangements = [[0, 1, 2, 3], [3, 2, 1, 0], [2, 0, 3, 1], [1, 3, 0, 2]];
+
+    foreach (var arrangement in arrangements) {
+      var ordered = ReplayEventOrder.Order([.. arrangement.Select(i => batch[i])]);
+      await _assertOrderAsync(ordered, 4, 2, 3, 1);
+    }
+  }
+
+  [Test]
   public async Task Order_WhenOneOriginStampsEveryEvent_FollowsOriginOrderOverVersionOrderAsync() {
     // A reconciled straggler is appended last here (the highest version) but belongs in its origin slot.
     var ordered = ReplayEventOrder.Order([

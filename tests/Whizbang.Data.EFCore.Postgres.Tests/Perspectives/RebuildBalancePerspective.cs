@@ -18,6 +18,7 @@ public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildDebitedEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildNonCreatingEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildBalanceSetEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildLabelSetEvent>,
     IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
@@ -56,7 +57,12 @@ public class RebuildBalancePerspective :
 
   // The last write wins: the fold's result depends on the order it is applied in, which a sum does not (#1352).
   public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildBalanceSetEvent @event) {
-    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance };
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance, Label = currentData.Label };
+  }
+
+  // A second last-write-wins field, so a test can compare a whole row and not only the field it expected to change.
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildLabelSetEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = currentData.Balance, Label = @event.Label };
   }
 
   // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
@@ -70,6 +76,7 @@ public class RebuildBalanceModel {
   [StreamId]
   public Guid Id { get; init; }
   public decimal Balance { get; init; }
+  public string? Label { get; init; }
 }
 
 public record RebuildCreditedEvent : IEvent {
@@ -95,6 +102,13 @@ public record RebuildBalanceSetEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
   public required decimal Balance { get; init; }
+}
+
+/// <summary>Sets the label outright: a second field whose final value depends on fold order.</summary>
+public record RebuildLabelSetEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  public required string Label { get; init; }
 }
 
 public record RebuildClosedEvent : IEvent {
