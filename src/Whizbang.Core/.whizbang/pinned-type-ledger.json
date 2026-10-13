@@ -74,6 +74,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "31f2fa19-a55f-40bc-a6cc-314c2a2d0dc3",
+      "clrTypeName": "Whizbang.Core.Events.System.MultiStreamCommandCompleted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
       "pinnedId": "5e3fb66f-286a-406f-9cf0-23e77bd96026",
       "clrTypeName": "Whizbang.Core.Events.System.PerspectiveRebuildCompleted",
       "kind": "event",
