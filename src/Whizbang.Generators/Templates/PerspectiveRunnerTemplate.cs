@@ -433,6 +433,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var lastAppliedEventId = existingMetadata?.EventId;
     var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
+      // An event below the row's recorded position is not dropped on that evidence alone (#1347): the row can have been
+      // moved past it by a later batch without ever folding it, and the worker's cursor check cannot see that when the
+      // stream has no cursor or a cursor behind the row. Re-fold the stream from the earliest such event instead; this
+      // runs under the apply lock already held, which is why it calls the core and not RewindAndRunAsync.
+      var rewindAnchor = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.FindRewindAnchor(
+          lastAppliedEventId, lastAppliedCommitSequence, events.Select(e => (e.MessageId.Value, e.LocalCommitSequence)));
+      if (rewindAnchor is Guid anchorEventId) {
+        var anchorCommitSequence = events.First(e => e.MessageId.Value == anchorEventId).LocalCommitSequence;
+        _logger.LogWarning(
+            "[diag.filter.rewind-below-position] {PerspectiveName} stream {StreamId}: event {AnchorEventId} at commit sequence {AnchorCs} is below the row's recorded position {LastCs} ({LastEventId}); rewinding instead of filtering {Count} event(s) as already applied",
+            perspectiveName,
+            streamId,
+            anchorEventId,
+            anchorCommitSequence,
+            lastAppliedCommitSequence,
+            lastAppliedEventId,
+            events.Count);
+        return await _rewindAndRunCoreAsync(streamId, perspectiveName, anchorEventId, anchorCommitSequence, cancellationToken);
+      }
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
         var isAlreadyApplied = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.IsAlreadyApplied(
