@@ -1,6 +1,6 @@
 # Multi-stream commands (#1358)
 
-Status: in progress (started 2026-10-13). Board #1, In progress. First consumer: #1357 (rebuild stream work follows
+Status: implemented, in review (started 2026-10-13). Slices 1-5 done; docs on branch docs/multi-stream-commands in the docs repo. Board #1, In progress. First consumer: #1357 (rebuild stream work follows
 stream ownership), done in its own PR once this lands.
 
 ## What it is
@@ -56,3 +56,16 @@ services.AddMultiStreamCommandHandler<ReindexOrders, ReindexOrdersHandler>();
 4. Driver registration + NOTIFY subscription; two-instance end-to-end (integration).
 5. Docs page `fundamentals/dispatcher/multi-stream-commands`, work-coordination page corrected (it predates the
    published assignment), maps regenerated from this worktree.
+
+## Found while building it
+
+- **Completion race (fixed in 208).** When a run's last two outcomes were recorded by two instances at once, each
+  transaction saw the other's item as still pending and neither completed the run. The end-to-end test caught it about
+  one run in five; the completion now takes the run row first. Locked by
+  `CompleteAsync_HoldsTheRunUntilItCommits_SoTwoLastOutcomesCannotBothMissTheCompletionAsync`.
+
+## Left for later
+
+- Dapper driver: the Dapper registration does not call `AddWhizbangPostgresNotifications`, so it gets no store and the
+  intake refuses multi-stream commands there. Same gap as the partition assigner.
+- #1357 adopts this for selected-streams and in-place rebuilds, in its own PR.
