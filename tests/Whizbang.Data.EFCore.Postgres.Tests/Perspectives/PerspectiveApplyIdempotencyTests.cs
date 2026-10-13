@@ -39,11 +39,16 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       IEventStore eventStore,
       EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore,
       IPerspectiveSnapshotStore? snapshotStore = null,
-      Microsoft.Extensions.Options.IOptions<Whizbang.Core.Perspectives.PerspectiveSnapshotOptions>? snapshotOptions = null) {
+      Microsoft.Extensions.Options.IOptions<Whizbang.Core.Perspectives.PerspectiveSnapshotOptions>? snapshotOptions = null,
+      ILoggerProvider? logs = null) {
 
     var services = new ServiceCollection();
     services.AddTransient<ActionTestPerspective>();
-    services.AddLogging();
+    services.AddLogging(builder => {
+      if (logs is not null) {
+        builder.AddProvider(logs);
+      }
+    });
     var sp = services.BuildServiceProvider();
 
     await Task.CompletedTask;
@@ -565,6 +570,272 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
       .IsEqualTo(999)
       .Because("ActionTestUpdatedEvent must have been Apply-ed to mutate Value to 999");
   }
+
+  /// <summary>
+  /// An event below the row's recorded position that the row never folded is rewound into it, not dropped (#1347).
+  /// </summary>
+  /// <remarks>
+  /// The measured shape: a row recording a commit sequence above a batch it had never applied. The worker's inversion
+  /// detector reads the cursor, and with no cursor it has nothing to compare, so the batch reached the runner, whose
+  /// filter read every event as below the row's position and dropped it. Here the event committed between two the row
+  /// did fold is delivered last; the runner sees it below its own position and must re-fold the stream around it.
+  /// </remarks>
+  [Test]
+  public async Task RunWithEvents_EventBelowTheRowsPositionNeverFolded_IsRewoundIntoTheRowAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+    var stamping = new Dictionary<Guid, long?>();
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
+
+    var created = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 });
+    stamping[created.Value] = 100L;
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+    }
+
+    var late = await AppendEventAsync(innerStore, streamId, new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 });
+    stamping[late.Value] = 150L;
+    var deletedAt = DateTimeOffset.UtcNow;
+    var ahead = await AppendEventAsync(innerStore, streamId, new ActionTestSoftDeletedEvent { StreamId = streamId, DeletedAt = deletedAt });
+    stamping[ahead.Value] = 200L;
+
+    // The later-committed event arrives first and is folded: the row's position moves to 200 with 150 never applied.
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunWithEventsAsync(streamId, "action_test", created.Value,
+        [_polymorphic(ahead, new ActionTestSoftDeletedEvent { StreamId = streamId, DeletedAt = deletedAt }, 200L)], CancellationToken.None);
+    }
+    await using (var check = CreateDbContext()) {
+      var meta = await new EFCorePostgresPerspectiveStore<ActionTestModel>(check, "wh_per_action_test").GetMetadataByStreamIdAsync(streamId);
+      await Assert.That(meta!.CommitSequence).IsEqualTo(200L).Because("precondition: the row's position is past the late event");
+    }
+
+    // Now the event committed in between arrives.
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunWithEventsAsync(streamId, "action_test", ahead.Value,
+        [_polymorphic(late, new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 150L)], CancellationToken.None);
+    }
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<ActionTestModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value).IsEqualTo(999)
+      .Because("the event committed at 150 was never folded; dropping it as already applied leaves the row wrong for good");
+    await Assert.That(row.Data.DeletedAt).IsNotNull()
+      .Because("the re-fold keeps what the row already had from the event at 200");
+  }
+
+  /// <summary>Records every log line the runner writes, so a test can tell whether it took the rewind path.</summary>
+  private sealed class LogLines : ILoggerProvider {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _lines = new();
+    public bool Rewound => _lines.Any(l => l.Contains("[diag.filter.rewind-below-position]", StringComparison.Ordinal));
+    public ILogger CreateLogger(string categoryName) => new Sink(_lines);
+    public void Dispose() { }
+    private sealed class Sink(System.Collections.Concurrent.ConcurrentQueue<string> lines) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+        lines.Enqueue(formatter(state, exception));
+    }
+  }
+
+  /// <summary>
+  /// Folds <paramref name="events"/> into a fresh row through the drain path, one batch per event in the given order,
+  /// with each event stamped as given. Returns the store and the stamping map so a test can keep going.
+  /// </summary>
+  private async Task<(InMemoryEventStore Inner, CommitSequenceStampingEventStore Store, Dictionary<Guid, long?> Stamps)> _foldAsync(
+      Guid streamId, params (IEvent Payload, long CommitSequence)[] events) {
+    var inner = new InMemoryEventStore();
+    var stamps = new Dictionary<Guid, long?>();
+    var store = new CommitSequenceStampingEventStore(inner, stamps);
+    Guid? last = null;
+    foreach (var (payload, commitSequence) in events) {
+      var id = MessageId.New();
+      await inner.AppendAsync(streamId, new MessageEnvelope<IEvent> {
+        MessageId = id,
+        Payload = payload,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      });
+      stamps[id.Value] = commitSequence;
+      await using var ctx = CreateDbContext();
+      var runner = await CreateRunnerAsync(store, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunWithEventsAsync(streamId, "action_test", last, [_polymorphic(id, payload, commitSequence)], CancellationToken.None);
+      last = id.Value;
+    }
+    return (inner, store, stamps);
+  }
+
+  private async Task<PerspectiveRow<ActionTestModel>> _actionRowAsync(Guid streamId) {
+    await using var verify = CreateDbContext();
+    return await verify.Set<PerspectiveRow<ActionTestModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+  }
+
+  private async Task<(PerspectiveCursorCompletion Result, LogLines Logs)> _deliverAsync(
+      CommitSequenceStampingEventStore store, Guid streamId, Guid? last, MessageEnvelope<IEvent> envelope) {
+    var logs = new LogLines();
+    await using var ctx = CreateDbContext();
+    var runner = await CreateRunnerAsync(store, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"), logs: logs);
+    var result = await runner.RunWithEventsAsync(streamId, "action_test", last, [envelope], CancellationToken.None);
+    return (result, logs);
+  }
+
+  /// <summary>
+  /// The row's own last event delivered again is dropped as applied and nothing is rewound (#1347): the rewind is for
+  /// events below the row's position, and a redelivery at it is the common, benign case it must not slow down.
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_TheRowsOwnLastEventRedelivered_IsDroppedWithoutARewindAsync() {
+    var streamId = Guid.NewGuid();
+    var (inner, store, _) = await _foldAsync(streamId,
+      (new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100),
+      (new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 7 }, 110));
+    var lastEvent = (await _readAllAsync(inner, streamId))[^1];
+
+    var (result, logs) = await _deliverAsync(store, streamId, lastEvent.MessageId.Value,
+      _polymorphic(lastEvent.MessageId, lastEvent.Payload, 110));
+
+    await Assert.That(result.EventsProcessed).IsEqualTo(0).Because("the row already records this event");
+    await Assert.That(logs.Rewound).IsFalse().Because("an event AT the row's position is its own; there is nothing to re-fold");
+    await Assert.That((await _actionRowAsync(streamId)).Data.Value).IsEqualTo(7);
+  }
+
+  /// <summary>
+  /// A batch at and above the row's position folds forward as before, with no rewind (#1347).
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_EventsAboveTheRowsPosition_FoldForwardWithoutARewindAsync() {
+    var streamId = Guid.NewGuid();
+    var (inner, store, stamps) = await _foldAsync(streamId,
+      (new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100));
+    var next = MessageId.New();
+    var payload = new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 42 };
+    await inner.AppendAsync(streamId, new MessageEnvelope<IEvent> {
+      MessageId = next,
+      Payload = payload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    });
+    stamps[next.Value] = 120;
+
+    var (result, logs) = await _deliverAsync(store, streamId, null, _polymorphic(next, payload, 120));
+
+    await Assert.That(result.EventsProcessed).IsEqualTo(1);
+    await Assert.That(logs.Rewound).IsFalse().Because("nothing in the batch is below the row's position");
+    await Assert.That((await _actionRowAsync(streamId)).Data.Value).IsEqualTo(42);
+  }
+
+  /// <summary>
+  /// An older event the row DID fold, delivered again, is below the row's position: the runner cannot tell it from
+  /// one it never folded, so it rewinds, and the row it re-folds is the row it already had (#1347). The cost of the
+  /// conservative answer is a re-fold, never a changed row.
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_AnOlderFoldedEventRedelivered_RewindsAndLeavesTheRowAsItWasAsync() {
+    var streamId = Guid.NewGuid();
+    var (inner, store, _) = await _foldAsync(streamId,
+      (new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100),
+      (new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 7 }, 110),
+      (new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 9 }, 120));
+    var before = await _actionRowAsync(streamId);
+    var older = (await _readAllAsync(inner, streamId))[1];
+
+    var (_, logs) = await _deliverAsync(store, streamId, null, _polymorphic(older.MessageId, older.Payload, 110));
+
+    var after = await _actionRowAsync(streamId);
+    await Assert.That(logs.Rewound).IsTrue().Because("an event below the row's position is re-folded, never dropped on that evidence alone");
+    await Assert.That(after.Data.Value).IsEqualTo(before.Data.Value).Because("re-folding a stream the row already reflects changes nothing");
+    await Assert.That(after.Data.Name).IsEqualTo(before.Data.Name);
+    await Assert.That(after.Metadata.CommitSequence).IsEqualTo(120L).Because("the position stays at the stream's head");
+  }
+
+  /// <summary>
+  /// An event the stamper has not reached yet is not compared by sequence: it is left to the filter, which defers on
+  /// it and applies it, and the runner does not rewind (#1347).
+  /// </summary>
+  [Test]
+  public async Task RunWithEvents_AnUnstampedLateEvent_IsAppliedWithoutARewindAsync() {
+    var streamId = Guid.NewGuid();
+    var (inner, store, stamps) = await _foldAsync(streamId,
+      (new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 100));
+    var late = MessageId.New();
+    var payload = new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 5 };
+    await inner.AppendAsync(streamId, new MessageEnvelope<IEvent> {
+      MessageId = late,
+      Payload = payload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    });
+    stamps[late.Value] = null;
+    var unstamped = new MessageEnvelope<IEvent> {
+      MessageId = late,
+      Payload = payload,
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+
+    var (result, logs) = await _deliverAsync(store, streamId, null, unstamped);
+
+    await Assert.That(result.EventsProcessed).IsEqualTo(1).Because("an unstamped event cannot be shown to be applied");
+    await Assert.That(logs.Rewound).IsFalse();
+    await Assert.That((await _actionRowAsync(streamId)).Data.Value).IsEqualTo(5);
+  }
+
+  /// <summary>
+  /// A rewind folds the stream in the order it was written even where its stamps run backward (#1352). The rewind has
+  /// replayed by commit sequence since commit sequences were introduced, so rows rewound on streams stamped after the
+  /// fact could come back holding older values.
+  /// </summary>
+  [Test]
+  public async Task RewindAndRun_StampsRunBackwardAgainstTheStream_FoldsInStreamOrderAsync() {
+    var streamId = Guid.NewGuid();
+    var inner = new InMemoryEventStore();
+    var stamps = new Dictionary<Guid, long?>();
+    var store = new CommitSequenceStampingEventStore(inner, stamps);
+    (IEvent Payload, long Stamp)[] stream = [
+      (new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 }, 400),
+      (new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 300),
+      (new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 5 }, 200)];
+    MessageId? first = null;
+    foreach (var (payload, stamp) in stream) {
+      var id = MessageId.New();
+      first ??= id;
+      await inner.AppendAsync(streamId, new MessageEnvelope<IEvent> {
+        MessageId = id,
+        Payload = payload,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      });
+      stamps[id.Value] = stamp;
+    }
+
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(store, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RewindAndRunAsync(streamId, "action_test", first!.Value.Value, null, CancellationToken.None);
+    }
+
+    var row = await _actionRowAsync(streamId);
+    await Assert.That(row.Data.Value).IsEqualTo(5).Because("the stream was written 1, 999, 5; a commit-order fold ends on the create");
+    await Assert.That(row.Data.Name).IsEqualTo("Job");
+  }
+
+  private static async Task<List<MessageEnvelope<IEvent>>> _readAllAsync(InMemoryEventStore store, Guid streamId) {
+    var read = new List<MessageEnvelope<IEvent>>();
+    await foreach (var e in store.ReadPolymorphicAsync(streamId, null,
+        [typeof(ActionTestCreatedEvent), typeof(ActionTestUpdatedEvent), typeof(ActionTestSoftDeletedEvent)])) {
+      read.Add(e);
+    }
+    return read;
+  }
+
+  private static MessageEnvelope<IEvent> _polymorphic(MessageId id, IEvent payload, long commitSequence) => new() {
+    MessageId = id,
+    Payload = payload,
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    Hops = [],
+    LocalCommitSequence = commitSequence
+  };
 
   /// <summary>
   /// <see cref="IPerspectiveStore{TModel}.GetMetadataByStreamIdAsync"/> on a non-existent stream

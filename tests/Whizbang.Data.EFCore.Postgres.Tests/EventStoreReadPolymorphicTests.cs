@@ -64,7 +64,7 @@ public class EventStoreReadPolymorphicTests : EFCoreTestBase {
     typeof(ReadProbeContracts.ProbeBetaEvent),
   ];
 
-  private static readonly int[] ReverseCommitOrder = [5, 4, 3, 2, 1, 0];
+  private static readonly int[] AppendOrder = [0, 1, 2, 3, 4, 5];
 
   private static async Task<Guid> _appendAsync<TEvent>(
       EFCoreEventStore<WorkCoordinationDbContext> store, Guid streamId, TEvent payload,
@@ -226,7 +226,7 @@ public class EventStoreReadPolymorphicTests : EFCoreTestBase {
   // ── Ordering and the fromEventId anchor ─────────────────────────────────────────────────────
 
   [Test]
-  public async Task ReadPolymorphicAsync_ReturnsEventsInCommitOrderAsync() {
+  public async Task ReadPolymorphicAsync_WhenCommitSequencesRunBackward_ReturnsEventsInStreamOrderAsync() {
     await using var context = CreateDbContext();
     var store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
     var streamId = Guid.NewGuid();
@@ -234,22 +234,23 @@ public class EventStoreReadPolymorphicTests : EFCoreTestBase {
     for (var i = 0; i < 6; i++) {
       await _appendAsync(store, streamId, new ReadProbeContracts.ProbeAlphaEvent { StreamId = streamId, Ordinal = i });
     }
-    // Stamp them in the REVERSE of append order, so an id-ordered read and a commit-ordered read differ.
+    // Stamp them in the REVERSE of append order: rows stamped after the fact carry commit sequences unrelated to
+    // the order the stream was written in (#1352). A commit-ordered read returns them backward.
     await context.Database.ExecuteSqlRawAsync(@"
       UPDATE wh_event_store e SET commit_sequence = x.seq
-        FROM (SELECT event_id, row_number() OVER (ORDER BY event_id DESC) AS seq
+        FROM (SELECT event_id, row_number() OVER (ORDER BY version DESC) AS seq
                 FROM wh_event_store WHERE stream_id = {0}) x
        WHERE e.event_id = x.event_id", streamId);
 
     var read = await _readAllAsync(store, streamId, null, BothProbeTypes);
 
     var ordinals = read.ConvertAll(e => ((ReadProbeContracts.ProbeAlphaEvent)e.Payload).Ordinal);
-    await Assert.That(ordinals).IsEquivalentTo(ReverseCommitOrder)
-      .Because("the read orders by commit sequence, which is what makes a replay deterministic");
+    await Assert.That(ordinals).IsEquivalentTo(AppendOrder, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("a replay folds the stream in the order it was written, which is its version, not its commit sequence");
   }
 
   [Test]
-  public async Task ReadPolymorphicAsync_ReturnsUnstampedEventsAtTheTailAsync() {
+  public async Task ReadPolymorphicAsync_ReturnsAnUnstampedEventInItsStreamPositionAsync() {
     await using var context = CreateDbContext();
     var store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
     var streamId = Guid.NewGuid();
@@ -267,8 +268,26 @@ public class EventStoreReadPolymorphicTests : EFCoreTestBase {
 
     await Assert.That(read).Count().IsEqualTo(2)
       .Because("an unstamped event is still history; the stamper lagging must not hide it from a replay");
-    await Assert.That(((ReadProbeContracts.ProbeAlphaEvent)read[^1].Payload).Ordinal).IsEqualTo(0)
-      .Because("NULLS LAST puts the unstamped row at the tail");
+    await Assert.That(((ReadProbeContracts.ProbeAlphaEvent)read[0].Payload).Ordinal).IsEqualTo(0)
+      .Because("the stamp says when the stamper reached a row, not where the row sits in its stream");
+  }
+
+  [Test]
+  public async Task ReadPolymorphicAsync_CarriesEachEventsStreamVersionAsync() {
+    await using var context = CreateDbContext();
+    var store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+    var streamId = Guid.NewGuid();
+
+    await _appendAsync(store, streamId, new ReadProbeContracts.ProbeAlphaEvent { StreamId = streamId, Ordinal = 0 });
+    await _appendAsync(store, streamId, new ReadProbeContracts.ProbeAlphaEvent { StreamId = streamId, Ordinal = 1 });
+    var versions = await context.Database
+      .SqlQueryRaw<int>("SELECT version AS \"Value\" FROM wh_event_store WHERE stream_id = {0} ORDER BY version", streamId)
+      .ToListAsync();
+
+    var read = await _readAllAsync(store, streamId, null, BothProbeTypes);
+
+    await Assert.That(read.ConvertAll(e => e.LocalStreamVersion)).IsEquivalentTo(versions.ConvertAll(v => (long?)v), TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the replay order is decided from the envelope; a read that drops the version falls back to commit order");
   }
 
   [Test]

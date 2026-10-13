@@ -268,7 +268,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
     // Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
-    // order the rewind uses (origin, then commit, then id): sorting it by id applied a stream's first committed
+    // order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a stream's first committed
     // event last whenever that event carried the highest id, and checkpointed on it (#1331). The live drain keeps
     // id order; an inversion there is the rewind's to correct.
     if (events.Count > 1) {
@@ -433,6 +433,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var lastAppliedEventId = existingMetadata?.EventId;
     var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
+      // An event below the row's recorded position is not dropped on that evidence alone (#1347): the row can have been
+      // moved past it by a later batch without ever folding it, and the worker's cursor check cannot see that when the
+      // stream has no cursor or a cursor behind the row. Re-fold the stream from the earliest such event instead; this
+      // runs under the apply lock already held, which is why it calls the core and not RewindAndRunAsync.
+      var rewindAnchor = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.FindRewindAnchor(
+          lastAppliedEventId, lastAppliedCommitSequence, events.Select(e => (e.MessageId.Value, e.LocalCommitSequence)));
+      if (rewindAnchor is Guid anchorEventId) {
+        var anchorCommitSequence = events.First(e => e.MessageId.Value == anchorEventId).LocalCommitSequence;
+        _logger.LogWarning(
+            "[diag.filter.rewind-below-position] {PerspectiveName} stream {StreamId}: event {AnchorEventId} at commit sequence {AnchorCs} is below the row's recorded position {LastCs} ({LastEventId}); rewinding instead of filtering {Count} event(s) as already applied",
+            perspectiveName,
+            streamId,
+            anchorEventId,
+            anchorCommitSequence,
+            lastAppliedCommitSequence,
+            lastAppliedEventId,
+            events.Count);
+        return await _rewindAndRunCoreAsync(streamId, perspectiveName, anchorEventId, anchorCommitSequence, cancellationToken);
+      }
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
         var isAlreadyApplied = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.IsAlreadyApplied(
@@ -798,8 +817,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             );
           }
         } else if (updatedModel != null && hasWrittenUpdate) {
-          var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-              lastSuccessfulEventId!.Value, cancellationToken);
+          var checkpointCommitSequence = _recordedCommitSequence(
+              await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId!.Value, cancellationToken),
+              processedEvents,
+              rebuilding);
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
           // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
           // left untouched is not a changed row (#1342).
@@ -960,8 +981,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Only save if we have a model AND Apply has produced one (skip if purge was pending
           // or the only events were ApplyResult.None() on a new stream)
           if (updatedModel != null && hasWrittenUpdate) {
-            var partialCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                lastSuccessfulEventId.Value, cancellationToken);
+            var partialCheckpointCommitSequence = _recordedCommitSequence(
+                await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId.Value, cancellationToken),
+                processedEvents,
+                rebuilding);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
@@ -1103,6 +1126,29 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
   /// </summary>
+  /// <summary>
+  /// The commit sequence a fold records as its position. A live apply records its last event's; a rebuild records
+  /// the highest among the events it folded (#1352), as the rewind's frontier does. A rebuild folds a stream in
+  /// version order, and where rows were stamped after the fact the last version can carry the lowest commit sequence
+  /// on the stream: recording it would put the row's position below events it already folded, and the store's
+  /// ordering guard refuses a write whose position sits below the stored one, so the corrected row was never written.
+  /// </summary>
+  private static long? _recordedCommitSequence(
+      long? lastEventsCommitSequence,
+      List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
+      bool rebuilding) {
+    if (!rebuilding) {
+      return lastEventsCommitSequence;
+    }
+    var highest = lastEventsCommitSequence;
+    foreach (var envelope in folded) {
+      if (envelope.LocalCommitSequence is long seq && (highest is null || seq > highest.Value)) {
+        highest = seq;
+      }
+    }
+    return highest;
+  }
+
   private static (Guid? EventId, long? CommitSequence) _advanceFrontier(
       Guid? frontierEventId,
       long? frontierCommitSequence,

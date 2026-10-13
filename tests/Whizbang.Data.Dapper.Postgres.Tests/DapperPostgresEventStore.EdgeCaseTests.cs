@@ -211,30 +211,34 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   // ========================================
 
   /// <summary>
-  /// A stream is read in the order its events committed (commit_sequence, an unstamped row last, event_id breaking
-  /// ties), as the EF Core store reads it, not in event_id order: an event id is minted before commit, so two
-  /// producers can commit in the opposite order to their ids.
+  /// A polymorphic read returns a stream in its own order (<c>version</c>, then <c>event_id</c>), as the EF Core store
+  /// reads it. Not in event_id order, because an event id is minted before commit and two producers can append in the
+  /// opposite order to their ids. Not in commit order either (#1352): a row stamped after the fact carries a commit
+  /// sequence unrelated to where it sits in the stream, and every row here is stamped against its version.
   /// </summary>
   [Test]
   [Arguments(false)]
   [Arguments(true)]
-  public async Task ReadPolymorphicAsync_IdsRunBackwardToCommits_ReadsInCommitOrderAsync(bool fromAnEvent) {
+  public async Task ReadPolymorphicAsync_IdsAndCommitsRunBackwardToVersions_ReadsInStreamOrderAsync(bool fromAnEvent) {
     var store = _createStore();
     var streamId = (Guid)TrackedGuid.New();
-    var before = Guid.Parse("00000000-0000-7000-8000-000000000001");
-    var laterCommit = Guid.Parse("00000000-0000-7000-8000-000000000002");
-    var unstamped = Guid.Parse("00000000-0000-7000-8000-000000000003");
-    var earlierCommit = Guid.Parse("00000000-0000-7000-8000-000000000004");
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "before"), _metadataJson(before), version: 0, eventId: before, commitSequence: 1);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "later"), _metadataJson(laterCommit), version: 1, eventId: laterCommit, commitSequence: 30);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "unstamped"), _metadataJson(unstamped), version: 2, eventId: unstamped);
-    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "earlier"), _metadataJson(earlierCommit), version: 3, eventId: earlierCommit, commitSequence: 20);
+    var first = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var second = Guid.Parse("00000000-0000-7000-8000-000000000004");
+    var third = Guid.Parse("00000000-0000-7000-8000-000000000003");
+    var fourth = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "first"), _metadataJson(first), version: 0, eventId: first, commitSequence: 40);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "second"), _metadataJson(second), version: 1, eventId: second, commitSequence: 30);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "third"), _metadataJson(third), version: 2, eventId: third);
+    await _seedEventRowAsync(streamId, _testEventType(), _eventDataJson(streamId, "fourth"), _metadataJson(fourth), version: 3, eventId: fourth, commitSequence: 10);
 
-    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], fromAnEvent ? before : null);
+    var events = await _readPolymorphicAsync(store, streamId, [typeof(TestEvent)], fromAnEvent ? first : null);
 
-    Guid[] expected = fromAnEvent ? [earlierCommit, laterCommit, unstamped] : [before, earlierCommit, laterCommit, unstamped];
+    Guid[] expected = fromAnEvent ? [second, third, fourth] : [first, second, third, fourth];
     await Assert.That(events.Select(e => e.MessageId.Value)).IsEquivalentTo(expected, TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("a replay applies a stream in commit order, so the later commit wins whatever its id");
+      .Because("a replay applies a stream in the order it was written, whatever its ids and its stamps say");
+    long?[] expectedVersions = fromAnEvent ? [1, 2, 3] : [0, 1, 2, 3];
+    await Assert.That(events.Select(e => e.LocalStreamVersion)).IsEquivalentTo(expectedVersions, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the replay order is decided from the envelope, so the read must carry each event's version");
   }
 
   // ========================================

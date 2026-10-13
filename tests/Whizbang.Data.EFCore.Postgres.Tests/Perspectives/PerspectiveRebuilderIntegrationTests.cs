@@ -479,6 +479,195 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// A rebuild folds a stream in the order it was written, its version, even where the commit sequences run
+  /// backward against it, and the write that brings the row to the version-order result is not refused (#1352).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The shape is a measured one: four writes of one value at versions 0..3, the last of which changed it, carried
+  /// commit sequences that ran backward because the rows were stamped after the fact. A replay in commit order folded
+  /// the last write first and left the row holding the value before it.
+  /// </para>
+  /// <para>
+  /// The row is seeded the way such a rebuild leaves it: the older value, with its position recorded at the highest
+  /// commit sequence on the stream. That is the state a repair starts from, and the write guard refuses any write
+  /// whose position sits below the stored one, so a rebuild that recorded the last version's own commit sequence
+  /// would fold the right value and then fail to write it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenCommitSequencesRunBackwardAgainstVersions_FoldsInVersionOrderAndWritesItAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    var ids = new[] { MessageId.New(), MessageId.New(), MessageId.New(), MessageId.New() };
+    long[] commitSequences = [40, 30, 20, 10];
+    decimal[] values = [3m, 3m, 3m, 4m];
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      for (var i = 0; i < ids.Length; i++) {
+        await eventStore.AppendAsync(streamId, new MessageEnvelope<RebuildBalanceSetEvent> {
+          MessageId = ids[i],
+          Payload = new RebuildBalanceSetEvent { StreamId = streamId, Balance = values[i] },
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+          Hops = []
+        });
+      }
+    }
+    await using (var stamp = CreateDbContext()) {
+      for (var i = 0; i < ids.Length; i++) {
+        await stamp.Database.ExecuteSqlRawAsync(
+          "UPDATE wh_event_store SET commit_sequence = {0} WHERE event_id = {1}", commitSequences[i], ids[i].Value);
+      }
+    }
+    await using (var seed = CreateDbContext()) {
+      var then = DateTime.UtcNow.AddDays(-1);
+      seed.Set<PerspectiveRow<RebuildBalanceModel>>().Add(new PerspectiveRow<RebuildBalanceModel> {
+        Id = streamId,
+        Data = new RebuildBalanceModel { Id = streamId, Balance = 3m },
+        Metadata = new PerspectiveMetadata {
+          EventId = ids[0].Value.ToString(),
+          EventType = typeof(RebuildBalanceSetEvent).FullName!,
+          CommitSequence = 40,
+          Timestamp = then
+        },
+        Scope = new PerspectiveScope(),
+        CreatedAt = then,
+        UpdatedAt = then,
+        Version = 1
+      });
+      _ = await seed.SaveChangesAsync();
+    }
+
+    var result = await new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>())
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+    await Assert.That(result.Success).IsTrue().Because($"the rebuild must report success ({result.Error})");
+    await Assert.That(row.Data.Balance).IsEqualTo(4m)
+      .Because("the stream was written 3, 3, 3, 4: the last write by version wins, whatever order the stamper reached the rows in");
+    await Assert.That(row.Metadata.CommitSequence).IsEqualTo(40L)
+      .Because("the recorded position covers every event the rebuild folded, so the highest commit sequence among them");
+  }
+
+  /// <summary>
+  /// Appends <paramref name="payloads"/> to a stream in order (so their versions ascend) and stamps each with the
+  /// given commit sequence, so a test controls the two orders independently, as rows stamped after the fact do (#1352).
+  /// </summary>
+  private async Task _appendWithStampsAsync(ServiceProvider sp, Guid streamId, params (IEvent Payload, long CommitSequence)[] payloads) {
+    var ids = new List<MessageId>();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var (payload, _) in payloads) {
+        // Appended under the event's own type: the store records the envelope's declared type, and a stream stored as
+        // IEvent folds nothing.
+        var id = MessageId.New();
+        ids.Add(id);
+        await (payload switch {
+          RebuildBalanceSetEvent balance => eventStore.AppendAsync(streamId, _typed(id, balance)),
+          RebuildLabelSetEvent label => eventStore.AppendAsync(streamId, _typed(id, label)),
+          _ => throw new ArgumentException($"no typed append for {payload.GetType().Name}", nameof(payloads))
+        });
+      }
+    }
+    await using var stamp = CreateDbContext();
+    for (var i = 0; i < ids.Count; i++) {
+      await stamp.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_event_store SET commit_sequence = {0} WHERE event_id = {1}", payloads[i].CommitSequence, ids[i].Value);
+    }
+  }
+
+  private static MessageEnvelope<TEvent> _typed<TEvent>(MessageId id, TEvent payload) where TEvent : IEvent => new() {
+    MessageId = id,
+    Payload = payload,
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    Hops = []
+  };
+
+  private async Task<PerspectiveRow<RebuildBalanceModel>> _rowAsync(Guid streamId) {
+    await using var verify = CreateDbContext();
+    return await verify.Set<PerspectiveRow<RebuildBalanceModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+  }
+
+  private static Task<RebuildResult> _rebuildAsync(ServiceProvider sp, Guid streamId) =>
+    new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>())
+      .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+  /// <summary>
+  /// With no row to start from, a rebuild of a stream whose stamps run backward still creates the row the stream's
+  /// versions describe (#1352).
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackwardAndNoRowExists_CreatesTheVersionOrderRowAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 40),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 30),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 20),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 4m }, 10));
+
+    await _rebuildAsync(sp, streamId);
+
+    var row = await _rowAsync(streamId);
+    await Assert.That(row.Data.Balance).IsEqualTo(4m).Because("the last write by version wins");
+    await Assert.That(row.Metadata.CommitSequence).IsEqualTo(40L)
+      .Because("the recorded position covers every folded event, so a later live event below it is not mistaken for new");
+  }
+
+  /// <summary>
+  /// A second rebuild of a stream whose stamps run backward leaves the row exactly as the first left it: the
+  /// version-order fold is stable, and its write is not refused by the position the first one recorded (#1352).
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackward_RebuildingTwiceLeavesTheSameRowAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "first" }, 70),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 1m }, 60),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "last" }, 50),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 2m }, 40));
+
+    await _rebuildAsync(sp, streamId);
+    var afterFirst = await _rowAsync(streamId);
+    await _rebuildAsync(sp, streamId);
+    var afterSecond = await _rowAsync(streamId);
+
+    await Assert.That(afterFirst.Data.Label).IsEqualTo("last");
+    await Assert.That(afterFirst.Data.Balance).IsEqualTo(2m);
+    await Assert.That(afterSecond.Data.Label).IsEqualTo(afterFirst.Data.Label).Because("a rebuild is repeatable");
+    await Assert.That(afterSecond.Data.Balance).IsEqualTo(afterFirst.Data.Balance).Because("a rebuild is repeatable");
+    await Assert.That(afterSecond.Metadata.CommitSequence).IsEqualTo(afterFirst.Metadata.CommitSequence)
+      .Because("the recorded position does not drift between rebuilds of an unchanged stream");
+  }
+
+  /// <summary>
+  /// Every field of the row follows the stream's versions, not only the one a repair set out to fix (#1352). A
+  /// commit-order fold of this stream ends on the oldest value of BOTH fields, and a check of one field alone is how
+  /// a regression of the other went unnoticed on a deployed environment.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackward_EveryFieldEndsOnItsLastVersionAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "a" }, 60),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 1m }, 50),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "b" }, 40),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 2m }, 30),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "c" }, 20),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 10));
+
+    await _rebuildAsync(sp, streamId);
+
+    var row = await _rowAsync(streamId);
+    await Assert.That(row.Data.Label).IsEqualTo("c").Because("the label's last write by version wins");
+    await Assert.That(row.Data.Balance).IsEqualTo(3m).Because("the balance's last write by version wins");
+  }
+
+  /// <summary>
   /// Appends an event with the given id and stamps it with the next commit sequence, so a test controls commit
   /// order independently of id order.
   /// </summary>

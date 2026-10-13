@@ -384,6 +384,8 @@ public abstract class DapperEventStoreBase : IEventStore {
     public string EventData { get; set; } = string.Empty;
     public string Metadata { get; set; } = string.Empty;
     public string? Scope { get; set; }
+    /// <summary>The row's position in its stream (<c>wh_event_store.version</c>), when the read selects it.</summary>
+    public long? Version { get; set; }
   }
 
   /// <inheritdoc />

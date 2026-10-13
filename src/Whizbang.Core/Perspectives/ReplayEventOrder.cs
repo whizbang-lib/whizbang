@@ -20,6 +20,11 @@ namespace Whizbang.Core.Perspectives;
 /// <see cref="MessageEnvelope{T}.SourceCommitSequence"/>, replays in origin order. A reconciled straggler keeps
 /// its original origin slot but lands with an arrival-fresh local sequence, and a local-order replay would apply
 /// it last.</description></item>
+/// <item><description>Otherwise <b>stream order</b>, when every event carries the version the local store appended it
+/// at (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>). That is the order the stream was written in and the
+/// order the live apply folded it in. A commit sequence only records when the stamper reached a row: rows stamped
+/// after the fact carry sequences unrelated to their versions, and folding by them applied a stream's last event
+/// first, so a rebuild or a rewind left the row holding an older value (#1352).</description></item>
 /// <item><description>Otherwise <b>commit order</b>, when every event carries its local stamp. An event id is
 /// minted by whoever produced the event and records when, not when the stream stored it: a seed, an import or a
 /// slow transaction can commit an event whose id sorts after events committed later. Folding by id then applies
@@ -48,6 +53,9 @@ public static class ReplayEventOrder {
     if (firstOrigin != Guid.Empty
         && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
       return [.. events.OrderBy(e => e.SourceCommitSequence).ThenBy(_tieBreak, StringComparer.Ordinal)];
+    }
+    if (events.All(e => e.LocalStreamVersion.HasValue)) {
+      return [.. events.OrderBy(e => e.LocalStreamVersion!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];
     }
     if (events.All(e => e.LocalCommitSequence.HasValue)) {
       return [.. events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(_tieBreak, StringComparer.Ordinal)];

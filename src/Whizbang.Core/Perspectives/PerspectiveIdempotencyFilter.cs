@@ -86,4 +86,50 @@ public static class PerspectiveIdempotencyFilter {
     // the asymmetry this filter exists to respect.
     return Guid.TryParse(lastAppliedEventId, out var lastApplied) && lastApplied == incomingEventId;
   }
+
+  /// <summary>
+  /// The event a batch must be rewound from instead of filtered, or null when the filter's answer can stand (#1347).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="IsAlreadyApplied"/> reads an event below the row's recorded commit sequence as folded. That holds only
+  /// if the stream was applied in commit order, and nothing guarantees it: a batch can reach the runner after a later
+  /// one has already moved the row past it. The worker's inversion detector catches that against the cursor, but a
+  /// stream with no cursor row, or a cursor behind the row, gives it nothing to compare, and the filter then dropped
+  /// events that had never been applied, with nothing left pending to repair the row.
+  /// </para>
+  /// <para>
+  /// So an event strictly below the row's position is never dropped on that evidence alone: the runner rewinds from
+  /// the earliest such event and re-folds the stream, which is right whether or not the row had it. Together with the
+  /// worker's cursor check this anchors detection on the later of the cursor and the row's position. An event AT the
+  /// position is the row's own event redelivered, and dropping it stands. An unstamped side cannot be compared and is
+  /// left to <see cref="IsAlreadyApplied"/>, which already defers on it.
+  /// </para>
+  /// </remarks>
+  /// <param name="lastAppliedEventId">The row's recorded last applied event id.</param>
+  /// <param name="lastAppliedCommitSequence">That event's commit sequence.</param>
+  /// <param name="events">The batch's events, as (id, commit sequence).</param>
+  /// <returns>The id of the batch's earliest-committed event below the row's position, or null.</returns>
+  public static Guid? FindRewindAnchor(
+      string? lastAppliedEventId,
+      long? lastAppliedCommitSequence,
+      IEnumerable<(Guid EventId, long? CommitSequence)> events) {
+    ArgumentNullException.ThrowIfNull(events);
+    if (string.IsNullOrEmpty(lastAppliedEventId) || lastAppliedCommitSequence is not long position) {
+      return null;
+    }
+    Guid? anchor = null;
+    long anchorSequence = 0;
+    foreach (var (eventId, commitSequence) in events) {
+      if (commitSequence is not long sequence || sequence >= position) {
+        continue;
+      }
+      if (anchor is null || sequence < anchorSequence
+          || (sequence == anchorSequence && string.CompareOrdinal(eventId.ToString("D"), anchor.Value.ToString("D")) < 0)) {
+        anchor = eventId;
+        anchorSequence = sequence;
+      }
+    }
+    return anchor;
+  }
 }
