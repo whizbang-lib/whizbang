@@ -34,6 +34,43 @@ public class ReplayEventOrderTests {
     await Assert.That(ordered.Select(e => e.MessageId).ToArray()).IsEquivalentTo(ids.Select(_id).ToArray(), TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
+  private static MessageEnvelope<IEvent> _versioned(int id, long version, long? local) =>
+    new(_id(id), new ProbeEvent(), []) { LocalStreamVersion = version, LocalCommitSequence = local };
+
+  [Test]
+  public async Task Order_WhenCommitSequencesRunBackwardAgainstVersions_FollowsTheStreamsVersionsAsync() {
+    // #1352: rows stamped after the fact carry commit sequences unrelated to the order the stream was written in.
+    // The live apply folded them by version; a replay by commit sequence applies the stream's last event first.
+    var ordered = ReplayEventOrder.Order([
+      _versioned(1, version: 43, local: 352_375),
+      _versioned(2, version: 59, local: 331_052),
+      _versioned(3, version: 118, local: 48_585),
+      _versioned(4, version: 120, local: 41_817)]);
+
+    await _assertOrderAsync(ordered, 1, 2, 3, 4);
+  }
+
+  [Test]
+  public async Task Order_WhenOneOriginStampsEveryEvent_FollowsOriginOrderOverVersionOrderAsync() {
+    // A reconciled straggler is appended last here (the highest version) but belongs in its origin slot.
+    var ordered = ReplayEventOrder.Order([
+      new(_id(1), new ProbeEvent(), []) { LocalStreamVersion = 1, SourceServiceId = _originA, SourceCommitSequence = 5 },
+      new(_id(2), new ProbeEvent(), []) { LocalStreamVersion = 2, SourceServiceId = _originA, SourceCommitSequence = 6 },
+      new(_id(3), new ProbeEvent(), []) { LocalStreamVersion = 3, SourceServiceId = _originA, SourceCommitSequence = 4 }]);
+
+    await _assertOrderAsync(ordered, 3, 1, 2);
+  }
+
+  [Test]
+  public async Task Order_WhenAnEventHasNoVersion_FallsBackToCommitOrderAsync() {
+    // A partial mix would interleave two orderings, as with commit sequences below.
+    var ordered = ReplayEventOrder.Order([
+      _versioned(1, version: 2, local: 11),
+      new(_id(2), new ProbeEvent(), []) { LocalCommitSequence = 10 }]);
+
+    await _assertOrderAsync(ordered, 2, 1);
+  }
+
   [Test]
   public async Task Order_WhenEveryEventIsStamped_FollowsCommitOrderNotIdsAsync() {
     // The #1331 shape: the event committed first carries the highest id.

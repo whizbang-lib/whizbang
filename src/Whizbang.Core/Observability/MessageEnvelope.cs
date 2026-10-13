@@ -136,6 +136,17 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   [System.Text.Json.Serialization.JsonIgnore]
   public long? LocalCommitSequence { get; set; }
 
+  /// <summary>
+  /// The event's position in its stream, the <c>wh_event_store.version</c> the local store assigned when it appended
+  /// the event. Unlike <see cref="LocalCommitSequence"/>, which records when the stamper reached the row, this is the
+  /// order the stream was actually written in: a row stamped after the fact can carry a commit sequence below an
+  /// earlier version's (#1352). Populated by event-store reads that know the column; null otherwise. NOT serialized,
+  /// derived from the local row at read time.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+  [System.Text.Json.Serialization.JsonIgnore]
+  public long? LocalStreamVersion { get; set; }
+
   /// <inheritdoc />
   [System.Text.Json.Serialization.JsonIgnore]
   public Messaging.EventFlags Flags { get; init; } = Messaging.EventFlags.None;
