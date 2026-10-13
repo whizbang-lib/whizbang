@@ -204,6 +204,63 @@ public class ClaimWorkStaleStatisticsTests : EFCoreTestBase {
       .Because("the statistics are left as they were, for the next claim to refresh");
   }
 
+  /// <summary>
+  /// The refresh works for an application role that has data rights only, as a consumer that keeps
+  /// the schema's owner on the <c>-init</c> connection runs it (<see cref="DataOnlyRoleE2ETests"/>).
+  /// </summary>
+  /// <remarks>
+  /// Only a table's owner may analyze it, and the claim runs as the application role. Run with that
+  /// role's own rights, the refresh could analyze nothing, and because it only acts on tables it may
+  /// analyze, it would say nothing either: the deployment it exists for would stall exactly as before.
+  /// The <c>-init</c> connection is not the answer; it is schema-only and never used once a service is
+  /// up. The refresh runs with the rights of the role that created it, which is the role that migrated
+  /// the schema and owns the tables.
+  /// </remarks>
+  [Test]
+  [Timeout(600000)]
+  public async Task RefreshStaleQueueStatistics_AsADataOnlyRole_StillAnalyzesTheStaleTableAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext, cancellationToken);
+    await _analyzeAtOnePageThenFillAsync(connection, rows: 5_000);
+    await Assert.That(await _isStaleAsync(connection)).IsTrue()
+      .Because("precondition: the table must be stale, or there is nothing for the role to refresh");
+    var role = $"wh_app_{Guid.NewGuid():N}"[..30];
+    await _executeAsync(connection, $"""
+      CREATE ROLE {role};
+      GRANT USAGE ON SCHEMA public TO {role};
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {role};
+      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {role};
+      """);
+    try {
+      var analyzedBefore = await _analyzeCountAsync(connection);
+
+      await _executeAsync(connection, $"SET ROLE {role}");
+      int refreshed;
+      try {
+        await Assert.That(await _canAnalyzeAsync(connection)).IsFalse()
+          .Because("precondition: the role must really be unable to analyze the table on its own rights");
+        refreshed = await _refreshAsync(connection);
+      } finally {
+        await _executeAsync(connection, "RESET ROLE");
+      }
+
+      await Assert.That(refreshed).IsEqualTo(1)
+        .Because("the stale table is analyzed with the rights of the schema's owner, whatever role the claim runs as");
+      await Assert.That(await _analyzeCountAsync(connection)).IsEqualTo(analyzedBefore + 1)
+        .Because("the table was analyzed once");
+    } finally {
+      await _executeAsync(connection, $"DROP OWNED BY {role}; DROP ROLE {role}");
+    }
+  }
+
+  /// <summary>Whether the current role may analyze the perspective-event table on its own rights.</summary>
+  private static async Task<bool> _canAnalyzeAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT pg_has_role(relowner, 'MEMBER') FROM pg_class WHERE oid = 'wh_perspective_events'::regclass";
+    return (bool)(await cmd.ExecuteScalarAsync())!;
+  }
+
   private static async Task<NpgsqlConnection> _openAsync(DbContext dbContext, CancellationToken cancellationToken) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
