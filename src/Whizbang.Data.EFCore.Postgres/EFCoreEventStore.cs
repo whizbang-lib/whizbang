@@ -353,23 +353,22 @@ public sealed class EFCoreEventStore<TDbContext>(
     // Canonical normalized stored-EventType -> Type lookup, shared by every read path.
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
 
-    // Query events from the specified event ID onwards. Slice 26: deterministic replay
-    // order = commit_sequence ASC NULLS LAST, then event_id. Unstamped rows (NULL
-    // commit_sequence) fall to the tail and still get processed; for the common case
-    // where the stamper has caught up, replay order matches live-apply commit-completion
-    // order regardless of UUIDv7 generation timing.
+    // Query events from the specified event ID onwards, in the stream's own order: its version, the position the
+    // local store appended each event at (#1352). Slice 26 read in commit_sequence order, which matches the version
+    // only when every row was stamped as it was written; rows stamped after the fact carry sequences that run
+    // backward against their versions, and a replay in that order folded the stream's last event first.
+    // ReplayEventOrder makes the final call from the envelope (LocalStreamVersion); reading in the same order keeps
+    // the two agreeing for any caller that takes the read as it comes.
     var query = _bodyAwareRows(fromEventId == null
       ? _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId)
-          .OrderBy(e => e.CommitSequence == null)
-          .ThenBy(e => e.CommitSequence)
+          .OrderBy(e => e.Version)
           .ThenBy(e => e.Id)
       : _context.Set<EventStoreRecord>()
           .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
-          .OrderBy(e => e.CommitSequence == null)
-          .ThenBy(e => e.CommitSequence)
+          .OrderBy(e => e.Version)
           .ThenBy(e => e.Id))
       .AsAsyncEnumerable();
 
@@ -398,6 +397,9 @@ public sealed class EFCoreEventStore<TDbContext>(
         Hops = hops,
         DispatchContext = record.Metadata.DispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
         LocalCommitSequence = record.CommitSequence,
+        // The stream's own order (#1352): replay folds by version, because a commit sequence stamped after the fact
+        // can run backward against the order the stream was written in.
+        LocalStreamVersion = record.Version,
         // Origin identity rides the replay read: the rewind's origin-order slotting keys on it
         // (a reconciled straggler's local sequence is arrival-fresh, but its origin sequence is
         // its true position in the stream). Dropping it demotes single-origin streams to
