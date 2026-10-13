@@ -86,4 +86,19 @@ public static class PerspectiveIdempotencyFilter {
     // the asymmetry this filter exists to respect.
     return Guid.TryParse(lastAppliedEventId, out var lastApplied) && lastApplied == incomingEventId;
   }
+
+  /// <summary>
+  /// The event a batch must be rewound from instead of filtered, or null when the filter's answer can stand (#1347).
+  /// </summary>
+  /// <param name="lastAppliedEventId">The row's recorded last applied event id.</param>
+  /// <param name="lastAppliedCommitSequence">That event's commit sequence.</param>
+  /// <param name="events">The batch's events, as (id, commit sequence).</param>
+  /// <returns>The id of the batch's earliest-committed event below the row's position, or null.</returns>
+  public static Guid? FindRewindAnchor(
+      string? lastAppliedEventId,
+      long? lastAppliedCommitSequence,
+      IEnumerable<(Guid EventId, long? CommitSequence)> events) {
+    ArgumentNullException.ThrowIfNull(events);
+    return null;
+  }
 }

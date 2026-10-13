@@ -41,9 +41,62 @@ public class PerspectiveIdempotencyFilterTests {
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(_v7().ToString("D"), 100, _v7(), 100))
       .IsTrue().Because("An event at the row's own sequence is the one the row already reflects.");
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(_v7().ToString("D"), 100, _v7(), 99))
-      .IsTrue().Because("A lower sequence committed earlier, so the row already includes it.");
+      .IsTrue().Because("A lower sequence sits below the row's position, so the filter reports it applied. Whether that answer "
+        + "can stand is FindRewindAnchor's call: a lower sequence is not proof the event was folded (#1347).");
     await Assert.That(PerspectiveIdempotencyFilter.IsAlreadyApplied(_v7().ToString("D"), 100, _v7(), 101))
       .IsFalse().Because("A higher sequence committed after the row's position and still has to be applied.");
+  }
+
+  // ── FindRewindAnchor (#1347) ──────────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task FindRewindAnchor_EventsBelowTheRowsPosition_AnchorsOnTheEarliestCommittedAsync() {
+    // The measured incident: a row recording 4847417 while a batch committed between 4847325 and 4847363 had never
+    // been folded into it. Fed unsorted, with a gap, because the recorded batch was.
+    var lowest = _v7();
+    var batch = new List<(Guid, long?)> { (_v7(), 4847340), (_v7(), 4847363), (lowest, 4847325), (_v7(), 4847330) };
+
+    var anchor = PerspectiveIdempotencyFilter.FindRewindAnchor(_v7().ToString("D"), 4847417, batch);
+
+    await Assert.That(anchor).IsEqualTo(lowest)
+      .Because("a lower sequence does not prove the row folded the event; the rewind re-folds from the earliest one");
+  }
+
+  [Test]
+  public async Task FindRewindAnchor_TheRowsOwnEventRedelivered_KeepsTheFilterAsync() {
+    var rowEvent = _v7();
+
+    var anchor = PerspectiveIdempotencyFilter.FindRewindAnchor(rowEvent.ToString("D"), 500, [(rowEvent, 500L)]);
+
+    await Assert.That(anchor).IsNull()
+      .Because("an event at the row's own position is the event the row records: dropping it is right");
+  }
+
+  [Test]
+  public async Task FindRewindAnchor_EventsAtOrAboveThePosition_KeepsTheFilterAsync() {
+    var anchor = PerspectiveIdempotencyFilter.FindRewindAnchor(_v7().ToString("D"), 500, [(_v7(), 500L), (_v7(), 501L)]);
+
+    await Assert.That(anchor).IsNull().Because("nothing in the batch sits below the row's position");
+  }
+
+  [Test]
+  public async Task FindRewindAnchor_WhenEitherSideIsUnstamped_KeepsTheFilterAsync() {
+    await Assert.That(PerspectiveIdempotencyFilter.FindRewindAnchor(_v7().ToString("D"), null, [(_v7(), 10L)])).IsNull()
+      .Because("a row with no recorded sequence has no position to be below; the filter already defers");
+    await Assert.That(PerspectiveIdempotencyFilter.FindRewindAnchor(_v7().ToString("D"), 500, [(_v7(), (long?)null)])).IsNull()
+      .Because("an unstamped event is not compared by sequence; the filter already defers");
+    await Assert.That(PerspectiveIdempotencyFilter.FindRewindAnchor(null, 500, [(_v7(), 10L)])).IsNull()
+      .Because("a row that records no position filters nothing");
+  }
+
+  [Test]
+  public async Task FindRewindAnchor_TiedSequences_BreakOnTheIdAsync() {
+    var first = Guid.Parse(V7_EARLIER);
+    var second = Guid.Parse(V7_LATER);
+
+    var anchor = PerspectiveIdempotencyFilter.FindRewindAnchor(_v7().ToString("D"), 500, [(second, 10L), (first, 10L)]);
+
+    await Assert.That(anchor).IsEqualTo(first).Because("the anchor is the same on every run");
   }
 
   [Test]

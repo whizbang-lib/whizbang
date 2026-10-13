@@ -99,7 +99,12 @@ public class NeverAppliedEventsAreNotDroppedTests {
     var discarded = events.Count(e => PerspectiveIdempotencyFilter.IsAlreadyApplied(
       rowLastAppliedEventId, ROW_MARK, e.MessageId.Value, sequences[e.MessageId.Value]));
 
-    await Assert.That(discarded == 0 || anchor is not null)
+    // Detection has two halves (#1347): the worker compares against the cursor, and the runner, before it lets the
+    // filter drop anything, compares against the row's own position. Together they anchor on the later of the two.
+    var runnerAnchor = PerspectiveIdempotencyFilter.FindRewindAnchor(
+      rowLastAppliedEventId, ROW_MARK, events.Select(e => (e.MessageId.Value, (long?)sequences[e.MessageId.Value])));
+
+    await Assert.That(discarded == 0 || anchor is not null || runnerAnchor is not null)
       .IsTrue()
       .Because(
         "The filter discards every event below the row's mark. Unless detection anchors a rewind, " +

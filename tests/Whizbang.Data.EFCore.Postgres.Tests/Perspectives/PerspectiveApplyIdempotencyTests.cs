@@ -567,6 +567,69 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// An event below the row's recorded position that the row never folded is rewound into it, not dropped (#1347).
+  /// </summary>
+  /// <remarks>
+  /// The measured shape: a row recording a commit sequence above a batch it had never applied. The worker's inversion
+  /// detector reads the cursor, and with no cursor it has nothing to compare, so the batch reached the runner, whose
+  /// filter read every event as below the row's position and dropped it. Here the event committed between two the row
+  /// did fold is delivered last; the runner sees it below its own position and must re-fold the stream around it.
+  /// </remarks>
+  [Test]
+  public async Task RunWithEvents_EventBelowTheRowsPositionNeverFolded_IsRewoundIntoTheRowAsync() {
+    var streamId = Guid.NewGuid();
+    var innerStore = new InMemoryEventStore();
+    var stamping = new Dictionary<Guid, long?>();
+    var stampingStore = new CommitSequenceStampingEventStore(innerStore, stamping);
+
+    var created = await AppendEventAsync(innerStore, streamId, new ActionTestCreatedEvent { StreamId = streamId, Name = "Job", Value = 1 });
+    stamping[created.Value] = 100L;
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunAsync(streamId, "action_test", null, CancellationToken.None);
+    }
+
+    var late = await AppendEventAsync(innerStore, streamId, new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 });
+    stamping[late.Value] = 150L;
+    var deletedAt = DateTimeOffset.UtcNow;
+    var ahead = await AppendEventAsync(innerStore, streamId, new ActionTestSoftDeletedEvent { StreamId = streamId, DeletedAt = deletedAt });
+    stamping[ahead.Value] = 200L;
+
+    // The later-committed event arrives first and is folded: the row's position moves to 200 with 150 never applied.
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunWithEventsAsync(streamId, "action_test", created.Value,
+        [_polymorphic(ahead, new ActionTestSoftDeletedEvent { StreamId = streamId, DeletedAt = deletedAt }, 200L)], CancellationToken.None);
+    }
+    await using (var check = CreateDbContext()) {
+      var meta = await new EFCorePostgresPerspectiveStore<ActionTestModel>(check, "wh_per_action_test").GetMetadataByStreamIdAsync(streamId);
+      await Assert.That(meta!.CommitSequence).IsEqualTo(200L).Because("precondition: the row's position is past the late event");
+    }
+
+    // Now the event committed in between arrives.
+    await using (var ctx = CreateDbContext()) {
+      var runner = await CreateRunnerAsync(stampingStore, new EFCorePostgresPerspectiveStore<ActionTestModel>(ctx, "wh_per_action_test"));
+      await runner.RunWithEventsAsync(streamId, "action_test", ahead.Value,
+        [_polymorphic(late, new ActionTestUpdatedEvent { StreamId = streamId, NewValue = 999 }, 150L)], CancellationToken.None);
+    }
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<ActionTestModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Value).IsEqualTo(999)
+      .Because("the event committed at 150 was never folded; dropping it as already applied leaves the row wrong for good");
+    await Assert.That(row.Data.DeletedAt).IsNotNull()
+      .Because("the re-fold keeps what the row already had from the event at 200");
+  }
+
+  private static MessageEnvelope<IEvent> _polymorphic(MessageId id, IEvent payload, long commitSequence) => new() {
+    MessageId = id,
+    Payload = payload,
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    Hops = [],
+    LocalCommitSequence = commitSequence
+  };
+
+  /// <summary>
   /// <see cref="IPerspectiveStore{TModel}.GetMetadataByStreamIdAsync"/> on a non-existent stream
   /// returns null — required so the runner's filter path knows it has never run for this stream
   /// and applies every event.
