@@ -87,9 +87,45 @@ public sealed class PerspectiveMetrics {
 
   // Rewind
 
-  /// <summary>Rewind operations triggered. Tags: perspective_name, has_snapshot.</summary>
+  /// <summary>
+  /// Rewind operations that COMPLETED. Tags: perspective_name, has_snapshot. Reads with
+  /// <see cref="RewindsTriggered"/> and <see cref="RewindsFailed"/> as one identity:
+  /// triggered = completed + failed + in flight.
+  /// </summary>
+  /// <remarks>
+  /// The instrument keeps the name <c>whizbang.perspective.rewinds</c> although it counts completions
+  /// rather than triggers, because renaming a published meter makes every panel built on it read zero,
+  /// which is the same thing that misled an operator in the first place (#1362). The description is what
+  /// changed.
+  /// </remarks>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   public PassiveCounter<long> Rewinds { get; }
+
+  /// <summary>Rewinds started, counted before the replay runs. Tags: perspective_name.</summary>
+  /// <remarks>
+  /// Separate from <see cref="Rewinds"/> so a rewind that never finishes is still visible. The two
+  /// reading apart is the signal: completions lagging triggers means rewinds are failing or queued,
+  /// and until a completed rewind retires its trigger this is inflated by re-detection (#1361).
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  public PassiveCounter<long> RewindsTriggered { get; }
+
+  /// <summary>Rewinds that threw. Tags: perspective_name.</summary>
+  /// <remarks>
+  /// Distinct from the generic <see cref="Errors"/> counter, which mixes every processing failure
+  /// together and so cannot answer whether rewinds specifically are failing.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  public PassiveCounter<long> RewindsFailed { get; }
+
+  /// <summary>Rewinds running right now (observable gauge).</summary>
+  private long _rewindsInFlightValue;
+
+  /// <summary>Records that a rewind has started and is now in flight.</summary>
+  public void RewindStarted() => Interlocked.Increment(ref _rewindsInFlightValue);
+
+  /// <summary>Records that a rewind has left flight, whether it completed or threw.</summary>
+  public void RewindFinished() => Interlocked.Decrement(ref _rewindsInFlightValue);
 
   /// <summary>Rewind replay duration in milliseconds. Tags: perspective_name.</summary>
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
@@ -130,7 +166,14 @@ public sealed class PerspectiveMetrics {
       observeValue: () => Interlocked.Read(ref _pendingEventsValue),
       description: "Pending perspective events awaiting processing");
 
-    Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations triggered");
+    Rewinds = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds", description: "Rewind operations that completed");
+    RewindsTriggered = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_triggered", description: "Rewinds started");
+    RewindsFailed = meter.CreatePassiveCounter<long>("whizbang.perspective.rewinds_failed", description: "Rewinds that threw");
+
+    // Pinned at the concurrency limit means rewinds are queueing behind it, which no counter shows.
+    meter.CreateObservableGauge("whizbang.perspective.rewinds_in_flight",
+      observeValue: () => Interlocked.Read(ref _rewindsInFlightValue),
+      description: "Rewinds running right now");
     RewindDuration = meter.CreateHistogram<double>("whizbang.perspective.rewind.duration", "ms", "Rewind replay duration");
     RewindEventsReplayed = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_replayed", description: "Events replayed per rewind");
     RewindEventsBehind = meter.CreateHistogram<int>("whizbang.perspective.rewind.events_behind", description: "Events behind cursor when rewind triggered");
