@@ -1195,16 +1195,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
     if (_schemaInitConnectionString() is { } initConnectionString) {
-      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
-      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      foreach (var table in VacuumedWorkTables.NAMES) {
-        await _vacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
-        outcomes.Add(new WorkTableVacuum(table, true, null));
-      }
-      return outcomes;
+      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, cancellationToken).ConfigureAwait(false);
     }
+
+    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -1216,6 +1211,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
         continue;
       }
       await _vacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      outcomes.Add(new WorkTableVacuum(table, true, null));
+    }
+    return outcomes;
+  }
+
+  /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
+  private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
+      string initConnectionString, string schema, CancellationToken cancellationToken) {
+    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
+    await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+    await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    foreach (var table in VacuumedWorkTables.NAMES) {
+      await _vacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
       outcomes.Add(new WorkTableVacuum(table, true, null));
     }
     return outcomes;

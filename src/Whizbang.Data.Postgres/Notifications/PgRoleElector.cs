@@ -62,6 +62,9 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RoleAssignmentElectorE2ETests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
 public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutdown, IRoleAssignmentReader {
+  /// <summary>The vote outcome that hands this instance a role it did not hold.</summary>
+  private const string OUTCOME_GRANTED = "granted";
+
   private readonly WhizbangNotificationOptions _options;
   private readonly RoleAssignmentOptions _roleOptions;
   private readonly IConfiguration _configuration;
@@ -435,13 +438,13 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   private DutyAttempt _conclude(
       NotificationConnectionPlan plan, string role, Vote vote, NpgsqlConnection? bridge, long legacyKey, long sendStarted) {
     var instanceId = _instanceProvider.InstanceId;
-    if (vote.Outcome is "granted" or "held") {
-      if (vote.Outcome == "granted" && vote.PreviousHolder is { } previous) {
+    if (vote.Outcome is OUTCOME_GRANTED or "held") {
+      if (vote.Outcome == OUTCOME_GRANTED && vote.PreviousHolder is { } previous) {
         // Logged by the winner only: exactly one vote produces each epoch, so each hand-off is
         // logged exactly once. The vote records the previous holder and its reason together.
         LogHandOff(_logger, role, previous, vote.VoidReason!, instanceId, vote.Epoch);
       }
-      if (vote.Outcome == "granted") {
+      if (vote.Outcome == OUTCOME_GRANTED) {
         _metrics?.Elections.Add(1, RoleAssignmentMetrics.RoleTag(role));
         if (vote.PreviousHolder is not null) {
           _metrics?.Handoffs.Add(1, RoleAssignmentMetrics.RoleTag(role),
@@ -450,7 +453,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       }
       LogAcquired(_logger, role, instanceId, vote.Epoch);
       // Only a fresh grant took the role from anyone: "held" is this instance keeping what it had.
-      var previousHolder = vote.Outcome == "granted" ? vote.PreviousHolder : null;
+      var previousHolder = vote.Outcome == OUTCOME_GRANTED ? vote.PreviousHolder : null;
       var tenure = new Tenure(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow(), previousHolder);
       _tenures[role] = tenure;
       _metrics?.Held.Add(1, RoleAssignmentMetrics.RoleTag(role));

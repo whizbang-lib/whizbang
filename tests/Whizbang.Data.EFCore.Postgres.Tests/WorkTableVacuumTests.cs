@@ -118,7 +118,7 @@ public class WorkTableVacuumTests : EFCoreTestBase {
         await Assert.That(outcomes.Count).IsEqualTo(_workTables.Length);
         foreach (var outcome in outcomes) {
           await Assert.That(outcome.Vacuumed).IsFalse();
-          await Assert.That(outcome.SkippedReason!).Contains($"role '{role}' does not own {outcome.TableName}");
+          await Assert.That(outcome.SkippedReason).Contains($"role '{role}' does not own {outcome.TableName}");
         }
         await _assertEachVacuumedAsync(before, after, by: 0);
       }
@@ -138,7 +138,7 @@ public class WorkTableVacuumTests : EFCoreTestBase {
 
     var missing = outcomes.Single(o => o.TableName == "wh_message_deduplication");
     await Assert.That(missing.Vacuumed).IsFalse();
-    await Assert.That(missing.SkippedReason!).Contains("does not exist");
+    await Assert.That(missing.SkippedReason).Contains("does not exist");
     await Assert.That(outcomes.Count(o => o.Vacuumed)).IsEqualTo(3);
   }
 }

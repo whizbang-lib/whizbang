@@ -427,6 +427,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task VacuumWorkTablesAsync_WithoutProviderSupport_VacuumsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var outcomes = await coordinator.VacuumWorkTablesAsync();
+
+    await Assert.That(outcomes).IsEmpty();
+  }
+
+  [Test]
   public async Task RecordInstanceStateAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

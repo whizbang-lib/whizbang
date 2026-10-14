@@ -160,6 +160,18 @@ public class WorkTableVacuumOnAcquisitionTests {
   }
 
   [Test]
+  public async Task ATableSkippedWithoutAReason_IsStillNamedInAWarningAsync() {
+    var coordinator = new VacuumCoordinator { Outcome = [new("wh_inbox", false, null)] };
+    var (handler, logger) = _handlerOver(coordinator);
+
+    await handler.OnAcquiredAsync(new Grant(previous: null), CancellationToken.None);
+
+    var warning = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Warning);
+    await Assert.That(warning.Message).Contains("wh_inbox");
+    await Assert.That(warning.Message).Contains("no reason given");
+  }
+
+  [Test]
   public async Task AGrantLostBeforeTheVacuum_DoesNotVacuum_AndLeavesTheFirstAssignmentOwedAsync() {
     var coordinator = new VacuumCoordinator();
     var (handler, _) = _handlerOver(coordinator);
