@@ -84,6 +84,7 @@ public class MultiStreamCommandWorkerTests {
       new MultiStreamOutcome(_run, _streamA, null), new MultiStreamOutcome(_run, _streamB, null)]);
     await Assert.That(h.Store.Completed[0].InstanceId).IsEqualTo(_instance);
     await Assert.That(h.Store.Completed[0].MaxAttempts).IsEqualTo(h.Options.MaxAttempts);
+    await Assert.That(h.Store.Completed[0].ReleaseDelay).IsEqualTo(h.Options.NoHandlerRetryDelay);
   }
 
   [Test]
@@ -148,16 +149,19 @@ public class MultiStreamCommandWorkerTests {
   }
 
   [Test]
-  public async Task RunOnceAsync_ACommandThisInstanceHasNoHandlerFor_RecordsAFailureNamingItAsync() {
+  public async Task RunOnceAsync_ACommandThisInstanceHasNoHandlerFor_IsReleasedWithoutCountingAnAttemptAsync() {
     var h = new Harness();
+    h.Options.NoHandlerRetryDelay = TimeSpan.FromSeconds(45);
     h.Store.Claims.Enqueue([_item(_streamA, type: "Unknown.Command, Elsewhere")]);
     var worker = h.Build();
 
     _ = await worker.RunOnceAsync(CancellationToken.None);
 
-    var error = h.Store.Completed.Single().Outcomes.Single().Error;
-    await Assert.That(error).Contains("Unknown.Command, Elsewhere")
-      .Because("an instance that owns a stream but not the handler (a rolling update) says so, and the stream is retried");
+    var outcome = h.Store.Completed.Single().Outcomes.Single();
+    await Assert.That(outcome.Released).IsTrue()
+      .Because("an instance that owns a stream but not the handler (a rolling update) must not use up the stream's attempts");
+    await Assert.That(outcome.Error).Contains("Unknown.Command, Elsewhere");
+    await Assert.That(h.Store.Completed[0].ReleaseDelay).IsEqualTo(TimeSpan.FromSeconds(45));
     await Assert.That(h.Handler.Calls).IsEmpty();
   }
 
@@ -216,6 +220,19 @@ public class MultiStreamCommandWorkerTests {
     await Assert.That(published.Succeeded).IsEqualTo(1);
     await Assert.That(published.Failed).IsEqualTo(0);
     await Assert.That(published.StreamCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task RunOnceAsync_ARunThatCompleted_WithNobodyListening_IsStillPublishedAsync() {
+    var h = new Harness();
+    h.Store.Claims.Enqueue([_item(_streamA)]);
+    h.Store.CompletionsToReturn.Enqueue([new MultiStreamRunCompletion(_run, _probeType, 1, 1, 0)]);
+    var worker = h.Build();
+
+    _ = await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(h.Dispatcher.Published.OfType<MultiStreamCommandCompleted>().Single().StreamId).IsEqualTo(_run)
+      .Because("the completion event is the durable record; the in-process announcement is optional");
   }
 
   [Test]
@@ -323,14 +340,17 @@ public class MultiStreamCommandWorkerTests {
   }
 
   [Test]
-  [Arguments(0, 60, 3, 1, 60, 60)]
-  [Arguments(10, 0, 3, 1, 60, 60)]
-  [Arguments(10, 60, 0, 1, 60, 60)]
-  [Arguments(10, 60, 3, 0, 60, 60)]
-  [Arguments(10, 60, 3, 1, 0, 60)]
-  [Arguments(10, 60, 3, 1, 60, 0)]
-  public async Task Options_Validate_RefusesANonPositiveSettingAsync(int batch, int leaseSeconds, int attempts, int pollSeconds, int retentionSeconds, int purgeSeconds) {
+  [Arguments(0, 60, 3, 1, 60, 60, 60)]
+  [Arguments(10, 0, 3, 1, 60, 60, 60)]
+  [Arguments(10, 60, 0, 1, 60, 60, 60)]
+  [Arguments(10, 60, 3, 0, 60, 60, 60)]
+  [Arguments(10, 60, 3, 1, 0, 60, 60)]
+  [Arguments(10, 60, 3, 1, 60, 0, 60)]
+  [Arguments(10, 60, 3, 1, 60, 60, 0)]
+  public async Task Options_Validate_RefusesANonPositiveSettingAsync(
+      int batch, int leaseSeconds, int attempts, int pollSeconds, int retentionSeconds, int purgeSeconds, int noHandlerSeconds) {
     var options = new MultiStreamCommandOptions {
+      NoHandlerRetryDelay = TimeSpan.FromSeconds(noHandlerSeconds),
       BatchSize = batch,
       Lease = TimeSpan.FromSeconds(leaseSeconds),
       MaxAttempts = attempts,

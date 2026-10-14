@@ -58,8 +58,8 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
     var connection = await _openAsync(cancellationToken).ConfigureAwait(false);
     await using var connectionScope = connection.ConfigureAwait(false);
     await using var cmd = connection.CreateCommand();
-    cmd.CommandText = "SELECT wh_record_multi_stream_run(@run, @type, @payload, @scope, @streams, @partitions)";
-    cmd.Parameters.AddWithValue("run", run.RunId);
+    cmd.CommandText = "SELECT wh_record_multi_stream_run(@run_id, @type, @payload, @scope, @streams, @partitions)";
+    cmd.Parameters.AddWithValue("run_id", run.RunId);
     cmd.Parameters.AddWithValue("type", run.CommandType);
     cmd.Parameters.AddWithValue("payload", run.Payload);
     cmd.Parameters.Add(new NpgsqlParameter("scope", NpgsqlDbType.Text) { Value = (object?)run.Scope ?? DBNull.Value });
@@ -98,7 +98,8 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
 
   /// <inheritdoc/>
   public async Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) {
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay,
+      CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(outcomes);
     var completions = new List<MultiStreamRunCompletion>();
     if (outcomes.Count == 0) {
@@ -108,12 +109,14 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
     await using (connection.ConfigureAwait(false)) {
       await using var cmd = connection.CreateCommand();
       cmd.CommandText = "SELECT run_id, command_type, stream_count, succeeded, failed "
-        + "FROM wh_complete_multi_stream_work(@instance, @runs, @streams, @errors, @attempts)";
+        + "FROM wh_complete_multi_stream_work(@instance, @runs, @streams, @errors, @released, @attempts, @release)";
       cmd.Parameters.AddWithValue("instance", instanceId);
       cmd.Parameters.Add(new NpgsqlParameter("runs", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = outcomes.Select(o => o.RunId).ToArray() });
       cmd.Parameters.Add(new NpgsqlParameter("streams", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = outcomes.Select(o => o.StreamId).ToArray() });
       cmd.Parameters.Add(new NpgsqlParameter("errors", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = outcomes.Select(o => o.Error).ToArray() });
+      cmd.Parameters.Add(new NpgsqlParameter("released", NpgsqlDbType.Array | NpgsqlDbType.Boolean) { Value = outcomes.Select(o => o.Released).ToArray() });
       cmd.Parameters.AddWithValue("attempts", maxAttempts);
+      cmd.Parameters.AddWithValue("release", (int)Math.Ceiling(releaseDelay.TotalSeconds));
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
         completions.Add(new MultiStreamRunCompletion(

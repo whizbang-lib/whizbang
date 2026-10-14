@@ -210,11 +210,16 @@ COMMENT ON FUNCTION __SCHEMA__.wh_claim_multi_stream_work(UUID, INTEGER, INTEGER
   'partition share unless a live sibling holds the lease), leasing each and counting the attempt. Reads '
   'wh_active_streams; never writes it.';
 
+-- One overload only: the arity changed while this migration was unreleased, and a stale overload would make every
+-- unqualified call ambiguous (42725).
+SELECT __SCHEMA__.drop_all_overloads('wh_complete_multi_stream_work');
+
 -- <docs>fundamentals/dispatcher/multi-stream-commands#outcomes</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_TheLastStream_CompletesTheRunOnceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AFailureBelowTheAttemptLimit_ReleasesTheStreamForAnotherAttemptAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AFailureAtTheAttemptLimit_RecordsTheStreamFailedWithItsErrorAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AStreamThisInstanceNoLongerHolds_IsNotRecordedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AReleasedStream_IsOfferedAgainAfterTheDelayWithoutCountingAnAttemptAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_HoldsTheRunUntilItCommits_SoTwoLastOutcomesCannotBothMissTheCompletionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandEndToEndTests.cs:ACommandOverManyStreams_IsWorkedOncePerStreamEachOnItsOwnerAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_complete_multi_stream_work(
@@ -222,7 +227,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.wh_complete_multi_stream_work(
   p_run_ids UUID[],
   p_stream_ids UUID[],
   p_errors TEXT[],
-  p_max_attempts INTEGER
+  p_released BOOLEAN[],
+  p_max_attempts INTEGER,
+  p_release_seconds INTEGER
 ) RETURNS TABLE (
   run_id UUID,
   command_type TEXT,
@@ -236,13 +243,19 @@ DECLARE
   v_now TIMESTAMPTZ := clock_timestamp();
 BEGIN
   -- Only items this instance still holds: a worker whose claim lapsed and was taken over cannot record over the new one.
+  -- A release (no handler on this instance, as in a rolling update) hands the item back without counting the attempt
+  -- and keeps it leased to this instance for p_release_seconds, so it is not claimed straight back: after that the
+  -- stream's owner at the time, on whatever build it runs, is offered it again.
   UPDATE __SCHEMA__.wh_multi_stream_run_streams rs
-  SET outcome = CASE WHEN o.error IS NULL THEN 1::SMALLINT WHEN rs.attempts >= p_max_attempts THEN 2::SMALLINT END,
+  SET outcome = CASE WHEN o.released THEN NULL
+                     WHEN o.error IS NULL THEN 1::SMALLINT
+                     WHEN rs.attempts >= p_max_attempts THEN 2::SMALLINT END,
       error = o.error,
-      completed_at = CASE WHEN o.error IS NULL OR rs.attempts >= p_max_attempts THEN v_now END,
-      instance_id = CASE WHEN o.error IS NULL OR rs.attempts >= p_max_attempts THEN rs.instance_id END,
-      lease_expiry = NULL
-  FROM unnest(p_run_ids, p_stream_ids, p_errors) AS o (run_id, stream_id, error)
+      attempts = CASE WHEN o.released THEN rs.attempts - 1 ELSE rs.attempts END,
+      completed_at = CASE WHEN NOT o.released AND (o.error IS NULL OR rs.attempts >= p_max_attempts) THEN v_now END,
+      instance_id = CASE WHEN o.released OR o.error IS NULL OR rs.attempts >= p_max_attempts THEN rs.instance_id END,
+      lease_expiry = CASE WHEN o.released THEN v_now + make_interval(secs => p_release_seconds) END
+  FROM unnest(p_run_ids, p_stream_ids, p_errors, p_released) AS o (run_id, stream_id, error, released)
   WHERE rs.run_id = o.run_id
     AND rs.stream_id = o.stream_id
     AND rs.instance_id = p_instance_id
@@ -272,9 +285,10 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION __SCHEMA__.wh_complete_multi_stream_work(UUID, UUID[], UUID[], TEXT[], INTEGER) IS
+COMMENT ON FUNCTION __SCHEMA__.wh_complete_multi_stream_work(UUID, UUID[], UUID[], TEXT[], BOOLEAN[], INTEGER, INTEGER) IS
   '208 (#1358): records outcomes for items this instance holds (a NULL error is success; a failure is final at '
-  'p_max_attempts, else the item is released) and completes, once, each run left with nothing pending.';
+  'p_max_attempts, else the item is released; a release hands the item back uncounted for p_release_seconds) and '
+  'completes, once, each run left with nothing pending.';
 
 -- <docs>fundamentals/dispatcher/multi-stream-commands#outcomes</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:RecordRunAsync_ANewRun_IsPendingForEveryStreamAsync</tests>

@@ -76,6 +76,9 @@ internal sealed class ConfigureMultiStreamCommandOptionsFromConfiguration(IConfi
     if (int.TryParse(section[nameof(options.MaxAttempts)], NumberStyles.Integer, CultureInfo.InvariantCulture, out var attempts)) {
       options.MaxAttempts = attempts;
     }
+    if (TimeSpan.TryParse(section[nameof(options.NoHandlerRetryDelay)], CultureInfo.InvariantCulture, out var noHandler)) {
+      options.NoHandlerRetryDelay = noHandler;
+    }
     if (TimeSpan.TryParse(section[nameof(options.PollInterval)], CultureInfo.InvariantCulture, out var poll)) {
       options.PollInterval = poll;
     }

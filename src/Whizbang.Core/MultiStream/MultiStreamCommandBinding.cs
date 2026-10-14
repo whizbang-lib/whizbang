@@ -15,16 +15,14 @@ namespace Whizbang.Core.MultiStream;
 /// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandReceptorRegistrarTests.cs:StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
 public sealed class MultiStreamCommandBinding<TCommand> : IMultiStreamCommandBinding where TCommand : IMultiStreamCommand {
-  internal static readonly string TYPE_NAME = TypeNameFormatter.Format(typeof(TCommand));
-
   /// <inheritdoc/>
-  public string CommandType => TYPE_NAME;
+  public string CommandType { get; } = MultiStreamCommandNames.Of(typeof(TCommand));
 
   /// <inheritdoc/>
   public async ValueTask InvokeAsync(IServiceProvider services, string payload, Guid streamId, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
     var command = MultiStreamJson.Deserialize<TCommand>(payload)
-      ?? throw new InvalidOperationException($"The stored payload of a {TYPE_NAME} run reads back as nothing; the stream cannot be worked.");
+      ?? throw new InvalidOperationException($"The stored payload of a {CommandType} run reads back as nothing; the stream cannot be worked.");
     var handler = services.GetRequiredService<IMultiStreamCommandHandler<TCommand>>();
     await handler.HandleStreamAsync(command, streamId, cancellationToken).ConfigureAwait(false);
   }

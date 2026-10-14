@@ -35,12 +35,12 @@ public sealed partial class MultiStreamCommandIntake<TCommand>(
     var streams = _distinctStreams(message.StreamIds);
     if (!_store.IsConfigured) {
       throw new InvalidOperationException(
-        $"{MultiStreamCommandBinding<TCommand>.TYPE_NAME} cannot be accepted: no multi-stream command store is registered, so no stream would ever run.");
+        $"{MultiStreamCommandNames.Of(typeof(TCommand))} cannot be accepted: no multi-stream command store is registered, so no stream would ever run.");
     }
 
     var run = new MultiStreamRun(
       message.RunId,
-      MultiStreamCommandBinding<TCommand>.TYPE_NAME,
+      MultiStreamCommandNames.Of(typeof(TCommand)),
       MultiStreamJson.Serialize(message),
       streams,
       MultiStreamScope.Capture(ScopeContextAccessor.CurrentContext));

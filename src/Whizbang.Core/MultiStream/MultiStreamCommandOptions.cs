@@ -23,6 +23,12 @@ public sealed class MultiStreamCommandOptions {
   /// <summary>Attempts a stream gets before a failure is final. Default 3.</summary>
   public int MaxAttempts { get; set; } = 3;
 
+  /// <summary>
+  /// How long a stream waits before it is offered again when the instance that claimed it has no handler for its command
+  /// (a rolling update, where an older build owns the stream). The attempt is not counted. Default 1 minute.
+  /// </summary>
+  public TimeSpan NoHandlerRetryDelay { get; set; } = TimeSpan.FromMinutes(1);
+
   /// <summary>How long the worker waits for a new-run notice before looking anyway. Default 30 seconds.</summary>
   public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -38,6 +44,7 @@ public sealed class MultiStreamCommandOptions {
     _positive(BatchSize > 0, nameof(BatchSize));
     _positive(Lease > TimeSpan.Zero, nameof(Lease));
     _positive(MaxAttempts > 0, nameof(MaxAttempts));
+    _positive(NoHandlerRetryDelay > TimeSpan.Zero, nameof(NoHandlerRetryDelay));
     _positive(PollInterval > TimeSpan.Zero, nameof(PollInterval));
     _positive(CompletedRunRetention > TimeSpan.Zero, nameof(CompletedRunRetention));
     _positive(PurgeInterval > TimeSpan.Zero, nameof(PurgeInterval));

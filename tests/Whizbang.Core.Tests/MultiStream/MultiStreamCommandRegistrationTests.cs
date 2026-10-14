@@ -42,7 +42,7 @@ public class MultiStreamCommandRegistrationTests {
 
   [Test]
   public async Task AddMultiStreamCommandHandler_RegistersOneBindingNamedForTheCommandTypeAsync() {
-    using var provider = _provider();
+    await using var provider = _provider();
 
     var bindings = provider.GetServices<IMultiStreamCommandBinding>().ToList();
 
@@ -53,7 +53,7 @@ public class MultiStreamCommandRegistrationTests {
 
   [Test]
   public async Task AddMultiStreamCommandHandler_CalledTwiceForTheSameHandler_RegistersOnceAsync() {
-    using var provider = _provider(s => s.AddMultiStreamCommandHandler<ProbeMultiStreamCommand, ProbeMultiStreamHandler>());
+    await using var provider = _provider(s => s.AddMultiStreamCommandHandler<ProbeMultiStreamCommand, ProbeMultiStreamHandler>());
 
     await Assert.That(provider.GetServices<IMultiStreamCommandBinding>()).Count().IsEqualTo(1);
     await Assert.That(provider.GetServices<IHostedService>().OfType<MultiStreamCommandReceptorRegistrar>()).Count().IsEqualTo(1);
@@ -71,7 +71,7 @@ public class MultiStreamCommandRegistrationTests {
 
   [Test]
   public async Task AddMultiStreamCommandHandler_TwoCommands_RegistersABindingForEachAsync() {
-    using var provider = _provider(s => s.AddMultiStreamCommandHandler<OtherProbeMultiStreamCommand, OtherProbeMultiStreamHandler>());
+    await using var provider = _provider(s => s.AddMultiStreamCommandHandler<OtherProbeMultiStreamCommand, OtherProbeMultiStreamHandler>());
 
     var types = provider.GetServices<IMultiStreamCommandBinding>().Select(b => b.CommandType).ToList();
 
@@ -82,7 +82,7 @@ public class MultiStreamCommandRegistrationTests {
 
   [Test]
   public async Task AddMultiStreamCommandHandler_WithNoStore_LeavesTheNullDefaultForADriverToReplaceAsync() {
-    using var provider = _provider();
+    await using var provider = _provider();
 
     await Assert.That(provider.GetRequiredService<IMultiStreamCommandStore>()).IsSameReferenceAs(NullMultiStreamCommandStore.Instance);
   }
@@ -96,7 +96,7 @@ public class MultiStreamCommandRegistrationTests {
   [Test]
   public async Task InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync() {
     var handler = new ProbeMultiStreamHandler();
-    using var provider = _provider(s => s.AddSingleton(handler));
+    await using var provider = _provider(s => s.AddSingleton(handler));
     var binding = provider.GetServices<IMultiStreamCommandBinding>().Single();
     var command = new ProbeMultiStreamCommand(_runId, [_stream], "label-2");
 
@@ -110,7 +110,7 @@ public class MultiStreamCommandRegistrationTests {
 
   [Test]
   public async Task InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync() {
-    using var provider = _provider();
+    await using var provider = _provider();
     var binding = provider.GetServices<IMultiStreamCommandBinding>().Single();
 
     await using var scope = provider.CreateAsyncScope();
@@ -123,7 +123,7 @@ public class MultiStreamCommandRegistrationTests {
   public async Task RegisterIntake_WithNoLoggerRegistered_StillRegistersTheIntakeAsync() {
     var services = new ServiceCollection();
     services.AddMultiStreamCommandHandler<ProbeMultiStreamCommand, ProbeMultiStreamHandler>();
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var registry = new CapturingReceptorRegistry();
 
     provider.GetServices<IMultiStreamCommandBinding>().Single().RegisterIntake(registry, provider);

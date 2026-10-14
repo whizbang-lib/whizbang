@@ -29,10 +29,25 @@ public sealed record MultiStreamWorkItem(Guid RunId, Guid StreamId, string Comma
 /// <summary>How working one claimed stream ended.</summary>
 /// <param name="RunId">The run.</param>
 /// <param name="StreamId">The stream.</param>
-/// <param name="Error">Null when the handler succeeded; otherwise the failure, as the exception's type and message.</param>
+/// <param name="Error">Null when the handler succeeded; otherwise the failure (the exception's type and message), or, for
+/// a release, why the stream was not worked.</param>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#outcomes</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AFailureAtTheAttemptLimit_RecordsTheStreamFailedWithItsErrorAsync</tests>
-public sealed record MultiStreamOutcome(Guid RunId, Guid StreamId, string? Error);
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandStoreSqlTests.cs:CompleteAsync_AReleasedStream_IsOfferedAgainAfterTheDelayWithoutCountingAnAttemptAsync</tests>
+public sealed record MultiStreamOutcome(Guid RunId, Guid StreamId, string? Error) {
+  /// <summary>
+  /// True when the stream was not worked and is handed back without counting the attempt, to be offered again after the
+  /// release delay; <see cref="Error"/> says why. Used when this instance has no handler for the command.
+  /// </summary>
+  public bool Released { get; init; }
+
+  /// <summary>An outcome that hands the stream back without counting the attempt.</summary>
+  /// <param name="runId">The run.</param>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="reason">Why the stream was not worked.</param>
+  /// <returns>The release.</returns>
+  public static MultiStreamOutcome Release(Guid runId, Guid streamId, string reason) => new(runId, streamId, reason) { Released = true };
+}
 
 /// <summary>A run that every one of its streams has now reported on.</summary>
 /// <param name="RunId">The run.</param>

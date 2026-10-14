@@ -119,7 +119,7 @@ public class MultiStreamCommandIntakeTests {
       .Throws<InvalidOperationException>();
     await Assert.That(async () => await store.ClaimAsync(new MultiStreamClaim(_runId, 1, TimeSpan.FromMinutes(1), null), CancellationToken.None))
       .Throws<InvalidOperationException>();
-    await Assert.That(async () => await store.CompleteAsync(_runId, [], 1, CancellationToken.None)).Throws<InvalidOperationException>();
+    await Assert.That(async () => await store.CompleteAsync(_runId, [], 1, TimeSpan.FromMinutes(1), CancellationToken.None)).Throws<InvalidOperationException>();
     await Assert.That(async () => await store.ReadRunAsync(_runId, CancellationToken.None)).Throws<InvalidOperationException>();
     await Assert.That(async () => await store.PurgeCompletedAsync(DateTimeOffset.UnixEpoch, CancellationToken.None)).Throws<InvalidOperationException>();
   }

@@ -28,6 +28,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
   private const int PARTITIONS = 10_000;
   private const string COMMAND = "Probe.Command, Probe";
   private static readonly TimeSpan _lease = TimeSpan.FromMinutes(5);
+  private static readonly TimeSpan _releaseDelay = TimeSpan.FromMinutes(1);
   private static readonly TimeSpan _signalDeadline = TimeSpan.FromSeconds(30);
 
   // --- recording a run -------------------------------------------------------------------------
@@ -305,9 +306,9 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     _ = await store.RecordRunAsync(run, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
 
-    var first = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, null)], 3, CancellationToken.None);
-    var last = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[1].StreamId, null)], 3, CancellationToken.None);
-    var repeat = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[1].StreamId, null)], 3, CancellationToken.None);
+    var first = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
+    var last = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[1].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
+    var repeat = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[1].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
 
     await Assert.That(first).IsEmpty().Because("one stream is still pending");
     await Assert.That(last.Single()).IsEqualTo(new MultiStreamRunCompletion(run.RunId, COMMAND, 2, 2, 0));
@@ -327,7 +328,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     _ = await store.RecordRunAsync(run, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
 
-    var completed = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, "TimeoutException: once")], 3, CancellationToken.None);
+    var completed = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, "TimeoutException: once")], 3, _releaseDelay, CancellationToken.None);
     var retried = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
 
     await Assert.That(completed).IsEmpty();
@@ -345,11 +346,33 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     _ = await store.RecordRunAsync(run, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
 
-    var completed = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, "InvalidOperationException: no")], 1, CancellationToken.None);
+    var completed = await store.CompleteAsync(a, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, "InvalidOperationException: no")], 1, _releaseDelay, CancellationToken.None);
 
     await Assert.That(completed.Single()).IsEqualTo(new MultiStreamRunCompletion(run.RunId, COMMAND, 1, 0, 1));
     var error = await _scalarAsync<string>(conn, $"SELECT error FROM wh_multi_stream_run_streams WHERE run_id = '{run.RunId}'");
     await Assert.That(error).IsEqualTo("InvalidOperationException: no");
+  }
+
+  [Test]
+  public async Task CompleteAsync_AReleasedStream_IsOfferedAgainAfterTheDelayWithoutCountingAnAttemptAsync() {
+    var a = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var version = await _assignAsync(conn, [a]);
+    var store = _store();
+    var run = _run(Guid.CreateVersion7());
+    _ = await store.RecordRunAsync(run, CancellationToken.None);
+    var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
+
+    var completed = await store.CompleteAsync(
+      a, [MultiStreamOutcome.Release(run.RunId, claimed[0].StreamId, "no handler here")], 1, _releaseDelay, CancellationToken.None);
+    var tooSoon = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
+    await _execAsync(conn, "UPDATE wh_multi_stream_run_streams SET lease_expiry = clock_timestamp() - INTERVAL '1 second'");
+    var later = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
+
+    await Assert.That(completed).IsEmpty().Because("a released stream has no outcome, even at an attempt limit of one");
+    await Assert.That(tooSoon).IsEmpty().Because("the release waits out its delay, so an instance without the handler does not spin on it");
+    await Assert.That(later.Single().Attempt).IsEqualTo(1).Because("a release is not an attempt");
+    await Assert.That((await store.ReadRunAsync(run.RunId, CancellationToken.None))!.Pending).IsEqualTo(1);
   }
 
   [Test]
@@ -362,7 +385,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     _ = await store.RecordRunAsync(run, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
 
-    var completed = await store.CompleteAsync(b, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, null)], 3, CancellationToken.None);
+    var completed = await store.CompleteAsync(b, [new MultiStreamOutcome(run.RunId, claimed[0].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
 
     await Assert.That(completed).IsEmpty();
     await Assert.That((await store.ReadRunAsync(run.RunId, CancellationToken.None))!.Pending).IsEqualTo(1)
@@ -384,7 +407,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     await using var first = await _openAsync();
     await using var tx = await first.BeginTransactionAsync();
     await _execAsync(first,
-      $"SELECT * FROM wh_complete_multi_stream_work('{a}'::uuid, ARRAY['{run.RunId}']::uuid[], ARRAY['{forA}']::uuid[], ARRAY[NULL]::text[], 3)");
+      $"SELECT * FROM wh_complete_multi_stream_work('{a}'::uuid, ARRAY['{run.RunId}']::uuid[], ARRAY['{forA}']::uuid[], ARRAY[NULL]::text[], ARRAY[false], 3, 60)");
 
     // While a's outcome is uncommitted, b's completion must not be able to decide the run: it has to wait for a, or
     // each sees the other's stream as pending and the run is never completed. The run row is that serialization point.
@@ -392,7 +415,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     var refused = await Assert.ThrowsAsync<PostgresException>(
       () => _execAsync(second, $"SELECT 1 FROM wh_multi_stream_runs WHERE run_id = '{run.RunId}' FOR UPDATE NOWAIT"));
     await tx.CommitAsync();
-    var completed = await store.CompleteAsync(b, [new MultiStreamOutcome(run.RunId, forB, null)], 3, CancellationToken.None);
+    var completed = await store.CompleteAsync(b, [new MultiStreamOutcome(run.RunId, forB, null)], 3, _releaseDelay, CancellationToken.None);
 
     await Assert.That(refused!.SqlState).IsEqualTo("55P03");
     await Assert.That(completed.Single().Succeeded).IsEqualTo(2);
@@ -400,7 +423,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
 
   [Test]
   public async Task CompleteAsync_NoOutcomes_CompletesNothingAsync() {
-    await Assert.That(await _store().CompleteAsync(Guid.CreateVersion7(), [], 3, CancellationToken.None)).IsEmpty();
+    await Assert.That(await _store().CompleteAsync(Guid.CreateVersion7(), [], 3, _releaseDelay, CancellationToken.None)).IsEmpty();
   }
 
   // --- retention -------------------------------------------------------------------------------
@@ -415,7 +438,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     var pending = _run(Guid.CreateVersion7());
     _ = await store.RecordRunAsync(done, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
-    _ = await store.CompleteAsync(a, [new MultiStreamOutcome(done.RunId, claimed[0].StreamId, null)], 3, CancellationToken.None);
+    _ = await store.CompleteAsync(a, [new MultiStreamOutcome(done.RunId, claimed[0].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
     _ = await store.RecordRunAsync(pending, CancellationToken.None);
 
     var purged = await store.PurgeCompletedAsync(DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
@@ -436,7 +459,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     var done = _run(Guid.CreateVersion7());
     _ = await store.RecordRunAsync(done, CancellationToken.None);
     var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 100, _lease, version), CancellationToken.None);
-    _ = await store.CompleteAsync(a, [new MultiStreamOutcome(done.RunId, claimed[0].StreamId, null)], 3, CancellationToken.None);
+    _ = await store.CompleteAsync(a, [new MultiStreamOutcome(done.RunId, claimed[0].StreamId, null)], 3, _releaseDelay, CancellationToken.None);
 
     await Assert.That(await store.PurgeCompletedAsync(DateTimeOffset.UtcNow.AddHours(-1), CancellationToken.None)).IsEqualTo(0);
   }
@@ -494,8 +517,8 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     cmd.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
     cmd.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
     cmd.Parameters.AddWithValue("inst", members[0]);
-    cmd.Parameters.AddWithValue("epoch", epoch);
-    cmd.Parameters.AddWithValue("members", members);
+    cmd.Parameters.AddWithValue(nameof(epoch), epoch);
+    cmd.Parameters.AddWithValue(nameof(members), members);
     var revision = Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     return new PartitionAssignmentVersion(epoch, revision);
   }
@@ -521,7 +544,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
   private static async Task _leaseStreamAsync(NpgsqlConnection conn, Guid stream, Guid owner, bool expired = false) {
     var expiry = expired ? "clock_timestamp() - INTERVAL '1 second'" : "clock_timestamp() + INTERVAL '5 minutes'";
     await _execAsync(conn,
-      $"INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at, lease_expiry) "
+      "INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at, lease_expiry) "
       + $"VALUES ('{stream}', compute_partition('{stream}'::uuid, {PARTITIONS}), '{owner}', clock_timestamp(), {expiry})");
   }
 }

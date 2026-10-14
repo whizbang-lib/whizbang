@@ -73,7 +73,7 @@ public sealed class ScriptedMultiStreamStore : IMultiStreamCommandStore {
   public Queue<IReadOnlyList<MultiStreamWorkItem>> Claims { get; } = new();
   public Queue<IReadOnlyList<MultiStreamRunCompletion>> CompletionsToReturn { get; } = new();
   public List<MultiStreamClaim> ClaimRequests { get; } = [];
-  public List<(Guid InstanceId, IReadOnlyList<MultiStreamOutcome> Outcomes, int MaxAttempts)> Completed { get; } = [];
+  public List<(Guid InstanceId, IReadOnlyList<MultiStreamOutcome> Outcomes, int MaxAttempts, TimeSpan ReleaseDelay)> Completed { get; } = [];
   public List<DateTimeOffset> Purges { get; } = [];
 
   /// <summary>When set, the next claim throws it (once).</summary>
@@ -102,8 +102,8 @@ public sealed class ScriptedMultiStreamStore : IMultiStreamCommandStore {
   }
 
   public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) {
-    Completed.Add((instanceId, outcomes, maxAttempts));
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay, CancellationToken cancellationToken) {
+    Completed.Add((instanceId, outcomes, maxAttempts, releaseDelay));
     IReadOnlyList<MultiStreamRunCompletion> completions = CompletionsToReturn.TryDequeue(out var next) ? next : [];
     return Task.FromResult(completions);
   }
@@ -144,7 +144,7 @@ public sealed class RecordingMultiStreamStore : IMultiStreamCommandStore {
     throw new NotSupportedException("The intake never claims.");
 
   public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) =>
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay, CancellationToken cancellationToken) =>
     throw new NotSupportedException("The intake never completes.");
 
   public Task<MultiStreamRunStatus?> ReadRunAsync(Guid runId, CancellationToken cancellationToken) =>

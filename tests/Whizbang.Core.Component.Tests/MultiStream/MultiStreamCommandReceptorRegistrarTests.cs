@@ -34,7 +34,7 @@ public class MultiStreamCommandReceptorRegistrarTests {
   [Test]
   public async Task StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync() {
     var registry = new CapturingReceptorRegistry();
-    using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(registry));
+    await using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(registry));
     var registrar = _registrar(provider);
 
     await registrar.StartAsync(CancellationToken.None);
@@ -48,7 +48,7 @@ public class MultiStreamCommandReceptorRegistrarTests {
 
   [Test]
   public async Task StartAsync_WithTheNullRegistry_RegistersNothingAndStartsAsync() {
-    using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(NullReceptorRegistry.Instance));
+    await using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(NullReceptorRegistry.Instance));
 
     await Assert.That(async () => await _registrar(provider).StartAsync(CancellationToken.None)).ThrowsNothing()
       .Because("a host with no receptor registry has nothing to register into and must still start");
@@ -56,7 +56,7 @@ public class MultiStreamCommandReceptorRegistrarTests {
 
   [Test]
   public async Task StartAsync_WithNoRegistry_RegistersNothingAndStartsAsync() {
-    using var provider = _provider();
+    await using var provider = _provider();
 
     await Assert.That(async () => await _registrar(provider).StartAsync(CancellationToken.None)).ThrowsNothing();
   }

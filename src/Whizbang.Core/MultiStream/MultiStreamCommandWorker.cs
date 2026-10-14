@@ -167,8 +167,10 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
 
   private async Task<MultiStreamOutcome> _workAsync(MultiStreamWorkItem item, CancellationToken cancellationToken) {
     if (!_bindings.TryGetValue(item.CommandType, out var binding)) {
-      LogNoHandler(_logger, item.CommandType, item.RunId, item.StreamId);
-      return new MultiStreamOutcome(item.RunId, item.StreamId, $"No handler for {item.CommandType} is registered on this instance.");
+      // A rolling update can leave a stream with an owner on an older build. Handing it back without counting the attempt
+      // keeps a slow rollout from using up the stream's attempts; it is offered again after the retry delay.
+      LogNoHandler(_logger, item.CommandType, item.RunId, item.StreamId, _options.NoHandlerRetryDelay);
+      return MultiStreamOutcome.Release(item.RunId, item.StreamId, $"No handler for {item.CommandType} is registered on this instance.");
     }
     var previous = ScopeContextAccessor.CurrentContext;
     var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
@@ -191,7 +193,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   }
 
   private async Task _completeAsync(Guid instanceId, List<MultiStreamOutcome> outcomes) {
-    var completions = await _store.CompleteAsync(instanceId, outcomes, _options.MaxAttempts, CancellationToken.None).ConfigureAwait(false);
+    var completions = await _store.CompleteAsync(
+      instanceId, outcomes, _options.MaxAttempts, _options.NoHandlerRetryDelay, CancellationToken.None).ConfigureAwait(false);
     foreach (var completion in completions) {
       LogRunCompleted(_logger, completion.RunId, completion.CommandType, completion.Succeeded, completion.Failed);
       await _publishAsync(completion).ConfigureAwait(false);
@@ -224,8 +227,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   static partial void LogPassFailed(ILogger logger, Exception exception);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
-    Message = "No handler for {CommandType} is registered on this instance; stream {StreamId} of run {RunId} is recorded as a failed attempt.")]
-  static partial void LogNoHandler(ILogger logger, string commandType, Guid runId, Guid streamId);
+    Message = "No handler for {CommandType} is registered on this instance; stream {StreamId} of run {RunId} is handed back without counting an attempt and offered again in {RetryDelay}.")]
+  static partial void LogNoHandler(ILogger logger, string commandType, Guid runId, Guid streamId, TimeSpan retryDelay);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
     Message = "{CommandType} failed for stream {StreamId} of run {RunId} on attempt {Attempt}.")]

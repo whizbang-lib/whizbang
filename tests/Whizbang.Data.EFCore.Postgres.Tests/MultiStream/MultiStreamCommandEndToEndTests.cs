@@ -138,8 +138,8 @@ public class MultiStreamCommandEndToEndTests : EFCoreTestBase {
     publish.CommandText = "SELECT wh_publish_partition_assignment(@role, @inst, @epoch, @members, INTERVAL '90 seconds')";
     publish.Parameters.AddWithValue("role", PartitionAssignerOptions.ROLE);
     publish.Parameters.AddWithValue("inst", members[0]);
-    publish.Parameters.AddWithValue("epoch", epoch);
-    publish.Parameters.AddWithValue("members", members);
+    publish.Parameters.AddWithValue(nameof(epoch), epoch);
+    publish.Parameters.AddWithValue(nameof(members), members);
     var revision = Convert.ToInt64(await publish.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
     return new PartitionAssignmentVersion(epoch, revision);
   }

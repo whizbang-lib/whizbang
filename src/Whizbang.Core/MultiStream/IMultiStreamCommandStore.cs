@@ -35,16 +35,19 @@ public interface IMultiStreamCommandStore {
 
   /// <summary>
   /// Records how claimed streams ended. A success is final. A failure releases the stream for another attempt until it
-  /// has had <paramref name="maxAttempts"/>, then is final with its error. Only streams this instance still holds are
-  /// recorded. Runs left with no pending stream are completed, each exactly once.
+  /// has had <paramref name="maxAttempts"/>, then is final with its error. A release (<see cref="MultiStreamOutcome.Released"/>)
+  /// hands the stream back without counting the attempt and holds it for <paramref name="releaseDelay"/> before it is
+  /// offered again. Only streams this instance still holds are recorded. Runs left with no pending stream are completed,
+  /// each exactly once.
   /// </summary>
   /// <param name="instanceId">The instance that worked the streams.</param>
   /// <param name="outcomes">One outcome per worked stream.</param>
   /// <param name="maxAttempts">The attempts a stream gets before a failure is final.</param>
+  /// <param name="releaseDelay">How long a released stream waits before it is offered again.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The runs this call completed.</returns>
   Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-    Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken);
+    Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay, CancellationToken cancellationToken);
 
   /// <summary>Reads where a run stands.</summary>
   /// <param name="runId">The run.</param>
@@ -87,7 +90,8 @@ public sealed class NullMultiStreamCommandStore : IMultiStreamCommandStore, INul
 
   /// <inheritdoc/>
   public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) =>
+      Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay,
+      CancellationToken cancellationToken) =>
     throw new InvalidOperationException(NOT_REGISTERED);
 
   /// <inheritdoc/>

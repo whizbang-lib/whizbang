@@ -88,7 +88,8 @@ public class MultiStreamCommandPostgresRegistrationTests {
       ["Whizbang:MultiStreamCommands:MaxAttempts"] = "5",
       ["Whizbang:MultiStreamCommands:PollInterval"] = "00:00:10",
       ["Whizbang:MultiStreamCommands:CompletedRunRetention"] = "2.00:00:00",
-      ["Whizbang:MultiStreamCommands:PurgeInterval"] = "00:30:00"
+      ["Whizbang:MultiStreamCommands:PurgeInterval"] = "00:30:00",
+      ["Whizbang:MultiStreamCommands:NoHandlerRetryDelay"] = "00:00:20"
     }).Build();
     await using var sp = _build(after: s => s.AddSingleton<IConfiguration>(configuration));
 
@@ -101,6 +102,7 @@ public class MultiStreamCommandPostgresRegistrationTests {
     await Assert.That(options.PollInterval).IsEqualTo(TimeSpan.FromSeconds(10));
     await Assert.That(options.CompletedRunRetention).IsEqualTo(TimeSpan.FromDays(2));
     await Assert.That(options.PurgeInterval).IsEqualTo(TimeSpan.FromMinutes(30));
+    await Assert.That(options.NoHandlerRetryDelay).IsEqualTo(TimeSpan.FromSeconds(20));
   }
 
   [Test]
@@ -112,7 +114,8 @@ public class MultiStreamCommandPostgresRegistrationTests {
       ["Whizbang:MultiStreamCommands:MaxAttempts"] = "lots",
       ["Whizbang:MultiStreamCommands:PollInterval"] = "often",
       ["Whizbang:MultiStreamCommands:CompletedRunRetention"] = "forever",
-      ["Whizbang:MultiStreamCommands:PurgeInterval"] = "sometimes"
+      ["Whizbang:MultiStreamCommands:PurgeInterval"] = "sometimes",
+      ["Whizbang:MultiStreamCommands:NoHandlerRetryDelay"] = "later"
     }).Build();
     await using var sp = _build(after: s => s.AddSingleton<IConfiguration>(configuration));
 
@@ -126,6 +129,7 @@ public class MultiStreamCommandPostgresRegistrationTests {
     await Assert.That(options.PollInterval).IsEqualTo(defaults.PollInterval);
     await Assert.That(options.CompletedRunRetention).IsEqualTo(defaults.CompletedRunRetention);
     await Assert.That(options.PurgeInterval).IsEqualTo(defaults.PurgeInterval);
+    await Assert.That(options.NoHandlerRetryDelay).IsEqualTo(defaults.NoHandlerRetryDelay);
   }
 
   [Test]

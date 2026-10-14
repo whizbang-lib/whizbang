@@ -291,7 +291,7 @@ public class MultiStreamCommandWorkerLoopTests {
     private int _failureTaken;
 
     public Task<IReadOnlyList<MultiStreamRunCompletion>> CompleteAsync(
-        Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, CancellationToken cancellationToken) {
+        Guid instanceId, IReadOnlyList<MultiStreamOutcome> outcomes, int maxAttempts, TimeSpan releaseDelay, CancellationToken cancellationToken) {
       Interlocked.Increment(ref _completes);
       return Task.FromResult<IReadOnlyList<MultiStreamRunCompletion>>(Completions.TryDequeue(out var c) ? c : []);
     }
