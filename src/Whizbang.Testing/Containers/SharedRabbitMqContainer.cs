@@ -84,22 +84,9 @@ public static class SharedRabbitMqContainer {
     }
 
     try {
-      var psi = new ProcessStartInfo {
-        FileName = dockerPath,
-        Arguments = "info",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process == null) {
-        return false;
-      }
-
-      await process.WaitForExitAsync(cancellationToken);
-      return process.ExitCode == 0;
+      // `docker info` writes several kilobytes; ProcessRunner reads it while waiting so the check cannot stall (#1366).
+      var result = await ProcessRunner.RunAsync(dockerPath, "info", cancellationToken);
+      return result.ExitCode == 0;
     } catch {
       return false;
     }
