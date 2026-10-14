@@ -14,7 +14,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// A table rewrite under a least-privilege application role. <c>VACUUM FULL</c> needs the table owner's rights,
 /// and Postgres does not refuse a role without them: it warns, skips the table and reports success. So the
-/// rewrite is judged by the space it reclaims, never by the absence of an error.
+/// rewrite is judged by the space it reclaims, never by the absence of an error. Without a schema-initialization
+/// connection, a table the application role does not own is not attempted at all (#1351).
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
@@ -87,9 +88,9 @@ public class TableRewriteUnderDataOnlyRoleTests : EFCoreTestBase {
         await Assert.That(ratioAfter!.Value).IsLessThan(candidate.BloatRatio);
       } else {
         await Assert.That(after).IsEqualTo(before)
-          .Because("Postgres skips VACUUM FULL for a role that does not own the table, so nothing is reclaimed");
-        await Assert.That(ratioAfter!.Value).IsGreaterThanOrEqualTo(candidate.BloatRatio)
-          .Because("a rewrite that reclaimed nothing must not measure as an improvement, or the step reports it done and clears the request");
+          .Because("the application role does not own the table, so nothing is reclaimed");
+        await Assert.That(ratioAfter).IsNull()
+          .Because("a table the role does not own is reported and not attempted (#1351), so the step leaves the request queued");
       }
     } finally {
       await _execAsync($"DROP OWNED BY {role}; DROP ROLE {role};");

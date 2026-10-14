@@ -505,6 +505,7 @@ Whizbang:Workers:Maintenance:DestructionRetryBackoffSeconds
 Whizbang:Workers:Maintenance:Enabled
 Whizbang:Workers:Maintenance:IntervalMinutes
 Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
+Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes

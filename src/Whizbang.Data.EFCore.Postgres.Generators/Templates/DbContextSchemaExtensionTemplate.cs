@@ -727,15 +727,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // the commit, on a connection of its own, because DROP INDEX CONCURRENTLY cannot run in a transaction.
     await _reconcileManagedObjectsAsync(dbContext, reconcileSettings, segmentConnectionFactory, serviceProvider, logger, cancellationToken);
 
-    // Step 7: Run database maintenance (purge completed messages, etc.)
-    // Runs outside the transaction and advisory lock because:
-    // 1. VACUUM ANALYZE cannot run inside a transaction block
-    // 2. Maintenance is non-critical and should not hold the lock
-    // 3. Multiple pods can run maintenance concurrently without issues
-    // Gracefully handles failures so it never prevents service startup
-    logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await PerformMaintenanceAsync(
-      dbContext, logger, initConnectionString, serviceProvider, cancellationToken);
+    // No maintenance here (#1351). Schema initialization runs on every instance at every start, and a
+    // service that scales out on its backlog starts instances at the peak of a load: the purge runs in
+    // the maintenance cycle behind its busy check, and the work tables are vacuumed by the instance that
+    // acquires the maintainer duty (WorkTableVacuumOnAcquisition), on the table owner's connection.
   }
 
   /// <summary>
@@ -2209,66 +2204,6 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogWarning(ex,
         "The managed-object reconcile for {Schema} failed; nothing was dropped that it did not report, and the "
         + "next start tries again", "__SCHEMA__");
-    }
-  }
-
-  /// <summary>
-  /// Calls the perform_maintenance() PostgreSQL function on startup.
-  /// Logs results for each maintenance task. Runs VACUUM ANALYZE afterward.
-  /// Gracefully catches all errors — never prevents service startup.
-  /// </summary>
-  private static async Task PerformMaintenanceAsync(
-    __DBCONTEXT_FQN__ dbContext,
-    ILogger? logger,
-    string? initConnectionString,
-    IServiceProvider? serviceProvider,
-    CancellationToken cancellationToken) {
-    try {
-      // Call the maintenance function and log results
-      using var command = dbContext.Database.GetDbConnection().CreateCommand();
-      command.CommandText = @"SELECT * FROM __QUOTED_SCHEMA__.perform_maintenance()";
-      command.CommandTimeout = 30;
-
-      await dbContext.Database.OpenConnectionAsync(cancellationToken);
-
-      using var reader = await command.ExecuteReaderAsync(cancellationToken);
-      while (await reader.ReadAsync(cancellationToken)) {
-        var taskName = reader.GetString(0);
-        var rowsAffected = reader.GetInt64(1);
-        var durationMs = reader.GetDouble(2);
-        var status = reader.GetString(3);
-        logger?.LogDebug(
-          "Maintenance task {Task}: {Rows} rows affected in {Duration:F1}ms ({Status})",
-          taskName, rowsAffected, durationMs, status);
-      }
-
-      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined, so it needs a
-      // connection of its own. Same need, and the same sources in the same order, as schema SQL
-      // carrying a commit boundary: see SchemaBoundaryConnections for why a connection string is
-      // usually not among them.
-      Npgsql.NpgsqlConnection? vacuumConn = null;
-      try {
-        vacuumConn = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
-          dbContext, initConnectionString, serviceProvider)?.Invoke();
-
-        if (vacuumConn != null) {
-          await vacuumConn.OpenAsync(cancellationToken);
-          var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication" };
-          foreach (var table in tables) {
-            await using var cmd = vacuumConn.CreateCommand();
-            cmd.CommandTimeout = 120;
-            cmd.CommandText = @"VACUUM ANALYZE __QUOTED_SCHEMA__." + table;
-            await cmd.ExecuteNonQueryAsync(cancellationToken);
-          }
-          logger?.LogDebug("VACUUM ANALYZE completed for work coordination tables");
-        }
-      } finally {
-        if (vacuumConn != null) {
-          await vacuumConn.DisposeAsync();
-        }
-      }
-    } catch (Exception ex) {
-      logger?.LogWarning(ex, "Database maintenance failed (non-fatal, will retry on next startup)");
     }
   }
 

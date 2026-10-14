@@ -449,7 +449,9 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
         }
       }
       LogAcquired(_logger, role, instanceId, vote.Epoch);
-      var tenure = new Tenure(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow());
+      // Only a fresh grant took the role from anyone: "held" is this instance keeping what it had.
+      var previousHolder = vote.Outcome == "granted" ? vote.PreviousHolder : null;
+      var tenure = new Tenure(this, plan, role, vote.Epoch, instanceId, bridge, legacyKey, sendStarted, _time.GetUtcNow(), previousHolder);
       _tenures[role] = tenure;
       _metrics?.Held.Add(1, RoleAssignmentMetrics.RoleTag(role));
       return DutyAttempt.Granted(tenure.OpenHandle());
@@ -612,7 +614,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// shutdown.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA1001:Types that own disposable fields should be disposable", Justification = "The only disposable field is a SemaphoreSlim used as an async lock; it allocates nothing to release unless AvailableWaitHandle is read, which this type never does.")]
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A private tenure records everything one grant decided (role, epoch, holder, bridge session and key, renewal clock, acquisition time), and is constructed in exactly one place, from the vote that granted it.")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A private tenure records everything one grant decided (role, epoch, holder, bridge session and key, renewal clock, acquisition time, previous holder), and is constructed in exactly one place, from the vote that granted it.")]
   private sealed class Tenure(
       PgRoleElector elector,
       NotificationConnectionPlan plan,
@@ -622,7 +624,8 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       NpgsqlConnection? bridge,
       long legacyKey,
       long renewedAtTimestamp,
-      DateTimeOffset acquiredAt) {
+      DateTimeOffset acquiredAt,
+      Guid? previousHolder) {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long _renewedAtTimestamp = renewedAtTimestamp;
     private int _handles;
@@ -633,6 +636,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     public long Epoch => epoch;
     public Guid InstanceId => instanceId;
     public DateTimeOffset AcquiredAt => acquiredAt;
+    public Guid? PreviousHolder => previousHolder;
     public bool DrainRequested => _drainRequested;
 
     public Handle OpenHandle() {
@@ -771,6 +775,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     public string Duty => tenure.Role;
     public DateTimeOffset AcquiredAt => tenure.AcquiredAt;
     public long? Epoch => tenure.Epoch;
+    public Guid? PreviousHolderInstanceId => tenure.PreviousHolder;
     public bool DrainRequested => tenure.DrainRequested;
 
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>

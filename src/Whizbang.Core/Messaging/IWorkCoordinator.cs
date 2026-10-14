@@ -1540,6 +1540,25 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Runs <c>VACUUM ANALYZE</c> on the work tables (outbox, inbox, perspective events, message
+  /// deduplication), on a connection with the table owner's rights: the schema-initialization
+  /// connection when one is configured, otherwise the coordinator's own connection for a table its role
+  /// owns. A table it cannot vacuum is reported with the reason rather than vacuumed, because Postgres
+  /// skips a non-owner's <c>VACUUM</c> with only a warning and the call would otherwise read as done.
+  /// Default: nothing to vacuum.
+  /// </summary>
+  /// <remarks>
+  /// Called by the maintainer duty's holder when it acquires the duty (#1351), never by every instance
+  /// as it starts.
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
+  Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
+
+  /// <summary>
   /// Records this instance's lifecycle phase (and, when known, library version) on its own
   /// instance row, so peers and the status surface can observe it — the standby handshake cannot
   /// wait for a state nobody can see. Returns false when the instance has no row yet (early
@@ -3835,3 +3854,11 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);
+
+/// <summary>What vacuuming one work table did (#1351).</summary>
+/// <param name="TableName">Unqualified table name.</param>
+/// <param name="Vacuumed">True when <c>VACUUM ANALYZE</c> ran on a connection with the owner's rights.</param>
+/// <param name="SkippedReason">Why it did not run, naming the table and the role; null when it ran.</param>
+/// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
+public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);

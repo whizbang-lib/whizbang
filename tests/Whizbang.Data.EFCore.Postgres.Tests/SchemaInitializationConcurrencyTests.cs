@@ -262,17 +262,37 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task Maintenance_WithNpgsqlDataSource_SucceedsAsync(CancellationToken cancellationToken) {
-    // Arrange — the test base uses NpgsqlDataSource-based configuration (like Aspire/cloud).
-    // The fix ensures VACUUM ANALYZE gets the NpgsqlDataSource from the existing connection
-    // rather than creating a new NpgsqlConnection from GetConnectionString() which may lack auth.
+  public async Task Initialization_NeverVacuumsTheWorkTablesAsync(CancellationToken cancellationToken) {
+    // #1351: schema initialization runs on every instance at every start, so a vacuum there is a vacuum
+    // per instance start, at the peak of a scale-out. The work tables are vacuumed by the instance that
+    // acquires the maintainer duty instead. vacuum_count counts manual vacuums only, never autovacuum.
+    var before = await _workTableVacuumCountsAsync(cancellationToken);
     await using var context = CreateDbContext();
 
-    // Act — run initialization which includes the maintenance step with VACUUM ANALYZE
-    // If the NpgsqlDataSource fix works, this should complete without auth failures
-    await Assert.That(async () =>
-        await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken))
-      .ThrowsNothing();
+    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+
+    await Assert.That(await _workTableVacuumCountsAsync(cancellationToken)).IsEquivalentTo(before)
+      .Because("starting an instance is not acquiring the maintainer duty");
+  }
+
+  private async Task<Dictionary<string, long>> _workTableVacuumCountsAsync(CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync(cancellationToken);
+    await using (var flush = connection.CreateCommand()) {
+      flush.CommandText = "SELECT pg_stat_force_next_flush()";
+      await flush.ExecuteNonQueryAsync(cancellationToken);
+    }
+    await using var read = connection.CreateCommand();
+    read.CommandText = """
+      SELECT relname, vacuum_count FROM pg_stat_user_tables
+      WHERE schemaname = 'public' AND relname IN ('wh_outbox', 'wh_inbox', 'wh_perspective_events', 'wh_message_deduplication')
+      """;
+    var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+    await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      counts[reader.GetString(0)] = reader.GetInt64(1);
+    }
+    return counts;
   }
 
   [Test]
@@ -997,7 +1017,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     // This simulates providing a direct Postgres connection (bypassing PgBouncer)
     await using var context = CreateDbContext();
 
-    // Act — should succeed using the init connection string for VACUUM maintenance
+    // Act — should succeed using the init connection string
     await Assert.That(async () =>
         await context.EnsureWhizbangDatabaseInitializedAsync(
             initConnectionString: ConnectionString,
