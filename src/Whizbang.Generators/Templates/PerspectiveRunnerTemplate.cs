@@ -1695,6 +1695,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // event need not carry the largest id, and a cursor behind the frontier would re-flag
       // already-replayed events as stragglers on the next work item.
       LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // Reported rather than left for the caller to rediscover. The caller used to look the id above
+      // up among the rows its batch claimed, which a replay never applied, so the commit-sequence
+      // cursor stayed behind while the event-id cursor moved and the inversion detector then
+      // under-reported against the stale one (#1365).
+      LastCommitSequence = frontierCommitSequence,
       Status = resultStatus,
       RowChanged = rowChanged,
       EventsProcessed = eventsProcessed

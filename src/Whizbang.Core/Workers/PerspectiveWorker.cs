@@ -3091,16 +3091,23 @@ public partial class PerspectiveWorker(
 
     _cursorCache.Set(streamCtx.StreamId, streamCtx.PerspectiveName, result.LastEventId);
 
-    // Slice 26.11: track commit_sequence cursor alongside event_id. Find the latest
-    // commit_sequence among events that share the result's LastEventId (the runner applies
-    // events in order and reports the last). Falls back to keeping the prior cursor when
-    // the lookup is null (e.g., result.LastEventId not in rawByEventId, or no stamped row).
+    // Slice 26.11: track the commit_sequence cursor alongside the event_id one. The run reports where
+    // it ended; the batch lookup is the fallback for a run that does not.
+    //
+    // The lookup alone was wrong for any run that did not apply the batch's own rows. A replay
+    // re-reads the stream and finishes at its frontier, which is not a row this batch claimed, so the
+    // lookup came back empty, this cursor kept its pre-rewind value, and the event-id cursor moved
+    // without it. The detector reads the commit sequence whenever it has one, so it then judged every
+    // later batch against a position the rewind had already replaced, and under-reported: an event out
+    // of order against the new position read as forward progress and was dropped as already applied,
+    // leaving the row short with nothing pending to repair it (#1365).
     if (result.LastEventId != Guid.Empty) {
-      var lastSeq = batchContext.RawByEventId[result.LastEventId]
-        .Where(raw => raw.CommitSequence.HasValue)
-        .Select(raw => (long?)raw.CommitSequence!.Value)
-        .DefaultIfEmpty(null)
-        .Max();
+      var lastSeq = result.LastCommitSequence
+        ?? batchContext.RawByEventId[result.LastEventId]
+          .Where(raw => raw.CommitSequence.HasValue)
+          .Select(raw => (long?)raw.CommitSequence!.Value)
+          .DefaultIfEmpty(null)
+          .Max();
       if (lastSeq.HasValue) {
         _cursorCache.SetCommitSequence(streamCtx.StreamId, streamCtx.PerspectiveName, lastSeq);
       }
