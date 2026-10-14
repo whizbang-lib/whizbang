@@ -94,25 +94,37 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     var routeToOwners = store is { IsConfigured: true };
     var queue = sp.GetService<RebuildBackgroundQueue>();
 
+    var routing = new RebuildRouting(routeToOwners ? store : null, queue, sp, origin, message.RequestId);
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
-      if (routeToOwners && (streamFilter is not null || message.Mode == RebuildMode.InPlace)) {
-        var streams = streamFilter ?? await rebuilder.ResolveStreamIdsAsync(perspectiveName, cancellationToken);
-        if (streams is not null) {
-          await _recordRunAsync(store!, sp, perspectiveName, streams, origin, message.RequestId, cancellationToken);
-          continue;
-        }
-      }
-      if (streamFilter is null && message.Mode == RebuildMode.BlueGreen && queue is not null) {
-        queue.Enqueue(perspectiveName, origin);
-        LogRebuildQueued(logger, perspectiveName);
-        continue;
-      }
-      LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
-      var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, origin, cancellationToken);
-      _logRebuildResult(perspectiveName, result);
+      await _rebuildPerspectiveAsync(rebuilder, perspectiveName, message.Mode, streamFilter, routing, cancellationToken);
     }
   }
+
+  /// <summary>Where one perspective's rebuild runs: a run on the streams' owners, the background queue, or here.</summary>
+  private async Task _rebuildPerspectiveAsync(
+      IPerspectiveRebuilder rebuilder, string perspectiveName, RebuildMode mode, IReadOnlyList<Guid>? streamFilter,
+      RebuildRouting routing, CancellationToken cancellationToken) {
+    if (routing.Store is not null && (streamFilter is not null || mode == RebuildMode.InPlace)) {
+      var streams = streamFilter ?? await rebuilder.ResolveStreamIdsAsync(perspectiveName, cancellationToken);
+      if (streams is not null) {
+        await _recordRunAsync(routing.Store, routing.Services, perspectiveName, streams, routing.Origin, routing.RequestId, cancellationToken);
+        return;
+      }
+    }
+    if (streamFilter is null && mode == RebuildMode.BlueGreen && routing.Queue is not null) {
+      routing.Queue.Enqueue(perspectiveName, routing.Origin);
+      LogRebuildQueued(logger, perspectiveName);
+      return;
+    }
+    LogPerspectiveRebuildStarting(logger, perspectiveName, mode, streamFilter?.Count);
+    var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, mode, streamFilter, routing.Origin, cancellationToken);
+    _logRebuildResult(perspectiveName, result);
+  }
+
+  /// <summary>What a rebuild can be routed to: the multi-stream store when it is configured, and the background queue.</summary>
+  private sealed record RebuildRouting(
+    IMultiStreamCommandStore? Store, RebuildBackgroundQueue? Queue, IServiceProvider Services, RebuildOrigin Origin, Guid? RequestId);
 
   private async Task _recordRunAsync(
       IMultiStreamCommandStore store, IServiceProvider sp, string perspectiveName, IReadOnlyList<Guid> streams,
