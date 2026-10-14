@@ -94,6 +94,34 @@ public interface IPerspectiveSnapshotStore {
     Task.FromResult<(Guid SnapshotEventId, long? SnapshotCommitSequence, JsonDocument SnapshotData)?>(null);
 
   /// <summary>
+  /// Returns the latest snapshot of this stream that lies before <paramref name="beforeEventId"/> in the
+  /// stream's own order, compared by version rather than by commit sequence or by event id.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A rewind restores the model from the snapshot and replays forward from it, so the snapshot has to sit
+  /// before the triggering event in the stream. Neither of the other two anchors gives that order. Commit
+  /// sequence is assignment order, and a row stamped after the fact carries a sequence far below rows
+  /// written long before it, so "the latest snapshot below this commit sequence" can name a snapshot that is
+  /// <em>later</em> in the stream. Event id is a UUIDv7 whose ordering reflects generation time, which races
+  /// the same way. Resuming at a snapshot past the triggering event skips every event in between and leaves
+  /// the row permanently short of them (#1355, and #1352 for the replay side of the same wrong assumption).
+  /// Version is the stream's own counter, unique per stream, and cannot invert.
+  /// </para>
+  /// <para>
+  /// A snapshot that records no version is never returned, and neither is a snapshot whose triggering event
+  /// cannot be placed in the stream. Those predate the column, so nothing can order them, and the honest
+  /// answer is "no usable snapshot": that costs a fuller replay and reproduces the row. The opposite guess
+  /// silently skips events, and a read model short of events has nothing pending to repair it.
+  /// </para>
+  /// <para>Default implementation returns null so stores that do not record a version keep compiling.</para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/snapshots</docs>
+  Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeEventInStreamOrderAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) =>
+    Task.FromResult<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?>(null);
+
+  /// <summary>
   /// Checks whether any snapshot exists for a stream/perspective pair.
   /// Cheap index-scan check used for bootstrap detection.
   /// </summary>

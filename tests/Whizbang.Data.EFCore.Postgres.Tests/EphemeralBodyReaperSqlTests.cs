@@ -183,6 +183,90 @@ public class EphemeralBodyReaperSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task Reap_SnapshotEarlierInTheStream_DoesNotCoverTheBodyAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);   // isolate the coverage gate from the grace window
+
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.StreamOrderCoverageEvent";
+    await _seedPerspectiveAssociationAsync(connection, eventType, "CoverPerspective");
+    await _commitAsync(connection, Guid.NewGuid(), eventId, streamId, eventType, flags: 8);
+
+    // The event sits at version 5 of its stream and carries a LOW commit sequence, which is what a
+    // retroactive stamping pass produces: assignment order runs opposite to stream order.
+    await using (var c = connection.CreateCommand()) {
+      c.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id; " +
+        "UPDATE wh_event_store SET commit_sequence = 10, version = 5 WHERE event_id = @id";
+      c.Parameters.AddWithValue("id", eventId);
+      await c.ExecuteNonQueryAsync();
+    }
+
+    // A snapshot taken EARLIER in the stream, at version 2, whose commit sequence happens to be higher.
+    await using (var snap = connection.CreateCommand()) {
+      snap.CommandText = "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence, snapshot_version) " +
+        "VALUES (@sid, 'CoverPerspective', @eid, '{}'::jsonb, 1, 50, 2)";
+      snap.Parameters.AddWithValue("sid", streamId);
+      snap.Parameters.AddWithValue("eid", Guid.NewGuid());
+      await snap.ExecuteNonQueryAsync();
+    }
+
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("the snapshot is at version 2 and the event at version 5, so the snapshot is BEFORE the event "
+             + "in the stream and a rewind through it still has to replay this body. Its commit sequence is "
+             + "above the event's, so a gate comparing commit sequences reads it as covering and releases the "
+             + "only copy of an event the perspective still needs");
+
+    // Move the snapshot to version 5 and it genuinely covers the event, so the body is released.
+    await using (var advance = connection.CreateCommand()) {
+      advance.CommandText = "UPDATE wh_perspective_snapshots SET snapshot_version = 5 WHERE stream_id = @sid";
+      advance.Parameters.AddWithValue("sid", streamId);
+      await advance.ExecuteNonQueryAsync();
+    }
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(0L)
+      .Because("a snapshot at or past the event in the stream is a rewind floor past this body, so the gate "
+             + "releases it. The gate holds bodies it cannot place, it does not refuse to release any");
+  }
+
+  [Test]
+  public async Task Reap_SnapshotRecordingNoVersion_DoesNotCoverTheBodyAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    await _setGraceSecondsAsync(connection, 0);
+
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string eventType = "Whizbang.Tests.NoVersionCoverageEvent";
+    await _seedPerspectiveAssociationAsync(connection, eventType, "CoverPerspective");
+    await _commitAsync(connection, Guid.NewGuid(), eventId, streamId, eventType, flags: 8);
+
+    await using (var c = connection.CreateCommand()) {
+      c.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id; " +
+        "UPDATE wh_event_store SET commit_sequence = 3, version = 1 WHERE event_id = @id";
+      c.Parameters.AddWithValue("id", eventId);
+      await c.ExecuteNonQueryAsync();
+    }
+
+    // A snapshot written before the version was recorded, whose commit sequence does cover the event.
+    await using (var snap = connection.CreateCommand()) {
+      snap.CommandText = "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
+        "VALUES (@sid, 'CoverPerspective', @eid, '{}'::jsonb, 1, 3)";
+      snap.Parameters.AddWithValue("sid", streamId);
+      snap.Parameters.AddWithValue("eid", eventId);
+      await snap.ExecuteNonQueryAsync();
+    }
+
+    await _runMaintenanceAsync(connection);
+    await Assert.That(await _eventBodyCountAsync(connection, eventId)).IsEqualTo(1L)
+      .Because("a snapshot that records no version cannot be placed in the stream, so nothing shows it is a "
+             + "rewind floor past this event. Keeping the body costs disk until the next snapshot records a "
+             + "version; releasing it on a guess destroys the only copy");
+  }
+
+  [Test]
   public async Task Reap_EphemeralBody_GatedWhilePending_ReapedAfterConsumedAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openAsync(dbContext);

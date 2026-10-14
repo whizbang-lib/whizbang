@@ -61,6 +61,15 @@ public static class PerspectiveSnapshotsSchema {
         Name: Columns.SNAPSHOT_COMMIT_SEQUENCE,
         DataType: WhizbangDataType.BIG_INT,
         Nullable: true
+      ),
+      // The stream version this snapshot was taken at, which is what places it in the stream. Commit
+      // sequence is assignment order and inverts against the stream for retroactively stamped rows, so
+      // it cannot answer "is this snapshot before that event". NULL on rows written before migration 209;
+      // selection treats a NULL as no usable snapshot and replays further rather than guessing.
+      new ColumnDefinition(
+        Name: Columns.SNAPSHOT_VERSION,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: true
       )
     ),
     Indexes: [
@@ -68,16 +77,20 @@ public static class PerspectiveSnapshotsSchema {
         Name: "idx_perspective_snapshots_lookup",
         Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SEQUENCE_NUMBER]
       ),
+      // These partial indexes work against columns added after the table (048, 209). A database that
+      // pre-dates either one gets the column backfilled by PostgresSchemaBuilder.BuildCreateTable's
+      // per-column `ALTER TABLE ADD COLUMN IF NOT EXISTS` pass, which runs BEFORE the CREATE INDEX, so
+      // index creation is safe on both fresh and upgraded databases.
       new IndexDefinition(
         Name: "idx_perspective_snapshots_commit_sequence",
         Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SNAPSHOT_COMMIT_SEQUENCE],
         WhereClause: $"{Columns.SNAPSHOT_COMMIT_SEQUENCE} IS NOT NULL"
+      ),
+      new IndexDefinition(
+        Name: "idx_perspective_snapshots_version",
+        Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SNAPSHOT_VERSION],
+        WhereClause: $"{Columns.SNAPSHOT_VERSION} IS NOT NULL"
       )
-      // This partial index works against the snapshot_commit_sequence column added
-      // in migration 048. Existing databases that pre-date that migration get the
-      // column backfilled by PostgresSchemaBuilder.BuildCreateTable's per-column
-      // `ALTER TABLE ADD COLUMN IF NOT EXISTS` pass that runs BEFORE the CREATE
-      // INDEX, so the index creation is safe on both fresh and upgraded DBs.
     ]
   );
 
@@ -93,5 +106,7 @@ public static class PerspectiveSnapshotsSchema {
     public const string CREATED_AT = "created_at";
     /// <summary>Slice 26.11 — commit_sequence as of this snapshot (added via mig 048).</summary>
     public const string SNAPSHOT_COMMIT_SEQUENCE = "snapshot_commit_sequence";
+    /// <summary>The stream version this snapshot was taken at, which is what orders it against the stream (added via mig 209).</summary>
+    public const string SNAPSHOT_VERSION = "snapshot_version";
   }
 }
