@@ -609,6 +609,18 @@ public class PerspectiveSnapshotAndRewindTests {
     await Assert.That(actual).IsNull();
   }
 
+  [Test]
+  public async Task GetLatestSnapshotBeforeEventInStreamOrderAsync_DefaultImpl_ReturnsNullAsync() {
+    IPerspectiveSnapshotStore store = new LegacyOnlySnapshotStore { Result = null };
+
+    var actual = await store.GetLatestSnapshotBeforeEventInStreamOrderAsync(Guid.NewGuid(), "p", Guid.NewGuid());
+
+    await Assert.That(actual).IsNull()
+      .Because("a store that records no stream version cannot place a snapshot against an event, and the "
+             + "default says so rather than handing back one it cannot order. A default that guessed would "
+             + "put every such store on the restore point the version anchor exists to stop using (#1355)");
+  }
+
   /// <summary>
   /// Minimal stub implementing only the legacy interface methods. Does NOT override
   /// the production forensic G7 sibling — so calls fall through to the interface default-impl, which is
