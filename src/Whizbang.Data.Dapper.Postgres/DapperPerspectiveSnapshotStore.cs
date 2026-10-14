@@ -26,14 +26,20 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(ct);
 
+    // snapshot_version is read from the event the snapshot was taken at rather than passed in: the
+    // version is a property of that event, so every caller would otherwise look up the same number and
+    // one that forgot would write a row nothing can place in the stream. A snapshot_event_id with no row
+    // in the event store yields NULL, which selection and the reap gate both read as "cannot be placed".
     const string sql = """
-      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version)
       VALUES (@p_stream_id, @p_perspective_name, @p_snapshot_event_id, @p_snapshot_data::jsonb,
         COALESCE(
           (SELECT MAX(sequence_number) + 1 FROM wh_perspective_snapshots
-           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1))
+           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1),
+        (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_snapshot_event_id))
       ON CONFLICT (stream_id, perspective_name, snapshot_event_id) DO UPDATE
       SET snapshot_data = EXCLUDED.snapshot_data,
+          snapshot_version = COALESCE(EXCLUDED.snapshot_version, wh_perspective_snapshots.snapshot_version),
           created_at = NOW()
       """;
 
@@ -74,6 +80,50 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     var snapshotEventId = reader.GetGuid(0);
     var snapshotJson = reader.GetString(1);
     return (snapshotEventId, JsonDocument.Parse(snapshotJson));
+  }
+
+  /// <summary>
+  /// Returns the latest snapshot that lies before <paramref name="beforeEventId"/> in the stream's own
+  /// order. Version is the stream's own counter and cannot invert; commit sequence and event id both can,
+  /// so neither answers "is this snapshot before that event" within a single stream (#1355).
+  /// </summary>
+  /// <remarks>
+  /// Two NULL cases fall out of the SQL and both mean "no usable snapshot": a snapshot written before the
+  /// column existed, excluded explicitly, and a triggering event with no row in the event store, whose
+  /// subquery yields NULL so the comparison matches nothing. Both cost a fuller replay, which reproduces
+  /// the row. Returning a snapshot on a guess skips the events between it and the trigger, and a read
+  /// model short of events has nothing pending to repair it.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/snapshots</docs>
+  public async Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeEventInStreamOrderAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+
+    const string sql = """
+      SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data
+      FROM wh_perspective_snapshots s
+      WHERE s.stream_id = @p_stream_id
+        AND s.perspective_name = @p_perspective_name
+        AND s.snapshot_version IS NOT NULL
+        AND s.snapshot_version < (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_before_event_id)
+      ORDER BY s.snapshot_version DESC
+      LIMIT 1
+      """;
+
+    await using var cmd = new NpgsqlCommand(sql, connection);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
+    cmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    if (!await reader.ReadAsync(ct)) {
+      return null;
+    }
+    var snapshotEventId = reader.GetGuid(0);
+    int? snapshotVersion = await reader.IsDBNullAsync(1, ct) ? null : reader.GetInt32(1);
+    var snapshotJson = reader.GetString(2);
+    return (snapshotEventId, snapshotVersion, JsonDocument.Parse(snapshotJson));
   }
 
   public async Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {

@@ -731,10 +731,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "AND es.created_at < NOW() - (COALESCE(g.grace_seconds, " +
       $"    (SELECT setting_value::int FROM {settings} WHERE setting_key = 'ephemeral_rewind_grace_seconds'), 300) " +
       "  * INTERVAL '1 second') " +
-      "AND es.commit_sequence IS NOT NULL AND c.last_event_id IS NOT NULL " +
+      "AND c.last_event_id IS NOT NULL " +
       $"AND NOT EXISTS (SELECT 1 FROM {perspEvents} pe WHERE pe.event_id = eb.event_id AND pe.processed_at IS NULL) " +
+      // 209: coverage is read by version, the stream's own counter, not by commit sequence. Commit
+      // sequence is assignment order and inverts against the stream for retroactively stamped rows, so a
+      // snapshot EARLIER in the stream could read as covering and this query would skip driving the
+      // snapshot that actually covers the body. The "commit_sequence IS NOT NULL" guard went with it: it
+      // existed only to hold unstamped events away from the old anchor, and version is never null, so
+      // keeping it would leave an unstamped event reapable by the gate yet never driven a snapshot here.
       $"AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
-      "  AND s.perspective_name = ma.target_name AND s.snapshot_commit_sequence >= es.commit_sequence)";
+      "  AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version)";
 #pragma warning restore S2077
     var list = new List<EphemeralSnapshotTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1801,7 +1807,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       $"AND NOT EXISTS (SELECT 1 FROM {assoc} ma WHERE ma.normalized_message_type = es.event_type " +
       "  AND ma.association_type = 'perspective' " +
       $"  AND NOT EXISTS (SELECT 1 FROM {snaps} s WHERE s.stream_id = es.stream_id " +
-      "    AND s.perspective_name = ma.target_name AND s.snapshot_commit_sequence >= es.commit_sequence))";
+      // 209: by version, matching the migration. This query answers "which bodies will this cycle reap",
+      // so any drift from the DELETE it mirrors reports bodies that survive or hides bodies that go.
+      "    AND s.perspective_name = ma.target_name AND s.snapshot_version >= es.version))";
 #pragma warning restore S2077
     var list = new List<EphemeralDestructionTarget>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);

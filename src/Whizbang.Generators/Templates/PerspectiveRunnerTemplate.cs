@@ -1290,51 +1290,37 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedAt = DateTimeOffset.UtcNow;
 
     if (_snapshotStore is not null) {
-      // Slice 26.11: prefer commit-sequence anchor for snapshot selection so live-apply
-      // and replay paths are fully deterministic. Falls back to event_id anchor when the
-      // commit_sequence isn't available (cache or events unstamped).
-      if (triggeringCommitSequence.HasValue) {
-        var seqSnapshot = await _snapshotStore.GetLatestSnapshotBeforeCommitSequenceAsync(
-            streamId, perspectiveName, triggeringCommitSequence.Value, cancellationToken);
-        if (seqSnapshot.HasValue) {
-          snapshotModel = FromSnapshotJson(seqSnapshot.Value.SnapshotData);
-          if (snapshotModel is not null) {
-            replayFromEventId = seqSnapshot.Value.SnapshotEventId;
-            hasSnapshot = true;
-            _logger.LogWarning(
-                "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
-                perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
-          } else {
-            _logger.LogWarning(
-                "Commit-sequence snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; rebuilding from events",
-                perspectiveName, streamId);
-          }
-        }
-      }
+      // The snapshot has to sit before the triggering event IN THE STREAM, because the rewind restores
+      // it and replays forward from there. Version is the only anchor that gives that order within one
+      // stream. Commit sequence is assignment order and event id is UUIDv7 generation order, and both
+      // run backward against the stream for retroactively stamped rows, so either can name a snapshot
+      // LATER in the stream than the trigger (#1355; #1352 is the replay side of the same assumption).
+      // Resuming there skips every event in between and leaves the row permanently short of them.
+      //
+      // There is deliberately no fallback to the two older anchors. A fallback is not a safety net here,
+      // it is the same wrong answer arriving one branch later: it fires exactly when the version anchor
+      // declined, which is exactly when the snapshot cannot be placed in the stream. A full replay costs
+      // more and reproduces the row; a wrong restore point leaves a read model nothing is pending to repair.
+      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeEventInStreamOrderAsync(
+          streamId, perspectiveName, triggeringEventId, cancellationToken);
 
-      if (!hasSnapshot) {
-        var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
-            streamId, perspectiveName, triggeringEventId, cancellationToken);
-
-        if (snapshot.HasValue) {
-          snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
-          if (snapshotModel is not null) {
-            replayFromEventId = snapshot.Value.SnapshotEventId;
-            hasSnapshot = true;
-
-            _logger.LogWarning(
-                "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
-                perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
-          } else {
-            _logger.LogWarning(
-                "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
-                perspectiveName, streamId, triggeringEventId);
-          }
+      if (snapshot.HasValue) {
+        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+        if (snapshotModel is not null) {
+          replayFromEventId = snapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
+              perspectiveName, streamId, snapshot.Value.SnapshotEventId, snapshot.Value.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
         } else {
           _logger.LogWarning(
-              "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+              "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
               perspectiveName, streamId, triggeringEventId);
         }
+      } else {
+        _logger.LogWarning(
+            "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
+            perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
       }
     } else {
       _logger.LogWarning(
