@@ -4287,15 +4287,28 @@ public partial class PerspectiveWorker(
     activity?.SetTag("whizbang.stream.id", streamId.ToString());
     activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.ToString());
 
+    // Counted before the replay runs, so a rewind that never returns is still visible as attempted.
+    // Everything after this point either completes it or fails it, and the gauge is released in
+    // either case, so triggered = completed + failed + in flight holds for an operator reading them.
+    _metrics?.RewindsTriggered.Add(1,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+    _metrics?.RewindStarted();
+
     var runnerSw = System.Diagnostics.Stopwatch.StartNew();
     PerspectiveCursorCompletion result;
     try {
       result = await runner.RewindAndRunAsync(
         streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _metrics?.RewindsFailed.Add(1,
+        new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
       activity?.SetTag("whizbang.perspective.rewind.error", ex.Message);
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       throw;
+    } finally {
+      // Leaves flight whether it completed, threw or was cancelled. A gauge released only on the
+      // success path reports phantom rewinds running forever.
+      _metrics?.RewindFinished();
     }
 
     var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
