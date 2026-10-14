@@ -49,11 +49,27 @@ public class MultiStreamCommandPostgresRegistrationTests {
   }
 
   [Test]
+  public async Task RegisteredTwice_HostsOneWorkerAsync() {
+    await using var sp = _build(after: s => s.AddWhizbangPostgresNotifications());
+
+    await Assert.That(sp.GetServices<IHostedService>().OfType<MultiStreamCommandWorker>().Count()).IsEqualTo(1)
+      .Because("two workers on one instance would claim the same streams twice over");
+  }
+
+  [Test]
   public async Task AHandlerRegisteredBeforeTheDriver_StillGetsThePostgresStoreAsync() {
     await using var sp = _build(before: s => s.AddMultiStreamCommandHandler<RegistrationProbeCommand, RegistrationProbeHandler>());
 
     await Assert.That(sp.GetRequiredService<IMultiStreamCommandStore>()).IsTypeOf<PgMultiStreamCommandStore>()
       .Because("the handler's null default must give way to the driver's store, or every command would be refused");
+  }
+
+  [Test]
+  public async Task TheNullAssignmentSourceRegisteredFirst_GivesWayToTheElectedAssignersCacheAsync() {
+    await using var sp = _build(before: s => s.AddSingleton<IPartitionAssignmentSource>(NullPartitionAssignmentSource.Instance));
+
+    await Assert.That(sp.GetRequiredService<IPartitionAssignmentSource>()).IsSameReferenceAs(sp.GetRequiredService<PartitionAssignmentCache>())
+      .Because("a host that also wires a driver without an assigner must still claim under the published assignment");
   }
 
   [Test]

@@ -10,6 +10,8 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Workers;
+using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.Postgres.MultiStream;
 
@@ -21,18 +23,41 @@ namespace Whizbang.Data.Postgres.MultiStream;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandPostgresRegistrationTests.cs:AddWhizbangPostgresNotifications_WiresTheStoreAndTheWorkerAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MultiStream/MultiStreamCommandPostgresRegistrationTests.cs:AHandlerRegisteredBeforeTheDriver_StillGetsThePostgresStoreAsync</tests>
 internal static class MultiStreamCommandRegistration {
+  /// <summary>The notifications path: the store opens connections as the notification stores do, and the worker is woken
+  /// by new-run notices on the shared listen connection.</summary>
   internal static IServiceCollection AddWhizbangMultiStreamCommands(this IServiceCollection services) {
+    services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore, PgMultiStreamCommandStore>();
+    _addWorker(services);
+    services.AddHostedService<MultiStreamCommandSubscriber>();
+    return services;
+  }
+
+  /// <summary>The Dapper path: the store opens connections from the driver's connection string, and with no shared listen
+  /// connection the worker finds new runs by polling.</summary>
+  internal static IServiceCollection AddWhizbangMultiStreamCommands(this IServiceCollection services, string connectionString) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore>(sp => new PgMultiStreamCommandStore(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = connectionString }),
+      sp.GetRequiredService<IConfiguration>(),
+      sp.GetService<IOptions<ClaimWorkerOptions>>()));
+    _addWorker(services);
+    return services;
+  }
+
+  // The worker requires the schema gate, and this registration deliberately does not add one: the worker pipeline
+  // registers the gate its initializer marks ready. A gate added here would never be marked ready in a host without
+  // that initializer, and every other worker that waits on a registered gate would wait on it forever.
+  private static void _addWorker(IServiceCollection services) {
     services.AddOptions<MultiStreamCommandOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<MultiStreamCommandOptions>, ConfigureMultiStreamCommandOptionsFromConfiguration>());
-    services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore, PgMultiStreamCommandStore>();
-    // The worker requires the schema gate, and this registration deliberately does not add one: the worker pipeline
-    // registers the gate its initializer marks ready. A gate added here would never be marked ready in a host without
-    // that initializer, and every other worker that waits on a registered gate would wait on it forever.
-    services.TryAddSingleton<MultiStreamCommandWorker>();
+    // A driver without the elected assigner ranks the live instances in every claim; the assigner replaces this.
+    services.TryAddSingleton<IPartitionAssignmentSource>(NullPartitionAssignmentSource.Instance);
+    if (services.Any(d => d.ServiceType == typeof(MultiStreamCommandWorker))) {
+      return;
+    }
+    services.AddSingleton<MultiStreamCommandWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<MultiStreamCommandWorker>());
-    services.AddHostedService<MultiStreamCommandSubscriber>();
-    return services;
   }
 }
 

@@ -130,6 +130,7 @@ Whizbang:MultiStreamCommands:CompletedRunRetention
 Whizbang:MultiStreamCommands:Enabled
 Whizbang:MultiStreamCommands:Lease
 Whizbang:MultiStreamCommands:MaxAttempts
+Whizbang:MultiStreamCommands:NoHandlerRetryDelay
 Whizbang:MultiStreamCommands:PollInterval
 Whizbang:MultiStreamCommands:PurgeInterval
 Whizbang:Offloads:AzureBlob:*:ConnectionString
