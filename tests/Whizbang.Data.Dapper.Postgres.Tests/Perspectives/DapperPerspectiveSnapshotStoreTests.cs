@@ -209,6 +209,81 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
 
   #endregion
 
+
+  #region GetLatestSnapshotBeforeEventInStreamOrderAsync Tests
+
+  [Test]
+  public async Task GetLatestSnapshotBeforeEventInStreamOrder_SnapshotLaterInTheStream_IsNotSelectedAsync() {
+    var streamId = TrackedGuid.New().Value;
+    const string perspectiveName = "StreamOrderPerspective";
+    // Stream order runs first, second, third. Commit sequence runs the other way, which is what a
+    // retroactive stamping pass produces and what makes commit sequence unusable as stream order.
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    var third = TrackedGuid.New().Value;
+    await _appendEventAsync(streamId, first, version: 1, commitSequence: 500);
+    await _appendEventAsync(streamId, second, version: 2, commitSequence: 100);
+    await _appendEventAsync(streamId, third, version: 3, commitSequence: 200);
+
+    // Written through the store, so this also covers the store recording the snapshot's version.
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, second, JsonDocument.Parse("""{"at":2}"""));
+
+    var beforeFirst = await _store.GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, first);
+    await Assert.That(beforeFirst.HasValue).IsFalse()
+      .Because("the only snapshot sits at version 2, which is AFTER the first event in the stream; "
+             + "restoring from it and replaying forward would never apply the first event at all. Its "
+             + "commit sequence is below the first event's, so answering by commit sequence returns it");
+
+    var beforeThird = await _store.GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, third);
+    await Assert.That(beforeThird.HasValue).IsTrue()
+      .Because("the snapshot at version 2 is genuinely before the third event, so a rewind to the third "
+             + "event may restore from it. A selection that never returns anything is not a fix, it is a "
+             + "permanent full replay");
+    await Assert.That(beforeThird!.Value.SnapshotEventId).IsEqualTo(second);
+    await Assert.That(beforeThird.Value.SnapshotVersion).IsEqualTo(2)
+      .Because("the store records the version of the event the snapshot was taken at, read from that event");
+  }
+
+  [Test]
+  public async Task GetLatestSnapshotBeforeEventInStreamOrder_EventTheStoreCannotPlace_FallsBackToEventIdOrderAsync() {
+    var streamId = TrackedGuid.New().Value;
+    const string perspectiveName = "StreamOrderPerspective";
+    // No events are appended, so neither the snapshot's event nor the triggering event has a row in the
+    // event store: this models a host whose events live somewhere this store cannot see.
+    var earlier = TrackedGuid.New().Value;
+    var trigger = TrackedGuid.New().Value;
+    await _store.CreateSnapshotAsync(streamId, perspectiveName, earlier, JsonDocument.Parse("""{"at":"unknown"}"""));
+
+    var selected = await _store.GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, perspectiveName, trigger);
+    await Assert.That(selected.HasValue).IsTrue()
+      .Because("a store that keeps no version for the event keeps none for any event, so it has no "
+             + "retroactive stamping to invert against versions either. Event id order is the only order "
+             + "it has and is as sound here as it ever was. Refusing would replay every rewind from event "
+             + "zero for a store that never had the defect");
+    await Assert.That(selected!.Value.SnapshotEventId).IsEqualTo(earlier);
+    await Assert.That(selected.Value.SnapshotVersion).IsNull()
+      .Because("the snapshot genuinely records no version, and the result says so rather than inventing one");
+  }
+
+  /// <summary>Puts an event in the stream at an explicit version, with a commit sequence of its own.</summary>
+  private async Task _appendEventAsync(Guid streamId, Guid eventId, int version, long commitSequence) {
+    await using var connection = new Npgsql.NpgsqlConnection(_testBase.TestConnectionString);
+    await connection.OpenAsync();
+    await using var cmd = connection.CreateCommand();
+    // No event_data: migration 078 dropped the inline body columns once bodies moved to wh_event_body.
+    cmd.CommandText = """
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, commit_sequence)
+      VALUES (@id, @stream, @stream, 'StreamOrderAggregate', 'Whizbang.Tests.StreamOrderEvent', @version, @cs)
+      """;
+    cmd.Parameters.AddWithValue("id", eventId);
+    cmd.Parameters.AddWithValue("stream", streamId);
+    cmd.Parameters.AddWithValue("version", version);
+    cmd.Parameters.AddWithValue("cs", commitSequence);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  #endregion
+
   #region GetLatestSnapshotBeforeAsync Tests
 
   [Test]

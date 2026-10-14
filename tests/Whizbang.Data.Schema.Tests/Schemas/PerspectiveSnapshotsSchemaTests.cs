@@ -28,7 +28,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectColumnsAsync() {
     var columns = PerspectiveSnapshotsSchema.Table.Columns;
 
-    await Assert.That(columns).Count().IsEqualTo(7);
+    await Assert.That(columns).Count().IsEqualTo(8);
 
     var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
@@ -64,6 +64,14 @@ public class PerspectiveSnapshotsSchemaTests {
     var snapshotCommitSequence = columns.First(c => c.Name == "snapshot_commit_sequence");
     await Assert.That(snapshotCommitSequence.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
     await Assert.That(snapshotCommitSequence.Nullable).IsTrue();
+
+    // #1355 — the stream version the snapshot was taken at, which is what places it in the stream.
+    var snapshotVersion = columns.First(c => c.Name == "snapshot_version");
+    await Assert.That(snapshotVersion.DataType).IsEqualTo(WhizbangDataType.INTEGER)
+      .Because("it holds a stream version, which is the same type the event store's version column is");
+    await Assert.That(snapshotVersion.Nullable).IsTrue()
+      .Because("rows written before migration 209 record no version, and both readers treat a null as a "
+             + "snapshot they cannot place rather than guessing at its position");
   }
 
   [Test]
@@ -83,7 +91,7 @@ public class PerspectiveSnapshotsSchemaTests {
   public async Task Table_HasCorrectIndexesAsync() {
     var indexes = PerspectiveSnapshotsSchema.Table.Indexes;
 
-    await Assert.That(indexes).Count().IsEqualTo(2);
+    await Assert.That(indexes).Count().IsEqualTo(3);
 
     var lookupIndex = indexes.First(i => i.Name == "idx_perspective_snapshots_lookup");
     await Assert.That(lookupIndex.Columns).Count().IsEqualTo(3);
@@ -98,6 +106,16 @@ public class PerspectiveSnapshotsSchemaTests {
     await Assert.That(commitSeqIndex.Columns[1]).IsEqualTo("perspective_name");
     await Assert.That(commitSeqIndex.Columns[2]).IsEqualTo("snapshot_commit_sequence");
     await Assert.That(commitSeqIndex.WhereClause).IsEqualTo("snapshot_commit_sequence IS NOT NULL");
+
+    // #1355 — partial index on version, which is what rewind selection now orders by.
+    var versionIndex = indexes.First(i => i.Name == "idx_perspective_snapshots_version");
+    await Assert.That(versionIndex.Columns).Count().IsEqualTo(3);
+    await Assert.That(versionIndex.Columns[0]).IsEqualTo("stream_id");
+    await Assert.That(versionIndex.Columns[1]).IsEqualTo("perspective_name");
+    await Assert.That(versionIndex.Columns[2]).IsEqualTo("snapshot_version");
+    await Assert.That(versionIndex.WhereClause).IsEqualTo("snapshot_version IS NOT NULL")
+      .Because("selection filters the nulls out, so indexing them would carry every legacy row for "
+             + "a query that can never return one");
   }
 
   [Test]
@@ -109,6 +127,8 @@ public class PerspectiveSnapshotsSchemaTests {
     var snapshotData = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_DATA;
     var sequenceNumber = PerspectiveSnapshotsSchema.Columns.SEQUENCE_NUMBER;
     var createdAt = PerspectiveSnapshotsSchema.Columns.CREATED_AT;
+    var snapshotCommitSequence = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_COMMIT_SEQUENCE;
+    var snapshotVersion = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_VERSION;
 
     await Assert.That(streamId).IsEqualTo("stream_id");
     await Assert.That(perspectiveName).IsEqualTo("perspective_name");
@@ -116,6 +136,10 @@ public class PerspectiveSnapshotsSchemaTests {
     await Assert.That(snapshotData).IsEqualTo("snapshot_data");
     await Assert.That(sequenceNumber).IsEqualTo("sequence_number");
     await Assert.That(createdAt).IsEqualTo("created_at");
+    await Assert.That(snapshotCommitSequence).IsEqualTo("snapshot_commit_sequence");
+    await Assert.That(snapshotVersion).IsEqualTo("snapshot_version")
+      .Because("the constant and the column name are what the stores write and read through; a "
+             + "mismatch is a runtime 42703 nothing catches at build time");
   }
 }
 
