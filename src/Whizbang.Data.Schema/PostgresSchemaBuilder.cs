@@ -156,6 +156,50 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   }
 
   /// <summary>
+  /// Builds the CREATE INDEX statements a table's ensure may assert: every declared index except one
+  /// that names a column the ensure does not assert.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A <see cref="ColumnDefinition.BackfillExempt"/> column is one whose lifecycle belongs to a forward
+  /// migration, typically because a migration drops it. The ensure deliberately skips re-adding it. An
+  /// index over that column has to be skipped for the same reason and was not: the ensure runs before
+  /// the migrations on every startup, so the boot after a migration dropped the column, CREATE INDEX
+  /// named a column that no longer existed and the service failed to start and never became ready. A
+  /// fresh database does not show it, because CREATE TABLE still declares the column, which is what
+  /// made it look like a regression from nowhere one restart after a clean deploy.
+  /// </para>
+  /// <para>
+  /// The rule this encodes: the ensure never asserts an index over a column it does not assert. Until
+  /// now that was a convention kept by hand, by remembering to delete the index from the descriptor at
+  /// the same time as marking the column exempt. Nothing enforced it, and forgetting it broke startup
+  /// rather than anything earlier and cheaper.
+  /// </para>
+  /// </remarks>
+  /// <param name="table">Table whose indexes to emit.</param>
+  /// <param name="prefix">Infrastructure table-name prefix.</param>
+  /// <param name="schemaName">Schema the table lives in.</param>
+  /// <docs>contributors/data-engines/writing-migrations</docs>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndexes_IndexOverABackfillExemptColumn_IsNotAssertedAsync</tests>
+  public string BuildCreateIndexes(TableDefinition table, string prefix, string? schemaName = null) {
+    ArgumentNullException.ThrowIfNull(table);
+    var exempt = new HashSet<string>(
+      table.Columns.Where(c => c.BackfillExempt).Select(c => c.Name),
+      StringComparer.OrdinalIgnoreCase);
+
+    var sb = new StringBuilder();
+    foreach (var index in table.Indexes) {
+      // An index is asserted only when every column it names is. One exempt column is enough to make
+      // the whole statement fail, so one is enough to skip it.
+      if (index.Columns.Any(exempt.Contains)) {
+        continue;
+      }
+      sb.AppendLine(BuildCreateIndex(index, table.Name, prefix, schemaName));
+    }
+    return sb.ToString();
+  }
+
+  /// <summary>
   /// Builds a CREATE INDEX statement for a single index definition.
   /// </summary>
   /// <param name="index">Index definition to convert to SQL</param>
@@ -249,10 +293,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       sb.AppendLine($"-- {description}");
       sb.AppendLine(BuildCreateTable(table, config.InfrastructurePrefix, config.SchemaName));
 
-      // Build indexes for this table
-      foreach (var index in table.Indexes) {
-        sb.AppendLine(BuildCreateIndex(index, table.Name, config.InfrastructurePrefix, config.SchemaName));
-      }
+      sb.Append(BuildCreateIndexes(table, config.InfrastructurePrefix, config.SchemaName));
 
       sb.AppendLine();
     }

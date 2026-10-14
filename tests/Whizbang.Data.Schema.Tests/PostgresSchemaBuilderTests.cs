@@ -551,4 +551,54 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     await Assert.That(sql).DoesNotContain("ADD COLUMN IF NOT EXISTS id UUID NOT NULL PRIMARY KEY");
   }
 
+  /// <summary>
+  /// The ensure runs before the migrations on every startup. A column marked
+  /// <c>BackfillExempt</c> is one a migration drops, so the ensure skips re-adding it; an index over
+  /// that column has to be skipped for the same reason, or the boot after the migration ran names a
+  /// column that no longer exists and the service never becomes ready (AB#18981).
+  /// </summary>
+  [Test]
+  public async Task BuildCreateIndexes_IndexOverABackfillExemptColumn_IsNotAssertedAsync() {
+    var table = new TableDefinition(
+      Name: "widget",
+      Columns: [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("kept", WhizbangDataType.STRING, Nullable: true),
+        new ColumnDefinition("moved_away", WhizbangDataType.STRING, Nullable: true, BackfillExempt: true)
+      ],
+      Indexes: [
+        new IndexDefinition(Name: "idx_widget_kept", Columns: ["kept"]),
+        new IndexDefinition(Name: "idx_widget_moved_away", Columns: ["moved_away"]),
+        new IndexDefinition(Name: "idx_widget_pair", Columns: ["kept", "moved_away"])
+      ]);
+
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndexes(table, "wh_");
+
+    await Assert.That(sql).Contains("idx_widget_kept")
+      .Because("an index over columns the ensure asserts is still asserted; the guard must not throw "
+             + "the healthy indexes out with the one it is there to stop");
+    await Assert.That(sql).DoesNotContain("idx_widget_moved_away")
+      .Because("the ensure does not re-add moved_away, so asserting an index on it names a column "
+             + "that is gone the boot after the migration dropped it, and startup fails there rather "
+             + "than anywhere cheaper");
+    await Assert.That(sql).DoesNotContain("idx_widget_pair")
+      .Because("one exempt column is enough to make the whole CREATE INDEX fail, so one is enough "
+             + "to skip it; a composite index is not partially creatable");
+  }
+
+  [Test]
+  public async Task BuildCreateIndexes_NoExemptColumns_AssertsEveryIndexAsync() {
+    var table = new TableDefinition(
+      Name: "widget",
+      Columns: [
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("name", WhizbangDataType.STRING, Nullable: true)
+      ],
+      Indexes: [new IndexDefinition(Name: "idx_widget_name", Columns: ["name"])]);
+
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndexes(table, "wh_");
+
+    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_widget_name")
+      .Because("the guard is a filter on a known hazard, not a change to what a healthy table emits");
+  }
 }
