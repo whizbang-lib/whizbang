@@ -69,6 +69,20 @@ public interface IPerspectiveRebuilder {
   /// </summary>
   Task<RebuildStatus?> GetRebuildStatusAsync(
       string perspectiveName, CancellationToken ct = default);
+
+  /// <summary>
+  /// Lists the streams an in-place rebuild of <paramref name="perspectiveName"/> would replay: those carrying the events
+  /// the perspective folds. A rebuild worked per stream on each stream's owner records these as a run. Null when this
+  /// rebuilder cannot list them; the rebuild then runs where it was received.
+  /// </summary>
+  /// <param name="perspectiveName">The perspective.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <returns>The streams, or null when they cannot be listed here.</returns>
+  /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
+  /// <tests>tests/Whizbang.Core.Tests/MultiStream/RebuildPerspectiveStreamsHandlerTests.cs:ResolveStreamIdsAsync_ARebuilderThatCannotList_SaysNothingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:ResolveStreamIdsAsync_ListsTheStreamsCarryingThisPerspectivesEventsAsync</tests>
+  Task<IReadOnlyList<Guid>?> ResolveStreamIdsAsync(string perspectiveName, CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyList<Guid>?>(null);
 }
 
 /// <summary>

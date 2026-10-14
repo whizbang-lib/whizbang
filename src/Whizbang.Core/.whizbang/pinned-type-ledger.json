@@ -38,6 +38,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "57e609a6-3b62-46c6-bb1b-1d7464a6d224",
+      "clrTypeName": "Whizbang.Core.Commands.System.RebuildPerspectiveStreamsCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "c50126f7-aa4f-4cb8-b46f-36f589e0c36b",
       "clrTypeName": "Whizbang.Core.Commands.System.ResumeProcessingCommand",
       "kind": "command",

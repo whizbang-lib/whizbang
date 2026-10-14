@@ -72,6 +72,14 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <inheritdoc/>
+  public async Task<IReadOnlyList<Guid>?> ResolveStreamIdsAsync(string perspectiveName, CancellationToken ct = default) {
+    await using var scope = scopeFactory.CreateAsyncScope();
+    var sp = scope.ServiceProvider;
+    var registry = sp.GetRequiredService<IPerspectiveRunnerRegistry>();
+    return await _resolveStreamIdsToReplayAsync(sp, perspectiveName, _effectiveEventTypes(sp, registry, perspectiveName), ct);
+  }
+
+  /// <inheritdoc/>
   public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) {
     _activeRebuilds.TryGetValue(perspectiveName, out var status);
     return Task.FromResult(status);

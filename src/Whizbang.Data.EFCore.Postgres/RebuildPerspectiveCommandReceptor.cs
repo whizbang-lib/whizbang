@@ -3,9 +3,11 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.MultiStream;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -83,12 +85,62 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     var origin = new RebuildOrigin(
         message.RequestId ?? (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), RebuildTrigger.Requested, message.RequestedBy);
 
+    // #1357/#1353: where the work runs. With a multi-stream store, a rebuild of named streams, or an in-place rebuild, is
+    // recorded as a run and each stream is rebuilt by the instance that owns it, under that stream's apply lock there; this
+    // instance rebuilds nothing itself, so it neither races the owners' live work nor holds the handler for the rebuild.
+    // A blue-green rebuild builds and swaps one table, so it stays one job, handed to the background queue so the
+    // handler returns at once. Without a store or a queue, the rebuild runs here, as it always has.
+    var store = sp.GetService<IMultiStreamCommandStore>();
+    var routeToOwners = store is { IsConfigured: true };
+    var queue = sp.GetService<RebuildBackgroundQueue>();
+
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
+      if (routeToOwners && (streamFilter is not null || message.Mode == RebuildMode.InPlace)) {
+        var streams = streamFilter ?? await rebuilder.ResolveStreamIdsAsync(perspectiveName, cancellationToken);
+        if (streams is not null) {
+          await _recordRunAsync(store!, sp, perspectiveName, streams, origin, message.RequestId, cancellationToken);
+          continue;
+        }
+      }
+      if (streamFilter is null && message.Mode == RebuildMode.BlueGreen && queue is not null) {
+        queue.Enqueue(perspectiveName, origin);
+        LogRebuildQueued(logger, perspectiveName);
+        continue;
+      }
       LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
       var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, origin, cancellationToken);
       _logRebuildResult(perspectiveName, result);
     }
+  }
+
+  private async Task _recordRunAsync(
+      IMultiStreamCommandStore store, IServiceProvider sp, string perspectiveName, IReadOnlyList<Guid> streams,
+      RebuildOrigin origin, Guid? requestId, CancellationToken cancellationToken) {
+    if (streams.Count == 0) {
+      // Nothing to rebuild is nothing to do: an empty list is never read as every stream (#1356).
+      LogNothingToRoute(logger, perspectiveName);
+      return;
+    }
+    var runId = requestId is { } request ? _runIdFor(request, perspectiveName) : (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var intake = new MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>(
+      store,
+      sp.GetService<ILogger<MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>>>()
+        ?? NullLogger<MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>>.Instance);
+    await intake.HandleAsync(new RebuildPerspectiveStreamsCommand(runId, streams, perspectiveName, origin), cancellationToken);
+    LogRebuildRouted(logger, perspectiveName, streams.Count, runId);
+  }
+
+  /// <summary>
+  /// One run per (request, perspective), the same however often the command is delivered: a redelivered rebuild command
+  /// finds its run already recorded instead of rebuilding every stream again.
+  /// </summary>
+  private static Guid _runIdFor(Guid requestId, string perspectiveName) {
+    var name = System.Text.Encoding.UTF8.GetBytes(perspectiveName);
+    var input = new byte[16 + name.Length];
+    requestId.TryWriteBytes(input);
+    name.CopyTo(input, 16);
+    return new Guid(System.Security.Cryptography.SHA256.HashData(input).AsSpan(0, 16));
   }
 
   /// <summary>IsEnabled-guarded "command received" log. Separated so the receptor's HandleAsync
@@ -243,4 +295,16 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Rebuild of perspective {PerspectiveName} failed: {Error}")]
   private static partial void LogRebuildFailed(ILogger logger, string perspectiveName, string error);
+
+  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+    Message = "Rebuild of {PerspectiveName} recorded as multi-stream run {RunId} over {StreamCount} stream(s); each stream is rebuilt by its owner.")]
+  static partial void LogRebuildRouted(ILogger logger, string perspectiveName, int streamCount, Guid runId);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "Blue-green rebuild of {PerspectiveName} queued to the background rebuild worker.")]
+  static partial void LogRebuildQueued(ILogger logger, string perspectiveName);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Warning,
+    Message = "Rebuild of {PerspectiveName} names no streams; nothing is recorded (an empty list is never every stream).")]
+  static partial void LogNothingToRoute(ILogger logger, string perspectiveName);
 }

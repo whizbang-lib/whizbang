@@ -8,8 +8,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Commands.System;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres.Notifications;
 
@@ -53,6 +55,8 @@ internal static class MultiStreamCommandRegistration {
       IConfigureOptions<MultiStreamCommandOptions>, ConfigureMultiStreamCommandOptionsFromConfiguration>());
     // A driver without the elected assigner ranks the live instances in every claim; the assigner replaces this.
     services.TryAddSingleton<IPartitionAssignmentSource>(NullPartitionAssignmentSource.Instance);
+    // #1357: a rebuild of named streams, or in place, is worked per stream on each stream's owner.
+    services.AddMultiStreamCommandHandler<RebuildPerspectiveStreamsCommand, RebuildPerspectiveStreamsHandler>();
     if (services.Any(d => d.ServiceType == typeof(MultiStreamCommandWorker))) {
       return;
     }
