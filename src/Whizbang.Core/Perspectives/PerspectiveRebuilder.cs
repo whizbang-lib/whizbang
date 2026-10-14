@@ -34,6 +34,17 @@ public sealed partial class PerspectiveRebuilder(
   // partial progress during long rebuilds.
   private const int COMPLETION_FLUSH_BATCH_SIZE = 50;
 
+  /// <summary>
+  /// The <see cref="PerspectiveRebuildCompleted.RowDigestUnavailableReason"/> of a named-record rebuild in a host
+  /// that registers no <see cref="IPerspectiveRowDigest"/> (#1372).
+  /// </summary>
+#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
+  public const string ROW_DIGEST_NOT_REGISTERED = "no IPerspectiveRowDigest is registered in this host";
+#pragma warning restore CA1707
+
+  // Set once the missing digest has been reported, so a host without one is told once, not once per rebuild.
+  private int _digestAbsenceReported;
+
   /// <inheritdoc/>
   public async Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) {
     return await _rebuildCoreAsync(perspectiveName, RebuildMode.BlueGreen, streamIds: null, ct, origin: null);
@@ -86,18 +97,72 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <summary>
-  /// Digests the targeted rows, or returns null. Never lets a digest failure fail the rebuild: the digest is
-  /// evidence about the rebuild, not part of it, and "not known" is an honest value where a wrong one is not.
+  /// Digests the targeted rows, or returns null with the reason. Never lets a digest failure fail the rebuild: the
+  /// digest is evidence about the rebuild, not part of it, and "not known" is an honest value where a wrong one is
+  /// not. The failure is a Warning naming the perspective (#1372): at Debug, a deployed service never said why every
+  /// rebuild carried no digest.
   /// </summary>
-  private async Task<string?> _digestOrNullAsync(
+  private async Task<(string? Digest, string? Failure)> _digestOrNullAsync(
       IPerspectiveRowDigest digester, string perspectiveName, IReadOnlyCollection<Guid> streamIds,
       CancellationToken ct) {
     try {
-      return await digester.ComputeAsync(perspectiveName, streamIds, ct);
+      return (await digester.ComputeAsync(perspectiveName, streamIds, ct), null);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRowDigestNotComputed(logger, ex, perspectiveName);
+      return (null, $"the row digest failed: {ex.GetType().Name}: {ex.Message}");
+    }
+  }
+
+  /// <summary>
+  /// The reason a named-record rebuild will carry no row digest because the host registers none, reported once per
+  /// rebuilder; null when a digest is registered or the mode takes none (#1372).
+  /// </summary>
+  private string? _digestAbsence(RebuildMode mode, IPerspectiveRowDigest? digester, string perspectiveName) {
+    if (mode != RebuildMode.SelectedStreams || digester is not null) {
       return null;
     }
+    if (Interlocked.Exchange(ref _digestAbsenceReported, 1) == 0) {
+      LogRowDigestNotRegistered(logger, perspectiveName);
+    }
+    return ROW_DIGEST_NOT_REGISTERED;
+  }
+
+  /// <summary>
+  /// Counts one replayed stream: rebuilt when the fold wrote its row, or when it ends purged (a deleted record, whose
+  /// correct result is no row, #1370); unchanged when it folded and the store wrote nothing; neither when it had no
+  /// events for this perspective.
+  /// </summary>
+  private async Task _countStreamAsync(
+      RebuildRun run, Guid streamId, IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken ct) {
+    if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
+      run.StreamsProcessed++;
+    } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
+      if (await _endsPurgedAsync(run, completions, ct)) {
+        run.StreamsProcessed++;
+        LogRebuildLeftPurged(logger, run.PerspectiveName, streamId);
+      } else {
+        // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
+        // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
+        run.StreamsUnchanged++;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Whether a stream the fold left untouched ends purged, which makes "no row" the correct result rather than a
+  /// write the store refused (#1370). A deleted record's replay starts purged and stays purged, so it writes nothing.
+  /// </summary>
+  private static async Task<bool> _endsPurgedAsync(
+      RebuildRun run, IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken ct) {
+    if (run.PurgeMarkers is null) {
+      return false;
+    }
+    foreach (var completion in completions.Where(c => c.LastEventId != Guid.Empty)) {
+      if (!await run.PurgeMarkers.IsPurgedAsync(completion.StreamId, run.PerspectiveName, ct).ConfigureAwait(false)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// <summary>
@@ -154,7 +219,9 @@ public sealed partial class PerspectiveRebuilder(
       // rebuild end-state. Optional dependency — when no driver registers a completer, the
       // rebuilder still updates projections and just skips cursor persistence.
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
-      run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin);
+      run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin) {
+        PurgeMarkers = sp.GetService<IPerspectivePurgeMarkerStore>(),
+      };
 
       // When the caller didn't supply an explicit list, narrow to streams that actually contain
       // events this perspective handles — otherwise we'd iterate every stream for every
@@ -181,9 +248,11 @@ public sealed partial class PerspectiveRebuilder(
       // replace. Taken after the state-based guard has filtered the list, so it describes the rows actually
       // replayed rather than the rows asked for.
       var digester = mode == RebuildMode.SelectedStreams ? sp.GetService<IPerspectiveRowDigest>() : null;
-      var digestBefore = digester is null
-          ? null
+      var digestUnavailable = _digestAbsence(mode, digester, perspectiveName);
+      var (digestBefore, digestBeforeFailure) = digester is null
+          ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
+      digestUnavailable ??= digestBeforeFailure;
 
       // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
       // unless they opt in with [FireDuringReplay]
@@ -223,12 +292,13 @@ public sealed partial class PerspectiveRebuilder(
         };
       }
       LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
-      var digestAfter = digester is null
-          ? null
+      var (digestAfter, digestAfterFailure) = digester is null
+          ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
+      digestUnavailable ??= digestAfterFailure;
       await _emitAsync(new PerspectiveRebuildCompleted(
           rebuildStreamId, perspectiveName, mode, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, origin,
-          digestBefore, digestAfter));
+          digestBefore, digestAfter, digestUnavailable));
 
       return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null) {
         StreamsRequested = requested,
@@ -500,18 +570,13 @@ public sealed partial class PerspectiveRebuilder(
       // same StreamsProcessed as one that repaired the row, with nothing logged at any level to separate
       // them. Counting the row rather than the fold is what lets a caller tell a repair from a no-op; it is
       // the same correction StreamsRequested made one layer up (#1162).
-      if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
-        run.StreamsProcessed++;
-      } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
-        // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
-        // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
-        run.StreamsUnchanged++;
-      }
+      await _countStreamAsync(run, streamId, completions, ct);
       foreach (var purged in completions.Where(c => c.PurgedBy is not null)) {
         run.StreamsPurged++;
         LogRebuildRowPurged(logger, run.PerspectiveName, purged.StreamId, purged.PurgedBy!);
       }
-      run.EventsReplayed += completions.Count;
+      // Events the runner applied, not records completed: one record of hundreds of events used to read as 1 (#1371).
+      run.EventsReplayed += completions.Sum(c => c.EventsProcessed);
 
       foreach (var completion in completions) {
         LogStreamReplayed(logger, run.PerspectiveName, completion.StreamId, completion.LastEventId,
@@ -577,6 +642,8 @@ public sealed partial class PerspectiveRebuilder(
     public int StreamsRefused { get; set; }
     public int StreamsPurged { get; set; }
     public int StreamsUnchanged { get; set; }
+    /// <summary>Where a stream the fold left untouched is checked for a purge; null when the host has no store.</summary>
+    public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
   }
 
   /// <summary>
@@ -649,9 +716,17 @@ public sealed partial class PerspectiveRebuilder(
       Message = "Could not publish rebuild event {EventType}; the rebuild itself is unaffected")]
   private static partial void LogRebuildEventNotPublished(ILogger logger, Exception ex, string eventType);
 
-  [LoggerMessage(Level = LogLevel.Debug,
-      Message = "Could not digest the rebuilt rows for {Perspective}; the rebuild itself is unaffected")]
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Could not digest the rebuilt rows for {Perspective}, so this rebuild cannot report how many rows it changed; the rebuild itself is unaffected")]
   private static partial void LogRowDigestNotComputed(ILogger logger, Exception ex, string perspective);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "No IPerspectiveRowDigest is registered, so named-record rebuilds (first: {Perspective}) cannot report how many rows they changed")]
+  private static partial void LogRowDigestNotRegistered(ILogger logger, string perspective);
+
+  [LoggerMessage(Level = LogLevel.Information,
+      Message = "Rebuild of perspective {Perspective} left stream {StreamId} purged, as its events say; nothing to write")]
+  private static partial void LogRebuildLeftPurged(ILogger logger, string perspective, Guid streamId);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Rebuild of perspective {Perspective} left stream {StreamId} purged: terminal event {PurgedBy}")]
