@@ -116,7 +116,7 @@ public class PerspectiveRebuilderOutcomeTests {
     var result = await rebuilder.RebuildStreamsAsync(PERSPECTIVE, [stream]);
 
     await Assert.That(result.Success).IsFalse();
-    await Assert.That(result.Error!).Contains("1 folded but left the row unchanged");
+    await Assert.That(result.Error).Contains("1 folded but left the row unchanged");
   }
 
   [Test]
@@ -158,7 +158,7 @@ public class PerspectiveRebuilderOutcomeTests {
     }
     var completed = dispatcher.Published.OfType<PerspectiveRebuildCompleted>().Single();
     await Assert.That(completed.RowDigestBefore).IsNull();
-    await Assert.That(completed.RowDigestUnavailableReason!).Contains("the digest query was refused");
+    await Assert.That(completed.RowDigestUnavailableReason).Contains("the digest query was refused");
   }
 
   [Test]

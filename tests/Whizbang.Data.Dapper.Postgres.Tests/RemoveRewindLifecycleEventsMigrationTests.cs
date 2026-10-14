@@ -94,10 +94,13 @@ public class RemoveRewindLifecycleEventsMigrationTests : IAsyncDisposable {
 
     await _runMigrationAsync();
 
-    await Assert.That(await _eventsAsync(app)).IsEquivalentTo(new[] { (a1, 1), (a4, 4) })
+    List<(Guid, int)> expectedApp = [(a1, 1), (a4, 4)];
+    List<(Guid, int)> expectedFailed = [(f1, 1)];
+    List<(Guid, int)> expectedOwn = [(o1, 1), (o2, 2)];
+    await Assert.That(await _eventsAsync(app)).IsEquivalentTo(expectedApp)
       .Because("the lifecycle events go, and the application events keep their versions: the gap is left");
-    await Assert.That(await _eventsAsync(failed)).IsEquivalentTo(new[] { (f1, 1) });
-    await Assert.That(await _eventsAsync(own)).IsEquivalentTo(new[] { (o1, 1), (o2, 2) })
+    await Assert.That(await _eventsAsync(failed)).IsEquivalentTo(expectedFailed);
+    await Assert.That(await _eventsAsync(own)).IsEquivalentTo(expectedOwn)
       .Because("a rewind event's own stream is where the fixed build writes them");
     await Assert.That(await _bodiesAsync(a2, a3, f2)).IsEqualTo(0L).Because("a removed event's body goes with it");
     await Assert.That(await _bodiesAsync(a1, a4, f1, o1, o2)).IsEqualTo(5L);
@@ -123,7 +126,7 @@ public class RemoveRewindLifecycleEventsMigrationTests : IAsyncDisposable {
 
     await _runMigrationAsync();
 
-    var left = (await _eventsAsync(stream)).Select(e => e.EventId).ToList();
+    var left = (await _eventsAsync(stream)).ConvertAll(e => e.EventId);
     await Assert.That(left).Contains(cursorTarget);
     await Assert.That(left).Contains(snapshotTarget);
     await Assert.That(left).DoesNotContain(free);

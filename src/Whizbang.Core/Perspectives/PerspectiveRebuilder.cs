@@ -114,6 +114,41 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <summary>
+  /// The reason a named-record rebuild will carry no row digest because the host registers none, reported once per
+  /// rebuilder; null when a digest is registered or the mode takes none (#1372).
+  /// </summary>
+  private string? _digestAbsence(RebuildMode mode, IPerspectiveRowDigest? digester, string perspectiveName) {
+    if (mode != RebuildMode.SelectedStreams || digester is not null) {
+      return null;
+    }
+    if (Interlocked.Exchange(ref _digestAbsenceReported, 1) == 0) {
+      LogRowDigestNotRegistered(logger, perspectiveName);
+    }
+    return ROW_DIGEST_NOT_REGISTERED;
+  }
+
+  /// <summary>
+  /// Counts one replayed stream: rebuilt when the fold wrote its row, or when it ends purged (a deleted record, whose
+  /// correct result is no row, #1370); unchanged when it folded and the store wrote nothing; neither when it had no
+  /// events for this perspective.
+  /// </summary>
+  private async Task _countStreamAsync(
+      RebuildRun run, Guid streamId, IReadOnlyList<PerspectiveCursorCompletion> completions, CancellationToken ct) {
+    if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
+      run.StreamsProcessed++;
+    } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
+      if (await _endsPurgedAsync(run, completions, ct)) {
+        run.StreamsProcessed++;
+        LogRebuildLeftPurged(logger, run.PerspectiveName, streamId);
+      } else {
+        // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
+        // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
+        run.StreamsUnchanged++;
+      }
+    }
+  }
+
+  /// <summary>
   /// Whether a stream the fold left untouched ends purged, which makes "no row" the correct result rather than a
   /// write the store refused (#1370). A deleted record's replay starts purged and stays purged, so it writes nothing.
   /// </summary>
@@ -213,13 +248,7 @@ public sealed partial class PerspectiveRebuilder(
       // replace. Taken after the state-based guard has filtered the list, so it describes the rows actually
       // replayed rather than the rows asked for.
       var digester = mode == RebuildMode.SelectedStreams ? sp.GetService<IPerspectiveRowDigest>() : null;
-      string? digestUnavailable = null;
-      if (mode == RebuildMode.SelectedStreams && digester is null) {
-        digestUnavailable = ROW_DIGEST_NOT_REGISTERED;
-        if (Interlocked.Exchange(ref _digestAbsenceReported, 1) == 0) {
-          LogRowDigestNotRegistered(logger, perspectiveName);
-        }
-      }
+      var digestUnavailable = _digestAbsence(mode, digester, perspectiveName);
       var (digestBefore, digestBeforeFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
@@ -541,19 +570,7 @@ public sealed partial class PerspectiveRebuilder(
       // same StreamsProcessed as one that repaired the row, with nothing logged at any level to separate
       // them. Counting the row rather than the fold is what lets a caller tell a repair from a no-op; it is
       // the same correction StreamsRequested made one layer up (#1162).
-      if (completions.Any(c => c.LastEventId != Guid.Empty && c.RowChanged)) {
-        run.StreamsProcessed++;
-      } else if (completions.Any(c => c.LastEventId != Guid.Empty)) {
-        if (await _endsPurgedAsync(run, completions, ct)) {
-          // A deleted record: the replay began purged and stayed so, and "no row" is exactly what its events say (#1370).
-          run.StreamsProcessed++;
-          LogRebuildLeftPurged(logger, run.PerspectiveName, streamId);
-        } else {
-          // Folded, but the row was left as it was: the store's ordering guard refused the write, or no event produced
-          // a model. Counted apart from a stream with no events, which the "nothing rebuilt" message used to call it (#1346).
-          run.StreamsUnchanged++;
-        }
-      }
+      await _countStreamAsync(run, streamId, completions, ct);
       foreach (var purged in completions.Where(c => c.PurgedBy is not null)) {
         run.StreamsPurged++;
         LogRebuildRowPurged(logger, run.PerspectiveName, purged.StreamId, purged.PurgedBy!);
