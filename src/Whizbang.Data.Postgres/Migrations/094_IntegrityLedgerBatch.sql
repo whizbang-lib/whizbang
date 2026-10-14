@@ -121,7 +121,11 @@ BEGIN
       AND l.stream_id         = k.stream_id
     RETURNING l.first_seen_at
   )
-  SELECT EXTRACT(EPOCH FROM (NOW() - h.first_seen_at))::DOUBLE PRECISION
+  -- first_seen_at is the reporting caller's clock (p_now), NOW() is the database's. A host running
+  -- slightly ahead of the database would otherwise report a negative age for a bucket healed moments
+  -- after it was first seen, and a repair-latency histogram cannot hold a negative duration. Clamped
+  -- at zero: the skew is below what the metric resolves.
+  SELECT GREATEST(EXTRACT(EPOCH FROM (NOW() - h.first_seen_at)), 0)::DOUBLE PRECISION
   FROM healed h;
 END;
 $$;
