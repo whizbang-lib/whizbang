@@ -2467,7 +2467,21 @@ public partial class PerspectiveWorker(
 #pragma warning restore CA1873
     }
 
-    // Everything cooled → previous drain handled it; nothing left to do.
+    // #1361: an event a completed rewind was already run for is covered, whatever row brought it back: the
+    // rewind's own rows still pending before the completion flush deletes them, or the same event delivered again
+    // under a new work row. Neither is a new inversion. Their rows are completed, with nothing applied; rewinding again
+    // would replay the whole stream once per lap of the drain loop.
+    var coveredEvents = _takeReplayedEvents(freshEvents, streamId, perspectiveName);
+    if (coveredEvents.Count > 0) {
+      _signalCooldownSkippedEvents(
+        coveredEvents, perspectiveName, streamId,
+        batchContext.BatchProcessedEvents, batchContext.LifecycleCoordinator);
+      _markProcessedInCooldown(_recentlyProcessedEventCache, coveredEvents, batchContext.RawByEventId, perspectiveName);
+      _enqueueDrainModePerspectiveCompletions(streamId, perspectiveName, coveredEvents, batchContext.RawByEventId);
+      LogEventsCoveredByRewind(_logger, streamId, perspectiveName, coveredEvents.Count);
+    }
+
+    // Everything cooled or covered → a previous run handled it; nothing left to do.
     if (freshEvents.Count == 0) {
       return;
     }
@@ -2538,6 +2552,11 @@ public partial class PerspectiveWorker(
             new RewindRequest(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, EventsBehind: null),
             _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
             leaseCt);
+          // #1361: the rewind applied this batch's events. A later lap or batch that brings any of them back is
+          // covered, not a new inversion.
+          if (result.Status == PerspectiveProcessingStatus.Completed) {
+            _cursorCache.MarkReplayed(streamId, perspectiveName, filteredEvents.Select(e => e.MessageId.Value));
+          }
         } else {
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
@@ -2872,6 +2891,10 @@ public partial class PerspectiveWorker(
     Message = "Cursor inversion detected: pending event {AnchorEventId} ≤ cached cursor {CachedCursor} for stream {StreamId} / perspective {PerspectiveName}; triggering rewind")]
   private static partial void LogRewindTriggered(ILogger logger, Guid streamId, string perspectiveName, Guid anchorEventId, Guid cachedCursor);
 
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "{Count} event(s) for stream {StreamId} / perspective {PerspectiveName} were already replayed by a completed rewind; their rows are completed without a new rewind (#1361)")]
+  private static partial void LogEventsCoveredByRewind(ILogger logger, Guid streamId, string perspectiveName, int count);
+
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Inversion diagnostics: stream={StreamId} perspective={PerspectiveName} anchor={AnchorEventId} cursorEventId={CachedCursor} pendingSeq={PendingSeq} cursorSeq={CursorSeq} cooled={CooledCount} fresh={FreshCount}")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage source generator needs one parameter per placeholder; the structure mirrors the log template.")]
@@ -3032,6 +3055,25 @@ public partial class PerspectiveWorker(
       }
     }
     return true;
+  }
+
+  /// <summary>
+  /// #1361 — removes from <paramref name="freshEvents"/>, and returns, the events a completed rewind was already
+  /// run for on this (stream, perspective). Only those events: one the rewind was not run for keeps its own
+  /// inversion check, even when it sorts below where the rewind left the stream.
+  /// </summary>
+  private List<MessageEnvelope<IEvent>> _takeReplayedEvents(
+      List<MessageEnvelope<IEvent>> freshEvents,
+      Guid streamId,
+      string perspectiveName) {
+    var covered = new List<MessageEnvelope<IEvent>>();
+    for (var i = freshEvents.Count - 1; i >= 0; i--) {
+      if (_cursorCache.WasReplayed(streamId, perspectiveName, freshEvents[i].MessageId.Value)) {
+        covered.Insert(0, freshEvents[i]);
+        freshEvents.RemoveAt(i);
+      }
+    }
+    return covered;
   }
 
   /// <summary>

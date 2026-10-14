@@ -34,6 +34,17 @@ public sealed class PerspectiveCursorCache {
   private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), long?> _commitSeqCache = new();
 
   /// <summary>
+  /// #1361 — the events a completed rewind was run for, per (stream, perspective). The rewind applied them, so
+  /// a pending work row for one of them afterwards (its own, not flushed yet, or the same event delivered again
+  /// under a new row) is not a new inversion. Kept across later rewinds, which replay them too; forgotten with
+  /// the stream.
+  /// </summary>
+  private readonly ConcurrentDictionary<(Guid StreamId, string PerspectiveName), HashSet<Guid>> _replayed = new();
+
+  /// <summary>The most events remembered per (stream, perspective); past it the set starts over.</summary>
+  internal const int MAX_REPLAYED_EVENTS_PER_PAIR = 4096;
+
+  /// <summary>
   /// Per-stream last-activity tick. Updated on every read/write that touches the cache;
   /// drives the activity-triggered sweep. Per-stream (not per-(stream, perspective)) so
   /// the eviction notification is naturally stream-scoped — matches how downstream
@@ -138,6 +149,46 @@ public sealed class PerspectiveCursorCache {
   }
 
   /// <summary>
+  /// #1361 — records that a completed rewind applied <paramref name="eventIds"/> for (stream, perspective).
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="eventIds">The events the rewind was run for.</param>
+  /// <docs>fundamentals/perspectives/rewind#a-rewind-covers-what-it-replayed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public void MarkReplayed(Guid streamId, string perspectiveName, IEnumerable<Guid> eventIds) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    _touch(streamId);
+    var set = _replayed.GetOrAdd((streamId, perspectiveName), _ => []);
+    lock (set) {
+      foreach (var eventId in eventIds) {
+        if (set.Count >= MAX_REPLAYED_EVENTS_PER_PAIR) {
+          set.Clear();
+        }
+        _ = set.Add(eventId);
+      }
+    }
+  }
+
+  /// <summary>
+  /// #1361 — whether a completed rewind already applied <paramref name="eventId"/> for (stream, perspective).
+  /// </summary>
+  /// <param name="streamId">The stream.</param>
+  /// <param name="perspectiveName">Perspective name (already normalized via TypeNameFormatter).</param>
+  /// <param name="eventId">The event.</param>
+  /// <returns>True when a completed rewind was run for this event.</returns>
+  /// <docs>fundamentals/perspectives/rewind#a-rewind-covers-what-it-replayed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCursorCacheReplayedThroughTests.cs</tests>
+  public bool WasReplayed(Guid streamId, string perspectiveName, Guid eventId) {
+    if (!_replayed.TryGetValue((streamId, perspectiveName), out var set)) {
+      return false;
+    }
+    lock (set) {
+      return set.Contains(eventId);
+    }
+  }
+
+  /// <summary>
   /// Slice 26 — gets the cached commit_sequence cursor for a (stream, perspective) pair.
   /// </summary>
   /// <param name="streamId">Stream to look up.</param>
@@ -168,7 +219,14 @@ public sealed class PerspectiveCursorCache {
       _cache.TryRemove(key, out _);
       _commitSeqCache.TryRemove(key, out _);
     }
+    _removeReplayed(streamId);
     _streamLastActivityTicks.TryRemove(streamId, out _);
+  }
+
+  private void _removeReplayed(Guid streamId) {
+    foreach (var key in _replayed.Keys.Where(k => k.StreamId == streamId).ToList()) {
+      _replayed.TryRemove(key, out _);
+    }
   }
 
   /// <summary>
@@ -185,6 +243,7 @@ public sealed class PerspectiveCursorCache {
   public void Clear() {
     _cache.Clear();
     _commitSeqCache.Clear();
+    _replayed.Clear();
     _streamLastActivityTicks.Clear();
   }
 
@@ -253,6 +312,7 @@ public sealed class PerspectiveCursorCache {
         _cache.TryRemove(key, out _);
         _commitSeqCache.TryRemove(key, out _);
       }
+      _removeReplayed(streamId);
       evictedStreams.Add(streamId);
     }
     return evictedStreams;
