@@ -1331,11 +1331,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Fire PerspectiveRewindStarted system event as System user
     // These events are marked [AuditEvent(Exclude = true)] to skip the audit pipeline
     // which requires security context that doesn't exist during background rewind.
+    //
+    // One id per rewind, minted here and shared by the Started/Completed pair, the way a rebuild
+    // mints one per run. It is the stream these two events are written to. Passing the rewound
+    // stream here instead wrote them into the application stream itself, where they took a version
+    // and a commit sequence and turned up in every later replay, audit, stream read and version
+    // count of that aggregate (#1360). The stream that was rewound travels as a plain property.
+    // Time-ordered so a reader can sort rewinds without joining anything.
+    Guid rewindStreamId = global::Whizbang.Core.ValueObjects.TrackedGuid.New();
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
       try {
         await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
-            streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+            rewindStreamId, streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
           perspectiveName, streamId);
@@ -1376,7 +1384,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (dispatcher is not null) {
       try {
         await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindCompleted(
-            streamId, perspectiveName, triggeringEventId, result.LastEventId,
+            rewindStreamId, streamId, perspectiveName, triggeringEventId, result.LastEventId,
             result.EventsProcessed,
             startedAt, DateTimeOffset.UtcNow));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
