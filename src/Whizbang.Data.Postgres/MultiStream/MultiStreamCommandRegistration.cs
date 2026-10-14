@@ -10,7 +10,6 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
-using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres.MultiStream;
 
@@ -27,7 +26,9 @@ internal static class MultiStreamCommandRegistration {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<MultiStreamCommandOptions>, ConfigureMultiStreamCommandOptionsFromConfiguration>());
     services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore, PgMultiStreamCommandStore>();
-    services.AddWhizbangSchemaReadyGate();
+    // The worker requires the schema gate, and this registration deliberately does not add one: the worker pipeline
+    // registers the gate its initializer marks ready. A gate added here would never be marked ready in a host without
+    // that initializer, and every other worker that waits on a registered gate would wait on it forever.
     services.TryAddSingleton<MultiStreamCommandWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<MultiStreamCommandWorker>());
     services.AddHostedService<MultiStreamCommandSubscriber>();
