@@ -123,21 +123,55 @@ public sealed partial class EFCorePerspectiveSnapshotStore(
       Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
-    const string sql = """
+    // Resolve where the triggering event sits in its stream first, because the answer decides which
+    // order can be trusted. Two statements rather than one branching query: a rewind is rare and the
+    // reader of this code is not.
+    const string versionSql = """
+      SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_before_event_id
+      """;
+    int? triggerVersion;
+    await using (var versionCmd = new NpgsqlCommand(versionSql, connection)) {
+      versionCmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
+      var raw = await versionCmd.ExecuteScalarAsync(ct);
+      triggerVersion = raw is null or DBNull ? null : Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    // The event is placed, so version order is available and is the only order worth trusting. A
+    // snapshot recording no version predates the column; nothing can order it against this event, so it
+    // is refused rather than guessed at.
+    const string byVersionSql = """
       SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data
       FROM wh_perspective_snapshots s
       WHERE s.stream_id = @p_stream_id
         AND s.perspective_name = @p_perspective_name
         AND s.snapshot_version IS NOT NULL
-        AND s.snapshot_version < (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_before_event_id)
+        AND s.snapshot_version < @p_before_version
       ORDER BY s.snapshot_version DESC
       LIMIT 1
       """;
 
-    await using var cmd = new NpgsqlCommand(sql, connection);
+    // The event is not placed, which means this store keeps no version for it. A store with no versions
+    // has no retroactive stamping to invert against them either, so event id order is the only order it
+    // has and is as sound here as it ever was. Refusing would replay every rewind from event zero for a
+    // store that never had the defect.
+    const string byEventIdSql = """
+      SELECT s.snapshot_event_id, s.snapshot_version, s.snapshot_data
+      FROM wh_perspective_snapshots s
+      WHERE s.stream_id = @p_stream_id
+        AND s.perspective_name = @p_perspective_name
+        AND s.snapshot_event_id < @p_before_event_id
+      ORDER BY s.snapshot_event_id DESC
+      LIMIT 1
+      """;
+
+    await using var cmd = new NpgsqlCommand(triggerVersion.HasValue ? byVersionSql : byEventIdSql, connection);
     cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
     cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
-    cmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
+    if (triggerVersion.HasValue) {
+      cmd.Parameters.AddWithValue("p_before_version", triggerVersion.Value);
+    } else {
+      cmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
+    }
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     if (!await reader.ReadAsync(ct)) {

@@ -102,6 +102,36 @@ public class SnapshotSelectionFollowsStreamOrderTests : EFCoreTestBase {
              + "nothing pending to repair it");
   }
 
+  [Test]
+  public async Task GetLatestSnapshotBeforeEventInStreamOrder_EventTheStoreCannotPlace_FallsBackToEventIdOrderAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    // Nothing is committed, so neither the snapshot's event nor the triggering event has a row in the
+    // event store: this models a host whose events live somewhere this store cannot see.
+    var streamId = Guid.NewGuid();
+    // Written out rather than generated: two UUIDv7 values minted in the same millisecond can land in
+    // either order, and this test is about which of two orders the store uses, not about which way a
+    // race fell. These two compare the one way in every order a database has.
+    var earlier = Guid.Parse("00000000-0000-7000-8000-000000000001");
+    var trigger = Guid.Parse("00000000-0000-7000-8000-000000000002");
+    await _snapshotAsync(connection, streamId, earlier, version: null, commitSequence: 1);
+
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+
+    var selected = await store.GetLatestSnapshotBeforeEventInStreamOrderAsync(
+      streamId, _perspectiveName, trigger, CancellationToken.None);
+    await Assert.That(selected.HasValue).IsTrue()
+      .Because("a store that keeps no version for the event keeps none for any event, so it has no "
+             + "retroactive stamping to invert against versions either. Event id order is the only order "
+             + "it has and is as sound here as it ever was. Refusing would replay every rewind from event "
+             + "zero for a store that never had the defect");
+    await Assert.That(selected!.Value.SnapshotEventId).IsEqualTo(earlier);
+    await Assert.That(selected.Value.SnapshotVersion).IsNull()
+      .Because("the snapshot genuinely records no version, and the result says so rather than inventing one");
+  }
+
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != ConnectionState.Open) {

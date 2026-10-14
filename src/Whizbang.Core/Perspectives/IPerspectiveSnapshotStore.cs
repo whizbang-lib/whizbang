@@ -109,10 +109,17 @@ public interface IPerspectiveSnapshotStore {
   /// Version is the stream's own counter, unique per stream, and cannot invert.
   /// </para>
   /// <para>
-  /// A snapshot that records no version is never returned, and neither is a snapshot whose triggering event
-  /// cannot be placed in the stream. Those predate the column, so nothing can order them, and the honest
-  /// answer is "no usable snapshot": that costs a fuller replay and reproduces the row. The opposite guess
-  /// silently skips events, and a read model short of events has nothing pending to repair it.
+  /// Where the store CAN place the triggering event, a snapshot that records no version is never returned.
+  /// Such a snapshot predates the column, nothing can order it against the event, and the honest answer is
+  /// "no usable snapshot": that costs a fuller replay and reproduces the row, where the opposite guess
+  /// silently skips events and leaves a read model with nothing pending to repair it.
+  /// </para>
+  /// <para>
+  /// Where the store cannot place the triggering event at all, because it keeps no version for it, it falls
+  /// back to event id order. That is not the same concession. A store that records no versions is a store
+  /// with no retroactive stamping to invert against them, so event id order is the only order it has and is
+  /// as sound there as it ever was. Refusing to answer at that point would turn every rewind into a replay
+  /// from event zero for a store that never had the defect.
   /// </para>
   /// <para>Default implementation returns null so stores that do not record a version keep compiling.</para>
   /// </remarks>
