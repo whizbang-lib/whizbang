@@ -38,6 +38,12 @@
       "formerNames": []
     },
     {
+      "pinnedId": "57e609a6-3b62-46c6-bb1b-1d7464a6d224",
+      "clrTypeName": "Whizbang.Core.Commands.System.RebuildPerspectiveStreamsCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "c50126f7-aa4f-4cb8-b46f-36f589e0c36b",
       "clrTypeName": "Whizbang.Core.Commands.System.ResumeProcessingCommand",
       "kind": "command",
@@ -70,6 +76,12 @@
     {
       "pinnedId": "a8809ecd-7804-43c2-b534-54156fe21b7a",
       "clrTypeName": "Whizbang.Core.Events.System.MigrationItemStarted",
+      "kind": "event",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "31f2fa19-a55f-40bc-a6cc-314c2a2d0dc3",
+      "clrTypeName": "Whizbang.Core.Events.System.MultiStreamCommandCompleted",
       "kind": "event",
       "formerNames": []
     },

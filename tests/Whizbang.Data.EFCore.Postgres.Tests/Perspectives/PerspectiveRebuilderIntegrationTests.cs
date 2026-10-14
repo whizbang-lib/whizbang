@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -13,6 +14,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.MultiStream;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
@@ -122,7 +124,92 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   /// the registered RebuildBalancePerspective runner. Uses reflection to pick up the
   /// generated types so the test survives compile passes where generators don't run.
   /// </summary>
-  private ServiceProvider _buildRebuildServices() {
+  /// <summary>
+  /// #1357: an in-place rebuild is worked per stream on each stream's owner, so the instance that received it needs the
+  /// perspective's streams to record the run: those carrying the perspective's events, and no others.
+  /// </summary>
+  [Test]
+  public async Task ResolveStreamIdsAsync_ListsTheStreamsCarryingThisPerspectivesEventsAsync() {
+    var balanceA = Guid.CreateVersion7();
+    var balanceB = Guid.CreateVersion7();
+    var inventory = Guid.CreateVersion7();
+    await using var sp = _buildRebuildServices();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceA, new RebuildCreditedEvent { StreamId = balanceA, Amount = 1m });
+      await _appendEventAsync(eventStore, balanceB, new RebuildCreditedEvent { StreamId = balanceB, Amount = 2m });
+      await _appendEventAsync(eventStore, inventory, new RebuildStockAdjustedEvent { StreamId = inventory, Delta = 3 });
+    }
+
+    var streams = await sp.GetRequiredService<IPerspectiveRebuilder>().ResolveStreamIdsAsync(RebuildBalancePerspectiveName);
+
+    await Assert.That(streams).IsNotNull();
+    await Assert.That(streams!.Order()).IsEquivalentTo(new[] { balanceA, balanceB }.Order(), TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
+  /// #1357 end to end on one database: a rebuild command naming a stream records a run instead of rebuilding where it
+  /// landed, and the stream's owner rebuilds it through the multi-stream worker; the cursor ends on the stream's last event.
+  /// </summary>
+  [Test]
+  public async Task RebuildCommand_NamingAStream_IsRebuiltByTheStreamsOwnerThroughARunAsync() {
+    var streamId = Guid.CreateVersion7();
+    var instance = Guid.CreateVersion7();
+    var store = new Whizbang.Data.Postgres.MultiStream.PgMultiStreamCommandStore(
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Notifications.WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+      new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    await using var sp = _buildRebuildServices(s => {
+      s.AddSingleton<Whizbang.Core.MultiStream.IMultiStreamCommandStore>(store);
+      s.AddMultiStreamCommandHandler<RebuildPerspectiveStreamsCommand, RebuildPerspectiveStreamsHandler>();
+    });
+    Guid lastEventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 7m });
+    }
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName], Mode: RebuildMode.InPlace, IncludeStreamIds: [streamId]));
+
+    await using (var beforeContext = CreateDbContext()) {
+      var untouched = await beforeContext.Set<PerspectiveCursorRecord>().AsNoTracking()
+          .AnyAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      await Assert.That(untouched).IsFalse().Because("the receiving instance recorded the run and rebuilt nothing itself");
+    }
+
+    var worker = new Whizbang.Core.MultiStream.MultiStreamCommandWorker(
+      store,
+      sp.GetServices<Whizbang.Core.MultiStream.IMultiStreamCommandBinding>(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new ServiceInstanceProvider(instance, "rebuild", "rebuild-host", 1),
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.MultiStream.MultiStreamCommandOptions { PollInterval = TimeSpan.FromHours(1) }),
+      sp.GetRequiredService<ILogger<Whizbang.Core.MultiStream.MultiStreamCommandWorker>>(),
+      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance,
+      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+    var completed = new TaskCompletionSource<Whizbang.Core.MultiStream.MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnRunCompleted += c => completed.TrySetResult(c);
+    await worker.StartAsync(CancellationToken.None);
+    Whizbang.Core.MultiStream.MultiStreamRunCompletion completion;
+    try {
+      worker.RequestImmediateRun();
+      completion = await completed.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    await Assert.That(completion.Succeeded).IsEqualTo(1);
+    await Assert.That(completion.Failed).IsEqualTo(0);
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>().AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(lastEventId);
+  }
+
+  private ServiceProvider _buildRebuildServices(Action<IServiceCollection>? extra = null) {
     var services = new ServiceCollection();
     services.AddLogging();
 
@@ -188,6 +275,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddSingleton(_publishedEvents);
     services.AddScoped<IDispatcher>(sp => new RecordingRebuildDispatcher(sp.GetRequiredService<PublishedEventLog>()));
 
+    extra?.Invoke(services);
     return services.BuildServiceProvider();
   }
 

@@ -31,7 +31,8 @@ internal static class PartitionAssignerRegistration {
 
     services.TryAddSingleton<IPartitionAssignmentStore, PgPartitionAssignmentStore>();
     services.TryAddSingleton<PartitionAssignmentCache>();
-    services.TryAddSingleton<IPartitionAssignmentSource>(sp => sp.GetRequiredService<PartitionAssignmentCache>());
+    // Over the null source a driver without the assigner registers, in either order.
+    services.TryAddSingletonOverNullDefault<IPartitionAssignmentSource>(sp => sp.GetRequiredService<PartitionAssignmentCache>());
     services.AddHostedService<PartitionAssignmentSubscriber>();
 
     services.TryAddSingleton<PartitionAssignerWorker>();
