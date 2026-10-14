@@ -113,7 +113,12 @@ public record PerspectiveRebuildFailed(
 /// <summary>
 /// Emitted when a perspective rewind begins due to a late-arriving event.
 /// </summary>
-/// <param name="StreamId">The unique identifier for this rewind stream.</param>
+/// <param name="StreamId">The unique identifier for this rewind, which is the stream this event is written to.
+/// A rewind gets a stream of its own, the way a rebuild does; it is never the stream being rewound. Writing
+/// these into the rewound stream gave them a version and a commit sequence in it, so they appeared in every
+/// later replay, audit, stream read and version count of that aggregate (#1360).</param>
+/// <param name="RewoundStreamId">The application stream that was rewound. A plain property: it says what the
+/// rewind acted on without routing the event there.</param>
 /// <param name="PerspectiveName">Name of the perspective being rewound.</param>
 /// <param name="TriggeringEventId">The late-arriving event that triggered the rewind.</param>
 /// <param name="ReplayFromSnapshotEventId">Event ID of the snapshot to replay from, if available.</param>
@@ -127,6 +132,7 @@ public record PerspectiveRebuildFailed(
 [PinnedId("7291e4ab-917e-4955-a78c-e41da5ee1af3")]
 public record PerspectiveRewindStarted(
     [property: StreamId] Guid StreamId,
+    Guid RewoundStreamId,
     string PerspectiveName,
     Guid TriggeringEventId,
     Guid? ReplayFromSnapshotEventId,
@@ -137,7 +143,11 @@ public record PerspectiveRewindStarted(
 /// <summary>
 /// Emitted when a perspective rewind completes successfully.
 /// </summary>
-/// <param name="StreamId">The unique identifier for this rewind stream.</param>
+/// <param name="StreamId">The unique identifier for this rewind, which is the stream this event is written to,
+/// and the same id its <see cref="PerspectiveRewindStarted"/> carries so the pair can be found together. It is
+/// never the stream being rewound (#1360).</param>
+/// <param name="RewoundStreamId">The application stream that was rewound. A plain property: it says what the
+/// rewind acted on without routing the event there.</param>
 /// <param name="PerspectiveName">Name of the perspective that was rewound.</param>
 /// <param name="TriggeringEventId">The late-arriving event that triggered the rewind.</param>
 /// <param name="FinalEventId">The last event ID after replay completed.</param>
@@ -152,6 +162,7 @@ public record PerspectiveRewindStarted(
 [PinnedId("56514b57-149d-47aa-9a10-afcb4e38539c")]
 public record PerspectiveRewindCompleted(
     [property: StreamId] Guid StreamId,
+    Guid RewoundStreamId,
     string PerspectiveName,
     Guid TriggeringEventId,
     Guid FinalEventId,

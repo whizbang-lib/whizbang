@@ -2530,7 +2530,14 @@ public partial class PerspectiveWorker(
             cooledEvents.Count,
             freshEvents.Count);
           LogRewindTriggered(_logger, streamId, perspectiveName, inversionAnchor.Value, lastProcessedEventId ?? Guid.Empty);
-          result = await runner.RewindAndRunAsync(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, leaseCt);
+          // Through the same helper the rewind work-item path uses, so this rewind is counted and
+          // traced like any other. It used to call the runner directly, which is why the rewind
+          // meters read zero while these rewinds ran (#1362).
+          result = await _rewindAndCountAsync(
+            runner,
+            new RewindRequest(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, EventsBehind: null),
+            _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
+            leaseCt);
         } else {
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
@@ -3084,16 +3091,23 @@ public partial class PerspectiveWorker(
 
     _cursorCache.Set(streamCtx.StreamId, streamCtx.PerspectiveName, result.LastEventId);
 
-    // Slice 26.11: track commit_sequence cursor alongside event_id. Find the latest
-    // commit_sequence among events that share the result's LastEventId (the runner applies
-    // events in order and reports the last). Falls back to keeping the prior cursor when
-    // the lookup is null (e.g., result.LastEventId not in rawByEventId, or no stamped row).
+    // Slice 26.11: track the commit_sequence cursor alongside the event_id one. The run reports where
+    // it ended; the batch lookup is the fallback for a run that does not.
+    //
+    // The lookup alone was wrong for any run that did not apply the batch's own rows. A replay
+    // re-reads the stream and finishes at its frontier, which is not a row this batch claimed, so the
+    // lookup came back empty, this cursor kept its pre-rewind value, and the event-id cursor moved
+    // without it. The detector reads the commit sequence whenever it has one, so it then judged every
+    // later batch against a position the rewind had already replaced, and under-reported: an event out
+    // of order against the new position read as forward progress and was dropped as already applied,
+    // leaving the row short with nothing pending to repair it (#1365).
     if (result.LastEventId != Guid.Empty) {
-      var lastSeq = batchContext.RawByEventId[result.LastEventId]
-        .Where(raw => raw.CommitSequence.HasValue)
-        .Select(raw => (long?)raw.CommitSequence!.Value)
-        .DefaultIfEmpty(null)
-        .Max();
+      var lastSeq = result.LastCommitSequence
+        ?? batchContext.RawByEventId[result.LastEventId]
+          .Where(raw => raw.CommitSequence.HasValue)
+          .Select(raw => (long?)raw.CommitSequence!.Value)
+          .DefaultIfEmpty(null)
+          .Max();
       if (lastSeq.HasValue) {
         _cursorCache.SetCommitSequence(streamCtx.StreamId, streamCtx.PerspectiveName, lastSeq);
       }
@@ -4212,57 +4226,25 @@ public partial class PerspectiveWorker(
         ? StartLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
         : Task.CompletedTask;
 
-      using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal) : null) {
-        activity?.SetTag("whizbang.perspective.name", perspectiveName);
-        activity?.SetTag("whizbang.stream.id", streamId.ToString());
-        activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.ToString());
+      try {
+        result = await _rewindAndCountAsync(
+          runner,
+          new RewindRequest(streamId, perspectiveName, rewindTriggerEventId, TriggerCommitSequence: null, eventsBehind),
+          enablePerspectiveSpans, cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Isolate rewind failures — a single stream's failure must not crash the worker.
+        // The stream will retry on the next polling cycle. The rewind itself is already counted
+        // as failed by the helper; this is the work item's own outcome.
+        LogRewindFailed(_logger, ex, perspectiveName, streamId, rewindTriggerEventId);
+        _metrics?.Errors.Add(1);
 
-        var runnerSw = System.Diagnostics.Stopwatch.StartNew();
-        try {
-          result = await runner.RewindAndRunAsync(
-            streamId, perspectiveName, rewindTriggerEventId, cancellationToken);
-        } catch (Exception ex) when (ex is not OperationCanceledException) {
-          // Isolate rewind failures — a single stream's failure must not crash the worker.
-          // The stream will retry on the next polling cycle.
-          LogRewindFailed(_logger, ex, perspectiveName, streamId, rewindTriggerEventId);
-          _metrics?.Errors.Add(1);
-          activity?.SetTag("whizbang.perspective.rewind.error", ex.Message);
-          activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-
-          return (new PerspectiveCursorCompletion {
-            StreamId = streamId,
-            PerspectiveName = perspectiveName,
-            LastEventId = Guid.Empty,
-            Status = PerspectiveProcessingStatus.None,
-            RowChanged = false,  // the rewind threw, so nothing was written
-          }, LockSkipped: false);
-        }
-
-        var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
-        _metrics?.RunnerDuration.Record(rewindDurationMs);
-
-        // Rewind-specific meters
-        var hasSnapshot = _snapshotStore.IsConfigured;
-        _metrics?.Rewinds.Add(1,
-          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
-          new KeyValuePair<string, object?>("has_snapshot", hasSnapshot));
-        _metrics?.RewindDuration.Record(rewindDurationMs,
-          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
-        _metrics?.RewindEventsReplayed.Record(result.EventsProcessed,
-          new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
-
-        // Span enrichment
-        activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
-        activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
-        activity?.SetTag("whizbang.perspective.rewind.events_behind", eventsBehind);
-        activity?.SetTag("whizbang.perspective.rewind.events_replayed", result.EventsProcessed);
-        activity?.SetTag("whizbang.perspective.rewind.has_snapshot", hasSnapshot);
-        activity?.SetTag("whizbang.perspective.rewind.replay_source", hasSnapshot ? "snapshot" : "full");
-
-        // Completion log — hasSnapshot indicates store availability, not actual usage.
-        // The runner logs the actual snapshot decision (restore from snapshot vs full replay).
-        LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
-          (long)rewindDurationMs, hasSnapshot ? "snapshot store available" : "no snapshot store");
+        return (new PerspectiveCursorCompletion {
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = Guid.Empty,
+          Status = PerspectiveProcessingStatus.None,
+          RowChanged = false,  // the rewind threw, so nothing was written
+        }, LockSkipped: false);
       }
 
       // Stop keepalive
@@ -4275,6 +4257,112 @@ public partial class PerspectiveWorker(
     }
 
     return (result, LockSkipped: false);
+  }
+
+  /// <summary>
+  /// Which rewind: the stream and perspective, the event that triggered it, that event's commit sequence
+  /// where the caller resolved one, and how far behind the cursor was where the caller knows.
+  /// </summary>
+  /// <remarks>
+  /// One parameter rather than five because they describe one thing and always travel together, and
+  /// because a call site that passes five positional values of which three are ids is a call site where
+  /// two of them can be swapped without the compiler noticing.
+  /// </remarks>
+  private readonly record struct RewindRequest(
+      Guid StreamId,
+      string PerspectiveName,
+      Guid TriggerEventId,
+      long? TriggerCommitSequence,
+      int? EventsBehind);
+
+  /// <summary>
+  /// Invokes a rewind and records it. Every rewind the worker performs goes through here, whichever
+  /// path decided to rewind, so the rewind telemetry describes rewinds rather than one route to them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// There were two call sites and only one recorded anything, so <c>whizbang.perspective.rewinds</c>
+  /// read zero while rewinds completed, and <c>rewind.duration</c> was absent rather than zero, because
+  /// an unrecorded histogram is never exported at all (#1362). Lifecycle events still appeared, since
+  /// the generated runner publishes those and both paths reach it, so the two signals disagreed and the
+  /// telemetry was the one that was wrong. A counter that moves for some of the thing it names is worse
+  /// than no counter, because it reads as a confident zero.
+  /// </para>
+  /// <para>
+  /// Failures are counted here and re-thrown. What to do about a failed rewind belongs to the caller:
+  /// the work-item path parks the item, the live apply path lets the lease handle it.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rewind#metrics</docs>
+  private async Task<PerspectiveCursorCompletion> _rewindAndCountAsync(
+      IPerspectiveRunner runner,
+      RewindRequest request,
+      bool enablePerspectiveSpans,
+      CancellationToken cancellationToken) {
+    var (streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, eventsBehind) = request;
+
+    using var activity = enablePerspectiveSpans
+      ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal)
+      : null;
+    activity?.SetTag("whizbang.perspective.name", perspectiveName);
+    activity?.SetTag("whizbang.stream.id", streamId.ToString());
+    activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.ToString());
+
+    // Counted before the replay runs, so a rewind that never returns is still visible as attempted.
+    // Everything after this point either completes it or fails it, and the gauge is released in
+    // either case, so triggered = completed + failed + in flight holds for an operator reading them.
+    _metrics?.RewindsTriggered.Add(1,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+    _metrics?.RewindStarted();
+
+    var runnerSw = System.Diagnostics.Stopwatch.StartNew();
+    PerspectiveCursorCompletion result;
+    try {
+      result = await runner.RewindAndRunAsync(
+        streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, cancellationToken);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _metrics?.RewindsFailed.Add(1,
+        new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+      activity?.SetTag("whizbang.perspective.rewind.error", ex.Message);
+      activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      throw;
+    } finally {
+      // Leaves flight whether it completed, threw or was cancelled. A gauge released only on the
+      // success path reports phantom rewinds running forever.
+      _metrics?.RewindFinished();
+    }
+
+    var rewindDurationMs = runnerSw.Elapsed.TotalMilliseconds;
+    _metrics?.RunnerDuration.Record(rewindDurationMs);
+
+    // Rewind-specific meters
+    var hasSnapshot = _snapshotStore.IsConfigured;
+    _metrics?.Rewinds.Add(1,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
+      new KeyValuePair<string, object?>("has_snapshot", hasSnapshot));
+    _metrics?.RewindDuration.Record(rewindDurationMs,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+    _metrics?.RewindEventsReplayed.Record(result.EventsProcessed,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName));
+
+    // Span enrichment
+    activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
+    activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+    if (eventsBehind.HasValue) {
+      // Only the work-item path knows how far behind the cursor was; the live path rewinds on an
+      // inversion inside the batch it is already holding, where the question does not arise.
+      activity?.SetTag("whizbang.perspective.rewind.events_behind", eventsBehind.Value);
+    }
+    activity?.SetTag("whizbang.perspective.rewind.events_replayed", result.EventsProcessed);
+    activity?.SetTag("whizbang.perspective.rewind.has_snapshot", hasSnapshot);
+    activity?.SetTag("whizbang.perspective.rewind.replay_source", hasSnapshot ? "snapshot" : "full");
+
+    // Completion log — hasSnapshot indicates store availability, not actual usage.
+    // The runner logs the actual snapshot decision (restore from snapshot vs full replay).
+    LogRewindCompleted(_logger, perspectiveName, streamId, result.EventsProcessed,
+      (long)rewindDurationMs, hasSnapshot ? "snapshot store available" : "no snapshot store");
+
+    return result;
   }
 
   /// <summary>

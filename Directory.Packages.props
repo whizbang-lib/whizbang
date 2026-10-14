@@ -55,6 +55,13 @@
     <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="4.15.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.0.0" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
+    <!-- Security pin: System.Security.Cryptography.Pkcs arrives transitively (Microsoft.Data.SqlClient 7.1.1 asks for
+         >= 9.0.18). 9.0.18 carries GHSA-846f-f764-76mx (high) and GHSA-2fmv-rv2c-59x7 (medium); both cover 10.0.0
+         through 10.0.12 as well, and 10.0.13 is the first patched release on the 10.0.x line the library's net10.0
+         dependencies use. SqlClient's requirement is a minimum, so 10.0.13 satisfies it. Consumed via a direct
+         PackageReference in Whizbang.Data.Dapper.Custom, which every project that pulls SqlClient references.
+         Remove once SqlClient flows a patched Pkcs on its own. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Security pin: SSH.NET arrives transitively (Testcontainers). 2025.1.0 carries
          GHSA-q939-rpr3-3284 (high); pin the patched release. Remove once the transitive
          chain flows a patched SSH.NET on its own. -->

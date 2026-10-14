@@ -26,14 +26,20 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(ct);
 
+    // snapshot_version is read from the event the snapshot was taken at rather than passed in: the
+    // version is a property of that event, so every caller would otherwise look up the same number and
+    // one that forgot would write a row nothing can place in the stream. A snapshot_event_id with no row
+    // in the event store yields NULL, which selection and the reap gate both read as "cannot be placed".
     const string sql = """
-      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number)
+      INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version)
       VALUES (@p_stream_id, @p_perspective_name, @p_snapshot_event_id, @p_snapshot_data::jsonb,
         COALESCE(
           (SELECT MAX(sequence_number) + 1 FROM wh_perspective_snapshots
-           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1))
+           WHERE stream_id = @p_stream_id AND perspective_name = @p_perspective_name), 1),
+        (SELECT es.version FROM wh_event_store es WHERE es.event_id = @p_snapshot_event_id))
       ON CONFLICT (stream_id, perspective_name, snapshot_event_id) DO UPDATE
       SET snapshot_data = EXCLUDED.snapshot_data,
+          snapshot_version = COALESCE(EXCLUDED.snapshot_version, wh_perspective_snapshots.snapshot_version),
           created_at = NOW()
       """;
 
@@ -74,6 +80,19 @@ public sealed partial class DapperPerspectiveSnapshotStore(
     var snapshotEventId = reader.GetGuid(0);
     var snapshotJson = reader.GetString(1);
     return (snapshotEventId, JsonDocument.Parse(snapshotJson));
+  }
+  /// <summary>
+  /// Returns the latest snapshot that lies before <paramref name="beforeEventId"/> in the stream's own
+  /// order. The choice of order, and why a snapshot recording no version is refused where the event can be
+  /// placed and event id order is used where it cannot, lives in
+  /// <see cref="SnapshotStreamOrderLookup"/> so both drivers answer identically (#1355).
+  /// </summary>
+  /// <docs>fundamentals/perspectives/snapshots</docs>
+  public async Task<(Guid SnapshotEventId, int? SnapshotVersion, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeEventInStreamOrderAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    return await SnapshotStreamOrderLookup.FindAsync(connection, streamId, perspectiveName, beforeEventId, ct);
   }
 
   public async Task<(Guid SnapshotEventId, JsonDocument SnapshotData)?> GetLatestSnapshotBeforeAsync(Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken ct = default) {

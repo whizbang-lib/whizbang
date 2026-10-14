@@ -61,6 +61,106 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  public async Task DrainMode_InversionRewind_IsCountedLikeAnyOtherRewindAsync() {
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    // A cursor ahead of the arriving event, so the drain's inversion detector fires and the live
+    // apply path rewinds in place rather than handing the stream to the rewind work-item path.
+    coordinator.CursorOverrides[(PERSPECTIVE, streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = PERSPECTIVE,
+      LastEventId = Guid.CreateVersion7(),
+      LastCommitSequence = 100,
+      Status = PerspectiveProcessingStatus.None
+    };
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7(), commitSequence: 50)]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("behind"))]);
+    var runner = new DrainRunner();
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      metrics: metrics);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
+      .Because("the arriving event is behind the cursor, so this drain rewinds the stream");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewinds").Sum(m => m.Value)).IsEqualTo(1d)
+      .Because("a rewind is a rewind wherever it is triggered from. Counting only the ones that come "
+             + "through the rewind work-item path leaves the counter reading zero while rewinds run, "
+             + "which reads to an operator as a rewind path that never fires");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewind.duration").Count).IsEqualTo(1)
+      .Because("an unrecorded histogram is absent rather than zero, so this rewind does not appear at "
+             + "all in the duration series an operator would check first");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewind.events_replayed").Count).IsEqualTo(1)
+      .Because("how much a rewind replayed is the measure of what it cost, and it is missing for "
+             + "every rewind the live path takes");
+  }
+
+  [Test]
+  public async Task DrainMode_AfterARewind_TheCommitSequenceCursorMovesWithTheEventIdCursorAsync() {
+    var streamId = Guid.CreateVersion7();
+    var lateEvent = Guid.CreateVersion7();
+    var laterEvent = Guid.CreateVersion7();
+    var frontierEvent = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    // The persisted position is commit sequence 100.
+    coordinator.CursorOverrides[(PERSPECTIVE, streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = PERSPECTIVE,
+      LastEventId = Guid.CreateVersion7(),
+      LastCommitSequence = 100,
+      Status = PerspectiveProcessingStatus.None
+    };
+    // First pass: an event below the position, so the detector fires and the stream rewinds.
+    coordinator.EnqueueStreamEvents([_raw(streamId, lateEvent, Guid.CreateVersion7(), commitSequence: 50)]);
+    // Second pass: an event ABOVE the old position and BELOW where the rewind left the stream. It is
+    // out of order against the position the rewind established, and only against that one.
+    coordinator.EnqueueStreamEvents([_raw(streamId, laterEvent, Guid.CreateVersion7(), commitSequence: 150)]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(lateEvent, new DrainDeepEvent("late"))]);
+    eventStore.EnqueueDeserialized([_envelope(laterEvent, new DrainDeepEvent("later"))]);
+    // The rewind finishes at the stream's frontier, commit sequence 200, which is not a row this
+    // batch claimed. That is what makes the caller's own lookup come back empty.
+    var runner = new DrainRunner { Frontier = (frontierEvent, 200) };
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      // Refetch after a single-event pass too; the default skips it, and one event per pass is
+      // exactly the shape this test needs.
+      configure: opts => opts.DrainLoopRefetchMinBatch = 1);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    // The drain loop re-fetches after each pass and stops when a fetch comes back empty, so the two
+    // enqueued responses are two passes and the third call ends the loop. The second pass runs against
+    // the cursor the first pass just set, which is the thing under test.
+    await coordinator.WaitForStreamEventsCallsAsync(3, TimeSpan.FromSeconds(20));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(2)
+      .Because("the rewind moved the stream to commit sequence 200, so the second event at 150 is out "
+             + "of order against the new position and has to rewind too. Judged against the position "
+             + "the rewind replaced, 150 looks like ordinary forward progress, no rewind runs, and the "
+             + "runner's idempotency filter drops it as already applied. The row is then permanently "
+             + "short of that event with nothing pending to repair it");
+  }
+
+  [Test]
   public async Task DrainMode_LeaseDeadlineWithMetrics_CountsOneErrorAsync() {
     var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
     var streamId = Guid.CreateVersion7();

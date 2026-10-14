@@ -293,6 +293,61 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       .Because("the span carries the failure so a trace shows why the rewind stopped");
   }
 
+
+  [Test]
+  public async Task Rewind_ThatCompletes_CountsTriggeredAndCompletedAndLeavesNothingInFlightAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.CountedRewindPerspective";
+    var coordinator = _rewindCoordinator(streamId, perspectiveName, Guid.CreateVersion7());
+    var runner = new RecordingRunner();
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, _, _) = _buildBranchWorker(coordinator, registry, new BranchSetup { Metrics = metrics });
+
+    await worker.ProcessChannelBatchAsync(
+      [_branchWork(streamId, perspectiveName, PerspectiveProcessingStatus.RewindRequired)], CancellationToken.None);
+
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_triggered")).IsEqualTo(1d)
+      .Because("a rewind that is about to run is counted before it runs, so one that never returns is "
+             + "still visible as having been attempted");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds")).IsEqualTo(1d)
+      .Because("it completed, which is the leg of the identity the existing counter reports");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_failed")).IsEqualTo(0d)
+      .Because("nothing threw");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_in_flight")).IsEqualTo(0d)
+      .Because("the rewind finished, so the gauge is back to nothing running. A gauge that only ever "
+             + "climbs reports a permanent backlog that is not there");
+  }
+
+  [Test]
+  public async Task Rewind_ThatThrows_CountsTriggeredAndFailedAndLeavesNothingInFlightAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.CountedFailingRewindPerspective";
+    var coordinator = _rewindCoordinator(streamId, perspectiveName, Guid.CreateVersion7());
+    var runner = new RecordingRunner { RunException = new InvalidOperationException("rewind replay failed") };
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, _, _) = _buildBranchWorker(coordinator, registry, new BranchSetup { Metrics = metrics });
+
+    await worker.ProcessChannelBatchAsync(
+      [_branchWork(streamId, perspectiveName, PerspectiveProcessingStatus.RewindRequired)], CancellationToken.None);
+
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_triggered")).IsEqualTo(1d)
+      .Because("the rewind was attempted, and the attempt is what triggered counts");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_failed")).IsEqualTo(1d)
+      .Because("rewind failures need their own counter: the generic error counter mixes every "
+             + "processing failure together and cannot answer whether rewinds are the ones failing");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds")).IsEqualTo(0d)
+      .Because("a rewind that threw did not complete, so triggered minus failed leaves nothing unaccounted");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_in_flight")).IsEqualTo(0d)
+      .Because("a rewind leaves flight whether it completed or threw; a gauge that leaks on the failure "
+             + "path reports phantom rewinds running forever");
+  }
+
   // ------------------------------------------------------------------
   // Completion meter and the affinity gate
   // ------------------------------------------------------------------

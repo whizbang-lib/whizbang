@@ -7,6 +7,7 @@ using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -320,10 +321,10 @@ public class NotifyInstanceOwnersScanShapeSqlTests : EFCoreTestBase {
       await emit();
       // 146 (#720): the functions under test queue their doorbells and the caller rings after the
       // commit, which is what the driver's DoorbellRinger does.
-      await using (var ring = conn.CreateCommand()) {
-        ring.CommandText = "SELECT ring_doorbells()";
-        _ = await ring.ExecuteScalarAsync();
-      }
+      // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+      // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+      // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+      _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, CancellationToken.None);
       await using var ping = conn.CreateCommand();
       ping.CommandText = "SELECT 1";
       _ = await ping.ExecuteScalarAsync();

@@ -80,6 +80,17 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
           message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
     }
 
+    // "Selected streams, none named" is refused, never widened. It is almost always a caller that
+    // meant to name streams and produced an empty list, and widening it would turn the most
+    // targeted request the command offers into the largest thing it can do: a full replay, and a
+    // table swap where a swapper is configured. A whole-perspective rebuild is asked for by its
+    // own mode. Refused once for the request rather than once per perspective, because the mode
+    // and the filter belong to the command, not to any one perspective (#1356).
+    if (message.Mode == RebuildMode.SelectedStreams && streamFilter is null) {
+      LogSelectedStreamsWithoutStreamIds(logger, perspectiveNames.Length);
+      return;
+    }
+
     // The caller's id when it supplied one, so it can find its own rebuild across every service that answered.
     // Otherwise one per service, which still answers "did anything run here" but cannot be correlated across them.
     var origin = new RebuildOrigin(
@@ -200,9 +211,13 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
 
   /// <summary>Selects the rebuild method based on filter presence and mode. When
   /// <paramref name="streamFilter"/> is non-null the stream-filtered overload runs; otherwise
-  /// the mode picks InPlace vs BlueGreen. SelectedStreams-without-filter falls through to
-  /// BlueGreen — the rebuilder's _rebuildCoreAsync treats the mode as logging only until a
-  /// real blue-green implementation lands.</summary>
+  /// the mode picks InPlace vs BlueGreen.</summary>
+  /// <remarks>
+  /// <paramref name="mode"/> is never <see cref="RebuildMode.SelectedStreams"/> with a null
+  /// <paramref name="streamFilter"/>: the caller refuses that combination before dispatching, so
+  /// it cannot reach the BlueGreen fall-through below. It used to, and a selected-streams request
+  /// whose stream list came out empty rebuilt every stream of the perspective instead (#1356).
+  /// </remarks>
   private static Task<RebuildResult> _dispatchRebuildAsync(
       IPerspectiveRebuilder rebuilder,
       string perspectiveName,
@@ -299,6 +314,10 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "RebuildPerspectiveCommand.FromEventId={FromEventId} is set but IPerspectiveRebuilder has no partial-range replay API; the value is ignored and the rebuild replays from event zero.")]
   private static partial void LogFromEventIdUnsupported(ILogger logger, long fromEventId);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "RebuildPerspectiveCommand refused: Mode=SelectedStreams names no streams (IncludeStreamIds is empty or absent, and no ExcludeStreamIds narrowed the set), so there is nothing to rebuild. {PerspectiveCount} locally owned perspective(s) were left untouched. This is not widened to a full rebuild; ask for one with Mode=BlueGreen or Mode=InPlace.")]
+  private static partial void LogSelectedStreamsWithoutStreamIds(ILogger logger, int perspectiveCount);
 
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Rebuilt perspective {PerspectiveName}: {StreamsProcessed} streams in {ElapsedMs}ms")]

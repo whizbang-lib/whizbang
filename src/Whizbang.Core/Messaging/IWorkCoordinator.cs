@@ -3431,6 +3431,23 @@ public record PerspectiveCursorCompletion {
   public required Guid LastEventId { get; init; }
 
   /// <summary>
+  /// Commit sequence of <see cref="LastEventId"/>, as the runner saw it. Null when the runner did not
+  /// resolve one.
+  /// </summary>
+  /// <remarks>
+  /// The worker keeps two cursors per stream and perspective, the last event id and the last commit
+  /// sequence, and the inversion detector reads the commit sequence whenever it has one. The caller used
+  /// to rediscover it by looking <see cref="LastEventId"/> up among the rows the batch claimed, which
+  /// works only while the run applied those rows. A rewind re-reads the stream and finishes at its
+  /// frontier, which is not one of them, so the lookup came back empty and the commit-sequence cursor
+  /// kept a pre-rewind value while the event-id cursor moved. The two then described different positions
+  /// and the detector under-reported against the stale one (#1365). The run that moved the position is
+  /// the thing that knows where it ended, so it reports it.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? LastCommitSequence { get; init; }
+
+  /// <summary>
   /// Whether this batch actually changed the row: it was written, or it was purged.
   /// </summary>
   /// <remarks>
