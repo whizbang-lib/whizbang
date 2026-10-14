@@ -69,8 +69,12 @@ public record PerspectiveRebuildProgress(
 /// Equal to <paramref name="RowDigestAfter"/> means the rebuild ran and changed nothing, which is a different
 /// outcome from never having run at all.</param>
 /// <param name="RowDigestAfter">Digest of the targeted rows after the replay, or null when not computed.</param>
+/// <param name="RowDigestUnavailableReason">Why the digests are absent, or null when they were computed or the mode does
+/// not take them (#1372): a named-record rebuild in a host with no <c>IPerspectiveRowDigest</c> registered says so, and
+/// one whose digest failed carries the failure, so "unknown" is never read as "unchanged".</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildCompleted_Properties_RoundTripCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderOutcomeTests.cs</tests>
 [PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
@@ -81,7 +85,8 @@ public record PerspectiveRebuildCompleted(
     TimeSpan Duration,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null,
     string? RowDigestBefore = null,
-    string? RowDigestAfter = null
+    string? RowDigestAfter = null,
+    string? RowDigestUnavailableReason = null
 ) : IEvent;
 
 /// <summary>
