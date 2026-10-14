@@ -2534,8 +2534,8 @@ public partial class PerspectiveWorker(
           // traced like any other. It used to call the runner directly, which is why the rewind
           // meters read zero while these rewinds ran (#1362).
           result = await _rewindAndCountAsync(
-            runner, streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence,
-            eventsBehind: null,
+            runner,
+            new RewindRequest(streamId, perspectiveName, inversionAnchor.Value, anchorCommitSequence, EventsBehind: null),
             _tracingOptions.CurrentValue.IsEnabled(TraceComponents.Perspectives),
             leaseCt);
         } else {
@@ -4228,8 +4228,9 @@ public partial class PerspectiveWorker(
 
       try {
         result = await _rewindAndCountAsync(
-          runner, streamId, perspectiveName, rewindTriggerEventId,
-          rewindTriggerCommitSequence: null, eventsBehind, enablePerspectiveSpans, cancellationToken);
+          runner,
+          new RewindRequest(streamId, perspectiveName, rewindTriggerEventId, TriggerCommitSequence: null, eventsBehind),
+          enablePerspectiveSpans, cancellationToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         // Isolate rewind failures — a single stream's failure must not crash the worker.
         // The stream will retry on the next polling cycle. The rewind itself is already counted
@@ -4259,6 +4260,22 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Which rewind: the stream and perspective, the event that triggered it, that event's commit sequence
+  /// where the caller resolved one, and how far behind the cursor was where the caller knows.
+  /// </summary>
+  /// <remarks>
+  /// One parameter rather than five because they describe one thing and always travel together, and
+  /// because a call site that passes five positional values of which three are ids is a call site where
+  /// two of them can be swapped without the compiler noticing.
+  /// </remarks>
+  private readonly record struct RewindRequest(
+      Guid StreamId,
+      string PerspectiveName,
+      Guid TriggerEventId,
+      long? TriggerCommitSequence,
+      int? EventsBehind);
+
+  /// <summary>
   /// Invokes a rewind and records it. Every rewind the worker performs goes through here, whichever
   /// path decided to rewind, so the rewind telemetry describes rewinds rather than one route to them.
   /// </summary>
@@ -4279,13 +4296,10 @@ public partial class PerspectiveWorker(
   /// <docs>fundamentals/perspectives/rewind#metrics</docs>
   private async Task<PerspectiveCursorCompletion> _rewindAndCountAsync(
       IPerspectiveRunner runner,
-      Guid streamId,
-      string perspectiveName,
-      Guid rewindTriggerEventId,
-      long? rewindTriggerCommitSequence,
-      int? eventsBehind,
+      RewindRequest request,
       bool enablePerspectiveSpans,
       CancellationToken cancellationToken) {
+    var (streamId, perspectiveName, rewindTriggerEventId, rewindTriggerCommitSequence, eventsBehind) = request;
 
     using var activity = enablePerspectiveSpans
       ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal)

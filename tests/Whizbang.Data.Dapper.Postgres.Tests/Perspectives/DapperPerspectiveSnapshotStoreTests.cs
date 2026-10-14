@@ -277,7 +277,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
       """;
     cmd.Parameters.AddWithValue("id", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.AddWithValue("version", version);
+    cmd.Parameters.AddWithValue(nameof(version), version);
     cmd.Parameters.AddWithValue("cs", commitSequence);
     await cmd.ExecuteNonQueryAsync();
   }
