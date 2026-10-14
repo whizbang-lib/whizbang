@@ -1229,15 +1229,29 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       await cancelled.Task;
     }
 
+    /// <summary>
+    /// Where a rewind finishes: the stream's frontier, which is NOT one of the rows the batch claimed.
+    /// A real rewind re-reads the stream from the snapshot forward and ends at its last event, so a
+    /// fake that reported the trigger back would hide the very thing #1365 is about.
+    /// </summary>
+    public (Guid EventId, long CommitSequence)? Frontier { get; init; }
+
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
       RewindCalls.Enqueue((triggeringEventId, null));
-      return Task.FromResult(_completed(streamId, perspectiveName, triggeringEventId));
+      return Task.FromResult(_rewound(streamId, perspectiveName, triggeringEventId));
     }
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken = default) {
       RewindCalls.Enqueue((triggeringEventId, triggeringCommitSequence));
-      return Task.FromResult(_completed(streamId, perspectiveName, triggeringEventId));
+      return Task.FromResult(_rewound(streamId, perspectiveName, triggeringEventId));
     }
+
+    private PerspectiveCursorCompletion _rewound(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
+      Frontier is null
+        ? _completed(streamId, perspectiveName, triggeringEventId)
+        : _completed(streamId, perspectiveName, Frontier.Value.EventId) with {
+          LastCommitSequence = Frontier.Value.CommitSequence
+        };
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
