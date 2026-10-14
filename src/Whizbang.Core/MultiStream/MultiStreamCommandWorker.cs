@@ -35,8 +35,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   private readonly IServiceInstanceProvider _instance;
   private readonly MultiStreamCommandOptions _options;
   private readonly ILogger<MultiStreamCommandWorker> _logger;
-  private readonly IPartitionAssignmentSource? _assignment;
-  private readonly ISchemaReadyGate? _schemaReady;
+  private readonly IPartitionAssignmentSource _assignment;
+  private readonly ISchemaReadyGate _schemaReady;
   private readonly TimeProvider _time;
   private readonly SemaphoreSlim _wake = new(0, 1);
   private DateTimeOffset? _nextPurgeAt;
@@ -48,9 +48,9 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <param name="instance">This instance.</param>
   /// <param name="options">Batch, lease, attempts, polling and retention.</param>
   /// <param name="logger">Logger.</param>
-  /// <param name="assignment">The cached partition assignment, when one is registered; the claim then ranks this instance
-  /// from it, as the work claim does.</param>
-  /// <param name="schemaReady">When registered, the loop waits for the schema before its first pass.</param>
+  /// <param name="assignment">The cached partition assignment; the claim ranks this instance from it, as the work claim
+  /// does, and ranks the live instances itself when it has no current version.</param>
+  /// <param name="schemaReady">The loop waits for the schema before its first pass.</param>
   /// <param name="timeProvider">Clock for retention; the system clock when null.</param>
   public MultiStreamCommandWorker(
       IMultiStreamCommandStore store,
@@ -59,8 +59,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
       IServiceInstanceProvider instance,
       IOptions<MultiStreamCommandOptions> options,
       ILogger<MultiStreamCommandWorker> logger,
-      IPartitionAssignmentSource? assignment = null,
-      ISchemaReadyGate? schemaReady = null,
+      IPartitionAssignmentSource assignment,
+      ISchemaReadyGate schemaReady,
       TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(store);
     ArgumentNullException.ThrowIfNull(bindings);
@@ -68,6 +68,8 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
     ArgumentNullException.ThrowIfNull(instance);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(assignment);
+    ArgumentNullException.ThrowIfNull(schemaReady);
     _store = store;
     _bindings = bindings.ToDictionary(b => b.CommandType, StringComparer.Ordinal);
     _scopeFactory = scopeFactory;
@@ -107,9 +109,7 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
       return;
     }
     _options.Validate();
-    if (_schemaReady is not null) {
-      await _schemaReady.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
-    }
+    await _schemaReady.WaitForReadyAsync(stoppingToken).ConfigureAwait(false);
     while (!stoppingToken.IsCancellationRequested) {
       var claimed = 0;
       try {
@@ -134,7 +134,7 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
   /// <returns>How many streams were claimed.</returns>
   internal async Task<int> RunOnceAsync(CancellationToken cancellationToken) {
     var instanceId = _instance.InstanceId;
-    var version = _assignment is null ? null : await _assignment.ForClaimAsync(instanceId, cancellationToken).ConfigureAwait(false);
+    var version = await _assignment.ForClaimAsync(instanceId, cancellationToken).ConfigureAwait(false);
     var items = await _store.ClaimAsync(
       new MultiStreamClaim(instanceId, _options.BatchSize, _options.Lease, version), cancellationToken).ConfigureAwait(false);
     var outcomes = new List<MultiStreamOutcome>(items.Count);

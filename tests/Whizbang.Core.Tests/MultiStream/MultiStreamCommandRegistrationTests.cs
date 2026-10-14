@@ -120,22 +120,6 @@ public class MultiStreamCommandRegistrationTests {
   }
 
   [Test]
-  public async Task Registrar_StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync() {
-    var registry = new CapturingReceptorRegistry();
-    using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(registry));
-    var registrar = provider.GetServices<IHostedService>().OfType<MultiStreamCommandReceptorRegistrar>().Single();
-
-    await registrar.StartAsync(CancellationToken.None);
-
-    await Assert.That(registry.Registrations.All(r => r.MessageType == typeof(ProbeMultiStreamCommand))).IsTrue();
-    await Assert.That(registry.Registrations.Select(r => r.Stage)).IsEquivalentTo([
-      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])
-      .Because("the command is recorded whether it is dispatched to this service locally or arrives from the transport");
-    await Assert.That(registry.Receptors.All(r => r is MultiStreamCommandIntake<ProbeMultiStreamCommand>)).IsTrue();
-    await registrar.StopAsync(CancellationToken.None);
-  }
-
-  [Test]
   public async Task RegisterIntake_WithNoLoggerRegistered_StillRegistersTheIntakeAsync() {
     var services = new ServiceCollection();
     services.AddMultiStreamCommandHandler<ProbeMultiStreamCommand, ProbeMultiStreamHandler>();
@@ -144,25 +128,11 @@ public class MultiStreamCommandRegistrationTests {
 
     provider.GetServices<IMultiStreamCommandBinding>().Single().RegisterIntake(registry, provider);
 
-    await Assert.That(registry.Registrations).Count().IsEqualTo(3)
-      .Because("a host without logging still records multi-stream commands");
-  }
-
-  [Test]
-  public async Task Registrar_StartAsync_WithTheNullRegistry_RegistersNothingAndStartsAsync() {
-    using var provider = _provider(s => s.AddSingleton<IReceptorRegistry>(NullReceptorRegistry.Instance));
-    var registrar = provider.GetServices<IHostedService>().OfType<MultiStreamCommandReceptorRegistrar>().Single();
-
-    await Assert.That(async () => await registrar.StartAsync(CancellationToken.None)).ThrowsNothing()
-      .Because("a host with no receptor registry has nothing to register into and must still start");
-  }
-
-  [Test]
-  public async Task Registrar_StartAsync_WithNoRegistry_RegistersNothingAndStartsAsync() {
-    using var provider = _provider();
-    var registrar = provider.GetServices<IHostedService>().OfType<MultiStreamCommandReceptorRegistrar>().Single();
-
-    await Assert.That(async () => await registrar.StartAsync(CancellationToken.None)).ThrowsNothing();
+    await Assert.That(registry.Registrations.Select(r => r.Stage)).IsEquivalentTo([
+      LifecycleStage.LocalImmediateInline, LifecycleStage.PreOutboxInline, LifecycleStage.PostInboxInline])
+      .Because("the command is recorded whether it is dispatched within the service or arrives from the transport, with or without logging");
+    await Assert.That(registry.Registrations.All(r => r.MessageType == typeof(ProbeMultiStreamCommand))).IsTrue();
+    await Assert.That(registry.Receptors.All(r => r is MultiStreamCommandIntake<ProbeMultiStreamCommand>)).IsTrue();
   }
 
   private sealed class CapturingReceptorRegistry : IReceptorRegistry {

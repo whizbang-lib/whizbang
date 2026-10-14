@@ -57,8 +57,9 @@ public class MultiStreamCommandWorkerTests {
         new FixedInstance(_instance),
         Microsoft.Extensions.Options.Options.Create(Options),
         NullLogger<MultiStreamCommandWorker>.Instance,
-        Assignment,
-        timeProvider: Time);
+        Assignment ?? new FixedAssignmentSource(null),
+        SchemaReadyGate.AlreadyReady(),
+        Time);
     }
   }
 
@@ -308,13 +309,17 @@ public class MultiStreamCommandWorkerTests {
     var options = Microsoft.Extensions.Options.Options.Create(new MultiStreamCommandOptions());
     var logger = NullLogger<MultiStreamCommandWorker>.Instance;
     var instance = new FixedInstance(_instance);
+    var source = new FixedAssignmentSource(null);
+    var gate = SchemaReadyGate.AlreadyReady();
 
-    await Assert.That(() => new MultiStreamCommandWorker(null!, [], scopes, instance, options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, null!, scopes, instance, options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], null!, instance, options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, null!, options, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, null!, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(null!, [], scopes, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, null!, scopes, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], null!, instance, options, logger, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, null!, options, logger, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, null!, logger, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, null!, source, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, logger, null!, gate)).Throws<ArgumentNullException>();
+    await Assert.That(() => new MultiStreamCommandWorker(h.Store, [], scopes, instance, options, logger, source, null!)).Throws<ArgumentNullException>();
   }
 
   [Test]
@@ -350,7 +355,7 @@ public class MultiStreamCommandWorkerTests {
     public ServiceInstanceInfo ToInfo() => new() { InstanceId = id, ServiceName = "test", HostName = "test-host", ProcessId = 1 };
   }
 
-  private sealed class FixedAssignmentSource(PartitionAssignmentVersion version) : IPartitionAssignmentSource {
+  private sealed class FixedAssignmentSource(PartitionAssignmentVersion? version) : IPartitionAssignmentSource {
     public PartitionAssignment? Current => null;
     public event Action<PartitionAssignment?>? OnAssignmentChanged;
     public void RaiseUnused() => OnAssignmentChanged?.Invoke(null);

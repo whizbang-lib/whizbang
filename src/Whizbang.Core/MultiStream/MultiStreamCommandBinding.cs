@@ -13,7 +13,7 @@ namespace Whizbang.Core.MultiStream;
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
 /// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_ReadsThePayloadBackAndCallsTheHandlerForThatStreamAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:Registrar_StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandReceptorRegistrarTests.cs:StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
 public sealed class MultiStreamCommandBinding<TCommand> : IMultiStreamCommandBinding where TCommand : IMultiStreamCommand {
   internal static readonly string TYPE_NAME = TypeNameFormatter.Format(typeof(TCommand));
 

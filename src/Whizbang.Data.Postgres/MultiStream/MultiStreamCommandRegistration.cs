@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Notifications;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres.MultiStream;
 
@@ -26,6 +27,7 @@ internal static class MultiStreamCommandRegistration {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<MultiStreamCommandOptions>, ConfigureMultiStreamCommandOptionsFromConfiguration>());
     services.TryAddSingletonOverNullDefault<IMultiStreamCommandStore, PgMultiStreamCommandStore>();
+    services.AddWhizbangSchemaReadyGate();
     services.TryAddSingleton<MultiStreamCommandWorker>();
     services.AddHostedService(sp => sp.GetRequiredService<MultiStreamCommandWorker>());
     services.AddHostedService<MultiStreamCommandSubscriber>();

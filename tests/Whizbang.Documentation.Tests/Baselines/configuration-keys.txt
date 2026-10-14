@@ -125,6 +125,13 @@ Whizbang:MessageSecurity:EnableAuditLogging
 Whizbang:MessageSecurity:PropagateToOutgoingMessages
 Whizbang:MessageSecurity:Timeout
 Whizbang:MessageSecurity:ValidateCredentials
+Whizbang:MultiStreamCommands:BatchSize
+Whizbang:MultiStreamCommands:CompletedRunRetention
+Whizbang:MultiStreamCommands:Enabled
+Whizbang:MultiStreamCommands:Lease
+Whizbang:MultiStreamCommands:MaxAttempts
+Whizbang:MultiStreamCommands:PollInterval
+Whizbang:MultiStreamCommands:PurgeInterval
 Whizbang:Offloads:AzureBlob:*:ConnectionString
 Whizbang:Offloads:AzureBlob:*:ContainerName
 Whizbang:Offloads:AzureBlob:*:DefaultAccessTier

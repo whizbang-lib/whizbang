@@ -48,7 +48,8 @@ public class MultiStreamCommandWorkerLoopTests {
       new LoopInstance(),
       Options.Create(options),
       NullLogger<MultiStreamCommandWorker>.Instance,
-      schemaReady: gate);
+      new NoAssignment(),
+      gate ?? SchemaReadyGate.AlreadyReady());
   }
 
   private static (Task<int> Pass, Action Unsubscribe) _nextPass(MultiStreamCommandWorker worker, Func<int, bool>? when = null) {
@@ -230,6 +231,14 @@ public class MultiStreamCommandWorkerLoopTests {
     public string HostName => "loop-host";
     public int ProcessId => 1;
     public ServiceInstanceInfo ToInfo() => new() { InstanceId = _instance, ServiceName = "loop", HostName = "loop-host", ProcessId = 1 };
+  }
+
+  private sealed class NoAssignment : IPartitionAssignmentSource {
+    public PartitionAssignment? Current => null;
+    public event Action<PartitionAssignment?>? OnAssignmentChanged;
+    public void MarkStale() => OnAssignmentChanged?.Invoke(null);
+    public ValueTask<PartitionAssignmentVersion?> ForClaimAsync(Guid instanceId, CancellationToken cancellationToken) =>
+      ValueTask.FromResult<PartitionAssignmentVersion?>(null);
   }
 
   private sealed class LoopGate : ISchemaReadyGate {

@@ -12,8 +12,8 @@ namespace Whizbang.Core.MultiStream;
 /// receptor generator sees only the consuming assembly's own receptors.
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#registration</docs>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:Registrar_StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandRegistrationTests.cs:Registrar_StartAsync_WithTheNullRegistry_RegistersNothingAndStartsAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandReceptorRegistrarTests.cs:StartAsync_RegistersTheIntakeAtTheDefaultReceptorStagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/MultiStream/MultiStreamCommandReceptorRegistrarTests.cs:StartAsync_WithTheNullRegistry_RegistersNothingAndStartsAsync</tests>
 internal sealed class MultiStreamCommandReceptorRegistrar(
     IServiceProvider services,
     IEnumerable<IMultiStreamCommandBinding> bindings) : IHostedService {

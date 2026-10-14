@@ -102,7 +102,8 @@ public class MultiStreamCommandEndToEndTests : EFCoreTestBase {
       new ServiceInstanceProvider(instance, "e2e", "e2e-host", 1),
       Options.Create(new MultiStreamCommandOptions { BatchSize = 7, PollInterval = TimeSpan.FromHours(1) }),
       NullLogger<MultiStreamCommandWorker>.Instance,
-      new FixedAssignment(version));
+      new FixedAssignment(version),
+      SchemaReadyGate.AlreadyReady());
   }
 
   private PgMultiStreamCommandStore _store() =>
