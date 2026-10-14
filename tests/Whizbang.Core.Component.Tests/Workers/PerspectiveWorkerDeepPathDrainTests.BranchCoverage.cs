@@ -61,6 +61,54 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  public async Task DrainMode_InversionRewind_IsCountedLikeAnyOtherRewindAsync() {
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    // A cursor ahead of the arriving event, so the drain's inversion detector fires and the live
+    // apply path rewinds in place rather than handing the stream to the rewind work-item path.
+    coordinator.CursorOverrides[(PERSPECTIVE, streamId)] = new PerspectiveCursorInfo {
+      StreamId = streamId,
+      PerspectiveName = PERSPECTIVE,
+      LastEventId = Guid.CreateVersion7(),
+      LastCommitSequence = 100,
+      Status = PerspectiveProcessingStatus.None
+    };
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7(), commitSequence: 50)]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("behind"))]);
+    var runner = new DrainRunner();
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      metrics: metrics);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
+      .Because("the arriving event is behind the cursor, so this drain rewinds the stream");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewinds").Sum(m => m.Value)).IsEqualTo(1d)
+      .Because("a rewind is a rewind wherever it is triggered from. Counting only the ones that come "
+             + "through the rewind work-item path leaves the counter reading zero while rewinds run, "
+             + "which reads to an operator as a rewind path that never fires");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewind.duration").Count).IsEqualTo(1)
+      .Because("an unrecorded histogram is absent rather than zero, so this rewind does not appear at "
+             + "all in the duration series an operator would check first");
+    await Assert.That(meters.GetByName("whizbang.perspective.rewind.events_replayed").Count).IsEqualTo(1)
+      .Because("how much a rewind replayed is the measure of what it cost, and it is missing for "
+             + "every rewind the live path takes");
+  }
+
+  [Test]
   public async Task DrainMode_LeaseDeadlineWithMetrics_CountsOneErrorAsync() {
     var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
     var streamId = Guid.CreateVersion7();
