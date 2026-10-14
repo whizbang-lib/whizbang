@@ -1146,16 +1146,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // VACUUM FULL and ANALYZE need the table owner's rights, which a least-privilege application role does not
     // have, and Postgres does not refuse them: it warns and skips the table. So when a schema-initialization
-    // connection is configured, the role startup migrations use runs them.
-    // The application's services come from the context itself: registered through DI, it carries them. Every
-    // configured context has the core extension (the options builder adds it), so only the provider can be absent.
-    var applicationServices = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
-      .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)
-      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()!.ApplicationServiceProvider;
-    if (applicationServices is not null && SchemaInitConnection.For(applicationServices, typeof(TDbContext)) is { } initConnectionString) {
+    // connection is configured, the role startup migrations use runs them; otherwise the application role
+    // runs them only on a table it owns, and a table it does not own is reported, not rewritten (#1351).
+    if (_schemaInitConnectionString() is { } initConnectionString) {
       await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
       await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
       await _vacuumFullAndAnalyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    } else if (await _notOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+      EFCoreWorkCoordinatorLog.TableNotRewritten(_log, tableName, notOwned);
+      return null;
     } else {
       await _vacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
@@ -1181,6 +1180,101 @@ public class EFCoreWorkCoordinator<TDbContext>(
     measure.Parameters.AddWithValue("t", tableName);
     var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return scalar is decimal d ? (double)d : null;
+  }
+
+  /// <summary>How long one work-table <c>VACUUM ANALYZE</c> may run before the vacuum gives up on it.</summary>
+  private const int WORK_TABLE_VACUUM_TIMEOUT_SECONDS = 120;
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// <c>VACUUM</c> cannot run in a transaction, so it runs on a connection of its own (the
+  /// schema-initialization one) or on the coordinator's connection outside any ambient transaction. The
+  /// table names are the framework's own constants, so nothing caller-supplied reaches the statement.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
+  public async Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    if (_schemaInitConnectionString() is { } initConnectionString) {
+      return await _vacuumWorkTablesOnInitAsync(initConnectionString, schema, cancellationToken).ConfigureAwait(false);
+    }
+
+    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    foreach (var table in VacuumedWorkTables.NAMES) {
+      var qualified = BuildSchemaQualifiedName(schema, table);
+      if (await _notOwnedReasonAsync(conn, qualified, table, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+        outcomes.Add(new WorkTableVacuum(table, false, notOwned));
+        continue;
+      }
+      await _vacuumAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+      outcomes.Add(new WorkTableVacuum(table, true, null));
+    }
+    return outcomes;
+  }
+
+  /// <summary>Every work table on the schema-initialization connection, which owns them.</summary>
+  private static async Task<IReadOnlyList<WorkTableVacuum>> _vacuumWorkTablesOnInitAsync(
+      string initConnectionString, string schema, CancellationToken cancellationToken) {
+    var outcomes = new List<WorkTableVacuum>(VacuumedWorkTables.NAMES.Length);
+    await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+    await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    foreach (var table in VacuumedWorkTables.NAMES) {
+      await _vacuumAnalyzeAsync(initConnection, BuildSchemaQualifiedName(schema, table), cancellationToken).ConfigureAwait(false);
+      outcomes.Add(new WorkTableVacuum(table, true, null));
+    }
+    return outcomes;
+  }
+
+  private static async Task _vacuumAnalyzeAsync(
+      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
+    await using var vacuum = conn.CreateCommand();
+#pragma warning disable S2077 // Qualified name built from a framework table constant and the validated schema; VACUUM takes no parameters
+    vacuum.CommandText = $"VACUUM ANALYZE {qualified}";
+#pragma warning restore S2077
+    vacuum.CommandTimeout = WORK_TABLE_VACUUM_TIMEOUT_SECONDS;
+    await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// The schema-initialization (<c>-init</c>) connection string configured for this context, or null. The
+  /// application's services come from the context itself: registered through DI, it carries them. Every
+  /// configured context has the core extension (the options builder adds it), so only the provider can be absent.
+  /// </summary>
+  private string? _schemaInitConnectionString() {
+    var applicationServices = Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+      .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)
+      .FindExtension<Microsoft.EntityFrameworkCore.Infrastructure.CoreOptionsExtension>()!.ApplicationServiceProvider;
+    return applicationServices is null ? null : SchemaInitConnection.For(applicationServices, typeof(TDbContext));
+  }
+
+  /// <summary>
+  /// Null when the connection's role owns <paramref name="qualified"/> (is a member of its owner, as
+  /// <c>VACUUM</c> requires); otherwise why the table cannot be vacuumed on it, naming the table and the role.
+  /// </summary>
+  private static async Task<string?> _notOwnedReasonAsync(
+      System.Data.Common.DbConnection conn, string qualified, string table, CancellationToken cancellationToken) {
+    await using var check = conn.CreateCommand().WithCoordinatorTimeout();
+    check.CommandText = """
+      SELECT current_user::TEXT, (SELECT pg_has_role(current_user, c.relowner, 'MEMBER') FROM pg_class c WHERE c.oid = to_regclass(@q))
+      """;
+    var parameter = check.CreateParameter();
+    parameter.ParameterName = "q";
+    parameter.Value = qualified;
+    check.Parameters.Add(parameter);
+    await using var reader = await check.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+    var role = reader.GetString(0);
+    if (reader.IsDBNull(1)) {
+      return $"{table} does not exist";
+    }
+    return reader.GetBoolean(1)
+      ? null
+      : $"role '{role}' does not own {table} and no schema-initialization (-init) connection is configured; "
+        + "configure one so the table owner runs it";
   }
 
   // The rewrite itself, then ANALYZE so the caller's re-measure sees what the rewrite did rather than assuming it.
@@ -5565,6 +5659,12 @@ internal static class OutboxClaimNotices {
   internal const string PARTITION_ASSIGNMENT_STALE = "whizbang.partition_assignment_stale=true";
 }
 
+/// <summary>The work tables vacuumed when an instance acquires the maintainer duty (#1351).</summary>
+internal static class VacuumedWorkTables {
+  /// <summary>Unqualified table names, in the order they are vacuumed.</summary>
+  internal static readonly string[] NAMES = ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_message_deduplication"];
+}
+
 internal static partial class EFCoreWorkCoordinatorLog {
   [LoggerMessage(
     Level = LogLevel.Warning,
@@ -5580,4 +5680,8 @@ internal static partial class EFCoreWorkCoordinatorLog {
     Message = "Row-retention declaration for {ClrTypeName} matched no wh_perspective_registry row: the perspective is NOT enrolled. "
             + "The registry key is the CLR type name (Outer+Model for a nested model); a row keyed in another form is a key drift")]
   public static partial void RetentionDeclarationMatchedNoRegistryRow(ILogger logger, string clrTypeName);
+
+  [LoggerMessage(EventId = 76, Level = LogLevel.Warning,
+    Message = "Table {Table} was not rewritten: {Reason}")]
+  public static partial void TableNotRewritten(ILogger logger, string table, string reason);
 }

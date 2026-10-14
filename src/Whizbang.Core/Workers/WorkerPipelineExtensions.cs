@@ -215,6 +215,14 @@ public static class WorkerPipelineExtensions {
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
+    // The work tables are vacuumed when an instance acquires the maintainer duty, never merely because
+    // it started (#1351). The holder loop runs it; without role assignment nothing acquires the duty.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IDutyAcquisitionHandler, WorkTableVacuumOnAcquisition>(sp =>
+      new WorkTableVacuumOnAcquisition(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+        sp.GetRequiredService<ILogger<WorkTableVacuumOnAcquisition>>())));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],

@@ -53,6 +53,22 @@ public interface IDutyGrant : IAsyncDisposable {
   long? Epoch => null;
 
   /// <summary>
+  /// The instance that held the duty before this grant, when the grant took it over from one; null for
+  /// a first assignment, for a grant that kept a duty this instance already held, and for an
+  /// implementation that cannot tell. A duty-acquisition handler reads it to tell a hand-off or a
+  /// takeover from a first assignment.
+  /// </summary>
+  /// <remarks>
+  /// A default member, so every existing grant implementation keeps compiling and reads as a first
+  /// assignment. The value is whatever the vote recorded as the last holder, so it can name an
+  /// instance that has since stopped: a cold restart after the whole fleet stopped is a reassignment
+  /// from the last instance that held the duty.
+  /// </remarks>
+  /// <docs>operations/startup/capabilities-and-duties#acquiring-a-duty</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Startup/DutyGrantContractTests.cs</tests>
+  Guid? PreviousHolderInstanceId => null;
+
+  /// <summary>
   /// Whether a newer-version instance has asked this holder to drain: finish the current step,
   /// then release, so the role hands over to the newer release without waiting for a lapse. Learned
   /// on a renewal, so it turns true only after a <see cref="VerifyStillHeldAsync"/>. A holder that

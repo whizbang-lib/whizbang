@@ -258,15 +258,10 @@ public static class SharedPostgresContainer {
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi)
-      ?? throw new InvalidOperationException("Failed to start docker process");
-
-    var stdOut = await process.StandardOutput.ReadToEndAsync(ct);
-    var stdErr = await process.StandardError.ReadToEndAsync(ct);
-    await process.WaitForExitAsync(ct);
-
-    if (process.ExitCode != 0) {
-      throw new InvalidOperationException($"Docker run failed: {stdErr}");
+    var result = await ProcessRunner.RunAsync(psi.FileName, psi.Arguments, ct);
+    var stdOut = result.StandardOutput;
+    if (result.ExitCode != 0) {
+      throw new InvalidOperationException($"Docker run failed: {result.StandardError}");
     }
 
     Console.WriteLine($"[SharedPostgresContainer] Container created with ID: {stdOut.Trim()[..12]}");
@@ -338,70 +333,22 @@ public static class SharedPostgresContainer {
   }
 
   private static async Task<string?> _getContainerStateAsync(CancellationToken ct) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi);
-    if (process == null) {
-      return null;
-    }
-
-    var output = await process.StandardOutput.ReadToEndAsync(ct);
-    await process.WaitForExitAsync(ct);
-
-    if (process.ExitCode != 0) {
-      return null; // Container doesn't exist
-    }
-
-    return output.Trim();
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"inspect --format={{{{.State.Status}}}} {CONTAINER_NAME}", ct);
+    return result.ExitCode != 0 ? null : result.StandardOutput.Trim(); // non-zero: the container doesn't exist
   }
 
   private static async Task _startContainerAsync(CancellationToken ct) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"start {CONTAINER_NAME}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi);
-    if (process != null) {
-      await process.WaitForExitAsync(ct);
-    }
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"start {CONTAINER_NAME}", ct);
   }
 
   private static async Task<int?> _getPortAsync(CancellationToken ct) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"port {CONTAINER_NAME} {CONTAINER_PORT}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi);
-    if (process == null) {
-      return null;
-    }
-
-    var output = await process.StandardOutput.ReadToEndAsync(ct);
-    await process.WaitForExitAsync(ct);
-
-    if (process.ExitCode != 0) {
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"port {CONTAINER_NAME} {CONTAINER_PORT}", ct);
+    if (result.ExitCode != 0) {
       return null;
     }
 
     // Output is like "0.0.0.0:54321" or "[::]:54321"
-    var parts = output.Trim().Split(':');
+    var parts = result.StandardOutput.Trim().Split(':');
     if (parts.Length >= 2 && int.TryParse(parts[^1], out var port)) {
       return port;
     }

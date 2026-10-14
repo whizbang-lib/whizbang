@@ -1,7 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -32,6 +34,7 @@ public class DutyHolderWorkerTests {
     public DateTimeOffset AcquiredAt => DateTimeOffset.UnixEpoch;
     public long? Epoch => epoch;
     public bool DrainRequested { get; set; }
+    public Guid? PreviousHolderInstanceId { get; init; }
     public Task<bool> VerifyStillHeldAsync(CancellationToken cancellationToken) =>
       Task.FromResult(!Disposed && (Verifications.Count == 0 || Verifications.Dequeue()));
     public ValueTask DisposeAsync() {
@@ -115,9 +118,106 @@ public class DutyHolderWorkerTests {
   private static Handler _done(string key) => new(key, _ => ValueTask.FromResult(DutyWorkResult.Done()));
 
   private static DutyHolderWorker _worker(Elector elector, Store store, IEnumerable<IDutyWorkHandler> handlers,
-      ISharedNotifyConnection? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null) =>
-    new(elector, store, handlers, Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance,
-      notify, metrics, time);
+      ISharedNotifyConnection? notify = null, RoleAssignmentMetrics? metrics = null, TimeProvider? time = null,
+      IEnumerable<IDutyAcquisitionHandler>? acquisitionHandlers = null, ILogger<DutyHolderWorker>? logger = null) =>
+    new(elector, store, handlers, acquisitionHandlers ?? [], Options.Create(new RoleAssignmentOptions()),
+      logger ?? NullLogger<DutyHolderWorker>.Instance, notify, metrics, time);
+
+  private sealed class OnAcquired(Func<IDutyGrant, CancellationToken, ValueTask>? run = null, string role = ROLE) : IDutyAcquisitionHandler {
+    public List<IDutyGrant> Acquisitions { get; } = [];
+    public string Role => role;
+    public ValueTask OnAcquiredAsync(IDutyGrant grant, CancellationToken cancellationToken) {
+      Acquisitions.Add(grant);
+      return run?.Invoke(grant, cancellationToken) ?? ValueTask.CompletedTask;
+    }
+  }
+
+  [Test]
+  public async Task WinningTheRole_RunsTheAcquisitionHandlerOnce_WithTheGrantThatWonItAsync() {
+    // #1351: work that belongs to acquiring a duty (the maintainer's vacuum) runs on the pass that wins
+    // the role, and not again on the passes that merely keep it.
+    var previous = Guid.CreateVersion7();
+    var grant = new Grant { PreviousHolderInstanceId = previous };
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(grant));
+    var onAcquired = new OnAcquired();
+    var worker = _worker(elector, new Store(), [], acquisitionHandlers: [onAcquired]);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(onAcquired.Acquisitions.Count).IsEqualTo(1).Because("keeping a role is not acquiring it");
+    await Assert.That(onAcquired.Acquisitions[0]).IsSameReferenceAs(grant);
+    await Assert.That(onAcquired.Acquisitions[0].PreviousHolderInstanceId).IsEqualTo(previous);
+  }
+
+  [Test]
+  public async Task AnAcquisitionHandlerAlone_MakesTheWorkerHoldItsRoleAsync() {
+    // No owed-work handler for the role: the acquisition handler is reason enough to vote for it.
+    var worker = _worker(new Elector(), new Store(), [], acquisitionHandlers: [new OnAcquired()]);
+
+    await Assert.That(worker.Roles).IsEquivalentTo([ROLE]);
+  }
+
+  [Test]
+  public async Task AnAcquisitionHandler_ForARoleNotManaged_IsIgnoredAsync() {
+    var worker = _worker(new Elector(), new Store(), [], acquisitionHandlers: [new OnAcquired(role: "not-a-managed-role")]);
+
+    await Assert.That(worker.Roles).IsEmpty();
+  }
+
+  [Test]
+  public async Task LosingAndWinningTheRoleBack_RunsTheAcquisitionHandlerAgainAsync() {
+    var first = new Grant();
+    first.Verifications.Enqueue(false);   // the keep step finds the role gone
+    var second = new Grant();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(first));
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(second));
+    var onAcquired = new OnAcquired();
+    var worker = _worker(elector, new Store(), [], acquisitionHandlers: [onAcquired]);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(onAcquired.Acquisitions).IsEquivalentTo(new IDutyGrant[] { first, second });
+  }
+
+  [Test]
+  public async Task AFailingAcquisitionHandler_IsLogged_AndTheRoleAndItsOwedWorkCarryOnAsync() {
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(new Grant()));
+    var store = new Store();
+    store.Owed.Add(_owed("Rewrite"));
+    var rewrite = _done("Rewrite");
+    var failing = new OnAcquired((_, _) => throw new InvalidOperationException("vacuum refused"));
+    var logger = new FakeLogger<DutyHolderWorker>();
+    var worker = _worker(elector, store, [rewrite], acquisitionHandlers: [failing], logger: logger);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(worker.Holds(ROLE)).IsTrue().Because("a failed acquisition step does not give the role up");
+    await Assert.That(rewrite.Runs).IsEqualTo(1).Because("owed work still runs after a failed acquisition step");
+    var record = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Warning);
+    await Assert.That(record.Message).Contains(ROLE);
+    await Assert.That(record.Message).Contains(nameof(OnAcquired));
+    await Assert.That(record.Exception).IsTypeOf<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task ACanceledAcquisitionHandler_PropagatesTheCancellationAsync() {
+    using var cts = new CancellationTokenSource();
+    var elector = new Elector();
+    elector.Answers.Enqueue(() => DutyAttempt.Granted(new Grant()));
+    var canceling = new OnAcquired((_, ct) => {
+      cts.Cancel();
+      ct.ThrowIfCancellationRequested();
+      return ValueTask.CompletedTask;
+    });
+    var worker = _worker(elector, new Store(), [], acquisitionHandlers: [canceling]);
+
+    await Assert.That(async () => await worker.RunOnceAsync(cts.Token)).Throws<OperationCanceledException>();
+  }
 
   [Test]
   public async Task Roles_AreTheManagedRolesThatHaveHandlers_AndTheFirstHandlerForAKeyWinsAsync() {
@@ -425,11 +525,12 @@ public class DutyHolderWorkerTests {
   public async Task Constructor_RefusesNullsAsync() {
     var options = Options.Create(new RoleAssignmentOptions());
     var logger = NullLogger<DutyHolderWorker>.Instance;
-    await Assert.That(() => new DutyHolderWorker(null!, new Store(), [], options, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), null!, [], options, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), null!, options, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], null!, logger, null)).Throws<ArgumentNullException>();
-    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], options, null!, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(null!, new Store(), [], [], options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), null!, [], [], options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), null!, [], options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], null!, options, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], [], null!, logger, null)).Throws<ArgumentNullException>();
+    await Assert.That(() => new DutyHolderWorker(new Elector(), new Store(), [], [], options, null!, null)).Throws<ArgumentNullException>();
   }
 
   private sealed class BatchElector : IDutyElector {
@@ -451,7 +552,7 @@ public class DutyHolderWorkerTests {
     var stamper = new Handler("Stamp", _ => ValueTask.FromResult(DutyWorkResult.Done()), "commit-stamper");
     var options = new RoleAssignmentOptions();
     options.Roles.Add("commit-stamper");
-    var worker = new DutyHolderWorker(elector, new Store(), [_done("Rewrite"), stamper], Options.Create(options),
+    var worker = new DutyHolderWorker(elector, new Store(), [_done("Rewrite"), stamper], [], Options.Create(options),
       NullLogger<DutyHolderWorker>.Instance, null);
 
     await worker.RunOnceAsync(CancellationToken.None);
@@ -511,7 +612,7 @@ public class DutyHolderWorkerTests {
   public async Task ADrainRequest_WithCancellationAlreadyRequested_PropagatesAsync() {
     var grant = new Grant();
     using var cts = new CancellationTokenSource();
-    var worker = new DutyHolderWorker(new BlockingVerifyElector(grant, cts), new Store(), [_done("Rewrite")],
+    var worker = new DutyHolderWorker(new BlockingVerifyElector(grant, cts), new Store(), [_done("Rewrite")], [],
       Options.Create(new RoleAssignmentOptions()), NullLogger<DutyHolderWorker>.Instance, null);
     await worker.RunOnceAsync(CancellationToken.None);
     grant.DrainRequested = true;

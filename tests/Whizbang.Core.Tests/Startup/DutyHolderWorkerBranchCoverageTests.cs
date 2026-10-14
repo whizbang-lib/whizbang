@@ -41,7 +41,7 @@ public class DutyHolderWorkerBranchCoverageTests {
   }
 
   private static DutyHolderWorker _worker(RoleAssignmentOptions options, IEnumerable<IDutyWorkHandler> handlers) =>
-    new(new UnusedElector(), new UnusedStore(), handlers, Options.Create(options), NullLogger<DutyHolderWorker>.Instance, notify: null);
+    new(new UnusedElector(), new UnusedStore(), handlers, [], Options.Create(options), NullLogger<DutyHolderWorker>.Instance, notify: null);
 
   private sealed class Handler(string role, string key) : IDutyWorkHandler {
     public string Role => role;

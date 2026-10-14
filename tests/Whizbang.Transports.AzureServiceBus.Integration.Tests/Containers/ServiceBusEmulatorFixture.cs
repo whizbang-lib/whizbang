@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics;
 using Azure.Messaging.ServiceBus;
 using Whizbang.Testing.Containers;
 
@@ -57,6 +56,14 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the emulator by starting docker containers.
   /// </summary>
+  /// <summary>The setup step in progress, so a setup that misses its deadline can say where it stopped (#1366).</summary>
+  public string CurrentStep { get; private set; } = "not started";
+
+  private void _step(string step) {
+    CurrentStep = step;
+    Console.WriteLine($"[ServiceBusEmulator] {DateTimeOffset.UtcNow:HH:mm:ss} {step}");
+  }
+
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     if (_isInitialized) {
       return;
@@ -84,6 +91,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       // Reuse is only valid when the running container was created from the SAME
       // Config.json — the emulator reads its topology once at startup, so a container
       // started from an older config silently lacks newly added entities.
+      _step($"inspecting container {containerName}");
       var existingState = await _getContainerStateAsync(containerName, cancellationToken);
       if (existingState == "running") {
         if (await _configMatchesRunningContainerAsync(containerName, cancellationToken)) {
@@ -91,6 +99,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
           _client = new ServiceBusClient(ConnectionString);
 
           // Quick warmup to verify connectivity
+          _step("warming up the reused emulator");
           await _warmupAsync(cancellationToken);
 
           Console.WriteLine("[ServiceBusEmulator] ✅ Existing emulator verified and ready!");
@@ -113,11 +122,11 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       }
 
       // Start containers
-      Console.WriteLine($"[ServiceBusEmulator] Starting containers for '{containerName}'...");
+      _step($"starting containers for {containerName}");
       await _runDockerComposeAsync($"-p {projectName} up -d --force-recreate", _dockerComposeFile, cancellationToken);
 
       // Wait for emulator to be ready
-      Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
+      _step("waiting for the emulator to report it is up (up to 180 seconds)");
       const int maxWaitSeconds = 180;
       const int pollIntervalSeconds = 5;
       var elapsed = 0;
@@ -146,13 +155,14 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       }
 
       // Wait for AMQP connections to be fully ready
-      Console.WriteLine("[ServiceBusEmulator] Waiting 40 seconds for AMQP connections to stabilize...");
+      _step("waiting 40 seconds for AMQP connections to stabilize");
       await Task.Delay(TimeSpan.FromSeconds(40), cancellationToken);
 
       // Create client and verify connectivity
       _client = new ServiceBusClient(ConnectionString);
 
       // Warmup: Send and receive a test message
+      _step("warming up the new emulator");
       await _warmupAsync(cancellationToken);
 
       Console.WriteLine("[ServiceBusEmulator] ✅ Emulator is ready!");
@@ -358,21 +368,9 @@ services:
     string composeFile,
     CancellationToken cancellationToken = default
   ) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"compose -f \"{composeFile}\" {arguments}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start docker compose process");
-    await process.WaitForExitAsync(cancellationToken);
-
-    if (process.ExitCode != 0) {
-      var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-      throw new InvalidOperationException($"docker compose failed: {error}");
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"compose -f \"{composeFile}\" {arguments}", cancellationToken);
+    if (result.ExitCode != 0) {
+      throw new InvalidOperationException($"docker compose {arguments} failed: {result.StandardError}");
     }
   }
 
@@ -384,74 +382,25 @@ services:
     string composeFile,
     CancellationToken cancellationToken = default
   ) {
-    try {
-      var psi = new ProcessStartInfo {
-        FileName = DockerExecutable.PathOrThrow,
-        Arguments = $"compose -f \"{composeFile}\" {arguments}",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process != null) {
-        await process.WaitForExitAsync(cancellationToken);
-        // Ignore exit code - cleanup may fail if containers don't exist
-      }
-    } catch {
-      // Ignore cleanup errors
-    }
+    // The exit code is ignored: cleanup fails when there is nothing to clean up. A canceled setup is not ignored.
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"compose -f \"{composeFile}\" {arguments}", cancellationToken);
   }
 
   private static async Task<string> _getDockerLogsAsync(
     string containerName,
     CancellationToken cancellationToken = default
   ) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"logs {containerName}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi);
-    if (process == null) {
-      return string.Empty;
-    }
-
-    await process.WaitForExitAsync(cancellationToken);
-
-    var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-    var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
-
-    return stdout + stderr;
+    // The emulator's log grows past a pipe buffer during startup; ProcessRunner reads it while docker writes it (#1366).
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"logs {containerName}", cancellationToken);
+    return result.StandardOutput + result.StandardError;
   }
 
   /// <summary>
   /// Remove a Docker network by name (ignores errors if network doesn't exist).
   /// </summary>
   private static async Task _removeNetworkAsync(string networkName, CancellationToken cancellationToken = default) {
-    try {
-      var psi = new ProcessStartInfo {
-        FileName = DockerExecutable.PathOrThrow,
-        Arguments = $"network rm {networkName}",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process != null) {
-        await process.WaitForExitAsync(cancellationToken);
-        // Ignore exit code - network may not exist
-      }
-    } catch {
-      // Ignore cleanup errors
-    }
+    // The exit code is ignored: the network may not exist.
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"network rm {networkName}", cancellationToken);
   }
 
   /// <summary>
@@ -473,38 +422,21 @@ services:
   /// doubt (no label, inspection failure) counts as a mismatch → recreate.
   /// </summary>
   private async Task<bool> _configMatchesRunningContainerAsync(string containerName, CancellationToken ct) {
+    // {{json .Config.Labels}} deliberately contains no spaces: the arguments are argv-split on whitespace.
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"inspect --format={{{{json .Config.Labels}}}} {containerName}", ct);
+    if (result.ExitCode != 0) {
+      return false;
+    }
     try {
-      // {{json .Config.Labels}} deliberately contains no spaces — ProcessStartInfo.Arguments
-      // is argv-split on whitespace, so a template with embedded spaces would fragment.
-      var psi = new ProcessStartInfo {
-        FileName = DockerExecutable.PathOrThrow,
-        Arguments = $"inspect --format={{{{json .Config.Labels}}}} {containerName}",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process == null) {
-        return false;
-      }
-
-      var output = await process.StandardOutput.ReadToEndAsync(ct);
-      await process.WaitForExitAsync(ct);
-      if (process.ExitCode != 0) {
-        return false;
-      }
-
-      using var labels = System.Text.Json.JsonDocument.Parse(output.Trim());
+      using var labels = System.Text.Json.JsonDocument.Parse(result.StandardOutput.Trim());
       var runningHash = labels.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
           && labels.RootElement.TryGetProperty("whizbang.config.sha256", out var hashElement)
         ? hashElement.GetString()
         : null;
       return !string.IsNullOrEmpty(runningHash)
         && string.Equals(runningHash, _computeConfigHash(), StringComparison.OrdinalIgnoreCase);
-    } catch {
-      return false; // any inspection failure → recreate (slow but correct)
+    } catch (System.Text.Json.JsonException) {
+      return false; // unreadable labels: recreate (slow but correct)
     }
   }
 
@@ -512,24 +444,8 @@ services:
   /// Gets the Docker container state (running, exited, etc.) or null if container doesn't exist.
   /// </summary>
   private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
-    var psi = new ProcessStartInfo {
-      FileName = DockerExecutable.PathOrThrow,
-      Arguments = $"inspect --format={{{{.State.Status}}}} {containerName}",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = Process.Start(psi);
-    if (process == null) {
-      return null;
-    }
-
-    var output = await process.StandardOutput.ReadToEndAsync(ct);
-    await process.WaitForExitAsync(ct);
-
-    return process.ExitCode != 0 ? null : output.Trim();
+    var result = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"inspect --format={{{{.State.Status}}}} {containerName}", ct);
+    return result.ExitCode != 0 ? null : result.StandardOutput.Trim();
   }
 
   /// <summary>
@@ -537,49 +453,9 @@ services:
   /// This handles the case where tests were aborted without proper cleanup.
   /// </summary>
   private async Task _forceCleanupContainersAsync(CancellationToken cancellationToken = default) {
-    var containerNames = new[] {
-      $"whizbang-test-servicebus-{_port}",
-      $"whizbang-test-mssql-{_port}"
-    };
-
-    foreach (var containerName in containerNames) {
-      try {
-        var psi = new ProcessStartInfo {
-          FileName = DockerExecutable.PathOrThrow,
-          Arguments = $"rm -f {containerName}",
-          RedirectStandardOutput = true,
-          RedirectStandardError = true,
-          UseShellExecute = false,
-          CreateNoWindow = true
-        };
-
-        using var process = Process.Start(psi);
-        if (process != null) {
-          await process.WaitForExitAsync(cancellationToken);
-          // Ignore exit code - container may not exist
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-
-    // Also prune any dangling networks
-    try {
-      var psi = new ProcessStartInfo {
-        FileName = DockerExecutable.PathOrThrow,
-        Arguments = "network prune -f",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process != null) {
-        await process.WaitForExitAsync(cancellationToken);
-      }
-    } catch {
-      // Ignore cleanup errors
-    }
+    // Exit codes are ignored throughout: a container or network that does not exist is already cleaned up.
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"rm -f whizbang-test-servicebus-{_port}", cancellationToken);
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, $"rm -f whizbang-test-mssql-{_port}", cancellationToken);
+    _ = await ProcessRunner.RunAsync(DockerExecutable.PathOrThrow, "network prune -f", cancellationToken);
   }
 }

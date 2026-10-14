@@ -215,7 +215,7 @@ public class SagaClaimPruneStepTests {
   }
 
   private static DutyHolderWorker _holder(bool grants, string role = StartupDuties.MAINTAINER) =>
-    new(new Elector(grants), new NoOwedWork(), [new Handler(role)],
+    new(new Elector(grants), new NoOwedWork(), [new Handler(role)], [],
       Options.Create(new RoleAssignmentOptions { Roles = { StartupDuties.MIGRATOR } }),
       NullLogger<DutyHolderWorker>.Instance, notify: null);
 
