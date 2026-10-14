@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -264,10 +265,10 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
       await emit();
       // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
       // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
-      await using (var ring = conn.CreateCommand()) {
-        ring.CommandText = "SELECT ring_doorbells()";
-        _ = await ring.ExecuteScalarAsync();
-      }
+      // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+      // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+      // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+      _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, CancellationToken.None);
 
       // Force a roundtrip to flush the NOTIFY queue to the Notification event.
       await using var ping = conn.CreateCommand();

@@ -27,6 +27,7 @@ using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
@@ -463,9 +464,10 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     _ = await call.ExecuteScalarAsync(ct);
     // 146 (#720): the commit queued its doorbells; the coordinator rings right after the commit, and
     // this raw call models that ring so the measured latency is the production path's.
-    await using var ring = conn.CreateCommand();
-    ring.CommandText = "SELECT ring_doorbells()";
-    _ = await ring.ExecuteScalarAsync(ct);
+    // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+    // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+    // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+    _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, ct);
   }
 
   private static async Task<long> _countOrderRowsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {

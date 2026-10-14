@@ -7,6 +7,7 @@ using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -84,10 +85,10 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
     }
     // 146 (#720): the completion queued its doorbell instead of notifying inside its transaction; the
     // driver rings after the commit, and this raw call models that ring.
-    await using (var ring = fireConn.CreateCommand()) {
-      ring.CommandText = "SELECT ring_doorbells()";
-      _ = await ring.ExecuteScalarAsync();
-    }
+    // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+    // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+    // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+    _ = await DoorbellRinger.RingAsync(fireConn, DoorbellRinger.FUNCTION_NAME, null, CancellationToken.None);
 
     // Drive notification delivery on the listener side. Npgsql delivers notifications
     // only when the connection is read from. Use a cancellable WaitAsync so the call
