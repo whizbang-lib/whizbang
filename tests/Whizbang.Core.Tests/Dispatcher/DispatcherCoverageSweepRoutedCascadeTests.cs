@@ -80,7 +80,9 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     IScopedEventTracker? scopedEventTracker = null,
     ReceptorInvoker<object>? invoker = null,
     VoidReceptorInvoker? voidInvoker = null,
-    Type? handleMessageType = null
+    Type? handleMessageType = null,
+    SyncReceptorInvoker<object>? syncInvoker = null,
+    VoidSyncReceptorInvoker? voidSyncInvoker = null
     ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       traceStore: traceStore,
       envelopeSerializer: envelopeSerializer,
@@ -88,6 +90,8 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
       scopedEventTracker: scopedEventTracker) {
     private readonly ReceptorInvoker<object>? _invoker = invoker;
     private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
+    private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;
+    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker = voidSyncInvoker;
     private readonly Type _handleMessageType = handleMessageType ?? typeof(SweepRoutedCommand);
 
     public List<IMessage> OutboxCascades { get; } = [];
@@ -107,9 +111,15 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) => null;
 
-    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      if (_syncInvoker is null || messageType != _handleMessageType) {
+        return null;
+      }
+      return msg => (TResult)_syncInvoker(msg);
+    }
 
-    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) => null;
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) =>
+      _voidSyncInvoker is not null && messageType == _handleMessageType ? _voidSyncInvoker : null;
 
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;
 
@@ -298,19 +308,121 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_OwnedChildNamespaceCommand_NoReceptor_ReturnsAcceptedWithoutOutboxAsync() {
+  [Arguments(SendOverload.Untyped)]
+  [Arguments(SendOverload.Typed)]
+  public async Task SendAsync_OwnedChildNamespaceCommand_NoReceptor_ThrowsReceptorNotFoundAsync(SendOverload overload) {
     // Arrange - owned domain "Whizbang.Core.Tests" is a PARENT of this test namespace,
-    // so the child-prefix matching branch fires (not the exact-match branch)
+    // so the child-prefix matching branch fires (not the exact-match branch). The owning
+    // service is expected to handle its own commands, so a missing receptor is a wiring
+    // error: it must fail loudly, not return Accepted and drop the command (#1379).
     var strategy = new SweepWorkStrategy();
     var dispatcher = new SweepRoutedDispatcher(
       _buildProvider(ownedDomains: _parentOwnedDomains, strategy: strategy),
       envelopeSerializer: new SweepEnvelopeSerializer());
 
-    // Act
-    var receipt = await dispatcher.SendAsync((object)new SweepOwnedCommand("owned"), MessageContext.New());
+    // Act & Assert
+    await Assert.That(async () => await _sendAsync(dispatcher, new SweepOwnedCommand("owned"), overload))
+      .ThrowsExactly<ReceptorNotFoundException>();
+    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+  }
 
-    // Assert - owned commands are Accepted without touching the outbox
-    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
+  // ========================================
+  // SendAsync finds every local receptor shape (#1379)
+  // ========================================
+
+  public enum SendOverload { Untyped, UntypedWithOptions, Typed, TypedWithOptions }
+
+  private static Task<IDeliveryReceipt> _sendAsync(SweepRoutedDispatcher dispatcher, SweepOwnedCommand command, SendOverload overload) =>
+    overload switch {
+      SendOverload.Untyped => dispatcher.SendAsync((object)command, MessageContext.New()),
+      SendOverload.UntypedWithOptions => dispatcher.SendAsync((object)command, MessageContext.New(), new DispatchOptions()),
+      SendOverload.Typed => dispatcher.SendAsync(command),
+      SendOverload.TypedWithOptions => dispatcher.SendAsync(command, new DispatchOptions()),
+      _ => throw new ArgumentOutOfRangeException(nameof(overload))
+    };
+
+  [Test]
+  [Arguments(SendOverload.Untyped, true)]
+  [Arguments(SendOverload.Untyped, false)]
+  [Arguments(SendOverload.UntypedWithOptions, true)]
+  [Arguments(SendOverload.UntypedWithOptions, false)]
+  [Arguments(SendOverload.Typed, true)]
+  [Arguments(SendOverload.Typed, false)]
+  [Arguments(SendOverload.TypedWithOptions, true)]
+  [Arguments(SendOverload.TypedWithOptions, false)]
+  public async Task SendAsync_VoidReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+    // Arrange - IReceptor<TCommand> with no result: before #1379 SendAsync never consulted the
+    // void lookup, so an owned command was dropped as Accepted and a non-owned one went to the outbox
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: owned ? _parentOwnedDomains : _unrelatedOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      voidInvoker: _ => { invoked++; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepOwnedCommand));
+
+    // Act
+    var receipt = await _sendAsync(dispatcher, new SweepOwnedCommand("void"), overload);
+
+    // Assert
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  [Arguments(SendOverload.Untyped, true)]
+  [Arguments(SendOverload.Untyped, false)]
+  [Arguments(SendOverload.UntypedWithOptions, true)]
+  [Arguments(SendOverload.UntypedWithOptions, false)]
+  [Arguments(SendOverload.Typed, true)]
+  [Arguments(SendOverload.Typed, false)]
+  [Arguments(SendOverload.TypedWithOptions, true)]
+  [Arguments(SendOverload.TypedWithOptions, false)]
+  public async Task SendAsync_SyncReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+    // Arrange - ISyncReceptor<TCommand, TResult>
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: owned ? _parentOwnedDomains : _unrelatedOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      handleMessageType: typeof(SweepOwnedCommand),
+      syncInvoker: _ => { invoked++; return "done"; });
+
+    // Act
+    var receipt = await _sendAsync(dispatcher, new SweepOwnedCommand("sync"), overload);
+
+    // Assert
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  [Arguments(SendOverload.Untyped, true)]
+  [Arguments(SendOverload.Untyped, false)]
+  [Arguments(SendOverload.UntypedWithOptions, true)]
+  [Arguments(SendOverload.UntypedWithOptions, false)]
+  [Arguments(SendOverload.Typed, true)]
+  [Arguments(SendOverload.Typed, false)]
+  [Arguments(SendOverload.TypedWithOptions, true)]
+  [Arguments(SendOverload.TypedWithOptions, false)]
+  public async Task SendAsync_VoidSyncReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+    // Arrange - ISyncReceptor<TCommand> with no result
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: owned ? _parentOwnedDomains : _unrelatedOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      handleMessageType: typeof(SweepOwnedCommand),
+      voidSyncInvoker: _ => invoked++);
+
+    // Act
+    var receipt = await _sendAsync(dispatcher, new SweepOwnedCommand("void-sync"), overload);
+
+    // Assert
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
     await Assert.That(strategy.Queued).Count().IsEqualTo(0);
   }
 
