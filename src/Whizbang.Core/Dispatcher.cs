@@ -4666,6 +4666,17 @@ public abstract partial class Dispatcher(
   /// Flushes outbox batch and adds Accepted receipts only for messages without a local receptor.
   /// Silently skips outbox if no strategy is registered and all messages were handled locally.
   /// </summary>
+  /// <summary>
+  /// SendManyAsync's form of SendAsync's owned-domain rule: an owned command with no local
+  /// receptor is a wiring error, never an outbox write the owning service would discard.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Integration.Tests/SendReceptorShapeIntegrationTests.cs:SendManyAsync_OwnedCommandWithNoReceptor_ThrowsAndWritesNothingAsync</tests>
+  private static void _throwIfOwnedWithoutReceptor(bool isOwned, List<bool> isLocalByMessage, Type messageType) {
+    if (isOwned && !isLocalByMessage.TrueForAll(static isLocal => isLocal)) {
+      throw new ReceptorNotFoundException(messageType);
+    }
+  }
+
   private async Task _flushOutboxBatchAndCollectReceiptsAsync(
     List<(object message, Type messageType, IMessageContext context)> outboxMessages,
     List<bool> hasLocalReceptor,
@@ -5048,11 +5059,15 @@ public abstract partial class Dispatcher(
       var hasLocalReceptor = new List<bool>();
 
       var messageType = typeof(TMessage);
-      foreach (var message in messageList) {
-        // Any receptor shape counts as local: result-returning, void, sync or void sync
-        var invoker = _lookupSendInvoker(message, messageType);
-        var isLocal = invoker != null;
-        hasLocalReceptor.Add(isLocal);
+      var isOwned = _isOwnedNamespace(messageType.Namespace);
+      // Any receptor shape counts as local: result-returning, void, sync or void sync. Resolved
+      // for every message before any runs, so an unhandled owned command fails the batch whole.
+      var isLocalByMessage = messageList.ConvertAll(message => _lookupSendInvoker(message, messageType) != null);
+      _throwIfOwnedWithoutReceptor(isOwned, isLocalByMessage, messageType);
+
+      for (var i = 0; i < messageList.Count; i++) {
+        var message = messageList[i];
+        var isLocal = isLocalByMessage[i];
 
         if (isLocal) {
           // Has local receptor - process locally (Delivered receipt)
@@ -5061,9 +5076,13 @@ public abstract partial class Dispatcher(
           receipts.Add(receipt);
         }
 
-        // ALWAYS queue for outbox delivery (cross-service propagation)
-        var outboxCascade = _cascadeContextFactory.NewRoot();
-        outboxMessages.Add((message, messageType, MessageContext.Create(outboxCascade)));
+        // Queue for outbox delivery (cross-service propagation), except an owned command this
+        // service just handled: its only subscriber is this service, which discards the echo
+        if (!(isLocal && isOwned)) {
+          hasLocalReceptor.Add(isLocal);
+          var outboxCascade = _cascadeContextFactory.NewRoot();
+          outboxMessages.Add((message, messageType, MessageContext.Create(outboxCascade)));
+        }
       }
 
       // Flush outbox batch and collect receipts for non-local messages
@@ -5100,11 +5119,17 @@ public abstract partial class Dispatcher(
       var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
       var hasLocalReceptor = new List<bool>();
 
-      foreach (var message in messageList) {
+      // Resolved for every message before any runs, so an unhandled owned command fails the batch whole
+      var isLocalByMessage = messageList.ConvertAll(message => _lookupSendInvoker(message, message.GetType()) != null);
+      for (var i = 0; i < messageList.Count; i++) {
+        var messageType = messageList[i].GetType();
+        _throwIfOwnedWithoutReceptor(_isOwnedNamespace(messageType.Namespace), [isLocalByMessage[i]], messageType);
+      }
+
+      for (var i = 0; i < messageList.Count; i++) {
+        var message = messageList[i];
         var messageType = message.GetType();
-        var invoker = _lookupSendInvoker(message, messageType);
-        var isLocal = invoker != null;
-        hasLocalReceptor.Add(isLocal);
+        var isLocal = isLocalByMessage[i];
 
         if (isLocal) {
           // Has local receptor - process locally (Delivered receipt)
@@ -5112,9 +5137,13 @@ public abstract partial class Dispatcher(
           receipts.Add(receipt);
         }
 
-        // ALWAYS queue for outbox delivery (cross-service propagation)
-        var cascade = _cascadeContextFactory.NewRoot();
-        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
+        // Queue for outbox delivery (cross-service propagation), except an owned command this
+        // service just handled: its only subscriber is this service, which discards the echo
+        if (!(isLocal && _isOwnedNamespace(messageType.Namespace))) {
+          hasLocalReceptor.Add(isLocal);
+          var cascade = _cascadeContextFactory.NewRoot();
+          outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
+        }
       }
 
       // Flush outbox batch and collect receipts for non-local messages

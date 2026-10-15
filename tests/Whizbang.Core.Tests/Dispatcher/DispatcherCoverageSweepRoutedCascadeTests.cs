@@ -452,6 +452,78 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   }
 
   [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendManyAsync_OwnedCommandHandledLocally_SkipsTheOutboxAsync(bool typed) {
+    // An owned command's only subscriber is this service; publishing the copy it already handled
+    // costs a round trip and, with an unknown service name, a second invocation (#1379)
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: _parentOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      voidInvoker: _ => { invoked++; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepOwnedCommand));
+    var command = new SweepOwnedCommand("owned-many");
+
+    var receipts = typed
+      ? await dispatcher.SendManyAsync(new[] { command })
+      : await dispatcher.SendManyAsync(new object[] { command });
+
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipts.Single().Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendManyAsync_UnownedCommandHandledLocally_StillQueuesTheOutboxCopyAsync(bool typed) {
+    // Unchanged for unowned commands: processed locally AND propagated through the outbox
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: _unrelatedOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      voidInvoker: _ => { invoked++; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepOwnedCommand));
+    var command = new SweepOwnedCommand("unowned-many");
+
+    var receipts = typed
+      ? await dispatcher.SendManyAsync(new[] { command })
+      : await dispatcher.SendManyAsync(new object[] { command });
+
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipts.Single().Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendManyAsync_OwnedCommandWithNoReceptor_ThrowsBeforeProcessingAnyAsync(bool typed) {
+    // The batch is checked whole first: a handled message ahead of the unhandled one never runs
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: _parentOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      voidInvoker: _ => { invoked++; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepRoutedCommand));
+
+    if (typed) {
+      await Assert.That(async () => await dispatcher.SendManyAsync(new[] { new SweepOwnedCommand("unhandled") }))
+        .ThrowsExactly<ReceptorNotFoundException>();
+    } else {
+      await Assert.That(async () => await dispatcher.SendManyAsync(new object[] { new SweepRoutedCommand("handled"), new SweepOwnedCommand("unhandled") }))
+        .ThrowsExactly<ReceptorNotFoundException>();
+    }
+
+    await Assert.That(invoked).IsEqualTo(0);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+  }
+
+  [Test]
   public async Task SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync() {
     // Arrange - owned domains exist but do NOT match → the prefix loop falls through to false
     var strategy = new SweepWorkStrategy();
