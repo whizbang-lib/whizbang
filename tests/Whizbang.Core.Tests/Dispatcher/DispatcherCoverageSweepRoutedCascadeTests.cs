@@ -427,6 +427,31 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   }
 
   [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendManyAsync_VoidReceptor_InvokesLocallyAsync(bool typed) {
+    // Arrange - SendManyAsync processes a message locally when it has a local receptor, and its
+    // lookup missed void receptors the same way SendAsync's did (#1379)
+    var strategy = new SweepWorkStrategy();
+    var invoked = 0;
+    var dispatcher = new SweepRoutedDispatcher(
+      _buildProvider(ownedDomains: _unrelatedOwnedDomains, strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      voidInvoker: _ => { invoked++; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepOwnedCommand));
+    var command = new SweepOwnedCommand("many");
+
+    // Act
+    var receipts = typed
+      ? await dispatcher.SendManyAsync(new[] { command })
+      : await dispatcher.SendManyAsync(new object[] { command });
+
+    // Assert
+    await Assert.That(invoked).IsEqualTo(1);
+    await Assert.That(receipts.First().Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
   public async Task SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync() {
     // Arrange - owned domains exist but do NOT match → the prefix loop falls through to false
     var strategy = new SweepWorkStrategy();
