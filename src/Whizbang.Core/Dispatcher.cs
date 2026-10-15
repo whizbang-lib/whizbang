@@ -218,6 +218,40 @@ public abstract partial class Dispatcher(
     return null;
   }
 
+  /// <summary>
+  /// Resolves the local receptor SendAsync and SendManyAsync invoke, whatever its shape: async or
+  /// sync, with or without a result. A send only runs the receptor and cascades its result, so a
+  /// void or sync receptor is adapted to the async invoker shape (a void receptor yields a null
+  /// result, which the cascade skips). Consulting only the result-returning lookup made a send
+  /// treat a void-receptor command as unhandled: dropped when owned, sent through the outbox when not.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidReceptor_InvokesLocallyWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_SyncReceptor_InvokesLocallyWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocallyWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendManyAsync_VoidReceptor_InvokesLocallyAsync</tests>
+  private ReceptorInvoker<object>? _lookupSendInvoker(object message, Type messageType) {
+    if (_lookupReceptorInvoker<object>(message, messageType) is { } invoker) {
+      return invoker;
+    }
+    if (_lookupVoidReceptorInvoker(message, messageType) is { } voidInvoker) {
+      return async msg => {
+        await voidInvoker(msg);
+        return null!;
+      };
+    }
+    if (_lookupSyncReceptorInvoker<object>(message, messageType) is { } syncInvoker) {
+      return msg => ValueTask.FromResult(syncInvoker(msg));
+    }
+    if (_lookupVoidSyncReceptorInvoker(message, messageType) is { } voidSyncInvoker) {
+      return msg => {
+        voidSyncInvoker(msg);
+        return ValueTask.FromResult<object>(null!);
+      };
+    }
+    return null;
+  }
+
   private Func<object, ValueTask<object?>>? _lookupReceptorInvokerAny(object message, Type messageType) {
     var own = GetReceptorInvokerAny(message, messageType);
     if (own is not null) {
@@ -410,7 +444,7 @@ public abstract partial class Dispatcher(
   /// <param name="ns">The namespace to check (typically from a message type).</param>
   /// <returns>True if the namespace is owned by this service.</returns>
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ReturnsAcceptedWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_OwnedChildNamespaceCommand_NoReceptor_ThrowsReceptorNotFoundAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_NonMatchingOwnedDomains_CommandRoutesToOutboxAsync</tests>
   private bool _isOwnedNamespace(string? ns) {
     if (string.IsNullOrEmpty(ns) || _ownedDomains.Count == 0) {
@@ -665,14 +699,15 @@ public abstract partial class Dispatcher(
       messageTypeName = messageType.Name;
 
       // Get strongly-typed delegate from generated code
-      var invoker = _lookupReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupSendInvoker(message, messageType);
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
         // Owned-domain commands should NOT go to the outbox — the owning service
-        // is expected to have a local receptor. Skip outbox routing.
+        // is expected to have a local receptor, so a missing one is a wiring error.
+        // Fail loudly: returning Accepted here silently dropped the command (#1379).
         if (_isOwnedNamespace(messageType.Namespace)) {
-          return DeliveryReceipt.Accepted(MessageId.New(), messageType.Name);
+          throw new ReceptorNotFoundException(messageType);
         }
 
         // Try strategy-based outbox pattern (new work coordinator pattern)
@@ -808,7 +843,7 @@ public abstract partial class Dispatcher(
 
       var messageType = message.GetType();
       messageTypeName = messageType.Name;
-      var invoker = _lookupReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupSendInvoker(message, messageType);
 
       if (invoker == null) {
         return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
@@ -895,14 +930,15 @@ public abstract partial class Dispatcher(
     var messageTypeName = messageType.Name;
     try {
       // Get strongly-typed delegate from generated code
-      var invoker = _lookupReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupSendInvoker(message, messageType);
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
         // Owned-domain commands should NOT go to the outbox — the owning service
-        // is expected to have a local receptor. Skip outbox routing.
+        // is expected to have a local receptor, so a missing one is a wiring error.
+        // Fail loudly: returning Accepted here silently dropped the command (#1379).
         if (_isOwnedNamespace(messageType.Namespace)) {
-          return DeliveryReceipt.Accepted(MessageId.New(), messageType.Name);
+          throw new ReceptorNotFoundException(messageType);
         }
 
         // Try strategy-based outbox pattern (new work coordinator pattern)
@@ -1005,7 +1041,7 @@ public abstract partial class Dispatcher(
     var messageType = typeof(TMessage);
     var messageTypeName = messageType.Name;
     try {
-      var invoker = _lookupReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupSendInvoker(message, messageType);
 
       if (invoker == null) {
         return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
@@ -5013,8 +5049,8 @@ public abstract partial class Dispatcher(
 
       var messageType = typeof(TMessage);
       foreach (var message in messageList) {
-        // Use <object> to find ANY receptor (result-returning or void)
-        var invoker = _lookupReceptorInvoker<object>(message, messageType);
+        // Any receptor shape counts as local: result-returning, void, sync or void sync
+        var invoker = _lookupSendInvoker(message, messageType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);
 
@@ -5066,7 +5102,7 @@ public abstract partial class Dispatcher(
 
       foreach (var message in messageList) {
         var messageType = message.GetType();
-        var invoker = _lookupReceptorInvoker<object>(message, messageType);
+        var invoker = _lookupSendInvoker(message, messageType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);
 
@@ -5118,7 +5154,7 @@ public abstract partial class Dispatcher(
 
       var eventType = typeof(TEvent);
       foreach (var eventData in eventList) {
-        // Use <object> to find ANY receptor (result-returning or void)
+        // Any receptor shape counts as local: result-returning, void, sync or void sync
         var invoker = GetReceptorInvoker<object>(eventData, eventType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);

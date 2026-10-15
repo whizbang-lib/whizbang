@@ -525,11 +525,10 @@ public class DispatcherBranchCoverageATests {
     await using var sp = _buildProvider(ownedDomains: _trailingDotOwnedDomains, strategy: strategy);
     var dispatcher = new BranchADispatcher(sp, envelopeSerializer: new StubEnvelopeSerializer());
 
-    // Act
-    var receipt = await dispatcher.SendAsync((object)new BranchAOwnedCommand(Guid.CreateVersion7()), MessageContext.New());
-
-    // Assert
-    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
+    // Act & Assert - owned with no local receptor throws (#1379); an UNowned command would
+    // have gone to the outbox instead, so the throw and the empty queue both prove ownership
+    await Assert.That(async () => await dispatcher.SendAsync((object)new BranchAOwnedCommand(Guid.CreateVersion7()), MessageContext.New()))
+      .ThrowsExactly<ReceptorNotFoundException>();
     await Assert.That(strategy.Queued).Count().IsEqualTo(0)
       .Because("a command in an owned namespace is never sent to the outbox, however the prefix was written");
   }
