@@ -66,7 +66,9 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
     registry.Register<ClearCacheCommand>(probe, LifecycleStage.PreOutboxInline);
 
     var cacheKey = "cache-" + Guid.CreateVersion7();
-    await serviceProvider.GetRequiredService<IDispatcher>().SendAsync(new ClearCacheCommand(CacheKey: cacheKey));
+    // A security context on the envelope: the drain worker runs no stage for a row without one
+    await serviceProvider.GetRequiredService<IDispatcher>().AsSystem().ForTenant("tenant-system-broadcast")
+      .SendAsync(new ClearCacheCommand(CacheKey: cacheKey));
 
     await Assert.That(probe.CountFor(cacheKey)).IsEqualTo(1)
       .Because("the sending service handles its own copy in-process before SendAsync returns");
@@ -88,7 +90,9 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
     serviceProvider.GetRequiredService<IReceptorRegistry>().Register<ClearCacheCommand>(probe, LifecycleStage.PreOutboxInline);
 
     var cacheKey = "cache-" + Guid.CreateVersion7();
-    await serviceProvider.GetRequiredService<IDispatcher>().SendAsync(new ClearCacheCommand(CacheKey: cacheKey));
+    // A security context on the envelope: the drain worker runs no stage for a row without one
+    await serviceProvider.GetRequiredService<IDispatcher>().AsSystem().ForTenant("tenant-system-broadcast")
+      .SendAsync(new ClearCacheCommand(CacheKey: cacheKey));
 
     await Assert.That(probe.CountFor(cacheKey)).IsEqualTo(0)
       .Because("nothing handles the command locally, so the send only queues it");
@@ -111,6 +115,7 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
 
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new SignalingCompletionChannel();
+    var failure = new RecordingFailureChannel();
     var publish = new SucceedingPublishStrategy(bulkPublish);
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -120,7 +125,7 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
       instanceProvider: instance,
       drainChannel: drainChannel,
       completionChannel: completion,
-      failureChannel: new RecordingFailureChannel(),
+      failureChannel: failure,
       schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: jsonOptions,
@@ -141,6 +146,8 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
       await drainChannel.WriteAsync(streamId, cts.Token);
       // The row's completion: its inline PreOutbox stage has run and it was published
       await completion.WaitForAsync(messageId).WaitAsync(_signalTimeout);
+      await Assert.That(failure.All).IsEmpty()
+        .Because("the row must reach its stages; a failure here (a missing security context, say) means nothing was tested");
       return [.. publish.PublishedIds];
     } finally {
       await cts.CancelAsync();
@@ -257,8 +264,11 @@ public class SystemCommandBroadcastIntegrationTests : EFCoreTestBase {
   }
 
   private sealed class RecordingFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) =>
-      ValueTask.CompletedTask;
+    public ConcurrentBag<MessageFailure> All { get; } = [];
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
+      All.Add(failure);
+      return ValueTask.CompletedTask;
+    }
   }
 
   private sealed class SucceedingPublishStrategy(bool supportsBulkPublish) : IMessagePublishStrategy {
