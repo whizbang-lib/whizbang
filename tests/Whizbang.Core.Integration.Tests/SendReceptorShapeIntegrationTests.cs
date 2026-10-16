@@ -178,7 +178,7 @@ public class SendReceptorShapeIntegrationTests {
       registry.Unregister<OwnedVoidCommand>(stageTracker, LifecycleStage.ImmediateDetached);
     }
 
-    await Assert.That(stageTracker.FiredFor).IsEquivalentTo(new[] { command.Id })
+    await Assert.That(stageTracker.FiredFor).IsEquivalentTo([command.Id])
       .Because("ImmediateDetached runs after the business receptor, which SendAsync now finds");
   }
 
@@ -286,7 +286,7 @@ public class SendReceptorShapeIntegrationTests {
     var command = new OwnedVoidCommand(Guid.CreateVersion7());
 
     var receipts = typed
-      ? await dispatcher.SendManyAsync(new[] { command })
+      ? await dispatcher.SendManyAsync<OwnedVoidCommand>([command])
       : await dispatcher.SendManyAsync(new object[] { command });
 
     await Assert.That(SendShapeInvocations.CountFor(command.Id)).IsEqualTo(1);
@@ -305,7 +305,7 @@ public class SendReceptorShapeIntegrationTests {
 
     await Assert.That(async () => {
       _ = typed
-        ? await dispatcher.SendManyAsync(new[] { command })
+        ? await dispatcher.SendManyAsync<OwnedUnhandledCommand>([command])
         : await dispatcher.SendManyAsync(new object[] { command });
     }).ThrowsExactly<ReceptorNotFoundException>();
     await Assert.That(outbox.QueuedOf(command)).IsEmpty();

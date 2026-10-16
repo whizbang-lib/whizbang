@@ -443,7 +443,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
 
     // Act
     var receipts = typed
-      ? await dispatcher.SendManyAsync(new[] { command })
+      ? await dispatcher.SendManyAsync<SweepOwnedCommand>([command])
       : await dispatcher.SendManyAsync(new object[] { command });
 
     // Assert
@@ -467,7 +467,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     var command = new SweepOwnedCommand("owned-many");
 
     var receipts = typed
-      ? await dispatcher.SendManyAsync(new[] { command })
+      ? await dispatcher.SendManyAsync<SweepOwnedCommand>([command])
       : await dispatcher.SendManyAsync(new object[] { command });
 
     await Assert.That(invoked).IsEqualTo(1);
@@ -490,7 +490,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     var command = new SweepOwnedCommand("unowned-many");
 
     var receipts = typed
-      ? await dispatcher.SendManyAsync(new[] { command })
+      ? await dispatcher.SendManyAsync<SweepOwnedCommand>([command])
       : await dispatcher.SendManyAsync(new object[] { command });
 
     await Assert.That(invoked).IsEqualTo(1);
@@ -512,10 +512,11 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
       handleMessageType: typeof(SweepRoutedCommand));
 
     if (typed) {
-      await Assert.That(async () => await dispatcher.SendManyAsync(new[] { new SweepOwnedCommand("unhandled") }))
+      await Assert.That(async () => await dispatcher.SendManyAsync<SweepOwnedCommand>([new SweepOwnedCommand("unhandled")]))
         .ThrowsExactly<ReceptorNotFoundException>();
     } else {
-      await Assert.That(async () => await dispatcher.SendManyAsync(new object[] { new SweepRoutedCommand("handled"), new SweepOwnedCommand("unhandled") }))
+      IEnumerable<object> batch = [new SweepRoutedCommand("handled"), new SweepOwnedCommand("unhandled")];
+      await Assert.That(async () => await dispatcher.SendManyAsync(batch))
         .ThrowsExactly<ReceptorNotFoundException>();
     }
 
