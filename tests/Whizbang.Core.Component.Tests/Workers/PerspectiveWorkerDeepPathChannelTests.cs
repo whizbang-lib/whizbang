@@ -304,7 +304,8 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(invoker.HasFired(LifecycleStage.PostLifecycleInline)).IsTrue();
     await Assert.That(invoker.HasFired(LifecycleStage.PostLifecycleDetached)).IsTrue()
       .Because("The fallback path fires PostLifecycleDetached via the static detached-stage helper");
-    await Assert.That(invoker.HasFired(LifecycleStage.ImmediateDetached)).IsTrue();
+    await Assert.That(invoker.HasFired(LifecycleStage.ImmediateDetached)).IsFalse()
+      .Because("a perspective projects the event rather than handling it, so ImmediateDetached does not fire here (#1386)");
   }
 
   [Test]

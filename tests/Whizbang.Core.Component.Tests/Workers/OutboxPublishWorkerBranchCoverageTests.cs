@@ -671,8 +671,8 @@ public class OutboxPublishWorkerBranchCoverageTests {
       "Lifecycle PostOutboxDetached",
       "Lifecycle PostOutboxInline",
     ]).Because("without a coordinator, each directly invoked outbox stage still runs inside its own span when lifecycle tracing is on");
-    await Assert.That(invoker.Stages()).Count().IsEqualTo(8)
-      .Because("each of the four stages chains an ImmediateDetached invocation");
+    await Assert.That(invoker.Stages()).Count().IsEqualTo(4)
+      .Because("each of the four stages is invoked once; an outbox stage chains no ImmediateDetached (#1386)");
 
     await _stopAsync(fx.Worker, cts);
   }

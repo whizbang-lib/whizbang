@@ -554,8 +554,6 @@ public sealed partial class OutboxPublishWorker(
         AttemptNumber = attempts
       };
       await receptorInvoker.InvokeAsync(typedEnvelope, stage, ctx, stoppingToken);
-      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-        ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, stoppingToken);
     }
   }
 

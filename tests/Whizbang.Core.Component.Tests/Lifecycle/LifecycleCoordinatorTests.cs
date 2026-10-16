@@ -158,7 +158,7 @@ public class LifecycleCoordinatorTests {
   }
 
   [Test]
-  public async Task AdvanceTo_FiresImmediateDetached_AfterEachStageAsync() {
+  public async Task AdvanceTo_DoesNotFireImmediateDetached_AfterTheStageAsync() {
     // Arrange
     var tracker = new InvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
@@ -183,10 +183,10 @@ public class LifecycleCoordinatorTests {
     // Act
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PrePerspectiveDetached, scopedProvider, CancellationToken.None);
 
-    // Assert - Both the stage receptor and ImmediateDetached should fire
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(2);
+    // Assert - only the stage's receptor fires. ImmediateDetached runs once per message, after the
+    // handler, never after a lifecycle stage (#1386)
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
     await Assert.That(tracker.Invocations[0].Stage).IsEqualTo(LifecycleStage.PrePerspectiveDetached);
-    await Assert.That(tracker.Invocations[1].Stage).IsEqualTo(LifecycleStage.ImmediateDetached);
   }
 
   #endregion

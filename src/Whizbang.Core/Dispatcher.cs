@@ -2276,7 +2276,9 @@ public abstract partial class Dispatcher(
     DispatchOptions options,
     CallerLocation caller
   ) {
-    if (_traceStore != null) {
+    // The full path whenever something runs after the receptor: the fast path below creates no
+    // envelope, so it fires no ImmediateDetached and no PostLifecycle stage
+    if (_traceStore != null || _hasImmediateDetachedReceptors(messageType) || _hasPostLifecycleReceptors(messageType)) {
       await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
     } else {
       options.CancellationToken.ThrowIfCancellationRequested();
@@ -2299,6 +2301,14 @@ public abstract partial class Dispatcher(
   ) {
     var syncInvoker = _lookupVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
+      if (_traceStore != null || _hasImmediateDetachedReceptors(messageType) || _hasPostLifecycleReceptors(messageType)) {
+        ValueTask wrappedInvoker(object msg) {
+          syncInvoker(msg);
+          return ValueTask.CompletedTask;
+        }
+        await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
+        return;
+      }
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
@@ -3251,7 +3261,7 @@ public abstract partial class Dispatcher(
     // must still fire even when no compile-time receptors exist.
     await using var scope = _scopeFactory.CreateAsyncScope();
 
-    // Prefer coordinator path — handles receptors + tags + ImmediateDetached
+    // Prefer coordinator path — handles receptors + tags
     if (_lifecycleCoordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
@@ -3274,15 +3284,11 @@ public abstract partial class Dispatcher(
     };
 
     // Always invoke both PostLifecycle stages — ReceptorInvoker handles
-    // the no-receptor case (still processes tags as lifecycle observers)
+    // the no-receptor case (still processes tags as lifecycle observers). ImmediateDetached is not
+    // re-fired after them: it fires once, after the business receptor (#1386)
     await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleDetached, context, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
-
     await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
       context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;

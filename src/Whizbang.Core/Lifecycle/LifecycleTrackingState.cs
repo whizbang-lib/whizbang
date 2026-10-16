@@ -16,7 +16,7 @@ namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// Per-event tracking state that drives lifecycle stage transitions.
-/// Encapsulates receptor invocation and ImmediateDetached chaining.
+/// Encapsulates receptor invocation and tag processing.
 /// </summary>
 /// <remarks>
 /// Thread-safe via <see cref="Lock"/> for stage transitions.
@@ -163,8 +163,6 @@ internal sealed partial class LifecycleTrackingState(
             return;
           }
           await detachedInvoker.InvokeAsync(_envelope, stage, context, ct).ConfigureAwait(false);
-          await detachedInvoker.InvokeAsync(_envelope, LifecycleStage.ImmediateDetached,
-            context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
         } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
           // Graceful shutdown
         } catch (Exception ex) {
@@ -180,10 +178,6 @@ internal sealed partial class LifecycleTrackingState(
     } else {
       // Inline stages: await directly — blocks the pipeline until all receptors complete
       await invoker.InvokeAsync(_envelope, stage, context, ct).ConfigureAwait(false);
-
-      // ImmediateDetached fires after each Inline stage (awaited, part of the blocking pipeline)
-      await invoker.InvokeAsync(_envelope, LifecycleStage.ImmediateDetached,
-        context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
       _recordStage(stage, stageStopwatch, startedAt);
     }

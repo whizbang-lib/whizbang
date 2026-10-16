@@ -11,12 +11,13 @@ namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
 /// Handle for advancing a tracked event through lifecycle stages.
-/// Encapsulates receptor invocation, tag processing, and ImmediateDetached chaining.
+/// Encapsulates receptor invocation and tag processing.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each call to <see cref="AdvanceToAsync"/> invokes receptors and processes tags at the target stage,
-/// then fires ImmediateDetached hooks. For Inline stages, all hooks are awaited before returning.
+/// Each call to <see cref="AdvanceToAsync"/> invokes receptors and processes tags at the target stage.
+/// It does not fire <see cref="LifecycleStage.ImmediateDetached"/>, which runs once per message, after the
+/// handler, not after each stage. For Inline stages, all hooks are awaited before returning.
 /// For Detached stages, hooks are fire-and-forget with captured scope/context.
 /// </para>
 /// </remarks>
@@ -44,7 +45,6 @@ public interface ILifecycleTracking {
   /// Advances to the next stage. Invokes receptors and processes tags.
   /// For Detached stages: receptors fire-and-forget in their own scope.
   /// For Inline stages: awaits all receptors before returning.
-  /// ImmediateDetached fires automatically after each stage.
   /// </summary>
   /// <param name="stage">The stage to advance to.</param>
   /// <param name="scopedProvider">Scoped service provider for receptor resolution.</param>
