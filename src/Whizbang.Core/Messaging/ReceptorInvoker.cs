@@ -28,7 +28,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <list type="bullet">
 /// <item><description>Receptors WITH [FireAt(X)] are registered at stage X only</description></item>
-/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, and PostInboxInline</description></item>
+/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached, never at an outbox stage</description></item>
 /// </list>
 /// <para>
 /// No runtime logic is needed to determine when a receptor fires - it's all compile-time categorization.

@@ -13,8 +13,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Registers <see cref="IntegrityCheckpointReceptor"/> with <see cref="IReceptorRegistry"/> at startup.
 /// <see cref="IntegrityCheckpoint"/> is a framework event defined in <c>Whizbang.Core</c>, and
 /// source-generated receptor discovery only sees the consumer's own syntax, so a built-in receptor needs
-/// runtime registration to join the dispatch pipeline. Registered at the three default lifecycle stages a
-/// receptor without <c>[FireAt]</c> fires at, so the checkpoint reaches it whether it fires in-process or
+/// runtime registration to join the dispatch pipeline. Registered at the three stages a framework receptor needs: <see cref="LifecycleStage.LocalImmediateInline"/>, where local
+/// dispatch finds a runtime handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an
+/// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
+/// from another service. So the checkpoint reaches it whether it fires in-process or
 /// arrives over the inbox. No-ops if no registry is present (schema-only / diagnostic hosts still boot).
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>

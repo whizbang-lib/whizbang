@@ -1656,7 +1656,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, PostInboxDetached
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached (never at an outbox stage)
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {

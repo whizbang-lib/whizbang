@@ -19,17 +19,17 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Registered at the three default lifecycle stages that receptors without <c>[FireAt]</c>
-/// fire at: <see cref="LifecycleStage.LocalImmediateInline"/> (same-process dispatch),
-/// <see cref="LifecycleStage.PreOutboxInline"/> (distributed sender), and
-/// <see cref="LifecycleStage.PostInboxInline"/> (distributed receiver). This matches the
-/// compile-time behavior documented on <see cref="IReceptorInvoker"/> so that a caller
-/// running <c>IDispatcher.SendAsync(new RebuildPerspectiveCommand(...))</c> hits the
-/// receptor regardless of whether the dispatch is local or distributed.
+/// Registered at <see cref="LifecycleStage.LocalImmediateInline"/>, where local dispatch finds a runtime
+/// handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an outbox copy
+/// that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
+/// from another service.
 /// </para>
 /// <para>
-/// The invoker's same-service dedup (<c>ReceptorInvoker</c>) already prevents double-firing
-/// when a service dispatches the command to itself — no extra dedup is needed here.
+/// <see cref="RebuildPerspectiveCommand"/> is a framework system command, so
+/// <c>IDispatcher.SendAsync</c> broadcasts it to every service. The sending service rebuilds in-process
+/// before the send returns, and its outbox copy is flagged as locally dispatched, so the invoker skips
+/// this receptor at PreOutbox. Every other service rebuilds at PostInbox; the invoker's same-service
+/// filter stops the sender's own copy coming back. Each service therefore rebuilds exactly once.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/rebuild</docs>
@@ -51,9 +51,8 @@ internal sealed class RebuildCommandReceptorRegistrar(
     }
 
     var receptor = new RebuildPerspectiveCommandReceptor(scopeFactory, receptorLogger);
-    // Match the compile-time default-stage behavior of receptors without [FireAt]. Registering
-    // only PostInboxInline misses the common case where a service dispatches the command to
-    // itself via IDispatcher.SendAsync (that path fires LocalImmediateInline only).
+    // LocalImmediateInline: the sender's own copy, run by local dispatch. PreOutboxInline: an
+    // outbox row nothing dispatched locally. PostInboxInline: every other service's copy.
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.LocalImmediateInline);
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PreOutboxInline);
     registry.Register<RebuildPerspectiveCommand>(receptor, LifecycleStage.PostInboxInline);
