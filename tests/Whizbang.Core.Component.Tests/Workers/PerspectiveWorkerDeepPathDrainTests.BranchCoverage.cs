@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Workers;
@@ -314,6 +315,229 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       .Because("the gate went free when the abandoned apply ended, and the release says it was abandoned");
     await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
       .Because("a stopped worker holds no gate");
+  }
+
+  [Test]
+  public async Task Stop_WhileAnAbandonedApplyStillRuns_KeepsItsScopeAliveUntilTheApplyEndsAsync() {
+    // The abandoned apply still uses the drain group's scope: its runner, its work coordinator and, in a
+    // real host, a DbContext whose command may be in flight. Disposing the scope when the consumer leaves
+    // closes that connection under the running command (#1382); the scope must outlive the apply.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("scope-at-stop"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var probes = new ScopeProbes(_registry(runner));
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      registryFactory: probes.Create,
+      drainChannel: drainChannel);
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    ScopeProbes.Probe applyScope;
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      applyScope = probes.Resolved.Single(p => p.RunnerRequested);
+      await cts.CancelAsync();
+      // The consumer has left: the apply was abandoned and is still in the runner.
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+
+      await Assert.That(applyScope.Disposals).IsEqualTo(0)
+        .Because("the abandoned apply is still running on the drain group's scope, which must not be disposed under it");
+    } finally {
+      hang.TrySetResult();
+    }
+
+    await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(applyScope.Disposals).IsEqualTo(1)
+      .Because("the scope is disposed once, after the abandoned apply ended");
+    await Assert.That(applyScope.DisposedWhileApplyRunning).IsFalse()
+      .Because("disposal waited for the apply to leave the runner");
+  }
+
+  [Test]
+  public async Task DrainMode_ApplyOutlivesItsLease_KeepsItsScopeAliveUntilTheApplyEndsAsync() {
+    // The same hand-off in steady state: the lease runs out, the executor abandons the apply and the
+    // consumer moves on, but the apply keeps running on the group's scope (#1382).
+    var fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 7, 5, 12, 0, 0, TimeSpan.Zero));
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("scope-at-lease-expiry"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var probes = new ScopeProbes(_registry(runner));
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      timeProvider: fakeTime,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 4 }),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 5 }),
+      registryFactory: probes.Create,
+      drainChannel: drainChannel);
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    ScopeProbes.Probe applyScope;
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      applyScope = probes.Resolved.Single(p => p.RunnerRequested);
+      fakeTime.Advance(TimeSpan.FromSeconds(10));
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+
+      await Assert.That(applyScope.Disposals).IsEqualTo(0)
+        .Because("the apply the lease abandoned still runs on the drain group's scope");
+    } finally {
+      hang.TrySetResult();
+    }
+
+    await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(applyScope.Disposals).IsEqualTo(1)
+      .Because("the scope is disposed once, after the abandoned apply ended");
+    await Assert.That(applyScope.DisposedWhileApplyRunning).IsFalse();
+  }
+
+  [Test]
+  public async Task AbandonedApply_ScopeDisposalThrows_IsLoggedAndTheGateStillReleasesAsync() {
+    // Nothing awaits the hand-off's result (the gate only waits for it to end), so a scope that fails to
+    // dispose after the abandoned apply must be logged, not lost in an unobserved task.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("scope-dispose-throws"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var probes = new ScopeProbes(_registry(runner)) { ThrowOnDispose = true };
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var logger = new CapturingLogger<PerspectiveWorker>();
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      logger: logger,
+      registryFactory: probes.Create,
+      drainChannel: drainChannel);
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
+    var logged = logger.WaitForAsync(e => e.Message.Contains("Disposing the scope of an abandoned apply failed", StringComparison.Ordinal));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await cts.CancelAsync();
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      hang.TrySetResult();
+    }
+
+    await logged.WaitAsync(TimeSpan.FromSeconds(10));
+    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true))
+      .Because("a failed disposal still releases the gate");
+  }
+
+  /// <summary>
+  /// The runner registry as a transient, so each resolution belongs to the scope that resolved it and is
+  /// disposed exactly when that scope is. The worker resolves it from the drain group's scope to get the
+  /// runner, which makes it a probe for that scope's lifetime.
+  /// </summary>
+  private sealed class ScopeProbes(IPerspectiveRunnerRegistry inner) {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<Probe> _resolved = new();
+    private int _appliesRunning;
+
+    /// <summary>When set, disposing the probe throws, as a scoped service failing to dispose would.</summary>
+    public bool ThrowOnDispose { get; init; }
+
+    public IReadOnlyList<Probe> Resolved => [.. _resolved];
+
+    /// <summary>The factory the worker's container calls for each resolution.</summary>
+    public Func<IServiceProvider, IPerspectiveRunnerRegistry> Create => _ => {
+      var probe = new Probe(inner, this);
+      _resolved.Enqueue(probe);
+      return probe;
+    };
+
+    public sealed class Probe(IPerspectiveRunnerRegistry inner, ScopeProbes owner) : IPerspectiveRunnerRegistry, IAsyncDisposable {
+      private int _disposals;
+      public bool RunnerRequested { get; private set; }
+      public int Disposals => Volatile.Read(ref _disposals);
+      public bool DisposedWhileApplyRunning { get; private set; }
+
+      public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
+        RunnerRequested = true;
+        var runner = inner.GetRunner(perspectiveName, serviceProvider);
+        return runner is null ? null : new TrackingRunner(runner, owner);
+      }
+
+      public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => inner.GetRegisteredPerspectives();
+      public IReadOnlyList<Type> GetEventTypes() => inner.GetEventTypes();
+      public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors => inner.LifecycleStagesWithReceptors;
+
+      public ValueTask DisposeAsync() {
+        if (Volatile.Read(ref owner._appliesRunning) > 0) {
+          DisposedWhileApplyRunning = true;
+        }
+        Interlocked.Increment(ref _disposals);
+        if (owner.ThrowOnDispose && RunnerRequested) {
+          throw new InvalidOperationException("scoped service failed to dispose");
+        }
+        return ValueTask.CompletedTask;
+      }
+    }
+
+    /// <summary>Counts applies inside the runner so a disposal can say whether one was still running.</summary>
+    private sealed class TrackingRunner(IPerspectiveRunner inner, ScopeProbes owner) : IPerspectiveRunner {
+      public Type PerspectiveType => inner.PerspectiveType;
+
+      public Task<PerspectiveCursorCompletion> RunAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        inner.RunAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
+
+      public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        inner.RewindAndRunAsync(streamId, perspectiveName, triggeringEventId, cancellationToken);
+
+      public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        inner.BootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId, cancellationToken);
+
+      public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(Guid streamId, string perspectiveName, Guid? lastProcessedEventId, IReadOnlyList<MessageEnvelope<IEvent>> events, CancellationToken cancellationToken = default) {
+        Interlocked.Increment(ref owner._appliesRunning);
+        try {
+          return await inner.RunWithEventsAsync(streamId, perspectiveName, lastProcessedEventId, events, cancellationToken);
+        } finally {
+          Interlocked.Decrement(ref owner._appliesRunning);
+        }
+      }
+    }
   }
 
   /// <summary>
