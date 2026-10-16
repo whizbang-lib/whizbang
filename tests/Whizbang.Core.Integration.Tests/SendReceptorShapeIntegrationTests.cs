@@ -224,6 +224,52 @@ public class SendReceptorShapeIntegrationTests {
       .Because("a [FireAt] lifecycle hook must not run as the command's handler");
   }
 
+  [Test]
+  [Arguments(SendOverload.Untyped, true)]
+  [Arguments(SendOverload.UntypedWithOptions, true)]
+  [Arguments(SendOverload.Typed, true)]
+  [Arguments(SendOverload.TypedWithOptions, true)]
+  [Arguments(SendOverload.Untyped, false)]
+  [Arguments(SendOverload.UntypedWithOptions, false)]
+  [Arguments(SendOverload.Typed, false)]
+  [Arguments(SendOverload.TypedWithOptions, false)]
+  public async Task SendAsync_ReceptorDeclaredAtALocalDispatchStage_IsTheHandlerAsync(SendOverload overload, bool inline) {
+    // [FireAt(LocalImmediateInline/Detached)] names the stage local dispatch fires: the receptor is
+    // the command's handler, unlike a hook at any other stage
+    var outbox = new RecordingOutbox();
+    var dispatcher = _buildDispatcher(outbox);
+    object command = inline ? new OwnedLocalInlineCommand(Guid.CreateVersion7()) : new OwnedLocalDetachedCommand(Guid.CreateVersion7());
+    var id = inline ? ((OwnedLocalInlineCommand)command).Id : ((OwnedLocalDetachedCommand)command).Id;
+
+    var receipt = overload switch {
+      SendOverload.Untyped => await dispatcher.SendAsync(command, MessageContext.New()),
+      SendOverload.UntypedWithOptions => await dispatcher.SendAsync(command, MessageContext.New(), new DispatchOptions()),
+      SendOverload.Typed => inline ? await dispatcher.SendAsync((OwnedLocalInlineCommand)command) : await dispatcher.SendAsync((OwnedLocalDetachedCommand)command),
+      _ => inline ? await dispatcher.SendAsync((OwnedLocalInlineCommand)command, new DispatchOptions()) : await dispatcher.SendAsync((OwnedLocalDetachedCommand)command, new DispatchOptions())
+    };
+
+    await Assert.That(SendShapeInvocations.CountFor(id)).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(outbox.QueuedOf(command)).IsEmpty();
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task LocalInvokeAsync_ReceptorDeclaredAtALocalDispatchStage_IsTheHandlerAsync(bool inline) {
+    var outbox = new RecordingOutbox();
+    var dispatcher = _buildDispatcher(outbox);
+    var id = Guid.CreateVersion7();
+
+    if (inline) {
+      await dispatcher.LocalInvokeAsync(new OwnedLocalInlineCommand(id));
+    } else {
+      await dispatcher.LocalInvokeAsync(new OwnedLocalDetachedCommand(id));
+    }
+
+    await Assert.That(SendShapeInvocations.CountFor(id)).IsEqualTo(1);
+  }
+
   // ========================================
   // SendManyAsync
   // ========================================

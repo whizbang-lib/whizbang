@@ -1323,14 +1323,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// The groups restricted to default-stage receptors, the ones a send invokes as the message's
-  /// handler. Message types left with no default-stage receptor are dropped.
+  /// The groups restricted to the receptors a send invokes as the message's handler
+  /// (<see cref="ReceptorInfo.FiresOnLocalDispatch"/>). Message types left with none are dropped.
   /// </summary>
-  private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>> _defaultStageOnly(
+  private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>> _localDispatchHandlersOnly(
       System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>> byMessage) {
     var result = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>>(byMessage.Count, StringComparer.Ordinal);
     foreach (var pair in byMessage) {
-      var handlers = pair.Value.Where(r => r.HasDefaultStage).ToList();
+      var handlers = pair.Value.Where(r => r.FiresOnLocalDispatch).ToList();
       if (handlers.Count > 0) {
         result[pair.Key] = handlers;
       }
@@ -1383,15 +1383,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .GroupBy(r => r.MessageType)
         .ToDictionary(g => g.Key, g => g.ToList());
 
-    // The send lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve a message's HANDLER.
-    // An explicit [FireAt] receptor is a lifecycle hook that fires at its declared stage through
-    // ReceptorInvoker, never the handler, so it is left out exactly as PublishToReceptors leaves it
-    // out. Emitting it made a send run the hook in place of routing the command to its owner.
+    // The send lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve a message's HANDLER: a
+    // receptor local dispatch fires (no [FireAt], or a LocalImmediate stage). A receptor declared only
+    // at other stages is a lifecycle hook that fires there through ReceptorInvoker, never the handler;
+    // emitting it made a send run the hook in place of routing the command to its owner.
     // The publish routing below still reads the unfiltered groups.
-    var sendRegularReceptorsByMessage = _defaultStageOnly(regularReceptorsByMessage);
-    var sendVoidReceptorsByMessage = _defaultStageOnly(voidReceptorsByMessage);
-    var sendRegularSyncReceptorsByMessage = _defaultStageOnly(regularSyncReceptorsByMessage);
-    var sendVoidSyncReceptorsByMessage = _defaultStageOnly(voidSyncReceptorsByMessage);
+    var sendRegularReceptorsByMessage = _localDispatchHandlersOnly(regularReceptorsByMessage);
+    var sendVoidReceptorsByMessage = _localDispatchHandlersOnly(voidReceptorsByMessage);
+    var sendRegularSyncReceptorsByMessage = _localDispatchHandlersOnly(regularSyncReceptorsByMessage);
+    var sendVoidSyncReceptorsByMessage = _localDispatchHandlersOnly(voidSyncReceptorsByMessage);
 
     // Read template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(

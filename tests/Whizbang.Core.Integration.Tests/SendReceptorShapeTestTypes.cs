@@ -48,6 +48,26 @@ namespace Whizbang.Core.Integration.Tests.SendShapes.Owned {
     public void Handle(OwnedVoidSyncCommand message) => SendShapeInvocations.Record(message.Id);
   }
 
+  public sealed record OwnedLocalInlineCommand(Guid Id) : ICommand;
+  public sealed record OwnedLocalDetachedCommand(Guid Id) : ICommand;
+
+  /// <summary>Declared at the local-dispatch stage, so it IS the command's handler.</summary>
+  [Whizbang.Core.Messaging.FireAt(Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline)]
+  public sealed class OwnedLocalInlineCommandReceptor : IReceptor<OwnedLocalInlineCommand> {
+    public ValueTask HandleAsync(OwnedLocalInlineCommand message, CancellationToken cancellationToken = default) {
+      SendShapeInvocations.Record(message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  [Whizbang.Core.Messaging.FireAt(Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached)]
+  public sealed class OwnedLocalDetachedCommandReceptor : IReceptor<OwnedLocalDetachedCommand> {
+    public ValueTask HandleAsync(OwnedLocalDetachedCommand message, CancellationToken cancellationToken = default) {
+      SendShapeInvocations.Record(message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   public sealed class OwnedThrowingVoidCommandReceptor : IReceptor<OwnedThrowingVoidCommand> {
     public ValueTask HandleAsync(OwnedThrowingVoidCommand message, CancellationToken cancellationToken = default) {
       SendShapeInvocations.Record(message.Id);

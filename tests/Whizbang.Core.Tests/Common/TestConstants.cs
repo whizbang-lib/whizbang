@@ -107,11 +107,15 @@ public static class TestConstants {
   ///     (ObservedReceptor and ObservedFailingReceptor — the dispatch spans and dispatcher metrics of a
   ///     succeeding and a failing receptor)</para>
   ///
+  /// <para>- 1 receptor from Tags/DispatcherTagProcessingTests.cs
+  ///     (TestVoidCommandReceptor — a void receptor SendAsync reaches since #1379, so tag processing
+  ///     must follow it)</para>
+  ///
   /// <para>DispatcherTests.cs (3 receptors) and DispatcherLocalInvokeAndSyncTimingTests.cs (2) moved to
   /// Whizbang.Core.Component.Tests with the Core test separation (#1264), so their receptors are
   /// discovered in that assembly, not this one.</para>
   ///
-  /// <para>Total: 125 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>Total: 126 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 125;
+  public const int EXPECTED_RECEPTOR_COUNT = 126;
 }
