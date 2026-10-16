@@ -1643,6 +1643,10 @@ public partial class PerspectiveWorker(
     Message = "A handler of OnStreamAffinityGateReleased threw for perspective {PerspectiveName} on stream {StreamId}; the gate was released regardless")]
   static partial void LogAffinityGateReleasedHandlerFailed(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
 
+  [LoggerMessage(EventId = 77, Level = LogLevel.Warning,
+    Message = "Disposing the scope of an abandoned apply failed for perspective {PerspectiveName} on stream {StreamId}; the affinity gate was released regardless")]
+  static partial void LogAbandonedApplyScopeDisposeFailed(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+
   [LoggerMessage(EventId = 76, Level = LogLevel.Information,
     Message = "PerspectiveWorker stopping: waiting for {Count} abandoned apply(s) to end and release their affinity gates")]
   static partial void LogAwaitingAbandonedApplies(ILogger logger, int count);
@@ -2368,7 +2372,11 @@ public partial class PerspectiveWorker(
       DrainBatchContext batchContext,
       Action<Task> keepGateHeldUntil,
       CancellationToken ct) {
-    await using var groupScope = _scopeFactory.CreateAsyncScope();
+    var groupScope = _scopeFactory.CreateAsyncScope();
+    // Disposes the scope when the group ends, unless an apply the lease executor abandoned is still
+    // running on it: that apply's runner, coordinator and DbContext (with a command possibly in flight)
+    // live in this scope, so it is then disposed after the apply ends (#1382).
+    await using var groupScopeLifetime = new DrainGroupScopeLifetime(groupScope, _logger, streamId, perspectiveName);
     var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     _markAffinityPhase(streamId, perspectiveName, "resolve");
 
@@ -2676,11 +2684,40 @@ public partial class PerspectiveWorker(
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     } finally {
       // An apply the executor abandoned is still running and has not marked its events processed. The
-      // gate stays held until it ends, so no other consumer can apply the same events in the meantime.
+      // gate stays held until it ends, so no other consumer can apply the same events in the meantime,
+      // and the group's scope, which the apply is still using, is disposed only after it ends.
       if (!apply.IsCompleted) {
-        keepGateHeldUntil(apply);
+        keepGateHeldUntil(groupScopeLifetime.DisposeAfterAsync(apply));
       }
     }
+  }
+
+  /// <summary>
+  /// Owns a drain group's scope. Disposed with the group as usual, except when an apply the lease
+  /// executor abandoned still runs on the scope: then <see cref="DisposeAfterAsync"/> takes ownership
+  /// and disposes the scope once the apply ends, and disposing this owner does nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs:Stop_WhileAnAbandonedApplyStillRuns_KeepsItsScopeAliveUntilTheApplyEndsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.BranchCoverage.cs:DrainMode_ApplyOutlivesItsLease_KeepsItsScopeAliveUntilTheApplyEndsAsync</tests>
+  private sealed class DrainGroupScopeLifetime(
+      AsyncServiceScope scope, ILogger logger, Guid streamId, string perspectiveName) : IAsyncDisposable {
+    private bool _handedOff;
+
+    /// <summary>
+    /// Disposes the scope after <paramref name="apply"/> ends, whatever its outcome. Nothing awaits this
+    /// task's result (the affinity gate only waits for it to end), so a disposal failure is logged here.
+    /// </summary>
+    public async Task DisposeAfterAsync(Task apply) {
+      _handedOff = true;
+      await apply.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      try {
+        await scope.DisposeAsync().ConfigureAwait(false);
+      } catch (Exception ex) {
+        LogAbandonedApplyScopeDisposeFailed(logger, ex, perspectiveName, streamId);
+      }
+    }
+
+    public ValueTask DisposeAsync() => _handedOff ? ValueTask.CompletedTask : scope.DisposeAsync();
   }
 
   /// <summary>The leased work rows of one perspective's share of a drain group.</summary>

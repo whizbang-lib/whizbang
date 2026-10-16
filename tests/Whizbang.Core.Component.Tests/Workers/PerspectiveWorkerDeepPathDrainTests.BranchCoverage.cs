@@ -421,6 +421,52 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(applyScope.DisposedWhileApplyRunning).IsFalse();
   }
 
+  [Test]
+  public async Task AbandonedApply_ScopeDisposalThrows_IsLoggedAndTheGateStillReleasesAsync() {
+    // Nothing awaits the hand-off's result (the gate only waits for it to end), so a scope that fails to
+    // dispose after the abandoned apply must be logged, not lost in an unobserved task.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("scope-dispose-throws"))]);
+    var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
+    var probes = new ScopeProbes(_registry(runner)) { ThrowOnDispose = true };
+    var drainChannel = new DrainedSignalingChannel(streamId);
+    var logger = new CapturingLogger<PerspectiveWorker>();
+    var (worker, _, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = 1,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      logger: logger,
+      registryFactory: probes.Create,
+      drainChannel: drainChannel);
+    var released = new TaskCompletionSource<PerspectiveWorker.AffinityGateRelease>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += r => released.TrySetResult(r);
+    var logged = logger.WaitForAsync(e => e.Message.Contains("Disposing the scope of an abandoned apply failed", StringComparison.Ordinal));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await runner.Started.WaitAsync(TimeSpan.FromSeconds(10));
+      await cts.CancelAsync();
+      await drainChannel.FirstDrained.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      hang.TrySetResult();
+    }
+
+    await logged.WaitAsync(TimeSpan.FromSeconds(10));
+    var release = await released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(release).IsEqualTo(new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true))
+      .Because("a failed disposal still releases the gate");
+  }
+
   /// <summary>
   /// The runner registry as a transient, so each resolution belongs to the scope that resolved it and is
   /// disposed exactly when that scope is. The worker resolves it from the drain group's scope to get the
@@ -429,6 +475,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   private sealed class ScopeProbes(IPerspectiveRunnerRegistry inner) {
     private readonly System.Collections.Concurrent.ConcurrentQueue<Probe> _resolved = new();
     private int _appliesRunning;
+
+    /// <summary>When set, disposing the probe throws, as a scoped service failing to dispose would.</summary>
+    public bool ThrowOnDispose { get; init; }
 
     public IReadOnlyList<Probe> Resolved => [.. _resolved];
 
@@ -460,6 +509,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
           DisposedWhileApplyRunning = true;
         }
         Interlocked.Increment(ref _disposals);
+        if (owner.ThrowOnDispose && RunnerRequested) {
+          throw new InvalidOperationException("scoped service failed to dispose");
+        }
         return ValueTask.CompletedTask;
       }
     }
