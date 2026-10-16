@@ -219,6 +219,11 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
 
+    receptors = _withoutRuntimeReceptorsThatRanLocally(envelope, messageType, stage, receptors, isPreOutbox);
+    if (receptors.Count == 0) {
+      return;
+    }
+
     if (!_tryClaimStageTracker(envelope, messageType, stage, context)) {
       return;
     }
@@ -315,6 +320,54 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     return true;
   }
+
+  /// <summary>
+  /// Double-fire prevention for RUNTIME registrations, with or without owned domains: on the outbox
+  /// copy of a message this service already dispatched locally (<see cref="Dispatch.DispatchModes.LocalDispatch"/>),
+  /// drops a runtime receptor that is also registered at a local dispatch stage, because that local
+  /// dispatch already ran it. A framework registrar registers one receptor at the local stage AND at
+  /// PreOutbox, the latter for outbox rows nothing dispatched locally. A generated receptor needs no
+  /// such rule: its dedup record carries one id at every stage, while a runtime registration's id names
+  /// its stage, so nothing else stops the second run. A receptor registered only at PreOutbox, which
+  /// observes the outbox rather than handling the message, is kept.
+  /// </summary>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#when-each-stage-fires</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/RuntimeReceptorLocalDispatchComponentTests.cs:PreOutbox_LocallyDispatchedCopy_SkipsARuntimeReceptorThatAlsoRegisteredLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/RuntimeReceptorLocalDispatchComponentTests.cs:PreOutbox_UnflaggedCopy_RunsARuntimeReceptorThatAlsoRegisteredLocallyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/RuntimeReceptorLocalDispatchComponentTests.cs:PreOutbox_LocallyDispatchedCopy_StillRunsARuntimeReceptorRegisteredOnlyAtPreOutboxAsync</tests>
+  private IReadOnlyList<ReceptorInfo> _withoutRuntimeReceptorsThatRanLocally(
+      IMessageEnvelope envelope,
+      Type messageType,
+      LifecycleStage stage,
+      IReadOnlyList<ReceptorInfo> receptors,
+      bool isPreOutbox) {
+    if (!isPreOutbox || !envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
+      return receptors;
+    }
+    List<ReceptorInfo>? kept = null;
+    for (var i = 0; i < receptors.Count; i++) {
+      var receptor = receptors[i];
+      if (receptor.RuntimeInstance is not null && _isRegisteredForLocalDispatch(messageType, receptor.RuntimeInstance)) {
+        kept ??= [.. receptors.Take(i)];
+        continue;
+      }
+      kept?.Add(receptor);
+    }
+    if (kept is null) {
+      return receptors;
+    }
+    if (kept.Count == 0) {
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
+    }
+    return kept;
+  }
+
+  private bool _isRegisteredForLocalDispatch(Type messageType, object instance) =>
+    _registry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline).Any(r => ReferenceEquals(r.RuntimeInstance, instance))
+    || _registry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached).Any(r => ReferenceEquals(r.RuntimeInstance, instance));
 
   /// <summary>
   /// Handles the "no receptors registered" branch: logs the skip and still fires message tags

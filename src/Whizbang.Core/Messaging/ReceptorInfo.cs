@@ -54,6 +54,12 @@ namespace Whizbang.Core.Messaging;
 /// is decorated with <see cref="ReceptorOnceAcrossServicesAttribute"/>. By default a prior invocation
 /// stops a receptor only in the service that recorded it; with this flag, one from any service does.
 /// </param>
+/// <param name="RuntimeInstance">
+/// The receptor instance behind a RUNTIME registration (<see cref="IReceptorRegistry.Register{TMessage}"/>),
+/// null for a compile-time receptor. One instance registered at several stages is one handler: the
+/// invoker uses this to recognize, at PreOutbox, a runtime receptor that already ran when the message
+/// was dispatched locally.
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
@@ -64,7 +70,8 @@ public sealed record ReceptorInfo(
     ICallerInfo? CallerInfo = null,
     bool FireDuringReplay = false,
     bool IsIdempotent = false,
-    bool IsOnceAcrossServices = false
+    bool IsOnceAcrossServices = false,
+    object? RuntimeInstance = null
 );
 
 /// <summary>

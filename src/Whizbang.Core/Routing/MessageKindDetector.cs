@@ -76,6 +76,21 @@ public static class MessageKindDetector {
   }
 
   /// <summary>
+  /// True when the type is a framework system message: it lives in the
+  /// <c>Whizbang.Core.Commands.System</c> namespace subtree. A namespace comparison only, cheap
+  /// enough for the dispatch path, which sends every system command to every service.
+  /// </summary>
+  /// <param name="type">The type to classify.</param>
+  /// <returns>True for a framework system message.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when type is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#system-commands</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/RuntimeReceptorLocalDispatchComponentTests.cs:SendAsync_SystemCommandWithAGeneratedReceptor_HandlesItLocallyOnceAndBroadcastsItAsync</tests>
+  public static bool IsFrameworkSystemType(Type type) {
+    ArgumentNullException.ThrowIfNull(type);
+    return _isFrameworkSystemNamespace(type);
+  }
+
+  /// <summary>
   /// True when the type lives in the framework system namespace subtree
   /// (<c>Whizbang.Core.Commands.System</c> or a sub-namespace of it).
   /// </summary>
