@@ -117,15 +117,15 @@ public class DispatcherOwnedDomainTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_OwnedCommand_NoLocalReceptor_SkipsOutboxAsync() {
-    // Arrange — command in owned namespace with no local receptor → skip outbox
+  public async Task SendAsync_OwnedCommand_NoLocalReceptor_ThrowsAndSkipsOutboxAsync() {
+    // Arrange — command in owned namespace with no local receptor
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithOwnedDomains(strategy, ["Whizbang.Core.Tests.Dispatcher"]);
 
-    // Act
-    await dispatcher.SendAsync(new OwnedDomainCommand("test"));
-
-    // Assert — owned commands never go to outbox
+    // Act & Assert — owned commands never go to outbox, and a missing receptor is a wiring
+    // error reported to the caller rather than an Accepted receipt for a dropped command (#1379)
+    await Assert.That(async () => await dispatcher.SendAsync(new OwnedDomainCommand("test")))
+      .ThrowsExactly<ReceptorNotFoundException>();
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
   }
 

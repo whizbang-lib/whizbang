@@ -40,6 +40,13 @@ public class DispatcherTagProcessingTests {
     }
   }
 
+  // Void receptor: SendAsync reaches it since #1379, so tag processing must follow it too
+  public record TestVoidCommand(Guid Id);
+
+  public class TestVoidCommandReceptor : IReceptor<TestVoidCommand> {
+    public ValueTask HandleAsync(TestVoidCommand message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
   // Spy implementation of IMessageTagProcessor to track invocations
   public class SpyMessageTagProcessor : IMessageTagProcessor {
     public int InvocationCount { get; private set; }
@@ -183,6 +190,23 @@ public class DispatcherTagProcessingTests {
 
   [Test]
   [NotInParallel]
+  public async Task SendAsync_VoidReceptor_WithTagProcessingEnabled_InvokesTagProcessorAsync() {
+    var spyProcessor = new SpyMessageTagProcessor();
+    var dispatcher = _createDispatcherWithProcessor(spyProcessor, options => {
+      options.EnableTagProcessing = true;
+      options.TagProcessingMode = TagProcessingMode.AfterReceptorCompletion;
+    });
+    var command = new TestVoidCommand(Guid.CreateVersion7());
+
+    var receipt = await dispatcher.SendAsync(command);
+
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(1);
+    await Assert.That(spyProcessor.LastMessage).IsEqualTo(command);
+  }
+
+  [Test]
+  [NotInParallel]
   public async Task SendAsync_WithTagProcessingDisabled_SkipsTagProcessorAsync() {
     // Arrange
     TestCommandReceptor.Reset();
@@ -266,7 +290,10 @@ public class DispatcherTagProcessingTests {
     var services = new ServiceCollection();
 
     // Exempt test message types from security — these tests are about tag processing, not security
-    services.AddWhizbangMessageSecurity(options => options.ExemptMessageTypes.Add(typeof(TestCommand)));
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(TestCommand));
+      options.ExemptMessageTypes.Add(typeof(TestVoidCommand));
+    });
 
     services.AddWhizbang(options => configure?.Invoke(options));
 

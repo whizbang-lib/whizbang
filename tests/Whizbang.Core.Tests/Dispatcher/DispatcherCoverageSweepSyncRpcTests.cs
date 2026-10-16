@@ -269,6 +269,51 @@ public class DispatcherCoverageSweepSyncRpcTests {
   }
 
   [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendAsync_Void_SyncAttributeSynced_AwaitsPerspectiveThenInvokesReceptorAsync(bool typed) {
+    // SendAsync reaches a void receptor since #1379, and must honor its [AwaitPerspectiveSync]
+    // exactly as LocalInvokeAsync does
+    var streamId = Guid.NewGuid();
+    var awaiter = new SweepSyncAwaiter(SyncOutcome.Synced);
+    var invoked = false;
+    var dispatcher = new SweepDispatcher(
+      _buildProvider(syncAwaiter: awaiter),
+      streamIdExtractor: new SweepStreamIdExtractor { OnExtract = _ => streamId },
+      receptorRegistry: _registryWithSyncAttribute(typeof(SweepSyncEvent), SyncFireBehavior.FireOnSuccess),
+      voidInvoker: _ => { invoked = true; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepSyncEvent));
+    var message = new SweepSyncEvent(streamId);
+
+    var receipt = typed
+      ? await dispatcher.SendAsync(message)
+      : await dispatcher.SendAsync((object)message, MessageContext.New());
+
+    await Assert.That(invoked).IsTrue();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(awaiter.StreamWaits).Count().IsEqualTo(1);
+    await Assert.That(awaiter.StreamWaits[0].StreamId).IsEqualTo(streamId);
+  }
+
+  [Test]
+  public async Task SendAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync() {
+    var streamId = Guid.NewGuid();
+    var awaiter = new SweepSyncAwaiter(SyncOutcome.TimedOut);
+    var invoked = false;
+    var dispatcher = new SweepDispatcher(
+      _buildProvider(syncAwaiter: awaiter),
+      streamIdExtractor: new SweepStreamIdExtractor { OnExtract = _ => streamId },
+      receptorRegistry: _registryWithSyncAttribute(typeof(SweepSyncEvent), SyncFireBehavior.FireOnSuccess),
+      voidInvoker: _ => { invoked = true; return ValueTask.CompletedTask; },
+      handleMessageType: typeof(SweepSyncEvent));
+
+    await Assert.That(async () =>
+        await dispatcher.SendAsync((object)new SweepSyncEvent(streamId), MessageContext.New()))
+      .ThrowsExactly<PerspectiveSyncTimeoutException>();
+    await Assert.That(invoked).IsFalse();
+  }
+
+  [Test]
   public async Task LocalInvokeAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync() {
     // Arrange - awaiter times out; FireOnSuccess must throw before invoking the receptor
     var streamId = Guid.NewGuid();

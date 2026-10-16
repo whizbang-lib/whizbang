@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Linq;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -52,6 +54,16 @@ public sealed record ReceptorInfo(
   /// True if receptor has no [FireAt] attributes (should default to ImmediateDetached).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
+
+  /// <summary>
+  /// True if local dispatch (SendAsync, SendManyAsync, LocalInvokeAsync) invokes this receptor as the
+  /// message's handler: it has no [FireAt], or it declares LocalImmediateInline or LocalImmediateDetached,
+  /// the stages local dispatch fires. A receptor declared only at other stages is a lifecycle hook.
+  /// </summary>
+  public bool FiresOnLocalDispatch => HasDefaultStage
+    || LifecycleStages.Any(static stage =>
+      stage.EndsWith(".LocalImmediateInline", System.StringComparison.Ordinal)
+      || stage.EndsWith(".LocalImmediateDetached", System.StringComparison.Ordinal));
 
   /// <summary>
   /// True if receptor has a [DefaultRouting] attribute.

@@ -1201,6 +1201,159 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
   }
 
   /// <summary>
+  /// The send and local-invoke lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve the
+  /// command's HANDLER. An explicit [FireAt] receptor is a lifecycle hook that fires at its declared
+  /// stage, never the handler, so every send table must omit it, the way PublishToReceptors does.
+  /// Emitting it made SendAsync run a hook in place of routing the command to its owner (#1379).
+  /// </summary>
+  [Test]
+  [Arguments("GetReceptorInvoker<TResult>(object message, Type messageType)", "DefaultAsync", "HookAsync")]
+  [Arguments("GetVoidReceptorInvoker(object message, Type messageType)", "DefaultVoid", "HookVoid")]
+  [Arguments("GetSyncReceptorInvoker<TResult>(object message, Type messageType)", "DefaultSync", "HookSync")]
+  [Arguments("GetVoidSyncReceptorInvoker(object message, Type messageType)", "DefaultVoidSync", "HookVoidSync")]
+  [Arguments("GetReceptorInvokerAny(object message, Type messageType)", "DefaultAsync", "HookAsync")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_SendLookups_OmitFireAtReceptorsAsync(string lookupSignature, string defaultPrefix, string hookPrefix) {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record DefaultAsyncCommand : ICommand;
+public record HookAsyncCommand : ICommand;
+public record DefaultVoidCommand : ICommand;
+public record HookVoidCommand : ICommand;
+public record DefaultSyncCommand : ICommand;
+public record HookSyncCommand : ICommand;
+public record DefaultVoidSyncCommand : ICommand;
+public record HookVoidSyncCommand : ICommand;
+public record Done : IMessage;
+
+public class DefaultAsyncHandler : IReceptor<DefaultAsyncCommand, Done> {
+  public ValueTask<Done> HandleAsync(DefaultAsyncCommand message, CancellationToken ct = default) => ValueTask.FromResult(new Done());
+}
+
+[FireAt(LifecycleStage.PostOutboxDetached)]
+public class HookAsyncHandler : IReceptor<HookAsyncCommand, Done> {
+  public ValueTask<Done> HandleAsync(HookAsyncCommand message, CancellationToken ct = default) => ValueTask.FromResult(new Done());
+}
+
+public class DefaultVoidHandler : IReceptor<DefaultVoidCommand> {
+  public ValueTask HandleAsync(DefaultVoidCommand message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PostOutboxDetached)]
+public class HookVoidHandler : IReceptor<HookVoidCommand> {
+  public ValueTask HandleAsync(HookVoidCommand message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+public class DefaultSyncHandler : ISyncReceptor<DefaultSyncCommand, Done> {
+  public Done Handle(DefaultSyncCommand message) => new Done();
+}
+
+[FireAt(LifecycleStage.PostOutboxDetached)]
+public class HookSyncHandler : ISyncReceptor<HookSyncCommand, Done> {
+  public Done Handle(HookSyncCommand message) => new Done();
+}
+
+public class DefaultVoidSyncHandler : ISyncReceptor<DefaultVoidSyncCommand> {
+  public void Handle(DefaultVoidSyncCommand message) { }
+}
+
+[FireAt(LifecycleStage.PostOutboxDetached)]
+public class HookVoidSyncHandler : ISyncReceptor<HookVoidSyncCommand> {
+  public void Handle(HookVoidSyncCommand message) { }
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    var content = dispatcher!;
+    var start = content.IndexOf(lookupSignature, StringComparison.Ordinal);
+    await Assert.That(start).IsGreaterThan(-1);
+    // The method runs to the next override; each entry has its own early "return null;", so that
+    // string cannot mark the end of the lookup
+    var end = content.IndexOf("protected override", start + lookupSignature.Length, StringComparison.Ordinal);
+    await Assert.That(end).IsGreaterThan(start);
+    var body = content[start..end];
+
+    await Assert.That(body).Contains($"{defaultPrefix}Command")
+      .Because("a default-stage receptor is the command's handler and must be found by a send");
+    await Assert.That(body).DoesNotContain($"{hookPrefix}Command")
+      .Because("an explicit [FireAt] receptor is a lifecycle hook, never the handler a send invokes");
+  }
+
+  /// <summary>
+  /// A receptor declared at a local-dispatch stage IS the local handler: LocalImmediateInline and
+  /// LocalImmediateDetached are the stages local dispatch fires, so the send lookups must keep it.
+  /// Only hooks at other stages are left out.
+  /// </summary>
+  [Test]
+  [Arguments("LocalImmediateInline", "GetReceptorInvoker<TResult>(object message, Type messageType)", "ResultCommand")]
+  [Arguments("LocalImmediateInline", "GetVoidReceptorInvoker(object message, Type messageType)", "VoidCommand")]
+  [Arguments("LocalImmediateInline", "GetSyncReceptorInvoker<TResult>(object message, Type messageType)", "SyncCommand")]
+  [Arguments("LocalImmediateInline", "GetVoidSyncReceptorInvoker(object message, Type messageType)", "VoidSyncCommand")]
+  [Arguments("LocalImmediateDetached", "GetReceptorInvoker<TResult>(object message, Type messageType)", "ResultCommand")]
+  [Arguments("LocalImmediateDetached", "GetVoidReceptorInvoker(object message, Type messageType)", "VoidCommand")]
+  [Arguments("LocalImmediateDetached", "GetSyncReceptorInvoker<TResult>(object message, Type messageType)", "SyncCommand")]
+  [Arguments("LocalImmediateDetached", "GetVoidSyncReceptorInvoker(object message, Type messageType)", "VoidSyncCommand")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_SendLookups_KeepReceptorsDeclaredAtALocalDispatchStageAsync(string stage, string lookupSignature, string command) {
+    var source = $$"""
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record ResultCommand : ICommand;
+public record VoidCommand : ICommand;
+public record SyncCommand : ICommand;
+public record VoidSyncCommand : ICommand;
+public record Done : IMessage;
+
+[FireAt(LifecycleStage.{{stage}})]
+public class ResultHandler : IReceptor<ResultCommand, Done> {
+  public ValueTask<Done> HandleAsync(ResultCommand message, CancellationToken ct = default) => ValueTask.FromResult(new Done());
+}
+
+[FireAt(LifecycleStage.{{stage}})]
+public class VoidHandler : IReceptor<VoidCommand> {
+  public ValueTask HandleAsync(VoidCommand message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.{{stage}})]
+public class SyncHandler : ISyncReceptor<SyncCommand, Done> {
+  public Done Handle(SyncCommand message) => new Done();
+}
+
+[FireAt(LifecycleStage.{{stage}})]
+public class VoidSyncHandler : ISyncReceptor<VoidSyncCommand> {
+  public void Handle(VoidSyncCommand message) { }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    var content = dispatcher!;
+    var start = content.IndexOf(lookupSignature, StringComparison.Ordinal);
+    await Assert.That(start).IsGreaterThan(-1);
+    var end = content.IndexOf("protected override", start + lookupSignature.Length, StringComparison.Ordinal);
+    await Assert.That(end).IsGreaterThan(start);
+
+    await Assert.That(content[start..end]).Contains($"MyApp.Receptors.{command}")
+      .Because($"a receptor declared at {stage} is the local handler a send invokes");
+  }
+
+  /// <summary>
   /// Symmetric guard: the cascade path (PublishToReceptorsUntyped) MUST still emit
   /// [FireAt] receptors inside an `if (!isDefaultDispatch)` block. That path is shared
   /// with code that invokes receptors with a non-default envelope; removing it would
