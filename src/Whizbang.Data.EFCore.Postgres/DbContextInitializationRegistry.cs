@@ -121,10 +121,26 @@ public static class DbContextInitializationRegistry {
     }
   }
 
-  /// <summary>Clears the registered initializers; for tests that share this process-wide registry.</summary>
-  internal static void ResetForTesting() {
+  /// <summary>
+  /// Clears the registered initializers; for tests that share this process-wide registry. Disposing the returned
+  /// scope puts them back: they come from module initializers, which never run again, so a reset that is not undone
+  /// silently unregisters every generated schema initializer for the rest of the process.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:ResetForTesting_DisposingTheScope_PutsBackWhatWasRegisteredAsync</tests>
+  internal static IDisposable ResetForTesting() {
     lock (_lock) {
+      var saved = _initializers.ToArray();
       _initializers.Clear();
+      return new InitializerRestore(saved);
+    }
+  }
+
+  private sealed class InitializerRestore(DbContextInitializer[] saved) : IDisposable {
+    public void Dispose() {
+      lock (_lock) {
+        _initializers.Clear();
+        _initializers.AddRange(saved);
+      }
     }
   }
 

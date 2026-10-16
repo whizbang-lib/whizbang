@@ -335,6 +335,67 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task DrainMode_EventsTheRewindAlreadyReplayed_DoNotRewindAgainAsync(bool redeliveredAsNewRows) {
+    // #1361: two events land behind the cursor, so the drain rewinds, replaying the stream to its frontier. The
+    // drain loop then refetches: either the same rows, still pending until the completion flush deletes them,
+    // or the same events delivered again under new work rows. Either way the rewind already replayed them, so
+    // no later lap may rewind again. Observed: one instance rewound the same stream a dozen times in a second.
+    var streamId = Guid.CreateVersion7();
+    var eventA = Guid.CreateVersion7();
+    var eventB = Guid.CreateVersion7();
+    var frontier = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator {
+      CursorsBatchToReturn = [
+        new PerspectiveCursorInfo {
+          StreamId = streamId,
+          PerspectiveName = PERSPECTIVE,
+          LastEventId = frontier,
+          LastCommitSequence = 100,
+          Status = PerspectiveProcessingStatus.None
+        }
+      ]
+    };
+    var eventStore = new DrainEventStore();
+    const int laps = 3;
+    var workA = Guid.CreateVersion7();
+    var workB = Guid.CreateVersion7();
+    for (var lap = 0; lap < laps; lap++) {
+      if (redeliveredAsNewRows) {
+        workA = Guid.CreateVersion7();
+        workB = Guid.CreateVersion7();
+      }
+      coordinator.EnqueueStreamEvents([
+        _raw(streamId, eventA, workA, commitSequence: 50),
+        _raw(streamId, eventB, workB, commitSequence: 51),
+      ]);
+      eventStore.EnqueueDeserialized([
+        _envelope(eventA, new DrainDeepEvent("a")),
+        _envelope(eventB, new DrainDeepEvent("b")),
+      ]);
+    }
+    var runner = new DrainRunner { Frontier = (frontier, 100) };
+    var (worker, harness, _) = _createWorker(
+      coordinator, eventStore, _registry(runner),
+      configure: opts => opts.DrainLoopMaxIterations = laps,
+      cooldownCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.WaitForStreamEventsCallsAsync(laps, TimeSpan.FromSeconds(20));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(runner.RewindCalls.Count).IsEqualTo(1)
+      .Because("the rewind replayed both events to the frontier; seeing them again is not a new inversion");
+    await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(0)
+      .Because("nothing new arrived after the rewind");
+  }
+
+  [Test]
   public async Task DrainMode_RefetchReturnsEmpty_ExitsLoopAfterSecondFetchAsync() {
     // Arrange — 2 fresh events (>= DrainLoopRefetchMinBatch default 2) → refetch fires; the
     // refetch returns no rows → loop exits.
@@ -1229,15 +1290,29 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       await cancelled.Task;
     }
 
+    /// <summary>
+    /// Where a rewind finishes: the stream's frontier, which is NOT one of the rows the batch claimed.
+    /// A real rewind re-reads the stream from the snapshot forward and ends at its last event, so a
+    /// fake that reported the trigger back would hide the very thing #1365 is about.
+    /// </summary>
+    public (Guid EventId, long CommitSequence)? Frontier { get; init; }
+
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {
       RewindCalls.Enqueue((triggeringEventId, null));
-      return Task.FromResult(_completed(streamId, perspectiveName, triggeringEventId));
+      return Task.FromResult(_rewound(streamId, perspectiveName, triggeringEventId));
     }
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, long? triggeringCommitSequence, CancellationToken cancellationToken = default) {
       RewindCalls.Enqueue((triggeringEventId, triggeringCommitSequence));
-      return Task.FromResult(_completed(streamId, perspectiveName, triggeringEventId));
+      return Task.FromResult(_rewound(streamId, perspectiveName, triggeringEventId));
     }
+
+    private PerspectiveCursorCompletion _rewound(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
+      Frontier is null
+        ? _completed(streamId, perspectiveName, triggeringEventId)
+        : _completed(streamId, perspectiveName, Frontier.Value.EventId) with {
+          LastCommitSequence = Frontier.Value.CommitSequence
+        };
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;

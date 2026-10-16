@@ -125,6 +125,14 @@ Whizbang:MessageSecurity:EnableAuditLogging
 Whizbang:MessageSecurity:PropagateToOutgoingMessages
 Whizbang:MessageSecurity:Timeout
 Whizbang:MessageSecurity:ValidateCredentials
+Whizbang:MultiStreamCommands:BatchSize
+Whizbang:MultiStreamCommands:CompletedRunRetention
+Whizbang:MultiStreamCommands:Enabled
+Whizbang:MultiStreamCommands:Lease
+Whizbang:MultiStreamCommands:MaxAttempts
+Whizbang:MultiStreamCommands:NoHandlerRetryDelay
+Whizbang:MultiStreamCommands:PollInterval
+Whizbang:MultiStreamCommands:PurgeInterval
 Whizbang:Offloads:AzureBlob:*:ConnectionString
 Whizbang:Offloads:AzureBlob:*:ContainerName
 Whizbang:Offloads:AzureBlob:*:DefaultAccessTier
@@ -497,6 +505,7 @@ Whizbang:Workers:Maintenance:DestructionRetryBackoffSeconds
 Whizbang:Workers:Maintenance:Enabled
 Whizbang:Workers:Maintenance:IntervalMinutes
 Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
+Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes

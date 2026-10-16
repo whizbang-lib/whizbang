@@ -195,6 +195,9 @@ public static class PostgresDriverExtensions {
         // has no effect — source-gen receptor discovery only sees the consumer's own syntax,
         // so a built-in receptor shipped from this assembly needs runtime registration.
         selector.Services.AddHostedService<RebuildCommandReceptorRegistrar>();
+        // #1353: a whole-perspective blue-green rebuild runs on this worker, off the inbox handler's budget.
+        selector.Services.TryAddSingleton<RebuildBackgroundQueue>();
+        selector.Services.AddHostedService<RebuildBackgroundWorker>();
 
         // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
         // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.

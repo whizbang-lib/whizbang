@@ -135,12 +135,14 @@ public class DapperPostgresEventStore(
   /// Uses the event_type column to determine which concrete type to deserialize to.
   /// </summary>
   /// <remarks>
-  /// The stream is read in commit order (#1003): <c>commit_sequence</c> ascending, an unstamped row last,
-  /// <c>event_id</c> breaking ties, as the EF Core store reads it. An event id is minted before commit, so two
-  /// producers can commit in the opposite order to their ids; reading by id would replay them backward.
+  /// The stream is read in its own order: <c>version</c> ascending, <c>event_id</c> breaking ties, as the EF Core
+  /// store reads it, and each envelope carries its version (<see cref="MessageEnvelope{T}.LocalStreamVersion"/>).
+  /// An event id is minted before commit, so two producers can append in the opposite order to their ids (#1003);
+  /// a commit sequence stamped after the fact can run backward against the versions (#1352). Either order would
+  /// replay the stream backward.
   /// </remarks>
   /// <docs>fundamentals/events/event-store#read-order</docs>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_IdsRunBackwardToCommits_ReadsInCommitOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.EdgeCaseTests.cs:ReadPolymorphicAsync_IdsAndCommitsRunBackwardToVersions_ReadsInStreamOrderAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
     Guid streamId,
     Guid? fromEventId,
@@ -151,7 +153,7 @@ public class DapperPostgresEventStore(
     EnsureConnectionOpen(connection);
 
     var typeMap = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
-    var sql = _getReadInCommitOrderSql(fromEventId);
+    var sql = _getReadInStreamOrderSql(fromEventId);
 
     var rows = await Executor.QueryAsync<EventRow>(
       connection,
@@ -420,27 +422,30 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// The SQL that reads a stream in commit order (<c>commit_sequence</c> ascending, unstamped last, then
-  /// <c>event_id</c>), after a starting event ID when one is given: the order a replay applies the stream in.
+  /// The SQL that reads a stream in its own order (<c>version</c>, then <c>event_id</c>), after a starting event ID
+  /// when one is given: the order a replay applies the stream in. Commit order matched it only for rows stamped as
+  /// they were written; rows stamped after the fact run backward against their versions (#1352).
   /// </summary>
-  private static string _getReadInCommitOrderSql(Guid? fromEventId) =>
+  private static string _getReadInStreamOrderSql(Guid? fromEventId) =>
     fromEventId is null
       ? @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId
-          ORDER BY es.commit_sequence ASC NULLS LAST, es.event_id"
+          ORDER BY es.version, es.event_id"
       : @"SELECT es.event_type AS EventType,
                  eb.event_data::text AS EventData,
                  eb.metadata::text AS Metadata,
-                 es.scope::text AS Scope
+                 es.scope::text AS Scope,
+                 es.version AS Version
           FROM wh_event_store es
           LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
           WHERE es.stream_id = @StreamId AND es.event_id > @FromEventId
-          ORDER BY es.commit_sequence ASC NULLS LAST, es.event_id";
+          ORDER BY es.version, es.event_id";
 
   /// <summary>
   /// Deserializes an EventRow into a typed MessageEnvelope using the JSONB adapter.
@@ -470,7 +475,9 @@ public class DapperPostgresEventStore(
     var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
     _restoreScopeFromJson(jsonb.ScopeJson, hops);
 
-    return _buildPolymorphicEnvelope(eventData, messageId, hops);
+    var envelope = _buildPolymorphicEnvelope(eventData, messageId, hops);
+    envelope.LocalStreamVersion = row.Version;
+    return envelope;
   }
 
   /// <summary>

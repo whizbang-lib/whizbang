@@ -20,9 +20,10 @@ namespace Whizbang.Data.Postgres.Collective;
 /// <para>
 /// <strong>Interleave.</strong> A collective event is its own single-event stream unless it carries an ordering
 /// key, in which case it shares its key's stream. During a rebuild this loads the tenant's collective events for
-/// the model being rebuilt and merges them into the stream's event list, <c>OrderByMessageId</c> places them
-/// chronologically among the per-stream events, and the collectives sharing a stream are then put in commit order
-/// among themselves, the order the live sink applied them in. Tenant scoping is essential: a collective for global template
+/// the model being rebuilt and merges them into the stream's event list. The stream's own events keep the order the
+/// runner gave them (its replay order); each collective goes in before the first of them it was committed before, by
+/// commit sequence when both carry one and by message id otherwise. The collectives are taken in message-id order,
+/// and those sharing a stream are put in commit order among themselves, the order the live sink applied them in. Tenant scoping is essential: a collective for global template
 /// G in tenant A must never fold into tenant B's row for the same G.
 /// </para>
 /// <para>
@@ -103,7 +104,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       return streamEvents;
     }
 
-    var merged = new List<MessageEnvelope<IEvent>>(streamEvents);
+    var allCollectives = new List<MessageEnvelope<IEvent>>();
     var byStream = new List<List<MessageEnvelope<IEvent>>>();
     foreach (var streamId in positions.Select(p => p.StreamId).Distinct()) {
       var collectives = new List<MessageEnvelope<IEvent>>();
@@ -113,14 +114,41 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
           .ConfigureAwait(false)) {
         collectives.Add(envelope);
       }
-      merged.AddRange(collectives);
+      allCollectives.AddRange(collectives);
       byStream.Add(collectives);
     }
 
-    var ordered = merged.OrderByMessageId().ToList();
-    _putSharedStreamsInCommitOrder(ordered, byStream, positions);
-    return ordered;
+    var orderedCollectives = allCollectives.OrderByMessageId().ToList();
+    _putSharedStreamsInCommitOrder(orderedCollectives, byStream, positions);
+    return _mergeIntoStreamOrder(streamEvents, orderedCollectives);
   }
+
+  /// <summary>
+  /// Merges the collectives into the stream's own events without reordering the stream's events: the runner hands
+  /// them over already in replay order (origin, then commit, then id), and re-sorting the whole list by id folded a
+  /// stream whose first event carried its highest id with that event last, so the rebuild's write carried a stale
+  /// commit sequence and the store's ordering guard refused it (#1346). A collective goes before the first stream
+  /// event it precedes: by commit sequence when both carry one, by message id otherwise.
+  /// </summary>
+  private static List<MessageEnvelope<IEvent>> _mergeIntoStreamOrder(
+      IReadOnlyList<MessageEnvelope<IEvent>> streamEvents, List<MessageEnvelope<IEvent>> collectives) {
+    var merged = new List<MessageEnvelope<IEvent>>(streamEvents.Count + collectives.Count);
+    var next = 0;
+    foreach (var streamEvent in streamEvents) {
+      while (next < collectives.Count && _precedes(collectives[next], streamEvent)) {
+        merged.Add(collectives[next++]);
+      }
+      merged.Add(streamEvent);
+    }
+    merged.AddRange(collectives.Skip(next));
+    return merged;
+  }
+
+  /// <summary>Whether <paramref name="collective"/> was committed before <paramref name="streamEvent"/>.</summary>
+  private static bool _precedes(MessageEnvelope<IEvent> collective, MessageEnvelope<IEvent> streamEvent) =>
+    collective.LocalCommitSequence is long collectiveSequence && streamEvent.LocalCommitSequence is long streamSequence
+      ? collectiveSequence < streamSequence
+      : collective.MessageId.Value.CompareTo(streamEvent.MessageId.Value) < 0;
 
   /// <summary>
   /// Collectives that share an ordering key share a stream, and the live sink applied that stream in commit order

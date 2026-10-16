@@ -15,6 +15,8 @@ using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
 
+using Whizbang.Data.Postgres.MultiStream;
+
 namespace Whizbang.Data.Postgres.Notifications;
 
 /// <summary>
@@ -199,6 +201,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
 
     // #1254: the elected partition assigner and the claimers' cached assignment, built on the role election above.
     services.AddWhizbangPartitionAssigner();
+
+    // #1358: multi-stream commands. Each instance claims the streams it owns, ranked from the assignment above.
+    services.AddWhizbangMultiStreamCommands();
 
     // Default-on auto-discovery: when no INotificationDataSource has been
     // explicitly registered (the caller didn't call

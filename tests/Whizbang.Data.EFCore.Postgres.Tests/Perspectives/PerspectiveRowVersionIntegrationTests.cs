@@ -263,6 +263,51 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task TryUpsert_OnTheCurrentVersion_ThatTheCommitSequenceGuardRefuses_ReportsNotWrittenAsync(bool atomicPath) {
+    // The refusal stays quiet, but no longer silent to the caller: a runner told the row was written reported a row
+    // the store had left untouched as changed (#1342). Both write paths answer the same.
+    var id = Guid.CreateVersion7();
+    await using var context = CreateDbContext();
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
+    var inserted = await store.TryUpsertAsync(id, new ActionTestModel { Id = id, Name = "newer", Value = 10 }, new PerspectiveScope(), false,
+      _meta(commitSequence: 10), PerspectiveRowVersion.Absent);
+    var read = await store.ReadForApplyAsync(id);
+
+    var refused = await store.TryUpsertAsync(id, new ActionTestModel { Id = id, Name = "older", Value = 5 }, new PerspectiveScope(), false,
+      _meta(commitSequence: 5), read.Version);
+    var readAgain = await store.ReadForApplyAsync(id);
+    var updated = await store.TryUpsertAsync(id, new ActionTestModel { Id = id, Name = "newest", Value = 15 }, new PerspectiveScope(), false,
+      _meta(commitSequence: 15), readAgain.Version);
+
+    await Assert.That(inserted).IsTrue();
+    await Assert.That(refused).IsFalse()
+      .Because("the guard refused the older write on the row version it read, so the row was not written");
+    await Assert.That(updated).IsTrue();
+    await Assert.That((await _rowAsync(id)).Data.Name).IsEqualTo("newest");
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task TryUpsertWithPhysicalFields_ThatTheCommitSequenceGuardRefuses_ReportsNotWrittenAsync(bool atomicPath) {
+    var id = Guid.CreateVersion7();
+    await using var context = CreateDbContext();
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE, UpsertWritePath.Strategy(atomicPath));
+    var inserted = await store.TryUpsertWithPhysicalFieldsAsync(id, new ActionTestModel { Id = id, Name = "newer", Value = 10 },
+      new Dictionary<string, object?>(), null, false, _meta(commitSequence: 10), PerspectiveRowVersion.Absent);
+    var read = await store.ReadForApplyAsync(id);
+
+    var refused = await store.TryUpsertWithPhysicalFieldsAsync(id, new ActionTestModel { Id = id, Name = "older", Value = 5 },
+      new Dictionary<string, object?>(), null, false, _meta(commitSequence: 5), read.Version);
+
+    await Assert.That(inserted).IsTrue();
+    await Assert.That(refused).IsFalse();
+    await Assert.That((await _rowAsync(id)).Data.Name).IsEqualTo("newer");
+  }
+
+  [Test]
   public async Task Upsert_OnTheCurrentVersion_ForAVersionedTarget_WithAnOlderEvent_IsSkippedQuietlyAsync() {
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();

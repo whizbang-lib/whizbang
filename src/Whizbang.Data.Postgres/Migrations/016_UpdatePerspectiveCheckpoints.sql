@@ -1,134 +1,120 @@
 -- Migration: 016_UpdatePerspectiveCheckpoints.sql
 -- Date: 2025-12-25
--- Description: Creates update_perspective_cursors function for updating persistent checkpoint state.
---              Finds highest completed sequence with no gaps, updates checkpoint atomically.
+-- Description: Creates update_perspective_cursors, which persists each stream's perspective cursor at the position the
+--              run reports (#1363). The cursor follows each completion's own LastEventId: it is created when missing,
+--              advanced when the reported event sorts later in its stream, and never moved back by an earlier one. It
+--              never passes the first event still unprocessed for the pair (the gap invariant).
+--
+--              It used to derive the position from the processed wh_perspective_events rows. complete_perspective
+--              deletes those rows (production mode) before calling this, so in production nothing was found: a missing
+--              cursor was never created and an existing one never advanced; only status changed. The rows' pre-creation
+--              that once covered the first case went away with process_work_batch.
 -- Dependencies: 001-015 (requires wh_perspective_events and wh_perspective_cursors tables)
 
 SELECT __SCHEMA__.drop_all_overloads('update_perspective_cursors');
 
+-- <docs>fundamentals/work-coordinator/batched-flushers#perspective-cursors</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_ProductionMode_CreatesTheMissingCursorAtTheCompletionsEventAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_ProductionMode_AdvancesAnExistingCursorAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_AnEarlierEventThanTheCursor_LeavesTheCursorWhereItIsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_TwoCompletionsForOneStreamInABatch_TheLaterEventWinsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_ACompletionWithNoEvent_CreatesNoCursorAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Cursors/PerspectiveCursorAdvanceSqlTests.cs:CompletePerspective_AnEventTheStoreDoesNotHold_IsSkippedAndTheRestOfTheBatchRecordedAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.update_perspective_cursors(
-  p_completed_events JSONB,  -- [{StreamId, PerspectiveName}]
+  p_completed_events JSONB,  -- [{StreamId, PerspectiveName, LastEventId, ...}]: PerspectiveCursorCompletion
   p_debug_mode BOOLEAN DEFAULT FALSE
 ) RETURNS VOID AS $$
 BEGIN
-  -- v0.671: collapse the prior FOR-loop (four statements per (StreamId,
-  -- PerspectiveName) pair — gap-free SELECT, NOT EXISTS is_complete check,
-  -- UPDATE wh_perspective_cursors, conditional INSERT if NOT FOUND) into a
-  -- two-statement bulk pattern. For M distinct pairs, the loop pattern
-  -- issued 4M round trips; the bulk pattern is 2 (one UPDATE + one INSERT
-  -- for any new pairs not yet in wh_perspective_cursors).
-  --
-  -- Production during-import data (PR #252 cycle) showed CompletePerspectiveAsync
-  -- as the second-largest gate-hold contributor after ClaimWorkAsync. Slice A
-  -- (PR #253) collapsed process_perspective_event_completions's loop;
-  -- this slice B addresses the other major loop inside complete_perspective.
-  --
-  -- Behavioral parity with the loop implementation preserved:
-  --   - Gap-free SELECT runs as a correlated subquery per pair in the CTE.
-  --   - COALESCE(new_last_event_id, pc.last_event_id) preserves cursor when
-  --     no gap-free event was found (e.g., production-mode rows already
-  --     deleted by process_perspective_event_completions before this runs).
-  --   - is_complete = NOT EXISTS unprocessed rows for the pair → sets
-  --     status to 2 (Completed) when fully drained; preserves existing
-  --     status otherwise.
-  --   - INSERT path fires only for pairs with no existing cursor AND a
-  --     non-NULL gap-free event_id (the NOT NULL constraint demands a real
-  --     last_event_id — same constraint the loop implementation honored).
-  IF p_completed_events IS NULL OR jsonb_array_length(p_completed_events) = 0 THEN
-    RETURN;
-  END IF;
+  -- Lock the existing cursors of every reported pair in one order, so two batches touching the same pairs queue
+  -- instead of deadlocking.
+  PERFORM 1
+  FROM __SCHEMA__.wh_perspective_cursors pc
+  JOIN (
+    SELECT DISTINCT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
+    FROM jsonb_array_elements(p_completed_events) AS elem
+  ) p ON p.stream_id = pc.stream_id AND p.perspective_name = pc.perspective_name
+  ORDER BY pc.stream_id, pc.perspective_name
+  FOR UPDATE OF pc;
 
-  -- Statement 1: bulk UPDATE for pairs that already have a cursor row.
+  -- The position of each (stream, perspective) is the latest of: the event its completions report (LastEventId), and
+  -- any processed rows still present (debug mode keeps them; production deletes them before this runs, which is why
+  -- the reported event is needed at all). It never passes the first event still unprocessed for the pair (the gap
+  -- invariant: an event behind the cursor would never be applied), and never moves the cursor back. An event the store
+  -- does not hold cannot be a cursor (fk_perspective_cursors_event) and is not a candidate. Every reported pair's
+  -- status becomes 2 when nothing is left unprocessed, whether or not its position moved.
   WITH pairs AS (
-    SELECT DISTINCT
-      (elem->>'StreamId')::UUID AS stream_id,
-      elem->>'PerspectiveName' AS perspective_name
+    SELECT DISTINCT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name
     FROM jsonb_array_elements(p_completed_events) AS elem
   ),
-  computed AS (
-    SELECT
-      p.stream_id,
-      p.perspective_name,
-      (SELECT pe.event_id
-       FROM __SCHEMA__.wh_perspective_events pe
-       WHERE pe.stream_id = p.stream_id
-         AND pe.perspective_name = p.perspective_name
-         AND pe.processed_at IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
-           WHERE earlier.stream_id = pe.stream_id
-             AND earlier.perspective_name = pe.perspective_name
-             AND earlier.event_id < pe.event_id
-             AND earlier.processed_at IS NULL
-         )
-       ORDER BY pe.event_id DESC
-       LIMIT 1) AS new_last_event_id,
-      NOT EXISTS (
-        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe2
-        WHERE pe2.stream_id = p.stream_id
-          AND pe2.perspective_name = p.perspective_name
-          AND pe2.processed_at IS NULL
-      ) AS is_complete
-    FROM pairs p
-  )
-  UPDATE __SCHEMA__.wh_perspective_cursors pc
-  SET last_event_id = COALESCE(c.new_last_event_id, pc.last_event_id),
-      status = CASE WHEN c.is_complete THEN 2 ELSE pc.status END
-  FROM computed c
-  WHERE pc.stream_id = c.stream_id
-    AND pc.perspective_name = c.perspective_name;
-
-  -- Statement 2: bulk INSERT for pairs that did NOT have a cursor and DO have
-  -- gap-free progress to record. Matches the loop's IF NOT FOUND branch. The
-  -- NOT NULL constraint on last_event_id forces us to skip new pairs without
-  -- progress — same constraint the loop honored (it would have errored if it
-  -- tried to INSERT with NULL last_event_id; the loop's flow filters that
-  -- case implicitly because real production cursors are pre-created when
-  -- their first event is stored via store_perspective_events).
-  WITH pairs AS (
-    SELECT DISTINCT
-      (elem->>'StreamId')::UUID AS stream_id,
-      elem->>'PerspectiveName' AS perspective_name
+  reported AS (
+    SELECT (elem->>'StreamId')::UUID AS stream_id, elem->>'PerspectiveName' AS perspective_name,
+      (elem->>'LastEventId')::UUID AS last_event_id
     FROM jsonb_array_elements(p_completed_events) AS elem
+    WHERE elem->>'LastEventId' IS NOT NULL
+      AND (elem->>'LastEventId')::UUID <> __EMPTY_UUID__::UUID
   ),
-  needed_inserts AS (
-    SELECT
-      p.stream_id,
-      p.perspective_name,
-      (SELECT pe.event_id
-       FROM __SCHEMA__.wh_perspective_events pe
-       WHERE pe.stream_id = p.stream_id
-         AND pe.perspective_name = p.perspective_name
-         AND pe.processed_at IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
-           WHERE earlier.stream_id = pe.stream_id
-             AND earlier.perspective_name = pe.perspective_name
-             AND earlier.event_id < pe.event_id
-             AND earlier.processed_at IS NULL
-         )
-       ORDER BY pe.event_id DESC
-       LIMIT 1) AS new_last_event_id,
+  gate AS (
+    SELECT p.stream_id, p.perspective_name,
+      (SELECT min(e.version)
+         FROM __SCHEMA__.wh_perspective_events pe
+         JOIN __SCHEMA__.wh_event_store e ON e.event_id = pe.event_id
+        WHERE pe.stream_id = p.stream_id AND pe.perspective_name = p.perspective_name
+          AND pe.processed_at IS NULL) AS first_unprocessed_version,
       NOT EXISTS (
-        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe2
-        WHERE pe2.stream_id = p.stream_id
-          AND pe2.perspective_name = p.perspective_name
-          AND pe2.processed_at IS NULL
-      ) AS is_complete
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.stream_id = p.stream_id AND pe.perspective_name = p.perspective_name
+          AND pe.processed_at IS NULL) AS is_complete
     FROM pairs p
-    WHERE NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_perspective_cursors pc
-      WHERE pc.stream_id = p.stream_id
-        AND pc.perspective_name = p.perspective_name
-    )
+  ),
+  candidates AS (
+    SELECT r.stream_id, r.perspective_name, e.event_id, e.version
+    FROM reported r
+    JOIN __SCHEMA__.wh_event_store e ON e.event_id = r.last_event_id
+    UNION ALL
+    SELECT pe.stream_id, pe.perspective_name, e.event_id, e.version
+    FROM pairs p
+    JOIN __SCHEMA__.wh_perspective_events pe
+      ON pe.stream_id = p.stream_id AND pe.perspective_name = p.perspective_name AND pe.processed_at IS NOT NULL
+    JOIN __SCHEMA__.wh_event_store e ON e.event_id = pe.event_id
+  ),
+  best AS (
+    SELECT DISTINCT ON (c.stream_id, c.perspective_name) c.stream_id, c.perspective_name, c.event_id, c.version
+    FROM candidates c
+    JOIN gate g ON g.stream_id = c.stream_id AND g.perspective_name = c.perspective_name
+    WHERE g.first_unprocessed_version IS NULL OR c.version < g.first_unprocessed_version
+    ORDER BY c.stream_id, c.perspective_name, c.version DESC
+  ),
+  positioned AS (
+    SELECT g.stream_id, g.perspective_name, g.is_complete, b.event_id, b.version
+    FROM gate g
+    LEFT JOIN best b ON b.stream_id = g.stream_id AND b.perspective_name = g.perspective_name
+  ),
+  updated AS (
+    UPDATE __SCHEMA__.wh_perspective_cursors pc
+    SET last_event_id = CASE
+          -- Never backwards. A cursor whose event the store no longer holds is behind any event it does.
+          WHEN p.event_id IS NOT NULL
+               AND p.version > COALESCE(
+                 (SELECT e.version FROM __SCHEMA__.wh_event_store e WHERE e.event_id = pc.last_event_id), -1)
+            THEN p.event_id
+          ELSE pc.last_event_id
+        END,
+        status = CASE WHEN p.is_complete THEN 2 ELSE pc.status END
+    FROM positioned p
+    WHERE pc.stream_id = p.stream_id AND pc.perspective_name = p.perspective_name
+    RETURNING pc.stream_id, pc.perspective_name
   )
   INSERT INTO __SCHEMA__.wh_perspective_cursors (stream_id, perspective_name, last_event_id, status)
-  SELECT stream_id, perspective_name, new_last_event_id,
-         CASE WHEN is_complete THEN 2 ELSE 0 END
-  FROM needed_inserts
-  WHERE new_last_event_id IS NOT NULL;
+  SELECT p.stream_id, p.perspective_name, p.event_id, CASE WHEN p.is_complete THEN 2 ELSE 0 END
+  FROM positioned p
+  WHERE p.event_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM updated u WHERE u.stream_id = p.stream_id AND u.perspective_name = p.perspective_name)
+  ORDER BY p.stream_id, p.perspective_name
+  ON CONFLICT (stream_id, perspective_name) DO NOTHING;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors IS
-'Updates persistent perspective checkpoints based on completed events. Finds highest completed sequence with no gaps, ensuring sequential consistency. Updates or creates checkpoint records atomically.';
+COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors(JSONB, BOOLEAN) IS
+'#1363: persists each stream perspective cursor at the latest of the reported event and any processed rows still '
+'present, never past the first unprocessed event and never moved back: created when missing, advanced otherwise. '
+'Status is 2 for every reported pair with no unprocessed work left.';

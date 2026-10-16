@@ -67,7 +67,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
   INotifySignalingGate? notifySignalingGate = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null
+  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _notificationOptions = notificationOptions?.Value ?? throw new ArgumentNullException(nameof(notificationOptions));
   private readonly CommitOrderStamperOptions _stamperOptions = stamperOptions?.Value ?? throw new ArgumentNullException(nameof(stamperOptions));
@@ -85,6 +86,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   // The size the last timeout backed off to (#1217): growth stops there until a short batch shows the pending set
   // drained. Null while no call has timed out since then. Read and written by the same loop as _batchSize.
   private int? _timeoutCap;
+  // Measures each stamp call, which the next call's size answers to (#1327).
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
   // Opt-in: register an INotificationDataSource via DI when the DbContext is
   // configured via UseNpgsql(NpgsqlDataSource) — that's the only path that
@@ -98,6 +101,9 @@ public sealed partial class PgCommitOrderStamperWorker(
   private const string FENCE_SQLSTATE = "WHF01";
   private readonly PgRoleElector? _roleElector =
     dutyElector is PgRoleElector role && role.Manages(CommitOrderStamperOptions.ROLE) ? role : null;
+  // The most a call should take: half the renewal interval when the stamper is a role, since the holder renews only
+  // between calls (#1327).
+  private TimeSpan _callBudget => _roleElector is null ? CommitOrderStampBatch.DefaultCallBudget : _roleElector.RenewInterval / 2;
   private readonly SemaphoreSlim _wake = new(initialCount: 1, maxCount: 1);
   private readonly SemaphoreSlim _vacancy = new(initialCount: 0, maxCount: 1);
   private bool _isLeader;
@@ -127,6 +133,14 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// role and retries at once with that size.
   /// </summary>
   public event Action<int>? OnStampTimedOut;
+
+  /// <summary>
+  /// Fires when a full stamp call took longer than the call budget, with the smaller batch size the next call will
+  /// ask for (#1327). A call holds the role row for as long as it runs and the holder renews its lease only between
+  /// calls, so the batch is sized by time as well as by rows.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/commit-sequence#batch-size</docs>
+  public event Action<int>? OnStampRanLong;
 
   /// <summary>
   /// Fires when a wake found nothing unstamped and the stamp was not run.
@@ -312,6 +326,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       }
 
       int stamped;
+      var started = _time.GetTimestamp();
       try {
         stamped = await _stampOnceAsync(conn, notifyOwners: fencedDrain, grant, stoppingToken);
       } catch (PostgresException ex) when (ex.SqlState == FENCE_SQLSTATE) {
@@ -326,7 +341,7 @@ public sealed partial class PgCommitOrderStamperWorker(
       }
       _ = Interlocked.Add(ref _totalStamped, stamped);
       OnStampCompleted?.Invoke(stamped);
-      _resizeAfter(stamped);
+      _resizeAfter(stamped, _time.GetElapsedTime(started));
 
       if (stamped > 0) {
         // A full batch may have left more behind — drain immediately instead of
@@ -613,15 +628,22 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   /// <summary>
   /// Sizes the next call from the count this one returned rather than from a count of what is left: a probe for the
-  /// backlog size would be another read of the set a stamp exists to avoid reading.
+  /// backlog size would be another read of the set a stamp exists to avoid reading. How long the call took bounds the
+  /// size too (#1327): see <see cref="CommitOrderStampBatch.Next(int, int, int, int, int?, TimeSpan, TimeSpan)"/>.
   /// </summary>
-  private void _resizeAfter(int stamped) {
+  private void _resizeAfter(int stamped, TimeSpan took) {
     var asked = _batchSize;
+    var budget = _callBudget;
     _batchSize = CommitOrderStampBatch.Next(
-      _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap);
+      _batchSize, stamped, _stamperOptions.BatchSize, _stamperOptions.DrainBatchSize, _timeoutCap, took, budget);
     if (stamped < asked) {
       // Drained to the fence: the next burst starts at the configured size and may grow past the old timeout again.
       _timeoutCap = null;
+    } else if (took > budget) {
+      // #1327: a full call that ran long halved; growth stops there until the backlog drains, as after a timeout.
+      _timeoutCap = _batchSize;
+      LogStampRanLong(_logger, asked, took.TotalMilliseconds, budget.TotalMilliseconds, _batchSize);
+      OnStampRanLong?.Invoke(_batchSize);
     }
   }
 
@@ -635,6 +657,9 @@ public sealed partial class PgCommitOrderStamperWorker(
 
   [LoggerMessage(EventId = 18, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: a stamp of {TimedOutAt} rows timed out and stamped nothing; the next asks for {NextBatch}")]
   private static partial void LogStampTimedOut(ILogger logger, int timedOutAt, int nextBatch);
+
+  [LoggerMessage(EventId = 19, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: a stamp of {Asked} rows took {TookMs:F0} ms, past the {BudgetMs:F0} ms call budget; the next asks for {NextBatch}")]
+  private static partial void LogStampRanLong(ILogger logger, int asked, double tookMs, double budgetMs, int nextBatch);
 
   [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "PgCommitOrderStamperWorker: the epoch fence refused a stamp; another instance holds the stamper role")]
   static partial void LogFenced(ILogger logger);

@@ -56,7 +56,8 @@ public interface IPerspectiveRunner {
     StreamId = streamId,
     PerspectiveName = perspectiveName,
     LastEventId = lastProcessedEventId ?? Guid.Empty,
-    Status = PerspectiveProcessingStatus.None
+    Status = PerspectiveProcessingStatus.None,
+    RowChanged = false,  // the default implementation runs nothing, so it writes nothing
   });
 
   /// <summary>

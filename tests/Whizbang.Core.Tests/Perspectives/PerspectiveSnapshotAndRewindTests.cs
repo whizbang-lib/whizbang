@@ -195,15 +195,20 @@ public class PerspectiveSnapshotAndRewindTests {
 
   [Test]
   public async Task PerspectiveRewindStarted_Properties_AreCorrectAsync() {
-    var streamId = Guid.CreateVersion7();
+    var rewindStreamId = Guid.CreateVersion7();
+    var rewoundStreamId = Guid.CreateVersion7();
     var triggeringEventId = Guid.CreateVersion7();
     var snapshotEventId = Guid.CreateVersion7();
     var startedAt = DateTimeOffset.UtcNow;
 
     var evt = new PerspectiveRewindStarted(
-      streamId, "OrderPerspective", triggeringEventId, snapshotEventId, true, startedAt);
+      rewindStreamId, rewoundStreamId, "OrderPerspective", triggeringEventId, snapshotEventId, true, startedAt);
 
-    await Assert.That(evt.StreamId).IsEqualTo(streamId);
+    await Assert.That(evt.StreamId).IsEqualTo(rewindStreamId)
+      .Because("the event's own stream is the rewind's, which is where it is written");
+    await Assert.That(evt.RewoundStreamId).IsEqualTo(rewoundStreamId)
+      .Because("the stream that was rewound travels as a plain property, so the event says what it acted "
+             + "on without being written into it (#1360)");
     await Assert.That(evt.PerspectiveName).IsEqualTo("OrderPerspective");
     await Assert.That(evt.TriggeringEventId).IsEqualTo(triggeringEventId);
     await Assert.That(evt.ReplayFromSnapshotEventId).IsEqualTo(snapshotEventId);
@@ -214,7 +219,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task PerspectiveRewindStarted_WithoutSnapshot_HasNullSnapshotEventIdAsync() {
     var evt = new PerspectiveRewindStarted(
-      Guid.CreateVersion7(), "TestPerspective", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "TestPerspective", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
 
     await Assert.That(evt.ReplayFromSnapshotEventId).IsNull();
     await Assert.That(evt.HasSnapshot).IsFalse();
@@ -222,16 +227,20 @@ public class PerspectiveSnapshotAndRewindTests {
 
   [Test]
   public async Task PerspectiveRewindCompleted_Properties_AreCorrectAsync() {
-    var streamId = Guid.CreateVersion7();
+    var rewindStreamId = Guid.CreateVersion7();
+    var rewoundStreamId = Guid.CreateVersion7();
     var triggeringEventId = Guid.CreateVersion7();
     var finalEventId = Guid.CreateVersion7();
     var startedAt = DateTimeOffset.UtcNow.AddSeconds(-5);
     var completedAt = DateTimeOffset.UtcNow;
 
     var evt = new PerspectiveRewindCompleted(
-      streamId, "OrderPerspective", triggeringEventId, finalEventId, 150, startedAt, completedAt);
+      rewindStreamId, rewoundStreamId, "OrderPerspective", triggeringEventId, finalEventId, 150, startedAt, completedAt);
 
-    await Assert.That(evt.StreamId).IsEqualTo(streamId);
+    await Assert.That(evt.StreamId).IsEqualTo(rewindStreamId)
+      .Because("the event's own stream is the rewind's, which is where it is written");
+    await Assert.That(evt.RewoundStreamId).IsEqualTo(rewoundStreamId)
+      .Because("the stream that was rewound travels as a plain property (#1360)");
     await Assert.That(evt.PerspectiveName).IsEqualTo("OrderPerspective");
     await Assert.That(evt.TriggeringEventId).IsEqualTo(triggeringEventId);
     await Assert.That(evt.FinalEventId).IsEqualTo(finalEventId);
@@ -243,7 +252,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task PerspectiveRewindStarted_ImplementsIEventAsync() {
     var evt = new PerspectiveRewindStarted(
-      Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
 
     await Assert.That(evt is IEvent).IsTrue();
   }
@@ -251,7 +260,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task PerspectiveRewindCompleted_ImplementsIEventAsync() {
     var evt = new PerspectiveRewindCompleted(
-      Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 0,
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 0,
       DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
     await Assert.That(evt is IEvent).IsTrue();
@@ -461,7 +470,7 @@ public class PerspectiveSnapshotAndRewindTests {
     var startedAt = DateTimeOffset.UtcNow;
 
     var evt = new PerspectiveRewindStarted(
-      streamId, "TestPerspective", triggeringEventId, snapshotEventId, true, startedAt);
+      streamId, Guid.CreateVersion7(), "TestPerspective", triggeringEventId, snapshotEventId, true, startedAt);
 
     await Assert.That(evt.StreamId).IsEqualTo(streamId);
     await Assert.That(evt.PerspectiveName).IsEqualTo("TestPerspective");
@@ -477,7 +486,7 @@ public class PerspectiveSnapshotAndRewindTests {
     var completedAt = DateTimeOffset.UtcNow;
 
     var evt = new PerspectiveRewindCompleted(
-      Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 500,
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 500,
       startedAt, completedAt);
 
     var duration = evt.CompletedAt - evt.StartedAt;
@@ -487,7 +496,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task PerspectiveRewindCompleted_ZeroEventsReplayed_IsValidAsync() {
     var evt = new PerspectiveRewindCompleted(
-      Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 0,
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), Guid.CreateVersion7(), 0,
       DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
 
     await Assert.That(evt.EventsReplayed).IsEqualTo(0);
@@ -496,7 +505,7 @@ public class PerspectiveSnapshotAndRewindTests {
   [Test]
   public async Task PerspectiveRewindStarted_NullSnapshot_IndicatesFullReplayAsync() {
     var evt = new PerspectiveRewindStarted(
-      Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
+      Guid.CreateVersion7(), Guid.CreateVersion7(), "Test", Guid.CreateVersion7(), null, false, DateTimeOffset.UtcNow);
 
     await Assert.That(evt.ReplayFromSnapshotEventId).IsNull();
     await Assert.That(evt.HasSnapshot).IsFalse();
@@ -598,6 +607,18 @@ public class PerspectiveSnapshotAndRewindTests {
     var actual = await store.GetLatestSnapshotWithCommitSequenceAsync(Guid.NewGuid(), "p");
 
     await Assert.That(actual).IsNull();
+  }
+
+  [Test]
+  public async Task GetLatestSnapshotBeforeEventInStreamOrderAsync_DefaultImpl_ReturnsNullAsync() {
+    IPerspectiveSnapshotStore store = new LegacyOnlySnapshotStore { Result = null };
+
+    var actual = await store.GetLatestSnapshotBeforeEventInStreamOrderAsync(Guid.NewGuid(), "p", Guid.NewGuid());
+
+    await Assert.That(actual).IsNull()
+      .Because("a store that records no stream version cannot place a snapshot against an event, and the "
+             + "default says so rather than handing back one it cannot order. A default that guessed would "
+             + "put every such store on the restore point the version anchor exists to stop using (#1355)");
   }
 
   /// <summary>

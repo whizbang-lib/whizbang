@@ -316,7 +316,7 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
 
   public void Build(
       string podConnection, string effectsConnection, string? version, bool bridge, Func<Task>? pause, FakeTimeProvider time,
-      IEnumerable<string> extraRoles, RoleAssignmentOptions? tuned = null) {
+      IEnumerable<string> extraRoles, RoleAssignmentOptions? tuned = null, IEnumerable<IDutyAcquisitionHandler>? onAcquired = null) {
     Time = time;
     var options = tuned ?? new RoleAssignmentOptions();
     options.HoldLegacySessionLock = bridge;
@@ -331,7 +331,7 @@ internal sealed class ChaosPod : IServiceInstanceProvider {
       new EffectWork(RoleAssignmentChaosTests.ROLE, RoleAssignmentChaosTests.WORK, effectsConnection, this, pause),
       .. extraRoles.Select(role => (IDutyWorkHandler)new EffectWork(role, "Idle", effectsConnection, this, null)),
     ];
-    Worker = new DutyHolderWorker(elector, Store, handlers, Options.Create(options), NullLogger<DutyHolderWorker>.Instance, null);
+    Worker = new DutyHolderWorker(elector, Store, handlers, onAcquired ?? [], Options.Create(options), NullLogger<DutyHolderWorker>.Instance, null);
   }
 
   public Task PassAsync(CancellationToken ct) => Worker.RunOnceAsync(ct);

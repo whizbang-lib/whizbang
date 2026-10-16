@@ -38,6 +38,10 @@ namespace Whizbang.Core.Startup;
 /// elector turns into one statement.
 /// </para>
 /// <para>
+/// Work that belongs to winning a role rather than to holding it (<see cref="IDutyAcquisitionHandler"/>,
+/// #1351: the maintainer's vacuum) runs once on the pass that wins the role, before its owed work.
+/// </para>
+/// <para>
 /// A newer-version instance can ask this holder to drain (<see cref="IDutyGrant.DrainRequested"/>):
 /// the loop finishes the piece of work it is on, then releases the role so the newer release takes
 /// it over at once. The migrator is never held here: it is held for one migration at a time.
@@ -54,6 +58,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   private readonly IDutyElector _elector;
   private readonly IPendingDutyWorkStore _store;
   private readonly Dictionary<(string Role, string Key), IDutyWorkHandler> _handlers;
+  private readonly ILookup<string, IDutyAcquisitionHandler> _onAcquired;
   private readonly IReadOnlyList<string> _roles;
   private readonly RoleAssignmentOptions _options;
   private readonly ILogger<DutyHolderWorker> _logger;
@@ -68,6 +73,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <param name="elector">The elector that decides who holds each role.</param>
   /// <param name="store">The owed duty work.</param>
   /// <param name="handlers">What runs each kind of owed work.</param>
+  /// <param name="acquisitionHandlers">What runs when this instance wins a role (#1351).</param>
   /// <param name="options">Role-assignment tuning; only roles it manages are held here.</param>
   /// <param name="logger">Logger.</param>
   /// <param name="notify">The shared notify connection, for release announcements. Required, and
@@ -80,6 +86,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
       IDutyElector elector,
       IPendingDutyWorkStore store,
       IEnumerable<IDutyWorkHandler> handlers,
+      IEnumerable<IDutyAcquisitionHandler> acquisitionHandlers,
       IOptions<RoleAssignmentOptions> options,
       ILogger<DutyHolderWorker> logger,
       ISharedNotifyConnection? notify,
@@ -89,6 +96,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     ArgumentNullException.ThrowIfNull(elector);
     ArgumentNullException.ThrowIfNull(store);
     ArgumentNullException.ThrowIfNull(handlers);
+    ArgumentNullException.ThrowIfNull(acquisitionHandlers);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(logger);
     _elector = elector;
@@ -104,7 +112,12 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     foreach (var handler in handlers.Where(h => _options.Manages(h.Role) && !RoleAssignmentOptions.IsEpisodic(h.Role))) {
       _ = _handlers.TryAdd((handler.Role, handler.WorkKey), handler);
     }
-    _roles = [.. _handlers.Keys.Select(k => k.Role).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+    _onAcquired = acquisitionHandlers
+      .Where(h => _options.Manages(h.Role) && !RoleAssignmentOptions.IsEpisodic(h.Role))
+      .ToLookup(h => h.Role, StringComparer.Ordinal);
+    // A role is held when something runs under it: owed work, or work that belongs to acquiring it.
+    _roles = [.. _handlers.Keys.Select(k => k.Role).Concat(_onAcquired.Select(g => g.Key))
+      .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
   }
 
   /// <summary>The roles this worker holds work for.</summary>
@@ -132,9 +145,12 @@ public sealed partial class DutyHolderWorker : BackgroundService {
           unheld.Add(role);
         }
       }
-      await _voteAsync(unheld, cancellationToken).ConfigureAwait(false);
+      var won = await _voteAsync(unheld, cancellationToken).ConfigureAwait(false);
       foreach (var role in _roles) {
         if (_held.TryGetValue(role, out var grant)) {
+          if (won.Contains(role)) {
+            await _runOnAcquiredAsync(role, grant, cancellationToken).ConfigureAwait(false);
+          }
           await _runOwedAsync(role, grant, cancellationToken).ConfigureAwait(false);
           await _drainIfAskedAsync(role, cancellationToken).ConfigureAwait(false);
         }
@@ -208,10 +224,11 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     return false;
   }
 
-  /// <summary>Votes for every role not held, in one call.</summary>
-  private async Task _voteAsync(List<string> roles, CancellationToken cancellationToken) {
+  /// <summary>Votes for every role not held, in one call. Returns the roles this vote won.</summary>
+  private async Task<HashSet<string>> _voteAsync(List<string> roles, CancellationToken cancellationToken) {
+    var won = new HashSet<string>(StringComparer.Ordinal);
     if (roles.Count == 0) {
-      return;
+      return won;
     }
     IReadOnlyList<DutyAttempt> attempts;
     try {
@@ -222,12 +239,29 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     } catch (Exception ex) {
 #pragma warning restore CA1031
       LogVoteFailed(_logger, string.Join(", ", roles), ex);
-      return;
+      return won;
     }
     for (var i = 0; i < roles.Count; i++) {
       if (attempts[i].Grant is { } grant) {
         _held[roles[i]] = grant;
+        _ = won.Add(roles[i]);
         LogBecameHolder(_logger, roles[i], grant.Epoch);
+      }
+    }
+    return won;
+  }
+
+  /// <summary>Runs the work that belongs to winning <paramref name="role"/>; a failure is logged, and the role kept.</summary>
+  private async Task _runOnAcquiredAsync(string role, IDutyGrant grant, CancellationToken cancellationToken) {
+    foreach (var handler in _onAcquired[role]) {
+      try {
+        await handler.OnAcquiredAsync(grant, cancellationToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        throw;
+#pragma warning disable CA1031 // runs again on the next acquisition; logged, not swallowed
+      } catch (Exception ex) {
+#pragma warning restore CA1031
+        LogAcquisitionHandlerFailed(_logger, handler.GetType().Name, role, ex);
       }
     }
   }
@@ -381,4 +415,8 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   [LoggerMessage(EventId = 9, Level = LogLevel.Information,
     Message = "DutyHolderWorker: released role '{Role}' (epoch {Epoch}) because a newer-version instance asked it to drain")]
   static partial void LogDrained(ILogger logger, string role, long? epoch);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "DutyHolderWorker: {Handler} failed on acquiring role '{Role}'; the role is kept, and it runs again the next time the role is acquired")]
+  static partial void LogAcquisitionHandlerFailed(ILogger logger, string handler, string role, Exception ex);
 }

@@ -162,4 +162,113 @@ public class InboxDeserializeCacheTests {
     await Assert.That(() => new InboxDeserializeCache(timeProvider: null!))
       .Throws<ArgumentNullException>();
   }
+
+  #region SelectEvictionKeys — the eviction selector (AB#18949)
+
+  /// <summary>
+  /// A source that yields more entries than its <see cref="ICollection{T}.Count"/> admits, which is
+  /// what a <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/> looks like
+  /// to a reader when another thread inserts mid-read.
+  /// </summary>
+  /// <remarks>
+  /// This is the failure AB#18949 reported, expressed without threads so it cannot flake. Buffering an
+  /// ordered source, which is what LINQ does for <c>Take</c>, reads <c>Count</c>, allocates an array of
+  /// that size and calls <c>CopyTo</c>; copying more entries than the array holds throws. In production
+  /// the dispatch worker caught that, logged a failed deserialization and carried on, so a message
+  /// stopped being processed for a reason nothing named.
+  /// </remarks>
+  private sealed class UndercountingSource(List<KeyValuePair<Guid, InboxDeserializeCache.Entry>> items, int reportedCount)
+      : ICollection<KeyValuePair<Guid, InboxDeserializeCache.Entry>> {
+    public int Count => reportedCount;
+    public bool IsReadOnly => true;
+    public IEnumerator<KeyValuePair<Guid, InboxDeserializeCache.Entry>> GetEnumerator() => items.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    public void CopyTo(KeyValuePair<Guid, InboxDeserializeCache.Entry>[] array, int arrayIndex) {
+      // Faithful to the real type: a destination sized from the stale Count cannot hold what is here.
+      ArgumentNullException.ThrowIfNull(array);
+      if (array.Length - arrayIndex < items.Count) {
+        throw new ArgumentException("Destination array is not long enough.", nameof(array));
+      }
+      items.CopyTo(array, arrayIndex);
+    }
+    public void Add(KeyValuePair<Guid, InboxDeserializeCache.Entry> item) => throw new NotSupportedException();
+    public void Clear() => throw new NotSupportedException();
+    public bool Contains(KeyValuePair<Guid, InboxDeserializeCache.Entry> item) => items.Contains(item);
+    public bool Remove(KeyValuePair<Guid, InboxDeserializeCache.Entry> item) => throw new NotSupportedException();
+  }
+
+  private static List<KeyValuePair<Guid, InboxDeserializeCache.Entry>> _entriesOldestFirst(int count, out List<Guid> ids) {
+    var at = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    var list = new List<KeyValuePair<Guid, InboxDeserializeCache.Entry>>();
+    ids = [];
+    for (var i = 0; i < count; i++) {
+      var id = (Guid)TrackedGuid.New();
+      ids.Add(id);
+      list.Add(new(id, new InboxDeserializeCache.Entry($"p{i}", at.AddSeconds(i))));
+    }
+    return list;
+  }
+
+  [Test]
+  public async Task SelectEvictionKeys_SourceYieldsMoreThanItCounts_DoesNotThrowAsync() {
+    // Six entries behind a Count that still says four: the shape a concurrent insert leaves.
+    var items = _entriesOldestFirst(6, out var ids);
+    var source = new UndercountingSource(items, reportedCount: 4);
+
+    var keys = InboxDeserializeCache.SelectEvictionKeys(source, batch: 3);
+
+    await Assert.That(keys).Count().IsEqualTo(3)
+      .Because("the selector walks the source once and never asks it how big it is, so a count that "
+             + "moved under it is not an error. Sizing a destination from that count and copying into "
+             + "it throws, and the caller turned that into a message that stopped being processed");
+    await Assert.That(keys[0]).IsEqualTo(ids[0]);
+    await Assert.That(keys[1]).IsEqualTo(ids[1]);
+    await Assert.That(keys[2]).IsEqualTo(ids[2]);
+  }
+
+  [Test]
+  public async Task SelectEvictionKeys_PicksTheOldestByExpiry_NotInsertionOrderAsync() {
+    var at = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    var youngest = (Guid)TrackedGuid.New();
+    var oldest = (Guid)TrackedGuid.New();
+    var middle = (Guid)TrackedGuid.New();
+    // Deliberately inserted youngest first, so insertion order and expiry order disagree.
+    var items = new List<KeyValuePair<Guid, InboxDeserializeCache.Entry>> {
+      new(youngest, new InboxDeserializeCache.Entry("y", at.AddMinutes(30))),
+      new(oldest, new InboxDeserializeCache.Entry("o", at)),
+      new(middle, new InboxDeserializeCache.Entry("m", at.AddMinutes(10)))
+    };
+
+    var keys = InboxDeserializeCache.SelectEvictionKeys(items, batch: 2);
+
+    await Assert.That(keys).Count().IsEqualTo(2);
+    await Assert.That(keys[0]).IsEqualTo(oldest)
+      .Because("eviction frees the entries closest to expiring; evicting by insertion order would "
+             + "drop an entry a caller is about to read while keeping one nobody wants");
+    await Assert.That(keys[1]).IsEqualTo(middle);
+  }
+
+  [Test]
+  public async Task SelectEvictionKeys_BatchNotPositive_SelectsNothingAsync() {
+    var items = _entriesOldestFirst(3, out _);
+
+    await Assert.That(InboxDeserializeCache.SelectEvictionKeys(items, batch: 0)).IsEmpty()
+      .Because("nothing was asked for, so nothing is evicted");
+    await Assert.That(InboxDeserializeCache.SelectEvictionKeys(items, batch: -1)).IsEmpty()
+      .Because("a negative batch is the same request as none, and must not be read as 'all'");
+  }
+
+  [Test]
+  public async Task SelectEvictionKeys_BatchLargerThanTheSource_SelectsEverythingItHasAsync() {
+    var items = _entriesOldestFirst(2, out var ids);
+
+    var keys = InboxDeserializeCache.SelectEvictionKeys(items, batch: 10);
+
+    await Assert.That(keys).Count().IsEqualTo(2)
+      .Because("asking for more than exists takes what exists rather than indexing past the end");
+    await Assert.That(keys).Contains(ids[0]);
+    await Assert.That(keys).Contains(ids[1]);
+  }
+
+  #endregion
 }

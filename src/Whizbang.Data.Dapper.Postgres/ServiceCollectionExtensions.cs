@@ -16,6 +16,7 @@ using Whizbang.Core.Policies;
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.MultiStream;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -230,6 +231,9 @@ public static class ServiceCollectionExtensions {
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
 
+    // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
+    services.AddWhizbangMultiStreamCommands(connectionString);
+
     // Reconcile wh_message_type_registry against the compile-time IMessageTypeCatalog.
     // Runs only when the schema was just initialized here (we know the table exists) and
     // AddWhizbang() has already registered IMessageTypeCatalog via its module initializer.
@@ -381,6 +385,9 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
+
+    // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
+    services.AddWhizbangMultiStreamCommands(connectionString);
 
     // See the first overload for the rationale: the prior `services.BuildServiceProvider()`
     // + `using` pattern silently disposed the host's shared ConfigurationManager. Defer

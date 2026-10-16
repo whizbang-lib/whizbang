@@ -102,6 +102,29 @@ public class PerspectiveRebuilderTests {
   /// Every named stream refused is not a success (#1162): 32 ephemeral streams named explicitly came back Success with
   /// nothing rebuilt, and no caller could tell that from a correct no-op.
   /// </summary>
+  /// <summary>
+  /// A stream folded whose row the store left untouched is not a stream with no events (#1346): the message said "had
+  /// no events" for three streams whose writes the ordering guard had refused, and sent the investigation the wrong way.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenNothingIsRebuilt_SaysWhichStreamsWereFoldedAndWhichHadNoEventsAsync() {
+    var folded = Guid.NewGuid();
+    var empty = Guid.NewGuid();
+    var runner = new FakePerspectiveRunner { Unchanged = [folded], Empty = [empty] };
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry(runner));
+    services.AddSingleton<IEventStoreQuery>(new FakeEventStoreQuery([]));
+    var sp = services.BuildServiceProvider();
+    var rebuilder = new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance);
+
+    var result = await rebuilder.RebuildStreamsAsync("TestPerspective", [folded, empty]);
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0);
+    await Assert.That(result.Error).Contains("1 folded but left the row unchanged");
+    await Assert.That(result.Error).Contains("1 had no events for this perspective");
+  }
+
   [Test]
   public async Task RebuildStreamsAsync_WhenEveryNamedStreamIsRefused_ReportsTheRefusalsAsAFailureAsync() {
     var runner = new FakePerspectiveRunner();
@@ -400,6 +423,10 @@ public class PerspectiveRebuilderTests {
     public Type PerspectiveType => typeof(object); // Fake — no real perspective type
     public int RunCount { get; private set; }
     public int FailOnStreamIndex { get; init; } = -1;
+    /// <summary>Streams folded whose row the store left untouched, e.g. a write its ordering guard refused.</summary>
+    public HashSet<Guid> Unchanged { get; init; } = [];
+    /// <summary>Streams with no events for the perspective.</summary>
+    public HashSet<Guid> Empty { get; init; } = [];
 
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) {
@@ -411,9 +438,10 @@ public class PerspectiveRebuilderTests {
       }
 
       return Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = !Unchanged.Contains(streamId) && !Empty.Contains(streamId),
         StreamId = streamId,
         PerspectiveName = perspectiveName,
-        LastEventId = Guid.NewGuid(),
+        LastEventId = Empty.Contains(streamId) ? Guid.Empty : Guid.NewGuid(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }

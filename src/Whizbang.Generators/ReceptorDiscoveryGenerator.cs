@@ -1323,6 +1323,22 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// The groups restricted to the receptors a send invokes as the message's handler
+  /// (<see cref="ReceptorInfo.FiresOnLocalDispatch"/>). Message types left with none are dropped.
+  /// </summary>
+  private static System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>> _localDispatchHandlersOnly(
+      System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>> byMessage) {
+    var result = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<ReceptorInfo>>(byMessage.Count, StringComparer.Ordinal);
+    foreach (var pair in byMessage) {
+      var handlers = pair.Value.Where(r => r.FiresOnLocalDispatch).ToList();
+      if (handlers.Count > 0) {
+        result[pair.Key] = handlers;
+      }
+    }
+    return result;
+  }
+
+  /// <summary>
   /// Generates a complete Dispatcher implementation with zero-reflection routing.
   /// Uses the DispatcherTemplate.cs file for full analyzer support.
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
@@ -1367,6 +1383,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .GroupBy(r => r.MessageType)
         .ToDictionary(g => g.Key, g => g.ToList());
 
+    // The send lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve a message's HANDLER: a
+    // receptor local dispatch fires (no [FireAt], or a LocalImmediate stage). A receptor declared only
+    // at other stages is a lifecycle hook that fires there through ReceptorInvoker, never the handler;
+    // emitting it made a send run the hook in place of routing the command to its owner.
+    // The publish routing below still reads the unfiltered groups.
+    var sendRegularReceptorsByMessage = _localDispatchHandlersOnly(regularReceptorsByMessage);
+    var sendVoidReceptorsByMessage = _localDispatchHandlersOnly(voidReceptorsByMessage);
+    var sendRegularSyncReceptorsByMessage = _localDispatchHandlersOnly(regularSyncReceptorsByMessage);
+    var sendVoidSyncReceptorsByMessage = _localDispatchHandlersOnly(voidSyncReceptorsByMessage);
+
     // Read template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(
         typeof(ReceptorDiscoveryGenerator).Assembly,
@@ -1382,8 +1408,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Send routing code for regular receptors using snippet template
     var sendRouting = new StringBuilder();
-    foreach (var messageType in regularReceptorsByMessage.Keys) {
-      var receptorList = regularReceptorsByMessage[messageType];
+    foreach (var messageType in sendRegularReceptorsByMessage.Keys) {
+      var receptorList = sendRegularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
@@ -1409,8 +1435,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate void Send routing code for void receptors using snippet template
     var voidSendRouting = new StringBuilder();
-    foreach (var messageType in voidReceptorsByMessage.Keys) {
-      var receptorList = voidReceptorsByMessage[messageType];
+    foreach (var messageType in sendVoidReceptorsByMessage.Keys) {
+      var receptorList = sendVoidReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
@@ -1505,8 +1531,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Sync Send routing code for sync receptors using snippet template
     var syncSendRouting = new StringBuilder();
-    foreach (var messageType in regularSyncReceptorsByMessage.Keys) {
-      var receptorList = regularSyncReceptorsByMessage[messageType];
+    foreach (var messageType in sendRegularSyncReceptorsByMessage.Keys) {
+      var receptorList = sendRegularSyncReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Replace placeholders with actual types
@@ -1528,8 +1554,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Void Sync Send routing code for void sync receptors using snippet template
     var voidSyncSendRouting = new StringBuilder();
-    foreach (var messageType in voidSyncReceptorsByMessage.Keys) {
-      var receptorList = voidSyncReceptorsByMessage[messageType];
+    foreach (var messageType in sendVoidSyncReceptorsByMessage.Keys) {
+      var receptorList = sendVoidSyncReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Replace placeholders with actual types
@@ -1551,8 +1577,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate Any Send routing code - prioritizes non-void async receptors (for cascading)
     // This enables void LocalInvokeAsync paths to find non-void receptors and cascade their results
     var anySendRouting = new StringBuilder();
-    foreach (var messageType in regularReceptorsByMessage.Keys) {
-      var receptorList = regularReceptorsByMessage[messageType];
+    foreach (var messageType in sendRegularReceptorsByMessage.Keys) {
+      var receptorList = sendRegularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes

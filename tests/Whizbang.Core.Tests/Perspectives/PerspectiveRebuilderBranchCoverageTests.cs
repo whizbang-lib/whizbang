@@ -112,6 +112,7 @@ public class PerspectiveRebuilderBranchCoverageTests {
     public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.FromResult(new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),

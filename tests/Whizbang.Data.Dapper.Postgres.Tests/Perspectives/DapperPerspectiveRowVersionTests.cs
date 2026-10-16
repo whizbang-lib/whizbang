@@ -209,6 +209,40 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
       .Because("an event the row has already passed is skipped, not applied backwards");
   }
 
+  /// <summary>The same quiet refusal, reported: a caller told the row was written counted an untouched row as changed (#1342).</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task TryUpsert_RefusedByTheOrderingGuard_ReportsNotWritten_AndALandedWriteReportsWrittenAsync(CancellationToken cancellationToken) {
+    var store = _store();
+    var id = Guid.NewGuid();
+    await store.UpsertAsync(id, _model("newer"), new PerspectiveScope(), false, _metadata(10), cancellationToken);
+    var version = (await store.ReadForApplyAsync(id, cancellationToken)).Version;
+
+    var refused = await store.TryUpsertAsync(id, _model("older"), new PerspectiveScope(), false, _metadata(2), version, cancellationToken);
+    var landed = await store.TryUpsertAsync(id, _model("newest"), new PerspectiveScope(), false, _metadata(11), version, cancellationToken);
+
+    await Assert.That(refused).IsFalse();
+    await Assert.That(landed).IsTrue();
+    await Assert.That(await _nameAsync(id, cancellationToken)).IsEqualTo("newest");
+  }
+
+  /// <summary>The physical-fields twin reports the same way.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task TryUpsertWithPhysicalFields_RefusedByTheOrderingGuard_ReportsNotWrittenAsync(CancellationToken cancellationToken) {
+    var store = _store();
+    var id = Guid.NewGuid();
+    await store.UpsertWithPhysicalFieldsAsync(
+      id, _model("newer"), _physical("ops"), new PerspectiveScope(), false, _metadata(10), cancellationToken);
+    var version = (await store.ReadForApplyAsync(id, cancellationToken)).Version;
+
+    var refused = await store.TryUpsertWithPhysicalFieldsAsync(
+      id, _model("older"), _physical("support"), new PerspectiveScope(), false, _metadata(2), version, cancellationToken);
+
+    await Assert.That(refused).IsFalse();
+    await Assert.That(await _assignedToAsync(id, cancellationToken)).IsEqualTo("ops");
+  }
+
   /// <summary>An unchecked write still overwrites, which is what every existing caller relies on.</summary>
   [Test]
   [Timeout(120000)]

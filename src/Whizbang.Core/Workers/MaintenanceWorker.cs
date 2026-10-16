@@ -1079,6 +1079,22 @@ public sealed class MaintenanceWorkerOptions {
   public bool AllowTableRewrite { get; set; }
 
   /// <summary>
+  /// Whether an instance that takes the maintainer duty over from another instance (a hand-off, or a
+  /// takeover after the holder lapsed) vacuums the work tables, as a first assignment always does.
+  /// Default <c>true</c>.
+  /// </summary>
+  /// <remarks>
+  /// The vacuum runs when an instance acquires the duty, never merely because it started, so an
+  /// instance joining a fleet that already has a holder never runs it (#1351). Turn this off when
+  /// hand-offs are frequent and the regular maintenance cycle and autovacuum are enough between them.
+  /// The previous holder is the last instance the duty recorded, so after the whole fleet stops, the
+  /// next cold start counts as a reassignment too.
+  /// </remarks>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkTableVacuumOnAcquisitionTests.cs</tests>
+  public bool MaintainOnReassignment { get; set; } = true;
+
+  /// <summary>
   /// Interval between maintenance runs, in minutes. Default 10.
   /// <para>
   /// perform_maintenance is the only path that cleans abandoned <c>wh_active_streams</c> rows

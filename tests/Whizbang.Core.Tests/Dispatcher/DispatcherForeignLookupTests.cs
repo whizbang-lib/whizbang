@@ -278,6 +278,60 @@ public class DispatcherForeignLookupTests {
     Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
   [SuppressMessage("Style", "IDE0060:Remove unused parameter",
     Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task Send_ResolvesAForeignAsyncVoidReceptorAsync(CancellationToken cancellationToken) {
+    var foreign = new AllShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new BlindDispatcher(sp);
+
+    var receipt = await dispatcher.SendAsync(new VoidCommand(Guid.NewGuid()));
+
+    await Assert.That(foreign.AsyncVoidInvoked).IsEqualTo(1)
+      .Because("SendAsync consulted only the result-returning lookup, so a void receptor in another assembly was never found (#1379)");
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task Send_ResolvesAForeignSyncReceptorAsync(CancellationToken cancellationToken) {
+    var foreign = new AllShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new BlindDispatcher(sp);
+
+    var receipt = await dispatcher.SendAsync(new SyncQuery(Guid.NewGuid()));
+
+    await Assert.That(foreign.SyncInvoked).IsEqualTo(1)
+      .Because("SendAsync must fall back to the sync lookup, foreign assemblies included");
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task Send_ResolvesAForeignSyncVoidReceptorAsync(CancellationToken cancellationToken) {
+    var foreign = new AllShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new BlindDispatcher(sp);
+
+    var receipt = await dispatcher.SendAsync(new VoidSyncCommand(Guid.NewGuid()));
+
+    await Assert.That(foreign.SyncVoidInvoked).IsEqualTo(1)
+      .Because("SendAsync must fall back to the void sync lookup, foreign assemblies included");
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ForeignLookup_IsConsultedOnlyWhenTheOwnTableAnswersNullAsync(CancellationToken cancellationToken) {
     // The fallback is additive: an assembly that can answer for itself must never hand the
     // message to a foreign assembly, or a publish would double-deliver.

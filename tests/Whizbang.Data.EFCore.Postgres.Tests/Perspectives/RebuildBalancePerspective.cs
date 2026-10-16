@@ -16,6 +16,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class RebuildBalancePerspective :
     IPerspectiveFor<RebuildBalanceModel, RebuildCreditedEvent>,
     IPerspectiveFor<RebuildBalanceModel, RebuildDebitedEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildNonCreatingEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildBalanceSetEvent>,
+    IPerspectiveFor<RebuildBalanceModel, RebuildLabelSetEvent>,
     IPerspectiveWithActionsFor<RebuildBalanceModel, RebuildClosedEvent> {
 
   public RebuildBalancePerspective() { }
@@ -43,6 +46,25 @@ public class RebuildBalancePerspective :
     };
   }
 
+  // "Leave the stream without a row": a null model with no action, which is the documented way a
+  // projection declines to create a row from an event that is not a creating one. A real projection
+  // reaches for it on the events that may legitimately arrive before the row exists -- a version bump
+  // that is not the initial draft, an update to a job that was since deleted -- and relies on a LATER
+  // creating event to bring the row into being.
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildNonCreatingEvent @event) {
+    return null!;
+  }
+
+  // The last write wins: the fold's result depends on the order it is applied in, which a sum does not (#1352).
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildBalanceSetEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = @event.Balance, Label = currentData.Label };
+  }
+
+  // A second last-write-wins field, so a test can compare a whole row and not only the field it expected to change.
+  public RebuildBalanceModel Apply(RebuildBalanceModel currentData, RebuildLabelSetEvent @event) {
+    return new RebuildBalanceModel { Id = @event.StreamId, Balance = currentData.Balance, Label = @event.Label };
+  }
+
   // A closed account leaves no row. Mirrors a real projection that purges on a terminal event -- the
   // shape that 32 ended sessions in an upgraded environment sat in, still present, after a rebuild.
   public ApplyResult<RebuildBalanceModel> Apply(RebuildBalanceModel currentData, RebuildClosedEvent @event) {
@@ -54,6 +76,7 @@ public class RebuildBalanceModel {
   [StreamId]
   public Guid Id { get; init; }
   public decimal Balance { get; init; }
+  public string? Label { get; init; }
 }
 
 public record RebuildCreditedEvent : IEvent {
@@ -66,6 +89,26 @@ public record RebuildDebitedEvent : IEvent {
   [StreamId]
   public required Guid StreamId { get; init; }
   public required decimal Amount { get; init; }
+}
+
+/// <summary>An event the perspective folds but which never creates a row.</summary>
+public record RebuildNonCreatingEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+}
+
+/// <summary>Sets the balance outright, so the order a replay folds in decides the result.</summary>
+public record RebuildBalanceSetEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  public required decimal Balance { get; init; }
+}
+
+/// <summary>Sets the label outright: a second field whose final value depends on fold order.</summary>
+public record RebuildLabelSetEvent : IEvent {
+  [StreamId]
+  public required Guid StreamId { get; init; }
+  public required string Label { get; init; }
 }
 
 public record RebuildClosedEvent : IEvent {

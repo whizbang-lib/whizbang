@@ -284,6 +284,7 @@ public class PerspectiveRebuilderBlueGreenTests {
         OnFirstRun?.Invoke();
       }
       return new PerspectiveCursorCompletion {
+        RowChanged = true,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),

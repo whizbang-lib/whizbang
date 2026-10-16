@@ -17,8 +17,29 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [NotInParallel("DbContextRegistrationRegistry")]
 [Category("Shard2")]
 public class DbContextRegistrationRegistryTests {
+  private IDisposable? _restore;
+
   [Before(Test)]
-  public void ResetStaticState() => DbContextRegistrationRegistry.ResetForTesting();
+  public void ResetStaticState() => _restore = DbContextRegistrationRegistry.ResetForTesting();
+
+  // Puts back the generated registrations this class cleared: later tests in the same process build turnkey hosts
+  // that rely on them, and module initializers never run again.
+  [After(Test)]
+  public void RestoreStaticState() => _restore?.Dispose();
+
+  [Test]
+  public async Task ResetForTesting_DisposingTheScope_PutsBackWhatWasRegisteredAsync() {
+    DbContextRegistrationRegistry.Register<FakeRegDbContextA>((_, _) => { });
+
+    using (DbContextRegistrationRegistry.ResetForTesting()) {
+      await Assert.That(DbContextRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(FakeRegDbContextA))).IsFalse()
+        .Because("inside the scope the registry is empty");
+    }
+
+    await Assert.That(DbContextRegistrationRegistry.InvokeRegistration(new ServiceCollection(), typeof(FakeRegDbContextA))).IsTrue()
+      .Because("a reset that is not undone unregisters every generated context for the rest of the process, and a "
+        + "later test that builds a turnkey host then fails with no service registered for its context");
+  }
 
   [Test]
   public async Task InvokeRegistration_CallsMatchingCallbackAsync() {

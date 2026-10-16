@@ -11,6 +11,7 @@ public sealed class ServiceBusEmulatorFixtureSource {
   private static ServiceBusEmulatorFixture? _fixture;
   private static readonly SemaphoreSlim _initLock = new(1, 1);
   private static bool _initialized;
+  private static readonly TimeSpan _setupDeadline = TimeSpan.FromMinutes(10);
 
   /// <summary>
   /// Default constructor required by TUnit ClassDataSource.
@@ -54,7 +55,14 @@ public sealed class ServiceBusEmulatorFixtureSource {
       Console.WriteLine("================================================================================");
 
       _fixture = new ServiceBusEmulatorFixture();
-      await _fixture.InitializeAsync();
+      // A setup that stalls must fail with the step it stalled on, not hang until the CI job is killed (#1366).
+      using var deadline = new CancellationTokenSource(_setupDeadline);
+      try {
+        await _fixture.InitializeAsync(deadline.Token);
+      } catch (OperationCanceledException) when (deadline.IsCancellationRequested) {
+        throw new TimeoutException(
+          $"Service Bus emulator setup did not finish within {_setupDeadline.TotalMinutes} minutes; it stopped while {_fixture.CurrentStep}.");
+      }
 
       Console.WriteLine("================================================================================");
       Console.WriteLine("[EMULATOR FIXTURE SOURCE] ✅ Emulator ready!");

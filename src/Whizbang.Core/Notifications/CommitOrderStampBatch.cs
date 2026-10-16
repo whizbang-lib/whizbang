@@ -36,6 +36,16 @@ public static class CommitOrderStampBatch {
   public const int GROWTH = 2;
 
   /// <summary>
+  /// The most a stamp call should take when no role elector says otherwise: half the default renewal interval.
+  /// </summary>
+  /// <remarks>
+  /// A role holder renews its lease only between calls, and a fenced call holds the role row shared for as long as it
+  /// runs, which every other instance's vote waits behind. Calls kept within half the renewal interval keep each gap
+  /// between renewals well inside the lease, and keep those waits short (#1327).
+  /// </remarks>
+  public static readonly TimeSpan DefaultCallBudget = TimeSpan.FromMilliseconds(2_500);
+
+  /// <summary>
   /// The size for the next call.
   /// </summary>
   /// <param name="current">The size the last call asked for.</param>
@@ -80,6 +90,39 @@ public static class CommitOrderStampBatch {
 
     var grown = (long)current * GROWTH;
     return grown >= top ? top : (int)grown;
+  }
+
+  /// <summary>
+  /// The size for the next call, sized by how long the last one took as well as by what it returned (#1327).
+  /// </summary>
+  /// <remarks>
+  /// A full batch that ran past <paramref name="budget"/> halves, down to one row; one that took more than half of it
+  /// holds its size, because doubling would take about twice as long; only one well inside it grows. Row counts alone
+  /// cannot bound a call: on a store where a few thousand rows took longer than the role lease, a drain grew its batch
+  /// until each call outlasted the lease, and the holder lost the role to its own lapse between calls. A short batch
+  /// returns to <paramref name="configured"/> whatever it cost, as in
+  /// <see cref="Next(int, int, int, int, int?)"/>. The caller sets <paramref name="timeoutCap"/> to the halved size
+  /// when a call ran past the budget, so growth stops there until the backlog drains.
+  /// </remarks>
+  /// <param name="current">The size the last call asked for.</param>
+  /// <param name="stamped">How many rows that call stamped.</param>
+  /// <param name="configured">The steady-state size, which a drained set returns to.</param>
+  /// <param name="ceiling">The largest size to grow to.</param>
+  /// <param name="timeoutCap">The size a timeout or a slow call last backed off to, or null.</param>
+  /// <param name="took">How long the last call took.</param>
+  /// <param name="budget">The most a call should take.</param>
+  /// <returns>The size for the next call.</returns>
+  public static int Next(int current, int stamped, int configured, int ceiling, int? timeoutCap, TimeSpan took, TimeSpan budget) {
+    if (stamped < current) {
+      return configured;
+    }
+    if (took > budget) {
+      return AfterTimeout(current);
+    }
+    if (took * GROWTH > budget) {
+      return current;
+    }
+    return Next(current, stamped, configured, ceiling, timeoutCap);
   }
 
   /// <summary>

@@ -377,6 +377,24 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task MarkHealedBatchWithAges_AReporterAheadOfTheDatabaseClock_ReportsZeroNotANegativeAgeAsync() {
+    // The first sighting carries the reporting host's clock and the heal stamps the database's. A host
+    // ahead of the database used to yield a negative age, which a repair-latency histogram cannot hold;
+    // it also failed the test above whenever the test host ran ahead of the database container.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.New();
+    var keys = new List<IntegrityRepairLedger.DivergenceKey> { _key(origin) };
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, [.. keys.Select(_observation)], DateTimeOffset.UtcNow.AddSeconds(30), TimeSpan.FromMinutes(5));
+
+    var ages = await coordinator.IntegrityMarkHealedBatchWithAgesAsync(origin, keys);
+
+    await Assert.That(ages!.Count).IsEqualTo(1);
+    await Assert.That(ages[0]).IsEqualTo(0d);
+  }
+
+  [Test]
   public async Task MarkHealedBatchWithAges_ForAnUnknownBucket_ReturnsNoAgesAsync() {
     // Healing something never reported is a no-op, not an error: the comparison can find a
     // stream clean that another instance already healed.

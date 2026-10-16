@@ -69,8 +69,12 @@ public record PerspectiveRebuildProgress(
 /// Equal to <paramref name="RowDigestAfter"/> means the rebuild ran and changed nothing, which is a different
 /// outcome from never having run at all.</param>
 /// <param name="RowDigestAfter">Digest of the targeted rows after the replay, or null when not computed.</param>
+/// <param name="RowDigestUnavailableReason">Why the digests are absent, or null when they were computed or the mode does
+/// not take them (#1372): a named-record rebuild in a host with no <c>IPerspectiveRowDigest</c> registered says so, and
+/// one whose digest failed carries the failure, so "unknown" is never read as "unchanged".</param>
 /// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/NewCodeCoverageTests.cs:PerspectiveRebuildCompleted_Properties_RoundTripCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderOutcomeTests.cs</tests>
 [PinnedId("5e3fb66f-286a-406f-9cf0-23e77bd96026")]
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
@@ -81,7 +85,8 @@ public record PerspectiveRebuildCompleted(
     TimeSpan Duration,
     Whizbang.Core.Perspectives.RebuildOrigin? Origin = null,
     string? RowDigestBefore = null,
-    string? RowDigestAfter = null
+    string? RowDigestAfter = null,
+    string? RowDigestUnavailableReason = null
 ) : IEvent;
 
 /// <summary>
@@ -113,7 +118,12 @@ public record PerspectiveRebuildFailed(
 /// <summary>
 /// Emitted when a perspective rewind begins due to a late-arriving event.
 /// </summary>
-/// <param name="StreamId">The unique identifier for this rewind stream.</param>
+/// <param name="StreamId">The unique identifier for this rewind, which is the stream this event is written to.
+/// A rewind gets a stream of its own, the way a rebuild does; it is never the stream being rewound. Writing
+/// these into the rewound stream gave them a version and a commit sequence in it, so they appeared in every
+/// later replay, audit, stream read and version count of that aggregate (#1360).</param>
+/// <param name="RewoundStreamId">The application stream that was rewound. A plain property: it says what the
+/// rewind acted on without routing the event there.</param>
 /// <param name="PerspectiveName">Name of the perspective being rewound.</param>
 /// <param name="TriggeringEventId">The late-arriving event that triggered the rewind.</param>
 /// <param name="ReplayFromSnapshotEventId">Event ID of the snapshot to replay from, if available.</param>
@@ -127,6 +137,7 @@ public record PerspectiveRebuildFailed(
 [PinnedId("7291e4ab-917e-4955-a78c-e41da5ee1af3")]
 public record PerspectiveRewindStarted(
     [property: StreamId] Guid StreamId,
+    Guid RewoundStreamId,
     string PerspectiveName,
     Guid TriggeringEventId,
     Guid? ReplayFromSnapshotEventId,
@@ -137,7 +148,11 @@ public record PerspectiveRewindStarted(
 /// <summary>
 /// Emitted when a perspective rewind completes successfully.
 /// </summary>
-/// <param name="StreamId">The unique identifier for this rewind stream.</param>
+/// <param name="StreamId">The unique identifier for this rewind, which is the stream this event is written to,
+/// and the same id its <see cref="PerspectiveRewindStarted"/> carries so the pair can be found together. It is
+/// never the stream being rewound (#1360).</param>
+/// <param name="RewoundStreamId">The application stream that was rewound. A plain property: it says what the
+/// rewind acted on without routing the event there.</param>
 /// <param name="PerspectiveName">Name of the perspective that was rewound.</param>
 /// <param name="TriggeringEventId">The late-arriving event that triggered the rewind.</param>
 /// <param name="FinalEventId">The last event ID after replay completed.</param>
@@ -152,6 +167,7 @@ public record PerspectiveRewindStarted(
 [PinnedId("56514b57-149d-47aa-9a10-afcb4e38539c")]
 public record PerspectiveRewindCompleted(
     [property: StreamId] Guid StreamId,
+    Guid RewoundStreamId,
     string PerspectiveName,
     Guid TriggeringEventId,
     Guid FinalEventId,

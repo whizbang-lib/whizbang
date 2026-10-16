@@ -4,6 +4,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -13,6 +14,7 @@ using TUnit.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -53,8 +55,10 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     });
     await cmd.ExecuteNonQueryAsync();
     // 146 (#720): the doorbell was queued, not notified; the driver rings after the commit, modeled here.
-    await using var ring = new NpgsqlCommand("SELECT ring_doorbells()", conn);
-    _ = await ring.ExecuteScalarAsync();
+    // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+    // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+    // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+    _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, CancellationToken.None);
   }
 
   [Test]
@@ -219,7 +223,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     var instance = new ServiceInstanceProvider(cfg);
     using var shared = new PgSharedNotifyConnection(
       Options.Create(opts), cfg, instance,
-      NullLogger<PgSharedNotifyConnection>.Instance,
+      new DiagLogger<PgSharedNotifyConnection>(_diag),
       connectionStringFallback: null,
       timeProvider: null);
 
@@ -232,7 +236,7 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await Assert.That(shared.IsAvailable).IsTrue();
 
     var services = new ServiceCollection();
-    services.AddLogging();
+    services.AddLogging(b => b.SetMinimumLevel(LogLevel.Trace).AddProvider(new DiagProvider(_diag)));
     services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(cfg);
     services.AddSingleton(Options.Create(opts));
     services.AddSingleton<IServiceInstanceProvider>(instance);
@@ -265,7 +269,12 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    _diag.Enqueue($"{DateTime.UtcNow:HH:mm:ss.fff} TEST rang doorbell");
+    try {
+      await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    } catch (TimeoutException) {
+      throw new TimeoutException("signal not received; diagnostics:\n" + string.Join("\n", _diag));
+    }
 
     // Bonus lock on the wire-route self-test: the hosted probe must have verified the REAL
     // Postgres transport end to end (pg_notify to own channel, back through typed dispatch).
@@ -279,4 +288,20 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
+
+  private readonly System.Collections.Concurrent.ConcurrentQueue<string> _diag = new();
+
+  private sealed class DiagProvider(System.Collections.Concurrent.ConcurrentQueue<string> q) : ILoggerProvider {
+    public ILogger CreateLogger(string categoryName) => new DiagLogger(q, categoryName);
+    public void Dispose() { }
+  }
+
+  private class DiagLogger(System.Collections.Concurrent.ConcurrentQueue<string> q, string category) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      q.Enqueue($"{DateTime.UtcNow:HH:mm:ss.fff} {logLevel} {category}: {formatter(state, exception)} {exception?.GetType().Name}");
+  }
+
+  private sealed class DiagLogger<T>(System.Collections.Concurrent.ConcurrentQueue<string> q) : DiagLogger(q, typeof(T).Name), ILogger<T>;
 }

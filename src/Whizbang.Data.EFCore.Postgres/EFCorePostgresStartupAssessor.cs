@@ -52,6 +52,11 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable) {
       // No ledger at all — the fresh-database verdict, not an error.
       return new StartupAssessment(StartupVerdict.Migrate, "fresh database — no migration ledger yet");
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn) {
+      // A ledger without its owner column: the first migration is still creating it (the assessment can run
+      // beside it on a fresh database), or an older library wrote it. Either way it records no version newer
+      // than this binary. Failing here kept the instance from ever reporting ready.
+      return new StartupAssessment(StartupVerdict.Migrate, "migration ledger is still being created — nothing recorded yet");
     }
     return ComputeVerdict(_versionProvider?.LibraryVersion, recorded);
   }

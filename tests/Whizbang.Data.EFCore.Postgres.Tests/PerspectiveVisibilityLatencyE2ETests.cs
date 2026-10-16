@@ -27,6 +27,7 @@ using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Testing.Options;
 using Whizbang.Testing.Workers;
@@ -257,14 +258,25 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       .Because("an unhealthy listener degrades ClaimWorker/PerspectiveWorker to backstop polling — the latency measurement would lie");
   }
 
-  /// <summary>Stops everything in reverse start order.</summary>
+  /// <summary>
+  /// Stops everything in reverse start order. Each step is bounded, so a component that does not stop
+  /// fails the test naming it, instead of running into the test's own timeout with no clue where it hung.
+  /// </summary>
   private static async Task _stopAsync(RealPipeline pipeline) {
-    await pipeline.PerspectiveWorker.StopAsync(CancellationToken.None);
-    await pipeline.ClaimWorker.StopAsync(CancellationToken.None);
-    await pipeline.Stamper.StopAsync(CancellationToken.None);
-    await ((IHostedService)pipeline.Listener).StopAsync(CancellationToken.None);
-    await ((IHostedService)pipeline.SharedConnection).StopAsync(CancellationToken.None);
-    await pipeline.Services.DisposeAsync();
+    await _stopStepAsync("PerspectiveWorker", () => pipeline.PerspectiveWorker.StopAsync(CancellationToken.None));
+    await _stopStepAsync("ClaimWorker", () => pipeline.ClaimWorker.StopAsync(CancellationToken.None));
+    await _stopStepAsync("commit-order stamper", () => pipeline.Stamper.StopAsync(CancellationToken.None));
+    await _stopStepAsync("notification listener", () => ((IHostedService)pipeline.Listener).StopAsync(CancellationToken.None));
+    await _stopStepAsync("shared notify connection", () => ((IHostedService)pipeline.SharedConnection).StopAsync(CancellationToken.None));
+    await _stopStepAsync("service provider", () => pipeline.Services.DisposeAsync().AsTask());
+  }
+
+  private static async Task _stopStepAsync(string component, Func<Task> stop) {
+    try {
+      await stop().WaitAsync(TimeSpan.FromSeconds(30));
+    } catch (TimeoutException ex) {
+      throw new TimeoutException($"The {component} did not stop within 30 s during teardown.", ex);
+    }
   }
 
   [Test]
@@ -463,9 +475,10 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     _ = await call.ExecuteScalarAsync(ct);
     // 146 (#720): the commit queued its doorbells; the coordinator rings right after the commit, and
     // this raw call models that ring so the measured latency is the production path's.
-    await using var ring = conn.CreateCommand();
-    ring.CommandText = "SELECT ring_doorbells()";
-    _ = await ring.ExecuteScalarAsync(ct);
+    // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+    // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+    // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+    _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, ct);
   }
 
   private static async Task<long> _countOrderRowsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {

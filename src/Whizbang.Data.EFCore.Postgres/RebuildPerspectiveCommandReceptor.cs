@@ -3,9 +3,11 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.MultiStream;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -78,17 +80,90 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
           message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
     }
 
+    // "Selected streams, none named" is refused, never widened. It is almost always a caller that
+    // meant to name streams and produced an empty list, and widening it would turn the most
+    // targeted request the command offers into the largest thing it can do: a full replay, and a
+    // table swap where a swapper is configured. A whole-perspective rebuild is asked for by its
+    // own mode. Refused once for the request rather than once per perspective, because the mode
+    // and the filter belong to the command, not to any one perspective (#1356).
+    if (message.Mode == RebuildMode.SelectedStreams && streamFilter is null) {
+      LogSelectedStreamsWithoutStreamIds(logger, perspectiveNames.Length);
+      return;
+    }
+
     // The caller's id when it supplied one, so it can find its own rebuild across every service that answered.
     // Otherwise one per service, which still answers "did anything run here" but cannot be correlated across them.
     var origin = new RebuildOrigin(
         message.RequestId ?? (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New(), RebuildTrigger.Requested, message.RequestedBy);
 
+    // #1357/#1353: where the work runs. With a multi-stream store, a rebuild of named streams, or an in-place rebuild, is
+    // recorded as a run and each stream is rebuilt by the instance that owns it, under that stream's apply lock there; this
+    // instance rebuilds nothing itself, so it neither races the owners' live work nor holds the handler for the rebuild.
+    // A blue-green rebuild builds and swaps one table, so it stays one job, handed to the background queue so the
+    // handler returns at once. Without a store or a queue, the rebuild runs here, as it always has.
+    var store = sp.GetService<IMultiStreamCommandStore>();
+    var routeToOwners = store is { IsConfigured: true };
+    var queue = sp.GetService<RebuildBackgroundQueue>();
+
+    var routing = new RebuildRouting(routeToOwners ? store : null, queue, sp, origin, message.RequestId);
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
-      LogPerspectiveRebuildStarting(logger, perspectiveName, message.Mode, streamFilter?.Count);
-      var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, message.Mode, streamFilter, origin, cancellationToken);
-      _logRebuildResult(perspectiveName, result);
+      await _rebuildPerspectiveAsync(rebuilder, perspectiveName, message.Mode, streamFilter, routing, cancellationToken);
     }
+  }
+
+  /// <summary>Where one perspective's rebuild runs: a run on the streams' owners, the background queue, or here.</summary>
+  private async Task _rebuildPerspectiveAsync(
+      IPerspectiveRebuilder rebuilder, string perspectiveName, RebuildMode mode, IReadOnlyList<Guid>? streamFilter,
+      RebuildRouting routing, CancellationToken cancellationToken) {
+    if (routing.Store is not null && (streamFilter is not null || mode == RebuildMode.InPlace)) {
+      var streams = streamFilter ?? await rebuilder.ResolveStreamIdsAsync(perspectiveName, cancellationToken);
+      if (streams is not null) {
+        await _recordRunAsync(routing.Store, routing.Services, perspectiveName, streams, routing.Origin, routing.RequestId, cancellationToken);
+        return;
+      }
+    }
+    if (streamFilter is null && mode == RebuildMode.BlueGreen && routing.Queue is not null) {
+      routing.Queue.Enqueue(perspectiveName, routing.Origin);
+      LogRebuildQueued(logger, perspectiveName);
+      return;
+    }
+    LogPerspectiveRebuildStarting(logger, perspectiveName, mode, streamFilter?.Count);
+    var result = await _dispatchRebuildAsync(rebuilder, perspectiveName, mode, streamFilter, routing.Origin, cancellationToken);
+    _logRebuildResult(perspectiveName, result);
+  }
+
+  /// <summary>What a rebuild can be routed to: the multi-stream store when it is configured, and the background queue.</summary>
+  private sealed record RebuildRouting(
+    IMultiStreamCommandStore? Store, RebuildBackgroundQueue? Queue, IServiceProvider Services, RebuildOrigin Origin, Guid? RequestId);
+
+  private async Task _recordRunAsync(
+      IMultiStreamCommandStore store, IServiceProvider sp, string perspectiveName, IReadOnlyList<Guid> streams,
+      RebuildOrigin origin, Guid? requestId, CancellationToken cancellationToken) {
+    if (streams.Count == 0) {
+      // Nothing to rebuild is nothing to do: an empty list is never read as every stream (#1356).
+      LogNothingToRoute(logger, perspectiveName);
+      return;
+    }
+    var runId = requestId is { } request ? _runIdFor(request, perspectiveName) : (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var intake = new MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>(
+      store,
+      sp.GetService<ILogger<MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>>>()
+        ?? NullLogger<MultiStreamCommandIntake<RebuildPerspectiveStreamsCommand>>.Instance);
+    await intake.HandleAsync(new RebuildPerspectiveStreamsCommand(runId, streams, perspectiveName, origin), cancellationToken);
+    LogRebuildRouted(logger, perspectiveName, streams.Count, runId);
+  }
+
+  /// <summary>
+  /// One run per (request, perspective), the same however often the command is delivered: a redelivered rebuild command
+  /// finds its run already recorded instead of rebuilding every stream again.
+  /// </summary>
+  private static Guid _runIdFor(Guid requestId, string perspectiveName) {
+    var name = System.Text.Encoding.UTF8.GetBytes(perspectiveName);
+    var input = new byte[16 + name.Length];
+    requestId.TryWriteBytes(input);
+    name.CopyTo(input, 16);
+    return new Guid(System.Security.Cryptography.SHA256.HashData(input).AsSpan(0, 16));
   }
 
   /// <summary>IsEnabled-guarded "command received" log. Separated so the receptor's HandleAsync
@@ -136,9 +211,13 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
 
   /// <summary>Selects the rebuild method based on filter presence and mode. When
   /// <paramref name="streamFilter"/> is non-null the stream-filtered overload runs; otherwise
-  /// the mode picks InPlace vs BlueGreen. SelectedStreams-without-filter falls through to
-  /// BlueGreen — the rebuilder's _rebuildCoreAsync treats the mode as logging only until a
-  /// real blue-green implementation lands.</summary>
+  /// the mode picks InPlace vs BlueGreen.</summary>
+  /// <remarks>
+  /// <paramref name="mode"/> is never <see cref="RebuildMode.SelectedStreams"/> with a null
+  /// <paramref name="streamFilter"/>: the caller refuses that combination before dispatching, so
+  /// it cannot reach the BlueGreen fall-through below. It used to, and a selected-streams request
+  /// whose stream list came out empty rebuilt every stream of the perspective instead (#1356).
+  /// </remarks>
   private static Task<RebuildResult> _dispatchRebuildAsync(
       IPerspectiveRebuilder rebuilder,
       string perspectiveName,
@@ -236,6 +315,10 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       Message = "RebuildPerspectiveCommand.FromEventId={FromEventId} is set but IPerspectiveRebuilder has no partial-range replay API; the value is ignored and the rebuild replays from event zero.")]
   private static partial void LogFromEventIdUnsupported(ILogger logger, long fromEventId);
 
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "RebuildPerspectiveCommand refused: Mode=SelectedStreams names no streams (IncludeStreamIds is empty or absent, and no ExcludeStreamIds narrowed the set), so there is nothing to rebuild. {PerspectiveCount} locally owned perspective(s) were left untouched. This is not widened to a full rebuild; ask for one with Mode=BlueGreen or Mode=InPlace.")]
+  private static partial void LogSelectedStreamsWithoutStreamIds(ILogger logger, int perspectiveCount);
+
   [LoggerMessage(Level = LogLevel.Information,
       Message = "Rebuilt perspective {PerspectiveName}: {StreamsProcessed} streams in {ElapsedMs}ms")]
   private static partial void LogRebuildSucceeded(ILogger logger, string perspectiveName, int streamsProcessed, double elapsedMs);
@@ -243,4 +326,16 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Rebuild of perspective {PerspectiveName} failed: {Error}")]
   private static partial void LogRebuildFailed(ILogger logger, string perspectiveName, string error);
+
+  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+    Message = "Rebuild of {PerspectiveName} recorded as multi-stream run {RunId} over {StreamCount} stream(s); each stream is rebuilt by its owner.")]
+  static partial void LogRebuildRouted(ILogger logger, string perspectiveName, int streamCount, Guid runId);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "Blue-green rebuild of {PerspectiveName} queued to the background rebuild worker.")]
+  static partial void LogRebuildQueued(ILogger logger, string perspectiveName);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Warning,
+    Message = "Rebuild of {PerspectiveName} names no streams; nothing is recorded (an empty list is never every stream).")]
+  static partial void LogNothingToRoute(ILogger logger, string perspectiveName);
 }

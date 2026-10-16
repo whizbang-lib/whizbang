@@ -39,7 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 public sealed partial class IntegritySweepScheduler(
     IServiceProvider services,
     IOptions<StreamIntegrityOptions> options,
-    ILogger<IntegritySweepScheduler> logger) : IHostedService {
+    ILogger<IntegritySweepScheduler> logger) : IHostedService, IDisposable {
 
   /// <summary>The idempotent create-or-update key — one sweep schedule per service.</summary>
   private const string SCHEDULE_KEY = "wh-integrity-sweep";
@@ -47,6 +47,10 @@ public sealed partial class IntegritySweepScheduler(
   /// <summary>Fixed control stream the sweep occurrences live in — a framework-owned stream,
   /// never a domain one.</summary>
   private static readonly Guid _sweepStreamId = Guid.Parse("0f80d000-5eeb-4a9e-8c01-000000000001");
+
+  // The registration in flight: it waits for the schema, so it runs beside the host's start, not inside it.
+  private Task _registration = Task.CompletedTask;
+  private readonly CancellationTokenSource _stopping = new();
 
   public async Task StartAsync(CancellationToken cancellationToken) {
     var cron = options.Value.FullSweepCron;
@@ -60,6 +64,30 @@ public sealed partial class IntegritySweepScheduler(
       return;   // no engine — counter fallback; CronActive stays false by design.
     }
 
+    // #1334: the schedule function arrives with the migrations. Registering before the schema is ready failed
+    // with "function does not exist" and was never retried, so wait for the gate, beside the host's start.
+    var gate = services.GetService<ISchemaReadyGate>();
+    if (gate?.IsReady != false) {   // no gate, or the schema is already ready
+      await _registerAsync(manager, instanceProvider, cron, cancellationToken).ConfigureAwait(false);
+      return;
+    }
+    _registration = _registerWhenReadyAsync(gate, manager, instanceProvider, cron, _stopping.Token);
+  }
+
+  private async Task _registerWhenReadyAsync(
+      ISchemaReadyGate gate, IScheduleManager manager, Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
+      string cron, CancellationToken cancellationToken) {
+    try {
+      await gate.WaitForReadyAsync(cancellationToken).ConfigureAwait(false);
+      await _registerAsync(manager, instanceProvider, cron, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      // stopped before the schema was ready: nothing to register, the counter fallback stays in charge
+    }
+  }
+
+  private async Task _registerAsync(
+      IScheduleManager manager, Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
+      string cron, CancellationToken cancellationToken) {
     var serviceName = instanceProvider.ServiceName;
     var splayed = SplayCron(cron, serviceName);
     try {
@@ -89,7 +117,16 @@ public sealed partial class IntegritySweepScheduler(
     }
   }
 
-  public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  public async Task StopAsync(CancellationToken cancellationToken) {
+    await _stopping.CancelAsync().ConfigureAwait(false);
+    await _registration.WaitAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  public void Dispose() => _stopping.Dispose();
+
+  /// <summary>Test seam: completes once registration has been attempted, or abandoned on stop.</summary>
+  internal Task WhenRegisteredForTestsAsync() => _registration;
 
   /// <summary>Replaces a default (<c>0</c>) minute field with the service's stable splay minute.</summary>
   internal static string SplayCron(string cron, string serviceName) {

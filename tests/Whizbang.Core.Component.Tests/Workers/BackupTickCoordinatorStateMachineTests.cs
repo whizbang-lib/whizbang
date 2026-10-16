@@ -155,8 +155,19 @@ public class BackupTickCoordinatorStateMachineTests {
     using var cts = new CancellationTokenSource();
     await coordinator.StartAsync(cts.Token);
     time.Advance(TimeSpan.FromMinutes(10));
-    await Task.Yield();
 
+    // Wait for ExecuteAsync itself, not for a scheduling opportunity. StartAsync only schedules a
+    // BackgroundService, so the yield this replaced gave the method a chance to run and no more:
+    // the assertion below read false whether the killswitch had returned or the method had never
+    // begun, which is the same answer for opposite reasons. Awaiting the task the service exposes
+    // is the signal that it ran AND returned, which is what the killswitch is supposed to do, and
+    // it makes the branch's coverage deterministic rather than a race the whole-library gate sees
+    // flap between runs.
+    await coordinator.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(coordinator.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+      .Because("the killswitch returns rather than throwing or hanging, and a test that never waited "
+             + "for the method could not tell those apart");
     await Assert.That(tickRan).IsFalse()
       .Because("Enabled=false is the killswitch — ExecuteAsync must return immediately without engaging the loop.");
 

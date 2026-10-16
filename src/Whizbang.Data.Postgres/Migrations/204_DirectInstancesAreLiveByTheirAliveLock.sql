@@ -225,6 +225,12 @@ BEGIN
     RETURN;  -- empty result set; orphan-claim sub-functions never invoked
   END IF;
 
+  -- 207 (#1349): plan the acquisitions below on statistics that describe the tables as they are. A queue table
+  -- analyzed while empty and filled since, with its autovacuum worker stuck behind the claim scans, made every
+  -- candidate index look free, and one claim read the backlog once per stream it captured. On a healthy database
+  -- this is a catalog read per table and analyzes nothing; autovacuum always gets there first.
+  PERFORM __SCHEMA__.wh_refresh_stale_queue_statistics();
+
   -- Non-empty path: claim outbox work and return it.
   -- Inbox / receptor / perspective claim + return land in subsequent TDD cycles.
   DECLARE

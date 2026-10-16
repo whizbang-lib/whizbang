@@ -1540,6 +1540,25 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Runs <c>VACUUM ANALYZE</c> on the work tables (outbox, inbox, perspective events, message
+  /// deduplication), on a connection with the table owner's rights: the schema-initialization
+  /// connection when one is configured, otherwise the coordinator's own connection for a table its role
+  /// owns. A table it cannot vacuum is reported with the reason rather than vacuumed, because Postgres
+  /// skips a non-owner's <c>VACUUM</c> with only a warning and the call would otherwise read as done.
+  /// Default: nothing to vacuum.
+  /// </summary>
+  /// <remarks>
+  /// Called by the maintainer duty's holder when it acquires the duty (#1351), never by every instance
+  /// as it starts.
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One outcome per work table.</returns>
+  /// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
+  Task<IReadOnlyList<WorkTableVacuum>> VacuumWorkTablesAsync(CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<WorkTableVacuum>>([]);
+
+  /// <summary>
   /// Records this instance's lifecycle phase (and, when known, library version) on its own
   /// instance row, so peers and the status surface can observe it — the standby handshake cannot
   /// wait for a state nobody can see. Returns false when the instance has no row yet (early
@@ -3431,6 +3450,46 @@ public record PerspectiveCursorCompletion {
   public required Guid LastEventId { get; init; }
 
   /// <summary>
+  /// Commit sequence of <see cref="LastEventId"/>, as the runner saw it. Null when the runner did not
+  /// resolve one.
+  /// </summary>
+  /// <remarks>
+  /// The worker keeps two cursors per stream and perspective, the last event id and the last commit
+  /// sequence, and the inversion detector reads the commit sequence whenever it has one. The caller used
+  /// to rediscover it by looking <see cref="LastEventId"/> up among the rows the batch claimed, which
+  /// works only while the run applied those rows. A rewind re-reads the stream and finishes at its
+  /// frontier, which is not one of them, so the lookup came back empty and the commit-sequence cursor
+  /// kept a pre-rewind value while the event-id cursor moved. The two then described different positions
+  /// and the detector under-reported against the stale one (#1365). The run that moved the position is
+  /// the thing that knows where it ended, so it reports it.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+  public long? LastCommitSequence { get; init; }
+
+  /// <summary>
+  /// Whether this batch actually changed the row: it was written, or it was purged.
+  /// </summary>
+  /// <remarks>
+  /// A fold can complete without touching the row. Every event may decline to produce a model, in which
+  /// case the save is skipped so a batch of pure <c>ApplyResult.None()</c> cannot insert a phantom default
+  /// row. That is right for the live path and invisible to the caller: <see cref="Status"/> reads
+  /// <c>Completed</c> and <see cref="EventsProcessed"/> counts the fold either way, so a rebuild that
+  /// repaired a row and one that touched nothing report the same thing. Rebuild counters key off this
+  /// instead, the way <c>RebuildResult.StreamsRequested</c> was added so a caller could tell "none of the
+  /// streams you named" from "nothing to do" (#1162).
+  /// </para>
+  /// <para>
+  /// <strong>It defaults to <c>false</c>, so set it wherever a row is written.</strong> Every production
+  /// construction site states it explicitly, including the ones that write nothing, because the default is
+  /// the dangerous direction: a path that forgets it reports a real write as a no-op, which is the same
+  /// silent miscount this property exists to end, pointing the other way. Making it <c>required</c> would
+  /// have the compiler enforce that, at the cost of breaking every caller that constructs this record.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/rebuild#reading-the-result</docs>
+  public bool RowChanged { get; init; }
+
+  /// <summary>
   /// Processing status (e.g., Completed, CatchingUp).
   /// </summary>
   public required PerspectiveProcessingStatus Status { get; init; }
@@ -3795,3 +3854,11 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);
+
+/// <summary>What vacuuming one work table did (#1351).</summary>
+/// <param name="TableName">Unqualified table name.</param>
+/// <param name="Vacuumed">True when <c>VACUUM ANALYZE</c> ran on a connection with the owner's rights.</param>
+/// <param name="SkippedReason">Why it did not run, naming the table and the role; null when it ran.</param>
+/// <docs>operations/startup/capabilities-and-duties#vacuum-on-acquiring-the-maintainer-duty</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkTableVacuumTests.cs</tests>
+public readonly record struct WorkTableVacuum(string TableName, bool Vacuumed, string? SkippedReason);

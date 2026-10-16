@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -13,6 +14,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.MultiStream;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
@@ -108,6 +110,10 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         inner.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
         inner.GetLastSequenceAsync(streamId, cancellationToken);
+    // Forwarded, not left to the interface default (null): the runner writes this into the row's metadata, and the
+    // store's commit-sequence guard is never exercised when it is always null.
+    public Task<long?> GetCommitSequenceAsync(Guid eventId, CancellationToken cancellationToken = default) =>
+        inner.GetCommitSequenceAsync(eventId, cancellationToken);
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) =>
         inner.DeserializeStreamEvents(streamEvents, eventTypes);
   }
@@ -118,7 +124,92 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   /// the registered RebuildBalancePerspective runner. Uses reflection to pick up the
   /// generated types so the test survives compile passes where generators don't run.
   /// </summary>
-  private ServiceProvider _buildRebuildServices() {
+  /// <summary>
+  /// #1357: an in-place rebuild is worked per stream on each stream's owner, so the instance that received it needs the
+  /// perspective's streams to record the run: those carrying the perspective's events, and no others.
+  /// </summary>
+  [Test]
+  public async Task ResolveStreamIdsAsync_ListsTheStreamsCarryingThisPerspectivesEventsAsync() {
+    var balanceA = Guid.CreateVersion7();
+    var balanceB = Guid.CreateVersion7();
+    var inventory = Guid.CreateVersion7();
+    await using var sp = _buildRebuildServices();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, balanceA, new RebuildCreditedEvent { StreamId = balanceA, Amount = 1m });
+      await _appendEventAsync(eventStore, balanceB, new RebuildCreditedEvent { StreamId = balanceB, Amount = 2m });
+      await _appendEventAsync(eventStore, inventory, new RebuildStockAdjustedEvent { StreamId = inventory, Delta = 3 });
+    }
+
+    var streams = await sp.GetRequiredService<IPerspectiveRebuilder>().ResolveStreamIdsAsync(RebuildBalancePerspectiveName);
+
+    await Assert.That(streams).IsNotNull();
+    await Assert.That(streams!.Order()).IsEquivalentTo(new[] { balanceA, balanceB }.Order(), TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  /// <summary>
+  /// #1357 end to end on one database: a rebuild command naming a stream records a run instead of rebuilding where it
+  /// landed, and the stream's owner rebuilds it through the multi-stream worker; the cursor ends on the stream's last event.
+  /// </summary>
+  [Test]
+  public async Task RebuildCommand_NamingAStream_IsRebuiltByTheStreamsOwnerThroughARunAsync() {
+    var streamId = Guid.CreateVersion7();
+    var instance = Guid.CreateVersion7();
+    var store = new Whizbang.Data.Postgres.MultiStream.PgMultiStreamCommandStore(
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Notifications.WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+      new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection([]).Build());
+    await using var sp = _buildRebuildServices(s => {
+      s.AddSingleton<Whizbang.Core.MultiStream.IMultiStreamCommandStore>(store);
+      s.AddMultiStreamCommandHandler<RebuildPerspectiveStreamsCommand, RebuildPerspectiveStreamsHandler>();
+    });
+    Guid lastEventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      lastEventId = await _appendAndGetEventIdAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 7m });
+    }
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName], Mode: RebuildMode.InPlace, IncludeStreamIds: [streamId]));
+
+    await using (var beforeContext = CreateDbContext()) {
+      var untouched = await beforeContext.Set<PerspectiveCursorRecord>().AsNoTracking()
+          .AnyAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+      await Assert.That(untouched).IsFalse().Because("the receiving instance recorded the run and rebuilt nothing itself");
+    }
+
+    var worker = new Whizbang.Core.MultiStream.MultiStreamCommandWorker(
+      store,
+      sp.GetServices<Whizbang.Core.MultiStream.IMultiStreamCommandBinding>(),
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new ServiceInstanceProvider(instance, "rebuild", "rebuild-host", 1),
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.MultiStream.MultiStreamCommandOptions { PollInterval = TimeSpan.FromHours(1) }),
+      sp.GetRequiredService<ILogger<Whizbang.Core.MultiStream.MultiStreamCommandWorker>>(),
+      Whizbang.Core.Workers.NullPartitionAssignmentSource.Instance,
+      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+    var completed = new TaskCompletionSource<Whizbang.Core.MultiStream.MultiStreamRunCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnRunCompleted += c => completed.TrySetResult(c);
+    await worker.StartAsync(CancellationToken.None);
+    Whizbang.Core.MultiStream.MultiStreamRunCompletion completion;
+    try {
+      worker.RequestImmediateRun();
+      completion = await completed.Task.WaitAsync(TimeSpan.FromSeconds(60));
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    await Assert.That(completion.Succeeded).IsEqualTo(1);
+    await Assert.That(completion.Failed).IsEqualTo(0);
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>().AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(lastEventId);
+  }
+
+  private ServiceProvider _buildRebuildServices(Action<IServiceCollection>? extra = null) {
     var services = new ServiceCollection();
     services.AddLogging();
 
@@ -184,6 +275,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     services.AddSingleton(_publishedEvents);
     services.AddScoped<IDispatcher>(sp => new RecordingRebuildDispatcher(sp.GetRequiredService<PublishedEventLog>()));
 
+    extra?.Invoke(services);
     return services.BuildServiceProvider();
   }
 
@@ -372,6 +464,450 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
     await Assert.That(rebuilt.Data.Balance).IsEqualTo(100m)
       .Because("the rebuild re-derives the row from its events, so it neither skips them nor folds them onto what was there");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheFirstEventCreatesNoRow_StillFoldsTheRestOfTheStreamAsync() {
+    // The stream opens with an event the perspective folds but which declines to create a row, and a
+    // later event is the one that would create it. Measured in a deployed environment: the rebuild
+    // checkpointed such a stream at its FIRST event with 48 events still ahead of it, wrote no row,
+    // reported the stream processed and logged no warning.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull()
+      .Because("the creating event is second in the stream, so declining the first must not end the replay");
+    await Assert.That(row!.Data.Balance).IsEqualTo(100m)
+      .Because("every event in the stream is folded, not only those up to the first that creates no row");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheFirstEventCreatesNoRow_CheckpointsAtTheStreamHeadAsync() {
+    // The same defect read from the cursor rather than the row, which is how it was found: a stream
+    // whose head was version 49 checkpointed at version 1. The cursor is what a later pass trusts, so
+    // a checkpoint short of the head is what makes the skip permanent rather than merely silent.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    Guid lastEventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 40m });
+      lastEventId = await _appendAndGetEventIdAsync(
+          eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 60m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+
+    await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(lastEventId)
+      .Because("the checkpoint records the replay frontier, and a frontier short of the head makes the gap permanent");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenEventIdsDisagreeWithCommitOrder_CheckpointsAtTheCommitHeadAsync() {
+    // Issue #1331. The rebuild reads a stream in commit order and the runner then re-sorted it by event id, so
+    // a stream whose FIRST committed event carries its HIGHEST id folded that event last and checkpointed on it:
+    // measured in a deployed environment as a cursor at version 1 of a 49-event stream. Ids minted by one
+    // process and committed by another (a seed, an import, a slow transaction) need not agree with commit
+    // order; the rewind already replays in commit order for exactly that reason, and a rebuild must too.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    // Three ids in ascending order; the highest goes on the event committed first.
+    var ids = new[] { MessageId.New(), MessageId.New(), MessageId.New() }.OrderBy(m => m.Value).ToArray();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 1m }, ids[2]);
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 10m }, ids[0]);
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m }, ids[1]);
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var cursor = await verifyContext.Set<PerspectiveCursorRecord>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(c => c.StreamId == streamId && c.PerspectiveName == RebuildBalancePerspectiveName);
+
+    await Assert.That(cursor).IsNotNull();
+    await Assert.That(cursor!.LastEventId).IsEqualTo(ids[1].Value)
+      .Because("the last event COMMITTED is the stream head; checkpointing on the highest id put the cursor on the first event");
+  }
+
+  /// <summary>
+  /// A rebuild folds a stream in the order it was written, its version, even where the commit sequences run
+  /// backward against it, and the write that brings the row to the version-order result is not refused (#1352).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The shape is a measured one: four writes of one value at versions 0..3, the last of which changed it, carried
+  /// commit sequences that ran backward because the rows were stamped after the fact. A replay in commit order folded
+  /// the last write first and left the row holding the value before it.
+  /// </para>
+  /// <para>
+  /// The row is seeded the way such a rebuild leaves it: the older value, with its position recorded at the highest
+  /// commit sequence on the stream. That is the state a repair starts from, and the write guard refuses any write
+  /// whose position sits below the stored one, so a rebuild that recorded the last version's own commit sequence
+  /// would fold the right value and then fail to write it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenCommitSequencesRunBackwardAgainstVersions_FoldsInVersionOrderAndWritesItAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    var ids = new[] { MessageId.New(), MessageId.New(), MessageId.New(), MessageId.New() };
+    long[] commitSequences = [40, 30, 20, 10];
+    decimal[] values = [3m, 3m, 3m, 4m];
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      for (var i = 0; i < ids.Length; i++) {
+        await eventStore.AppendAsync(streamId, new MessageEnvelope<RebuildBalanceSetEvent> {
+          MessageId = ids[i],
+          Payload = new RebuildBalanceSetEvent { StreamId = streamId, Balance = values[i] },
+          DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+          Hops = []
+        });
+      }
+    }
+    await using (var stamp = CreateDbContext()) {
+      for (var i = 0; i < ids.Length; i++) {
+        await stamp.Database.ExecuteSqlRawAsync(
+          "UPDATE wh_event_store SET commit_sequence = {0} WHERE event_id = {1}", commitSequences[i], ids[i].Value);
+      }
+    }
+    await using (var seed = CreateDbContext()) {
+      var then = DateTime.UtcNow.AddDays(-1);
+      seed.Set<PerspectiveRow<RebuildBalanceModel>>().Add(new PerspectiveRow<RebuildBalanceModel> {
+        Id = streamId,
+        Data = new RebuildBalanceModel { Id = streamId, Balance = 3m },
+        Metadata = new PerspectiveMetadata {
+          EventId = ids[0].Value.ToString(),
+          EventType = typeof(RebuildBalanceSetEvent).FullName!,
+          CommitSequence = 40,
+          Timestamp = then
+        },
+        Scope = new PerspectiveScope(),
+        CreatedAt = then,
+        UpdatedAt = then,
+        Version = 1
+      });
+      _ = await seed.SaveChangesAsync();
+    }
+
+    var result = await new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>())
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+    await Assert.That(result.Success).IsTrue().Because($"the rebuild must report success ({result.Error})");
+    await Assert.That(row.Data.Balance).IsEqualTo(4m)
+      .Because("the stream was written 3, 3, 3, 4: the last write by version wins, whatever order the stamper reached the rows in");
+    await Assert.That(row.Metadata.CommitSequence).IsEqualTo(40L)
+      .Because("the recorded position covers every event the rebuild folded, so the highest commit sequence among them");
+  }
+
+  /// <summary>
+  /// Appends <paramref name="payloads"/> to a stream in order (so their versions ascend) and stamps each with the
+  /// given commit sequence, so a test controls the two orders independently, as rows stamped after the fact do (#1352).
+  /// </summary>
+  private async Task _appendWithStampsAsync(ServiceProvider sp, Guid streamId, params (IEvent Payload, long CommitSequence)[] payloads) {
+    var ids = new List<MessageId>();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      foreach (var (payload, _) in payloads) {
+        // Appended under the event's own type: the store records the envelope's declared type, and a stream stored as
+        // IEvent folds nothing.
+        var id = MessageId.New();
+        ids.Add(id);
+        await (payload switch {
+          RebuildBalanceSetEvent balance => eventStore.AppendAsync(streamId, _typed(id, balance)),
+          RebuildLabelSetEvent label => eventStore.AppendAsync(streamId, _typed(id, label)),
+          _ => throw new ArgumentException($"no typed append for {payload.GetType().Name}", nameof(payloads))
+        });
+      }
+    }
+    await using var stamp = CreateDbContext();
+    for (var i = 0; i < ids.Count; i++) {
+      await stamp.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_event_store SET commit_sequence = {0} WHERE event_id = {1}", payloads[i].CommitSequence, ids[i].Value);
+    }
+  }
+
+  private static MessageEnvelope<TEvent> _typed<TEvent>(MessageId id, TEvent payload) where TEvent : IEvent => new() {
+    MessageId = id,
+    Payload = payload,
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    Hops = []
+  };
+
+  private async Task<PerspectiveRow<RebuildBalanceModel>> _rowAsync(Guid streamId) {
+    await using var verify = CreateDbContext();
+    return await verify.Set<PerspectiveRow<RebuildBalanceModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
+  }
+
+  private static Task<RebuildResult> _rebuildAsync(ServiceProvider sp, Guid streamId) =>
+    new PerspectiveRebuilder(sp.GetRequiredService<IServiceScopeFactory>(), sp.GetRequiredService<ILogger<PerspectiveRebuilder>>())
+      .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+  /// <summary>
+  /// With no row to start from, a rebuild of a stream whose stamps run backward still creates the row the stream's
+  /// versions describe (#1352).
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackwardAndNoRowExists_CreatesTheVersionOrderRowAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 40),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 30),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 20),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 4m }, 10));
+
+    await _rebuildAsync(sp, streamId);
+
+    var row = await _rowAsync(streamId);
+    await Assert.That(row.Data.Balance).IsEqualTo(4m).Because("the last write by version wins");
+    await Assert.That(row.Metadata.CommitSequence).IsEqualTo(40L)
+      .Because("the recorded position covers every folded event, so a later live event below it is not mistaken for new");
+  }
+
+  /// <summary>
+  /// A second rebuild of a stream whose stamps run backward leaves the row exactly as the first left it: the
+  /// version-order fold is stable, and its write is not refused by the position the first one recorded (#1352).
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackward_RebuildingTwiceLeavesTheSameRowAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "first" }, 70),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 1m }, 60),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "last" }, 50),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 2m }, 40));
+
+    await _rebuildAsync(sp, streamId);
+    var afterFirst = await _rowAsync(streamId);
+    await _rebuildAsync(sp, streamId);
+    var afterSecond = await _rowAsync(streamId);
+
+    await Assert.That(afterFirst.Data.Label).IsEqualTo("last");
+    await Assert.That(afterFirst.Data.Balance).IsEqualTo(2m);
+    await Assert.That(afterSecond.Data.Label).IsEqualTo(afterFirst.Data.Label).Because("a rebuild is repeatable");
+    await Assert.That(afterSecond.Data.Balance).IsEqualTo(afterFirst.Data.Balance).Because("a rebuild is repeatable");
+    await Assert.That(afterSecond.Metadata.CommitSequence).IsEqualTo(afterFirst.Metadata.CommitSequence)
+      .Because("the recorded position does not drift between rebuilds of an unchanged stream");
+  }
+
+  /// <summary>
+  /// Every field of the row follows the stream's versions, not only the one a repair set out to fix (#1352). A
+  /// commit-order fold of this stream ends on the oldest value of BOTH fields, and a check of one field alone is how
+  /// a regression of the other went unnoticed on a deployed environment.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_StampsRunBackward_EveryFieldEndsOnItsLastVersionAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+    await _appendWithStampsAsync(sp, streamId,
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "a" }, 60),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 1m }, 50),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "b" }, 40),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 2m }, 30),
+      (new RebuildLabelSetEvent { StreamId = streamId, Label = "c" }, 20),
+      (new RebuildBalanceSetEvent { StreamId = streamId, Balance = 3m }, 10));
+
+    await _rebuildAsync(sp, streamId);
+
+    var row = await _rowAsync(streamId);
+    await Assert.That(row.Data.Label).IsEqualTo("c").Because("the label's last write by version wins");
+    await Assert.That(row.Data.Balance).IsEqualTo(3m).Because("the balance's last write by version wins");
+  }
+
+  /// <summary>
+  /// Appends an event with the given id and stamps it with the next commit sequence, so a test controls commit
+  /// order independently of id order.
+  /// </summary>
+  private async Task _appendCommittedAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload, MessageId messageId)
+      where TEvent : IEvent {
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = payload,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = []
+    };
+    await eventStore.AppendAsync(streamId, envelope);
+    await using var stampContext = CreateDbContext();
+    await stampContext.Database.ExecuteSqlRawAsync(
+      "UPDATE wh_event_store SET commit_sequence = (SELECT COALESCE(MAX(commit_sequence), 0) + 1 FROM wh_event_store) WHERE event_id = {0}",
+      messageId.Value);
+  }
+
+  [Test]
+  public async Task PerspectiveStore_FindsARowWhoseScopeCarriesAUserAsync() {
+    // The rebuild's write gate starts as "the store returned a row" (hasWrittenUpdate =
+    // modelLoadedFromDb). If a scoped row were invisible to that read, a rebuild of it would fold,
+    // write nothing, and report success. The read is by stream id, so it must not be.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    // Give the row a scope the reader shares nothing with, then read it back through the store.
+    await using (var scopeContext = CreateDbContext()) {
+      await scopeContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET scope = '{{\"t\": \"tenant-probe\", \"u\": \"user-probe\"}}'::jsonb WHERE id = {0}",
+        streamId);
+    }
+
+    await using var readScope = sp.CreateAsyncScope();
+    var store = readScope.ServiceProvider.GetRequiredService<IPerspectiveStore<RebuildBalanceModel>>();
+    var model = await store.GetByStreamIdAsync(streamId, CancellationToken.None);
+
+    await Assert.That(model).IsNotNull()
+      .Because("the row is read by stream id, so a scope the reader does not share must not hide it");
+    await Assert.That(model!.Balance).IsEqualTo(100m);
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenItWritesNoRow_DoesNotCountTheStreamAsProcessedAsync() {
+    // The gap this issue is about. A stream whose every event declines to produce a model folds to
+    // nothing: hasWrittenUpdate stays false, the save is skipped, no row is written and no line is
+    // logged at any level. The caller is handed StreamsProcessed = 1 and Success = true, which is
+    // the same answer a rebuild that repaired the row would give.
+    //
+    // StreamsRequested exists because of exactly this shape one layer up (#1162): a selected-streams
+    // rebuild reported success having rebuilt none of 32 named streams, and no caller could tell.
+    // This is the next layer down — streams folded, rows not written.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+      await _appendEventAsync(eventStore, streamId, new RebuildNonCreatingEvent { StreamId = streamId });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var result = await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNull()
+      .Because("every event declined, so there is correctly no row — the question is what the caller is told");
+
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0)
+      .Because("a stream folded without writing a row is not a stream that was rebuilt, and a caller "
+             + "given the same number either way cannot tell a repair from a no-op");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheStoreRefusesTheWrite_DoesNotCountTheStreamAsProcessedAsync() {
+    // Issue #1342. The store's ordering guard refuses a write whose commit sequence is older than the one the row
+    // records, and on the row version the apply read that refusal is a quiet skip by design. The runner marked the
+    // row changed before it asked the store, so a rebuild whose every write was refused reported each stream
+    // processed: three untouched rows were measured as StreamsProcessed = 3 in a deployed environment.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    Guid eventId;
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      eventId = await _appendAndGetEventIdAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+    await using (var stampContext = CreateDbContext()) {
+      await stampContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_event_store SET commit_sequence = (SELECT COALESCE(MAX(commit_sequence), 0) + 1 FROM wh_event_store) WHERE event_id = {0}",
+        eventId);
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, rebuilderLogger);
+    await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    // The row now records a position later than any event on its stream, so the guard refuses every rebuild write.
+    await using (var aheadContext = CreateDbContext()) {
+      await aheadContext.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET metadata = jsonb_set(metadata, '{{CommitSequence}}', '9000000000000000'), data = jsonb_set(data, '{{Balance}}', '7') WHERE id = {0}",
+        streamId);
+    }
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await using var verifyContext = CreateDbContext();
+    var row = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+    await Assert.That(row!.Data.Balance).IsEqualTo(7m)
+      .Because("the guard refused the write, so the row is exactly as it was left: the precondition of this test");
+    await Assert.That(result.StreamsProcessed).IsEqualTo(0)
+      .Because("a write the store refused left the row untouched, and must not be counted as a row the rebuild wrote");
+  }
+
+  [Test]
+  public async Task RebuildStreamsAsync_WhenItWritesTheRow_CountsItProcessedAndNotAsAFoldWithoutWritingAsync() {
+    // The other side of the same signal: a rebuild that really repairs a row must be distinguishable
+    // from one that touched nothing, which is the whole point of counting the row and not the fold.
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+    }
+
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    var rebuilderLogger = sp.GetRequiredService<ILogger<PerspectiveRebuilder>>();
+    var result = await new PerspectiveRebuilder(scopeFactory, rebuilderLogger)
+        .RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1)
+      .Because("a rebuild that really wrote the row must be distinguishable from one that touched nothing");
   }
 
   [Test]

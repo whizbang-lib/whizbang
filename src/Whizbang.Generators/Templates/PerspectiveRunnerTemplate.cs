@@ -239,7 +239,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           PerspectiveName = perspectiveName,
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           LastEventId = Guid.Empty,
-          Status = PerspectiveProcessingStatus.None
+          Status = PerspectiveProcessingStatus.None,
+          RowChanged = false,  // no events for this perspective, so the row was never touched
         }
       };
     }
@@ -266,11 +267,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         ? null
         : await _applyCoordinator.AcquireAsync(streamId, perspectiveName, cancellationToken).ConfigureAwait(false);
 
-    // Ordering invariant: sort by MessageId (UUIDv7 = chronological) before any processing.
-    // Defensive — callers should already pass sorted, but this is the apply boundary.
-    // See plans/ordered-stream-invariant.md.
+    // Ordering invariant, at the apply boundary. A rebuild folds the whole stream it read, so it takes the replay
+    // order the rewind uses (origin, then stream version, then commit, then id; #1352): sorting it by id applied a stream's first committed
+    // event last whenever that event carried the highest id, and checkpointed on it (#1331). The live drain keeps
+    // id order; an inversion there is the rewind's to correct.
     if (events.Count > 1) {
-      events = events.OrderByMessageId().ToList();
+      events = global::Whizbang.Core.Messaging.ProcessingModeAccessor.Current is global::Whizbang.Core.Messaging.ProcessingMode.Rebuild
+          ? global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)
+          : events.OrderByMessageId().ToList();
     }
 
     // Lost-update guard (issue #928). The apply reads the row, folds the batch in memory and writes the
@@ -429,6 +433,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var lastAppliedEventId = existingMetadata?.EventId;
     var lastAppliedCommitSequence = existingMetadata?.CommitSequence;
     if (!string.IsNullOrEmpty(lastAppliedEventId) && events.Count > 0) {
+      // An event below the row's recorded position is not dropped on that evidence alone (#1347): the row can have been
+      // moved past it by a later batch without ever folding it, and the worker's cursor check cannot see that when the
+      // stream has no cursor or a cursor behind the row. Re-fold the stream from the earliest such event instead; this
+      // runs under the apply lock already held, which is why it calls the core and not RewindAndRunAsync.
+      var rewindAnchor = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.FindRewindAnchor(
+          lastAppliedEventId, lastAppliedCommitSequence, events.Select(e => (e.MessageId.Value, e.LocalCommitSequence)));
+      if (rewindAnchor is Guid anchorEventId) {
+        var anchorCommitSequence = events.First(e => e.MessageId.Value == anchorEventId).LocalCommitSequence;
+        _logger.LogWarning(
+            "[diag.filter.rewind-below-position] {PerspectiveName} stream {StreamId}: event {AnchorEventId} at commit sequence {AnchorCs} is below the row's recorded position {LastCs} ({LastEventId}); rewinding instead of filtering {Count} event(s) as already applied",
+            perspectiveName,
+            streamId,
+            anchorEventId,
+            anchorCommitSequence,
+            lastAppliedCommitSequence,
+            lastAppliedEventId,
+            events.Count);
+        return await _rewindAndRunCoreAsync(streamId, perspectiveName, anchorEventId, anchorCommitSequence, cancellationToken);
+      }
       var filtered = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>(events.Count);
       foreach (var e in events) {
         var isAlreadyApplied = global::Whizbang.Core.Perspectives.PerspectiveIdempotencyFilter.IsAlreadyApplied(
@@ -472,6 +495,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             LastEventId = alreadyAppliedAsGuid != Guid.Empty ? alreadyAppliedAsGuid : (lastProcessedEventId ?? Guid.Empty),
             Status = PerspectiveProcessingStatus.Completed,
             EventsProcessed = 0,
+            RowChanged = false,  // every event was judged already applied, so the model was not touched
             ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray()
           };
         } else {
@@ -510,6 +534,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // True once Apply has contributed a concrete model OR the row came from DB.
     // When false at save time, updatedModel is only the scaffolded default and must not be written.
     var hasWrittenUpdate = modelLoadedFromDb;
+    var rowChanged = false;  // True once this batch actually wrote or purged the row
     var pendingPurge = startedPurged;  // True while the stream is purged: the row is (to be) removed
     Guid? purgeEventId = null;  // The event whose Apply purged in this batch, if one did
     string? purgeEventType = null;  // Its type, reported on the completion (#1151)
@@ -784,6 +809,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // on a live row (harmless), never a missing row a later event could recreate.
             await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
             await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+            rowChanged = true;
             _logger.LogDebug(
                 "Model purged for {PerspectiveName} stream {StreamId}",
                 perspectiveName,
@@ -791,10 +817,14 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             );
           }
         } else if (updatedModel != null && hasWrittenUpdate) {
-          var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-              lastSuccessfulEventId!.Value, cancellationToken);
+          var checkpointCommitSequence = _recordedCommitSequence(
+              await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId!.Value, cancellationToken),
+              processedEvents,
+              rebuilding);
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
-          await SaveModelAndCheckpointAsync(
+          // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
+          // left untouched is not a changed row (#1342).
+          rowChanged = await SaveModelAndCheckpointAsync(
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
@@ -807,7 +837,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               rowVersion
           );
           // Forget the purge only once the resurrected row is written.
-          if (resurrected && startedPurged) {
+          if (rowChanged && resurrected && startedPurged) {
             await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
           }
         }
@@ -928,6 +958,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = resultStatus,
         EventsProcessed = eventsProcessed,
+        RowChanged = rowChanged,
         ProcessedEventIds = events.Select(e => e.MessageId.Value).ToArray(),
         PurgedBy = pendingPurge && purgeEventId.HasValue ? purgeEventType : null
       };
@@ -950,8 +981,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Only save if we have a model AND Apply has produced one (skip if purge was pending
           // or the only events were ApplyResult.None() on a new stream)
           if (updatedModel != null && hasWrittenUpdate) {
-            var partialCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(
-                lastSuccessfulEventId.Value, cancellationToken);
+            var partialCheckpointCommitSequence = _recordedCommitSequence(
+                await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId.Value, cancellationToken),
+                processedEvents,
+                rebuilding);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
@@ -1093,6 +1126,29 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Moves the replay frontier (max event id, max local commit sequence) past an envelope.
   /// </summary>
+  /// <summary>
+  /// The commit sequence a fold records as its position. A live apply records its last event's; a rebuild records
+  /// the highest among the events it folded (#1352), as the rewind's frontier does. A rebuild folds a stream in
+  /// version order, and where rows were stamped after the fact the last version can carry the lowest commit sequence
+  /// on the stream: recording it would put the row's position below events it already folded, and the store's
+  /// ordering guard refuses a write whose position sits below the stored one, so the corrected row was never written.
+  /// </summary>
+  private static long? _recordedCommitSequence(
+      long? lastEventsCommitSequence,
+      List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>> folded,
+      bool rebuilding) {
+    if (!rebuilding) {
+      return lastEventsCommitSequence;
+    }
+    var highest = lastEventsCommitSequence;
+    foreach (var envelope in folded) {
+      if (envelope.LocalCommitSequence is long seq && (highest is null || seq > highest.Value)) {
+        highest = seq;
+      }
+    }
+    return highest;
+  }
+
   private static (Guid? EventId, long? CommitSequence) _advanceFrontier(
       Guid? frontierEventId,
       long? frontierCommitSequence,
@@ -1134,7 +1190,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// PerspectiveWorker collects checkpoint completions and reports them to
   /// ProcessWorkBatchAsync, which persists them via complete_perspective_cursor_work SQL function.
   /// </summary>
-  private async Task SaveModelAndCheckpointAsync(
+  /// <returns>
+  /// Whether the row was written. False when the store's ordering guard refused the write, which leaves the row
+  /// untouched and must not be reported as a changed row (#1342).
+  /// </returns>
+  private async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
@@ -1164,7 +1224,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     if (scope != null) {
-      await _perspectiveStore.UpsertAsync(
+      return await _perspectiveStore.TryUpsertAsync(
           streamId,
           model,
           scope,
@@ -1174,7 +1234,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken
       );
     } else {
-      await _perspectiveStore.UpsertAsync(
+      return await _perspectiveStore.TryUpsertAsync(
           streamId,
           model,
           new global::Whizbang.Core.Lenses.PerspectiveScope(),
@@ -1230,51 +1290,37 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var startedAt = DateTimeOffset.UtcNow;
 
     if (_snapshotStore is not null) {
-      // Slice 26.11: prefer commit-sequence anchor for snapshot selection so live-apply
-      // and replay paths are fully deterministic. Falls back to event_id anchor when the
-      // commit_sequence isn't available (cache or events unstamped).
-      if (triggeringCommitSequence.HasValue) {
-        var seqSnapshot = await _snapshotStore.GetLatestSnapshotBeforeCommitSequenceAsync(
-            streamId, perspectiveName, triggeringCommitSequence.Value, cancellationToken);
-        if (seqSnapshot.HasValue) {
-          snapshotModel = FromSnapshotJson(seqSnapshot.Value.SnapshotData);
-          if (snapshotModel is not null) {
-            replayFromEventId = seqSnapshot.Value.SnapshotEventId;
-            hasSnapshot = true;
-            _logger.LogWarning(
-                "Restoring {PerspectiveName} stream {StreamId} from commit-sequence snapshot at {SnapshotEventId} (commit_sequence < {TriggeringCommitSequence}) due to late event {TriggeringEventId}",
-                perspectiveName, streamId, seqSnapshot.Value.SnapshotEventId, triggeringCommitSequence.Value, triggeringEventId);
-          } else {
-            _logger.LogWarning(
-                "Commit-sequence snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; rebuilding from events",
-                perspectiveName, streamId);
-          }
-        }
-      }
+      // The snapshot has to sit before the triggering event IN THE STREAM, because the rewind restores
+      // it and replays forward from there. Version is the only anchor that gives that order within one
+      // stream. Commit sequence is assignment order and event id is UUIDv7 generation order, and both
+      // run backward against the stream for retroactively stamped rows, so either can name a snapshot
+      // LATER in the stream than the trigger (#1355; #1352 is the replay side of the same assumption).
+      // Resuming there skips every event in between and leaves the row permanently short of them.
+      //
+      // There is deliberately no fallback to the two older anchors. A fallback is not a safety net here,
+      // it is the same wrong answer arriving one branch later: it fires exactly when the version anchor
+      // declined, which is exactly when the snapshot cannot be placed in the stream. A full replay costs
+      // more and reproduces the row; a wrong restore point leaves a read model nothing is pending to repair.
+      var snapshot = await _snapshotStore.GetLatestSnapshotBeforeEventInStreamOrderAsync(
+          streamId, perspectiveName, triggeringEventId, cancellationToken);
 
-      if (!hasSnapshot) {
-        var snapshot = await _snapshotStore.GetLatestSnapshotBeforeAsync(
-            streamId, perspectiveName, triggeringEventId, cancellationToken);
-
-        if (snapshot.HasValue) {
-          snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
-          if (snapshotModel is not null) {
-            replayFromEventId = snapshot.Value.SnapshotEventId;
-            hasSnapshot = true;
-
-            _logger.LogWarning(
-                "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} due to late event {TriggeringEventId}",
-                perspectiveName, streamId, snapshot.Value.SnapshotEventId, triggeringEventId);
-          } else {
-            _logger.LogWarning(
-                "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
-                perspectiveName, streamId, triggeringEventId);
-          }
+      if (snapshot.HasValue) {
+        snapshotModel = FromSnapshotJson(snapshot.Value.SnapshotData);
+        if (snapshotModel is not null) {
+          replayFromEventId = snapshot.Value.SnapshotEventId;
+          hasSnapshot = true;
+          _logger.LogWarning(
+              "Restoring {PerspectiveName} stream {StreamId} from snapshot at {SnapshotEventId} (stream version {SnapshotVersion}) due to late event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence})",
+              perspectiveName, streamId, snapshot.Value.SnapshotEventId, snapshot.Value.SnapshotVersion, triggeringEventId, triggeringCommitSequence);
         } else {
           _logger.LogWarning(
-              "No qualifying snapshot found for {PerspectiveName} stream {StreamId}, performing full replay due to late event {TriggeringEventId}",
+              "Snapshot for {PerspectiveName} stream {StreamId} has a stale serialization version; performing full replay due to late event {TriggeringEventId}",
               perspectiveName, streamId, triggeringEventId);
         }
+      } else {
+        _logger.LogWarning(
+            "No snapshot of {PerspectiveName} stream {StreamId} is placed before event {TriggeringEventId} (detected at commit sequence {TriggeringCommitSequence}); performing full replay",
+            perspectiveName, streamId, triggeringEventId, triggeringCommitSequence);
       }
     } else {
       _logger.LogWarning(
@@ -1285,11 +1331,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Fire PerspectiveRewindStarted system event as System user
     // These events are marked [AuditEvent(Exclude = true)] to skip the audit pipeline
     // which requires security context that doesn't exist during background rewind.
+    //
+    // One id per rewind, minted here and shared by the Started/Completed pair, the way a rebuild
+    // mints one per run. It is the stream these two events are written to. Passing the rewound
+    // stream here instead wrote them into the application stream itself, where they took a version
+    // and a commit sequence and turned up in every later replay, audit, stream read and version
+    // count of that aggregate (#1360). The stream that was rewound travels as a plain property.
+    // Time-ordered so a reader can sort rewinds without joining anything.
+    Guid rewindStreamId = global::Whizbang.Core.ValueObjects.TrackedGuid.New();
     var dispatcher = _serviceProvider.GetService<IDispatcher>();
     if (dispatcher is not null) {
       try {
         await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindStarted(
-            streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
+            rewindStreamId, streamId, perspectiveName, triggeringEventId, replayFromEventId, hasSnapshot, startedAt));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _logger.LogDebug(ex, "Failed to publish PerspectiveRewindStarted for {PerspectiveName} stream {StreamId}",
           perspectiveName, streamId);
@@ -1318,7 +1372,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = Guid.Empty,
         Status = PerspectiveProcessingStatus.None,
-        EventsProcessed = 0
+        EventsProcessed = 0,
+        RowChanged = false,  // the rewind was skipped, so nothing was written
       };
     } else {
       result = await RunFromModelAsync(
@@ -1329,7 +1384,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     if (dispatcher is not null) {
       try {
         await dispatcher.AsSystem().ForAllTenants().PublishAsync(new PerspectiveRewindCompleted(
-            streamId, perspectiveName, triggeringEventId, result.LastEventId,
+            rewindStreamId, streamId, perspectiveName, triggeringEventId, result.LastEventId,
             result.EventsProcessed,
             startedAt, DateTimeOffset.UtcNow));
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -1377,6 +1432,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var resurrected = false;
     var purgedEventsSkipped = 0;
     PerspectiveScope? lastScope = null;
+    var rowChanged = false;  // True once this replay actually wrote or purged the row
     // The replay FRONTIER — max event id / max local commit_sequence across everything
     // applied. The checkpoint metadata must carry the frontier, not the origin-order-last
     // event's stamp: after a replay everything at or below the frontier IS applied (that is
@@ -1447,27 +1503,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         break;
       }
 
-      // Ordering invariant — one comparator per batch, chosen by what the batch can prove:
-      // 1) SINGLE-ORIGIN stream (every event carries the same non-empty SourceServiceId and a
-      //    positive SourceCommitSequence): replay in ORIGIN order. A reconciled straggler
-      //    keeps its original origin slot but lands with an arrival-fresh LOCAL sequence — a
-      //    local-order replay would apply it last, which is exactly the arrival-order failure
-      //    the rewind exists to correct.
-      // 2) Otherwise, COMMIT order when every event carries its local stamp — the inversion
-      //    detector is commit-sequence-authoritative (same-millisecond UUIDv7 ids can disagree
-      //    with commit order), and an id-ordered replay would silently undo newer writes.
-      // 3) Any unstamped event (stamper lag) falls the whole batch back to MessageId order —
-      //    a partial mix would interleave two orderings.
+      // Ordering invariant: origin order for a single-origin stream, else commit order when every event is
+      // stamped, else id order. The inversion detector is commit-sequence-authoritative, and an id-ordered replay
+      // would silently undo newer writes. The rule lives in ReplayEventOrder, which the rebuild shares.
       if (events.Count > 1) {
-        var firstOrigin = events[0].SourceServiceId;
-        if (firstOrigin != Guid.Empty
-            && events.All(e => e.SourceServiceId == firstOrigin && e.SourceCommitSequence > 0)) {
-          events = events.OrderBy(e => e.SourceCommitSequence).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
-        } else if (events.All(e => e.LocalCommitSequence.HasValue)) {
-          events = events.OrderBy(e => e.LocalCommitSequence!.Value).ThenBy(e => e.MessageId.Value.ToString("D"), StringComparer.Ordinal).ToList();
-        } else {
-          events = events.OrderByMessageId().ToList();
-        }
+        events = [.. global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(events)];
       }
 
       // A batch whose last event always purges the row (#1151) discards whatever the events before it fold: they
@@ -1609,6 +1649,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           await _markPurgedAsync(streamId, perspectiveName, purgeEventId, cancellationToken);
         }
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+        rowChanged = true;
       } else if (updatedModel != null) {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
         var replayCheckpointCommitSequence = frontierCommitSequence
@@ -1616,10 +1657,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Issue #1002: the snapshot below follows every rewind that applied something, when snapshots are on.
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
         snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
-        await SaveModelAndCheckpointAsync(
+        rowChanged = await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
-        if (resurrected && startedPurged) {
+        if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }
       }
@@ -1662,7 +1703,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // event need not carry the largest id, and a cursor behind the frontier would re-flag
       // already-replayed events as stragglers on the next work item.
       LastEventId = frontierEventId ?? lastSuccessfulEventId ?? replayFromEventId ?? Guid.Empty,
+      // Reported rather than left for the caller to rediscover. The caller used to look the id above
+      // up among the rows its batch claimed, which a replay never applied, so the commit-sequence
+      // cursor stayed behind while the event-id cursor moved and the inversion detector then
+      // under-reported against the stale one (#1365).
+      LastCommitSequence = frontierCommitSequence,
       Status = resultStatus,
+      RowChanged = rowChanged,
       EventsProcessed = eventsProcessed
     };
   }

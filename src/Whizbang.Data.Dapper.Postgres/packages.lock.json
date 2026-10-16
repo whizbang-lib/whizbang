@@ -441,11 +441,6 @@
           "Microsoft.IdentityModel.Tokens": "8.16.0"
         }
       },
-      "System.Security.Cryptography.Pkcs": {
-        "type": "Transitive",
-        "resolved": "9.0.18",
-        "contentHash": "NKMKhUdLGNZryY9GXXTF5dXyP6S37EYXhiA2JYvwshJbd4DRq07IOS9it8Opi9atadvv5rlNkD76Mio+5Oo2aQ=="
-      },
       "System.Security.Cryptography.ProtectedData": {
         "type": "Transitive",
         "resolved": "9.0.18",
@@ -474,7 +469,8 @@
           "Microsoft.Data.SqlClient": "[7.1.1, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )",
           "Npgsql": "[10.0.1, )",
-          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )"
         }
       },
       "SoftwareExtravaganza.Whizbang.Data.Postgres": {
@@ -583,6 +579,12 @@
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.12"
         }
+      },
+      "System.Security.Cryptography.Pkcs": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
       }
     }
   }

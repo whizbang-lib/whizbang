@@ -124,6 +124,7 @@ public static class RoleAssignmentServiceCollectionExtensions {
        .. sp.GetServices<IStartupStep>()
          .Where(step => step.Descriptor.RequiredCapability != StartupCapabilities.EVERY_INSTANCE)
          .Select(step => new StartupStepDutyWork(step, sp.GetService<IStartupPipelineState>()))],
+      [.. sp.GetServices<IDutyAcquisitionHandler>()],
       sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
       sp.GetRequiredService<ILogger<DutyHolderWorker>>(),
       sp.GetService<ISharedNotifyConnection>(),

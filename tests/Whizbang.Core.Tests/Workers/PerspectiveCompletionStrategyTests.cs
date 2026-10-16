@@ -23,6 +23,7 @@ public class PerspectiveCompletionStrategyTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var completion = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -66,12 +67,14 @@ public class PerspectiveCompletionStrategyTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var completion1 = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective1",
       LastEventId = Guid.NewGuid(),
       Status = PerspectiveProcessingStatus.Completed
     };
     var completion2 = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective2",
       LastEventId = Guid.NewGuid(),
@@ -130,6 +133,7 @@ public class PerspectiveCompletionStrategyTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var completion = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -168,6 +172,7 @@ public class PerspectiveCompletionStrategyTests {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var completion = new PerspectiveCursorCompletion {
+      RowChanged = true,
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),

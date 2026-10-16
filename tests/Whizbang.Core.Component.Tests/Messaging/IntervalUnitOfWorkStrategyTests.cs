@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 
@@ -76,7 +77,8 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
   [Test]
   public async Task QueueMessageAsync_GeneratesUuid7UnitId_OnFirstMessageAsync() {
     // Arrange
-    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
+    // A clock that does not move: both messages are queued before any tick, by construction.
+    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100), new FakeTimeProvider());
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message1 = new TestMessage { Value = "test1" };
@@ -95,7 +97,7 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
   [Test]
   public async Task QueueMessageAsync_AccumulatesMessages_InCurrentUnitAsync() {
     // Arrange
-    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(500));
+    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(500), new FakeTimeProvider());
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message1 = new TestMessage { Value = "test1" };
@@ -119,7 +121,7 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
   [Test]
   public async Task QueueMessageAsync_ReturnsImmediatelyAsync() {
     // Arrange
-    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
+    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100), new FakeTimeProvider());
     var callbackStarted = false;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -307,7 +309,10 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
   [Test]
   public async Task GetLifecycleStagesForUnit_DuringCallback_ReturnsLifecycleStagesAsync() {
     // Arrange
-    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
+    // The tick comes only when the test advances the clock, after both messages are queued. On the system
+    // clock a 50ms tick could land between the two queue calls and flush a unit holding only the first.
+    var clock = new FakeTimeProvider();
+    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50), clock);
     IReadOnlyDictionary<object, LifecycleStage>? lifecycleStagesInCallback = null;
     var flushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -322,8 +327,8 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
 
     await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeDetached);
     await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeDetached);
+    clock.Advance(TimeSpan.FromMilliseconds(50));
 
-    // Wait for timer tick (signal-based)
     await flushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert

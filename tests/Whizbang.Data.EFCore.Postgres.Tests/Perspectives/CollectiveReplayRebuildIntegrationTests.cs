@@ -80,10 +80,10 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
     return (IReadOnlyList<CollectiveApplyEntry>)entries;
   }
 
-  private static async Task _appendAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload)
+  private static async Task _appendAsync<TEvent>(IEventStore eventStore, Guid streamId, TEvent payload, Guid? eventId = null)
       where TEvent : IEvent {
     var envelope = new MessageEnvelope<TEvent> {
-      MessageId = MessageId.New(),
+      MessageId = eventId is { } id ? new MessageId(id) : MessageId.New(),
       Payload = payload,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = []
@@ -131,6 +131,53 @@ public class CollectiveReplayRebuildIntegrationTests : EFCoreTestBase {
       await Assert.That(b).IsNotNull();
       await Assert.That(b!.Balance).IsEqualTo(500m)
         .Because("the collective event's Where targets only stream A — stream B must be unaffected");
+    }
+  }
+
+  [Test]
+  public async Task Rebuild_WithCollectivesInTheTenant_FoldsTheStreamInCommitOrderAsync() {
+    // The stream's first committed event carries its higher id. With a collective in the tenant, the interleave used
+    // to re-sort the whole list by id, fold the first commit last, and write the row at a stale position (#1346).
+    var streamA = Guid.NewGuid();
+    var streamB = Guid.NewGuid();
+    var collectiveStream = Guid.NewGuid();
+    var lowerId = Guid.CreateVersion7();
+    var higherId = Guid.CreateVersion7();
+
+    await using var sp = _buildServices();
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
+      var collectiveId = Guid.CreateVersion7();
+      await _appendAsync(eventStore, collectiveStream, new RebuildResetBalanceCollectiveEvent {
+        StreamId = collectiveStream,
+        Scope = new TenantCollectiveScope(string.Empty),
+        TargetId = streamB,
+        ResetTo = 0m,
+      }, collectiveId);
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 100m }, higherId);
+      await _appendAsync(eventStore, streamA, new RebuildCreditedEvent { StreamId = streamA, Amount = 5m }, lowerId);
+
+      // Commit order: the collective, then the higher id, then the lower id.
+      var db = scope.ServiceProvider.GetRequiredService<WorkCoordinationDbContext>();
+      await db.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_event_store SET commit_sequence = CASE event_id WHEN {0} THEN 1 WHEN {1} THEN 2 WHEN {2} THEN 3 END " +
+        "WHERE event_id IN ({0}, {1}, {2})", collectiveId, higherId, lowerId);
+    }
+
+    var rebuilder = sp.GetRequiredService<IPerspectiveRebuilder>();
+    var result = await rebuilder.RebuildInPlaceAsync(RebuildBalancePerspectiveName, CancellationToken.None);
+    await Assert.That(result.Success).IsTrue().Because(result.Error ?? "rebuild should succeed");
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var store = scope.ServiceProvider.GetRequiredService<IPerspectiveStore<RebuildBalanceModel>>();
+      var metadata = await store.GetMetadataByStreamIdAsync(streamA, CancellationToken.None);
+
+      await Assert.That(metadata).IsNotNull();
+      await Assert.That(metadata!.EventId).IsEqualTo(lowerId.ToString("D"))
+        .Because("the stream's last committed event folds last, though its id is the lower one");
+      await Assert.That(metadata.CommitSequence).IsEqualTo(3L)
+        .Because("the row is written at the stream's head position, which the ordering guard admits next time");
     }
   }
 }

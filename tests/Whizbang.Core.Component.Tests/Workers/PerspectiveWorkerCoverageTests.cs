@@ -178,10 +178,14 @@ public class PerspectiveWorkerCoverageTests {
   public async Task Worker_WithWork_TransitionsToActiveAndFiresEventAsync() {
     // Arrange
     var startedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var (worker, coordinator, _, harness) = _createWorker();
-    // Sample IsIdle INSIDE the handler: the worker flips Active BEFORE invoking the event, so the
-    // capture is deterministic — asserting after StopAsync raced the idle-threshold polls, which
-    // could legitimately flip the worker back to idle under load before the assertion sampled.
+    // The idle threshold is put out of reach so the worker cannot flip back to idle while this test
+    // is looking. Sampling inside the handler was meant to make the capture deterministic, and it is
+    // not quite: the CAS flips Active and then invokes, so the state is Active at the moment of the
+    // call, but the consumer loops run in parallel and an empty poll on another one can reach the
+    // threshold and flip it back between the invoke and the handler's read. That is a race in what
+    // the test observes, not in the worker, and raising the threshold removes it by construction
+    // rather than by hoping the read wins. Seen failing once on CI under load.
+    var (worker, coordinator, _, harness) = _createWorker(idleThresholdPolls: int.MaxValue);
     bool? idleWhenStartedFired = null;
     worker.OnWorkProcessingStarted += () => {
       idleWhenStartedFired = worker.IsIdle;

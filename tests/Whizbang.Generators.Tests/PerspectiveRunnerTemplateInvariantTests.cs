@@ -51,6 +51,39 @@ public class PerspectiveRunnerTemplateInvariantTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task FilterBlock_RewindsFromAnEventBelowThePositionBeforeItDropsAnythingAsync() {
+    // #1347 regression lock: the filter must never drop an event below the row's position on that evidence alone. The
+    // runner asks FindRewindAnchor first and re-folds through the lock-free rewind core; RewindAndRunAsync would take
+    // the apply lock this method already holds and deadlock.
+    var template = _loadTemplate();
+    var anchor = template.IndexOf("PerspectiveIdempotencyFilter.FindRewindAnchor(", StringComparison.Ordinal);
+    var drop = template.IndexOf("PerspectiveIdempotencyFilter.IsAlreadyApplied(", StringComparison.Ordinal);
+    var rewindCall = template.IndexOf("return await _rewindAndRunCoreAsync(streamId, perspectiveName, anchorEventId", StringComparison.Ordinal);
+
+    await Assert.That(anchor).IsGreaterThan(0).Because("the runner must ask for a rewind anchor");
+    await Assert.That(drop).IsGreaterThan(anchor).Because("the anchor check must come before any event is judged already applied");
+    await Assert.That(rewindCall).IsGreaterThan(anchor).Because("an anchor must re-fold the stream");
+    await Assert.That(rewindCall).IsLessThan(drop).Because("the re-fold must happen before the drop loop, not after it");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task FoldCheckpoints_RecordTheCommitSequenceThroughOneRuleAsync() {
+    // #1352 regression lock: both checkpoint writes of a fold go through _recordedCommitSequence, which records a
+    // rebuild's highest folded commit sequence. Looking up the last event's own sequence directly put a rebuilt row's
+    // position below events it had folded, and the store's ordering guard refused the corrected write.
+    var template = _loadTemplate();
+    var uses = template.Split("_recordedCommitSequence(").Length - 1;
+
+    await Assert.That(uses).IsEqualTo(3).Because("one definition and the two checkpoint writes (full and partial)");
+    await Assert.That(template).DoesNotContain("var checkpointCommitSequence = await _eventStore.GetCommitSequenceAsync(")
+      .Because("the full checkpoint must not take the last event's sequence as the row's position");
+    await Assert.That(template).DoesNotContain("var partialCheckpointCommitSequence = await _eventStore.GetCommitSequenceAsync(")
+      .Because("the partial checkpoint must not either");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task ApplyLoop_CallsThrowIfCancellationRequestedBetweenEventsAsync() {
     // Phase H step 9 slice 4 regression lock: the apply loop must check the lease CT between
     // events. Apply is pure synchronous so can't be canceled mid-call, but per-event CT checks
@@ -180,5 +213,77 @@ public class PerspectiveRunnerTemplateInvariantTests {
       .Because("the resurrection probe asks about the handled event types only");
     await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)")
       .Because("the untyped probe is the false positive");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task RewindLifecycleEvents_AreStampedWithTheirOwnStream_NotTheOneBeingRewoundAsync() {
+    // #1360: both publishes passed the domain stream as the event's stream id, and the attribute on that
+    // parameter routes the event there, so every rewind appended two framework events into the application
+    // stream it had just rewound. They take a version and a commit sequence in it, so they show up in every
+    // later replay, audit, stream read and version count of that aggregate.
+    var template = _loadTemplate();
+
+    await Assert.That(_firstArgumentOf(template, "new PerspectiveRewindStarted(")).IsEqualTo("rewindStreamId")
+      .Because("the event's stream is the rewind's own, which is what the record's own parameter "
+             + "documentation has always said it is");
+    await Assert.That(_firstArgumentOf(template, "new PerspectiveRewindCompleted(")).IsEqualTo("rewindStreamId")
+      .Because("the pair belongs to one rewind, so both carry the same stream and a reader can find them together");
+
+    await Assert.That(_secondArgumentOf(template, "new PerspectiveRewindStarted(")).IsEqualTo("streamId")
+      .Because("the rewound stream stays on the event as a plain property; losing it would make the event "
+             + "unreadable without joining back through the triggering event");
+    await Assert.That(_secondArgumentOf(template, "new PerspectiveRewindCompleted(")).IsEqualTo("streamId");
+
+    var mints = _countOf(template, "TrackedGuid.New()");
+    await Assert.That(mints).IsEqualTo(1)
+      .Because("one id per rewind, minted once and shared by the pair. Minting per publish would scatter "
+             + "the Started and Completed of one rewind across two streams");
+  }
+
+  /// <summary>The first argument of a constructor call, as written, with nesting respected.</summary>
+  private static string _firstArgumentOf(string template, string ctor) => _argumentsOf(template, ctor)[0];
+
+  private static string _secondArgumentOf(string template, string ctor) => _argumentsOf(template, ctor)[1];
+
+  private static string[] _argumentsOf(string template, string ctor) {
+    var open = template.IndexOf(ctor, StringComparison.Ordinal);
+    if (open < 0) {
+      return ["<not found: " + ctor + ">"];
+    }
+    var i = open + ctor.Length;
+    var depth = 1;
+    var args = new List<string>();
+    var current = new System.Text.StringBuilder();
+    while (i < template.Length && depth > 0) {
+      var c = template[i];
+      if (c is '(' or '[') {
+        depth++;
+      } else if (c is ')' or ']') {
+        depth--;
+        if (depth == 0) {
+          break;
+        }
+      }
+      if (c == ',' && depth == 1) {
+        args.Add(current.ToString().Trim());
+        current.Clear();
+      } else {
+        current.Append(c);
+      }
+      i++;
+    }
+    args.Add(current.ToString().Trim());
+    return [.. args];
+  }
+
+  private static int _countOf(string template, string needle) {
+    var count = 0;
+    var i = template.IndexOf(needle, StringComparison.Ordinal);
+    while (i >= 0) {
+      count++;
+      i = template.IndexOf(needle, i + needle.Length, StringComparison.Ordinal);
+    }
+    return count;
   }
 }

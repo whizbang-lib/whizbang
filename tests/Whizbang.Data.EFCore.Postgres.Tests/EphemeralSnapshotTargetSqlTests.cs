@@ -74,7 +74,7 @@ public class EphemeralSnapshotTargetSqlTests : EFCoreTestBase {
 
     // Consume (work item processed), stamp commit_sequence, age past grace, and set a cursor.
     await _execAsync(connection, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_id = @id", ("id", eventId));
-    await _execAsync(connection, "UPDATE wh_event_store SET commit_sequence = 5 WHERE event_id = @id", ("id", eventId));
+    await _execAsync(connection, "UPDATE wh_event_store SET commit_sequence = 5, version = 5 WHERE event_id = @id", ("id", eventId));
     await _execAsync(connection, "UPDATE wh_event_store SET created_at = NOW() - INTERVAL '10 minutes' WHERE event_id = @id", ("id", eventId));
     await _execAsync(connection,
       "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status) VALUES (@sid, @p, @eid, 1)",
@@ -86,15 +86,15 @@ public class EphemeralSnapshotTargetSqlTests : EFCoreTestBase {
     await Assert.That(target).IsNotNull().Because("A consumed, aged, uncovered ephemeral pair must be snapshotted before the reap.");
     await Assert.That(target!.LastEventId).IsEqualTo(eventId).Because("It carries the perspective cursor's last processed event to snapshot at.");
 
-    // Cover it with a snapshot at/past the event's commit_sequence.
+    // Cover it with a snapshot at/past the event in the stream.
     await _execAsync(connection,
-      "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence) " +
-      "VALUES (@sid, @p, @eid, '{}'::jsonb, 1, 5)",
+      "INSERT INTO wh_perspective_snapshots (stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_commit_sequence, snapshot_version) " +
+      "VALUES (@sid, @p, @eid, '{}'::jsonb, 1, 5, 5)",
       ("sid", streamId), ("p", Perspective), ("eid", eventId));
 
     var pairsAfter = await coordinator.GetEphemeralPairsNeedingSnapshotAsync();
     await Assert.That(pairsAfter.Any(t => t.StreamId == streamId && t.PerspectiveName == Perspective)).IsFalse()
-      .Because("Once a covering snapshot exists (snapshot_commit_sequence >= the event), the pair is no longer a target.");
+      .Because("Once a snapshot sits at or past the event in the stream, the pair is no longer a target.");
   }
 
   [Test]

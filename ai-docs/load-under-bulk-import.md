@@ -175,6 +175,48 @@ peer.
 **Rule:** the same as round two, for every acquisition: the bound is on rows examined, not on rows
 found.
 
+## Finding 1, round four: the plans were bounded, the statistics were not (#1349)
+
+Every bound above is a plan property, and a planner chooses a plan from statistics. The queue tables
+are empty between loads, which is when autovacuum analyzes them, and under a load its next analyze
+may never come: autovacuum runs one worker per table, and that worker's vacuum needs a cleanup lock
+on each btree leaf page, which it cannot get while claim scans keep the page pinned. A deployed
+service sat for over an hour like this: the perspective-event table's statistics said one page and
+no rows (`reltuples` 0), it held tens of thousands of pending rows on over a thousand pages, and its
+vacuum had waited on
+`BufferPin` the whole time.
+
+With one page and no rows the planner computes a density of zero, so every scan is estimated to
+return nothing and every candidate index looks free. It captured each selected stream by walking the
+whole pending set in event-id order (`ix_perspective_events_event_id_unprocessed`, which had read
+billions of entries, by far the most of any index on the table) and filtering on the stream, once per stream. `claim_work` ran past the
+caller's command timeout, was canceled, claimed nothing, and the next call met the same backlog. The
+service drained nothing for hours, and the scans that never stopped were what kept the vacuum stuck.
+
+Reproduced by `ClaimWorkStaleStatisticsTests` on a container: 180,000 pending rows, one claim, 6,512
+tuples and 19 ms on fresh statistics, more than eight minutes (canceled) on statistics taken at one
+page and no rows. Statistics from a table that never had a page do not reproduce it: with no pages
+the planner sizes the table from its current pages and stays roughly right. A fixture has to put the
+table at one page and no rows, then fill it.
+
+No SQL shape fixes this. Once the planner believes a table is empty, a plan that reads every matching
+row before it sorts looks as cheap as one that walks an index and stops, for every query. Migration
+207 keeps the statistics true instead: before it acquires, `claim_work` calls
+`wh_refresh_stale_queue_statistics`, which analyzes any queue table that has changed by more than
+1,000 rows and four times what the planner believes it holds since its last analyze. Autovacuum
+analyzes at 50 rows plus a tenth of the table, so on a healthy database it always gets there first and
+the check costs a catalog read per table. A stale table is analyzed by one claimant at a time (a
+transaction-scoped advisory lock per table; a claimant that waited reads the counters again, which are
+cached for its transaction, and analyzes nothing a peer already did). ANALYZE needs no cleanup lock,
+and Postgres cancels an autovacuum that is not preventing wraparound once another session has waited
+on it for `deadlock_timeout`, so the stuck worker is ended rather than waited out. All of it runs under
+a five second lock timeout; a claimant that cannot get there logs a warning and claims as before.
+
+**Rule:** a cost bound that a plan provides holds only on statistics that describe the table. A
+queue table's statistics are part of the claim's correctness, and the claim keeps them true when
+autovacuum cannot. Any test that asserts a plan bound states which statistics it ran on; the fixtures
+above analyze after every fill on purpose, and that is why none of them could see this.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a
@@ -236,6 +278,15 @@ before and 2 after (`CommitSequenceStreamOrderSqlTests`); the harness
 it may stamp. When more are eligible than one batch holds, the earlier transaction's rows go first; a
 batch is numbered in insertion order and a stream in version order, as before.
 
+**A batch is bounded by time, not only by rows (#1327).** After 205 a draining stamper still grew its
+batch by doubling while calls filled, whatever a call cost. On a store where a few thousand rows took
+longer than the role lease (15 s by default), a single-instance service lost the stamper role to its own
+lapse four times in two minutes: the holder renews only between calls, and nobody else could take the
+role, so each lapse cost a cool-down and nothing more. A full call that runs past the call budget (half
+the renewal interval, 2.5 s by default) now halves the next one and caps growth until the backlog drains;
+one past half the budget holds its size. The timeout backoff stays as the last resort. **Rule:** no
+single fenced call may outlast a renewal interval; it holds the role row for its whole duration.
+
 **Measure a function's work inside its own transaction, not from its plan.** `EXPLAIN (ANALYZE,
 BUFFERS)` of `SELECT stamp_pending_commit_sequences(…)` did not follow the walk: 910 buffers for a
 call that read 1,000 index entries and 530 for one that read 20,000. Index entries read come from
@@ -269,6 +320,27 @@ prints every wait with the statement that held it. On the SQL before 197 to 199:
 **Rule:** a liveness call never waits for bulk work. Where it shares a row with a fenced duty, the
 duty's transaction is bounded by its batch; anything opportunistic inside a liveness call steps aside
 instead of waiting.
+
+## Finding 3, round three: the doorbell rings queued behind each other (#1336)
+
+The bulk-import capture for #1217 found the largest single source of blocked sessions was
+`ring_doorbells()` waiting on another `ring_doorbells()`: 3,111 waits in 20 minutes across 13 service
+databases, median 371 ms, p95 1,028 ms, longest 2.3 s, wait event `Lock/object`. 146 had moved the
+NOTIFY lock out of the hot transactions, but every hot call is followed by a ring and every ring that
+notifies commits on that one database-wide lock, so the contention moved to the rings and each hot
+caller waited for its own. (A 204 s "wait" in the same capture was a session in `Client/ClientRead`,
+waiting on its client; filter on `wait_event_type = 'Lock'` before quoting a lock wait.)
+
+206 lets one ringer per schema ring at a time. A ring checks the queue first and returns when it is
+empty, then tries a transaction-scoped advisory lock and returns when another ringer has it, then
+rings one batch; `DoorbellRinger` calls again while a call rang anything. The order of the first two
+steps is what makes it lossless: the holder stops only on a call whose empty check started after its
+previous commit, so after any doorbell a busy caller left to it. A ring inside a caller's transaction
+that has written never takes the turn, because it would hold it until that caller commits.
+
+**Rule:** a contended lock the caller does not need is not waited for. When any one of many callers
+can do the work, one does it and drains, and the rest return; the drainer's stopping condition must
+be a check that starts after every handoff it could have missed.
 
 ## Finding 4: DDL at startup under load deadlocks
 

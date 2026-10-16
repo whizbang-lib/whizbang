@@ -12,6 +12,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Notifications;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -296,10 +297,10 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       _ = await fire.ExecuteScalarAsync();
     }
     // 146 (#720): the completion queued its doorbell; the driver rings after the commit, modeled here.
-    await using (var ring = conn.CreateCommand()) {
-      ring.CommandText = "SELECT ring_doorbells()";
-      _ = await ring.ExecuteScalarAsync();
-    }
+    // Rings the way the driver rings: DoorbellRinger loops until a call rings nothing. A single raw
+    // call rings one batch and stops, and since migration 206 a second ringer that finds the turn
+    // held returns at once trusting the holder to drain, so a raw holder can strand a doorbell (#1344).
+    _ = await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, null, CancellationToken.None);
 
     var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
     await Assert.That(category).IsEqualTo(WorkSignalCategory.Perspective);

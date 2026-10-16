@@ -38,6 +38,15 @@ public class DutyGrantContractTests {
     await Assert.That(grant.DrainRequested).IsFalse();
   }
 
+  [Test]
+  public async Task PreviousHolderInstanceId_OfAGrantThatDoesNotKnow_IsNullAsync() {
+    // #1351: a grant that cannot tell a hand-off from a first assignment says so with null, which a
+    // duty-acquisition handler reads as a first assignment.
+    IDutyGrant grant = new SessionLockStyleGrant();
+
+    await Assert.That(grant.PreviousHolderInstanceId).IsNull();
+  }
+
   private sealed class OneAtATimeElector : IDutyElector {
     public List<string> Asked { get; } = [];
 
