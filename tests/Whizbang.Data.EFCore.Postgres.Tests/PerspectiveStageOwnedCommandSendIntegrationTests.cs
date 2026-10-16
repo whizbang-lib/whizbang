@@ -299,10 +299,9 @@ public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       }
       // The commit-order stamper's job, done in line: the claim gates unstamped rows behind a grace
       // window, and stamping here is what the stamper would do on the commit's wake.
-      await using (var stamp = conn.CreateCommand()) {
-        stamp.CommandText = "SELECT stamp_pending_commit_sequences(10000, false)";
-        _ = await stamp.ExecuteScalarAsync(ct);
-      }
+      await using var stamp = conn.CreateCommand();
+      stamp.CommandText = "SELECT stamp_pending_commit_sequences(10000, false)";
+      _ = await stamp.ExecuteScalarAsync(ct);
     }
 
     private static async Task _registerInstanceAsync(NpgsqlConnection conn, Guid instanceId, CancellationToken ct) {
