@@ -153,3 +153,69 @@ public sealed class ExRuntimeResultReceptor<TMessage> : IReceptor<TMessage, ExFo
     return ValueTask.FromResult(new ExFollowUpEvent(message.Id));
   }
 }
+
+// ── E6: request/response receptors reached through every LocalInvoke overload ─────────────────
+
+public record ExRpcResponse(Guid Id);
+
+public record ExRpcCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExRpcCommandReceptor : IReceptor<ExRpcCommand, (ExRpcResponse, ExFollowUpEvent)> {
+  public ValueTask<(ExRpcResponse, ExFollowUpEvent)> HandleAsync(ExRpcCommand message, CancellationToken cancellationToken = default) {
+    PolicyProbe.Record(nameof(ExRpcCommandReceptor), message.Id);
+    return ValueTask.FromResult((new ExRpcResponse(message.Id), new ExFollowUpEvent(message.Id)));
+  }
+}
+
+public record ExSyncRpcCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExSyncRpcCommandReceptor : ISyncReceptor<ExSyncRpcCommand, ExRpcResponse> {
+  public ExRpcResponse Handle(ExSyncRpcCommand message) {
+    PolicyProbe.Record(nameof(ExSyncRpcCommandReceptor), message.Id);
+    return new ExRpcResponse(message.Id);
+  }
+}
+
+// ── E13: a receptor's [DefaultRouting] applies at a worker stage too ────────────────────────────
+
+public record ExDefaultLocalTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+[DefaultRouting(DispatchModes.Local)]
+public sealed class ExDefaultLocalTriggerReceptor : IReceptor<ExDefaultLocalTrigger, ExFollowUpEvent> {
+  public ValueTask<ExFollowUpEvent> HandleAsync(ExDefaultLocalTrigger message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new ExFollowUpEvent(message.Id));
+}
+
+// ── E21: a routed result whose type no receptor declares goes through the dynamic outbox path ──
+
+public record ExUndeclaredEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+public sealed class ExUndeclaredEventReceptor : IReceptor<ExUndeclaredEvent> {
+  public ValueTask HandleAsync(ExUndeclaredEvent message, CancellationToken cancellationToken = default) {
+    PolicyProbe.Record(nameof(ExUndeclaredEventReceptor), message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public record ExObjectRouteOutboxTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExObjectRouteOutboxTriggerReceptor : IReceptor<ExObjectRouteOutboxTrigger, object> {
+  public ValueTask<object> HandleAsync(ExObjectRouteOutboxTrigger message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult<object>(Route.Outbox(new ExUndeclaredEvent(message.Id)));
+}
+
+// ── E28: the caller's explicit context reaches the receptor ────────────────────────────────────
+
+public record ExContextProbeCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExContextProbeCommandReceptor : IReceptor<ExContextProbeCommand> {
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, Guid?> _seenCorrelation = new();
+
+  /// <summary>The correlation id the receptor saw in the ambient message context for a message, if any.</summary>
+  public static Guid? SeenCorrelation(Guid id) => _seenCorrelation.TryGetValue(id, out var seen) ? seen : null;
+
+  public ValueTask HandleAsync(ExContextProbeCommand message, CancellationToken cancellationToken = default) {
+    _seenCorrelation[message.Id] = Whizbang.Core.Security.MessageContextAccessor.CurrentContext?.CorrelationId.Value;
+    return ValueTask.CompletedTask;
+  }
+}
