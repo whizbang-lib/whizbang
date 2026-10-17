@@ -553,11 +553,12 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   }
 
   /// <summary>
-  /// Verifies that SendAsync with Route.Outbox&lt;T&gt; unwraps and dispatches correctly.
+  /// SendAsync honors a Route.Outbox&lt;T&gt; wrapper (#1395): the local handler is skipped and the message
+  /// goes to the outbox, so with no outbox configured the send fails instead of quietly running here.
   /// </summary>
   [Test]
   [NotInParallel]
-  public async Task SendAsync_WithRouteOutbox_UnwrapsAndDispatchesAsync() {
+  public async Task SendAsync_WithRouteOutbox_SkipsTheLocalHandlerAsync() {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
@@ -566,12 +567,12 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var evt = new RoutedSendTestEvent(Guid.NewGuid());
     var routed = Route.Outbox(evt);
 
-    // Act
-    var receipt = await dispatcher.SendAsync(routed, MessageContext.New());
-
-    // Assert
-    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(dispatcher.GetSentMessages()[0]).IsTypeOf<RoutedSendTestEvent>();
+    // Act + Assert
+    Func<Task> send = () => dispatcher.SendAsync(routed, MessageContext.New());
+    await Assert.That(send).Throws<ReceptorNotFoundException>()
+      .Because("Route.Outbox sends the message out; this host has no outbox to send it through");
+    await Assert.That(dispatcher.GetSentMessages()).IsEmpty()
+      .Because("Route.Outbox skips local handlers");
   }
 
   /// <summary>

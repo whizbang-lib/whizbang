@@ -350,7 +350,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   [Arguments(SendOverload.Typed, false)]
   [Arguments(SendOverload.TypedWithOptions, true)]
   [Arguments(SendOverload.TypedWithOptions, false)]
-  public async Task SendAsync_VoidReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+  public async Task SendAsync_VoidReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync(SendOverload overload, bool owned) {
     // Arrange - IReceptor<TCommand> with no result: before #1379 SendAsync never consulted the
     // void lookup, so an owned command was dropped as Accepted and a non-owned one went to the outbox
     var strategy = new SweepWorkStrategy();
@@ -367,7 +367,8 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     // Assert
     await Assert.That(invoked).IsEqualTo(1);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(owned ? 0 : 1)
+      .Because("an owned command stays in its service; an unowned one this service handles also goes to the outbox (#1396)");
   }
 
   [Test]
@@ -379,7 +380,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   [Arguments(SendOverload.Typed, false)]
   [Arguments(SendOverload.TypedWithOptions, true)]
   [Arguments(SendOverload.TypedWithOptions, false)]
-  public async Task SendAsync_SyncReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+  public async Task SendAsync_SyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync(SendOverload overload, bool owned) {
     // Arrange - ISyncReceptor<TCommand, TResult>
     var strategy = new SweepWorkStrategy();
     var invoked = 0;
@@ -395,7 +396,8 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     // Assert
     await Assert.That(invoked).IsEqualTo(1);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(owned ? 0 : 1)
+      .Because("an owned command stays in its service; an unowned one this service handles also goes to the outbox (#1396)");
   }
 
   [Test]
@@ -407,7 +409,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   [Arguments(SendOverload.Typed, false)]
   [Arguments(SendOverload.TypedWithOptions, true)]
   [Arguments(SendOverload.TypedWithOptions, false)]
-  public async Task SendAsync_VoidSyncReceptor_InvokesLocallyWithoutOutboxAsync(SendOverload overload, bool owned) {
+  public async Task SendAsync_VoidSyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync(SendOverload overload, bool owned) {
     // Arrange - ISyncReceptor<TCommand> with no result
     var strategy = new SweepWorkStrategy();
     var invoked = 0;
@@ -423,7 +425,8 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     // Assert
     await Assert.That(invoked).IsEqualTo(1);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(strategy.Queued).Count().IsEqualTo(0);
+    await Assert.That(strategy.Queued).Count().IsEqualTo(owned ? 0 : 1)
+      .Because("an owned command stays in its service; an unowned one this service handles also goes to the outbox (#1396)");
   }
 
   [Test]

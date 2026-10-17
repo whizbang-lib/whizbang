@@ -45,7 +45,7 @@ public class RuntimeReceptorLocalDispatchComponentTests {
   [Test]
   [Arguments(LifecycleStage.LocalImmediateInline)]
   [Arguments(LifecycleStage.LocalImmediateDetached)]
-  public async Task SendAsync_UnownedCommandWithOnlyARuntimeReceptor_HandlesItLocallyAndNeverQueuesItAsync(LifecycleStage stage) {
+  public async Task SendAsync_UnownedCommandWithOnlyARuntimeReceptor_HandlesItLocallyAndSendsAMarkedCopyAsync(LifecycleStage stage) {
     var outbox = new RecordingOutbox();
     await using var provider = _buildProvider(outbox);
     _registry(provider).Register(new RecordingRuntimeReceptor<UnownedRuntimeCommand>(), stage);
@@ -56,8 +56,11 @@ public class RuntimeReceptorLocalDispatchComponentTests {
     await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1)
       .Because("the runtime receptor is the command's local handler and runs before SendAsync returns");
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(outbox.QueuedOf(typeof(UnownedRuntimeCommand))).IsEmpty()
-      .Because("a command handled locally is not also sent through the outbox");
+    var queued = outbox.QueuedOf(typeof(UnownedRuntimeCommand));
+    await Assert.That(queued).Count().IsEqualTo(1)
+      .Because("an unowned command this service handles also goes to the outbox for the other services that handle it (#1396)");
+    await Assert.That(queued[0].Envelope.DispatchContext.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue()
+      .Because("the copy is marked as handled here, so this service does not run it again");
   }
 
   [Test]
