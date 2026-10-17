@@ -55,8 +55,8 @@ public static class DispatchRules {
   public static readonly DispatchRule ResultRequiresLocalRun = _resultRequiresLocalRun;
 
   /// <summary>
-  /// With no outbox: a message this service handles now simply is not sent on; otherwise the
-  /// policy's <see cref="NoOutboxBehavior"/> applies.
+  /// With no outbox: a policy that defers or logs keeps the write for that fallback; otherwise a
+  /// message this service handles now simply is not sent on, and one it does not handle is refused.
   /// </summary>
   public static readonly DispatchRule NoOutbox = _noOutbox;
 
@@ -168,12 +168,14 @@ public static class DispatchRules {
     if (!current.WriteOutbox || situation.OutboxAvailable) {
       return current;
     }
+    if (policy.NoOutbox == NoOutboxBehavior.DeferOrLog) {
+      // The write goes ahead: the dispatcher hands it to the deferred outbox channel, or logs it
+      return current;
+    }
     if (current.Local == LocalRun.Now) {
-      // Handled here during the call: with nowhere to send it, it simply is not sent on.
+      // Handled here during the call: with nowhere to send it, it simply is not sent on
       return current with { WriteOutbox = false, Reason = DispatchReason.NoOutbox };
     }
-    return policy.NoOutbox == NoOutboxBehavior.Throw
-      ? DispatchDecision.Rejected(DispatchRejection.NoOutbox, DispatchReason.NoOutbox)
-      : current;
+    return DispatchDecision.Rejected(DispatchRejection.NoOutbox, DispatchReason.NoOutbox);
   }
 }

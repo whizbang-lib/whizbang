@@ -391,6 +391,13 @@ public class DispatchRulesTests {
   }
 
   [Test]
+  public async Task NoOutbox_HandledNowAndPolicyDefers_KeepsTheWriteForTheFallbackAsync() {
+    var result = _apply(DispatchRules.NoOutbox, _situation(MessageTraits.Event, outbox: false), _baselineHandled, DispatchPolicies.Publish);
+
+    await Assert.That(result).IsEqualTo(_baselineHandled);
+  }
+
+  [Test]
   public async Task NoOutbox_HandledNow_IsSimplyNotSentOnAsync() {
     var result = _apply(DispatchRules.NoOutbox, _situation(outbox: false), _baselineHandled);
 

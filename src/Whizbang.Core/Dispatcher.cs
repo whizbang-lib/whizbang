@@ -307,6 +307,67 @@ public abstract partial class Dispatcher(
       ? async msg => (TResult)(await runtimeInvoker(msg))!
       : null;
 
+  /// <summary>
+  /// True when publishing <paramref name="eventType"/> has any local receptor to run here: a generated
+  /// one (this assembly or another) or one registered at runtime at a local stage.
+  /// </summary>
+  private bool _hasLocalPublishReceptors(Type eventType) {
+    if (GetUntypedReceptorPublisher(eventType) is not null) {
+      return true;
+    }
+    return _foreignLookups().Any(lookup => lookup.LookupUntypedReceptorPublisher(eventType) is not null)
+      || _runtimeLocalReceptorsFor(eventType).Count > 0;
+  }
+
+  /// <summary>
+  /// Whether a publish has a local handler, as far as the policy needs to know. An event's publisher is
+  /// a no-op when nothing handles it, so an event is treated as handled here unless the caller asked to
+  /// fail without a handler; a command (an owned one fails without its handler) is checked exactly.
+  /// </summary>
+  private bool _publishHasLocalHandler(object message, Type eventType, DispatchOptions? options) =>
+    (message is IEvent && (options is null || (options.Behaviors & DispatchBehaviors.ThrowWhenNoHandler) == 0))
+    || _hasLocalPublishReceptors(eventType);
+
+  /// <summary>
+  /// The receptors registered at runtime (<see cref="IReceptorRegistry.Register"/>) at a local stage,
+  /// each once even when registered at both local stages.
+  /// </summary>
+  private List<ReceptorInfo> _runtimeLocalReceptorsFor(Type messageType) {
+    var runtime = new List<ReceptorInfo>();
+    if (_receptorRegistry is null) {
+      return runtime;
+    }
+    foreach (var stage in _localStages) {
+      foreach (var receptor in _receptorRegistry.GetReceptorsFor(messageType, stage)) {
+        if (receptor.RuntimeInstance is { } instance && !runtime.Exists(r => ReferenceEquals(r.RuntimeInstance, instance))) {
+          runtime.Add(receptor);
+        }
+      }
+    }
+    return runtime;
+  }
+
+  private static readonly LifecycleStage[] _localStages = [LifecycleStage.LocalImmediateInline, LifecycleStage.LocalImmediateDetached];
+
+  /// <summary>
+  /// Runs every receptor registered at runtime at a local stage for a published or cascaded message
+  /// (#1399), each in its own scope with the cascade's security context.
+  /// </summary>
+  private async Task _publishToRuntimeLocalReceptorsAsync(object message, Type messageType, CancellationToken cancellationToken) {
+    var receptors = _runtimeLocalReceptorsFor(messageType);
+    foreach (var receptor in receptors) {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+      var envelope = new MessageEnvelope<object> {
+        MessageId = MessageId.New(),
+        Payload = message,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      };
+      await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   private static DispatchPolicyEngine _resolvePolicyEngine(IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IDispatchPolicyRegistry>();
     var hooks = serviceProvider.GetServices<IDispatchPolicyHook>().ToArray();
@@ -583,6 +644,60 @@ public abstract partial class Dispatcher(
     serviceProvider.GetService<IServiceProviderIsService>()?.IsService(typeof(IWorkCoordinatorStrategy)) ?? true;
   // The namespace-derived traits of each message type (owned, system command), computed once per type.
   private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MessageTraits> _namespaceTraits = new();
+
+  // How the next outbox copy built on this async flow is marked. Set by a caller around its outbox
+  // write (publish, cascade) so the generated cascade code needs no new parameter.
+  private static readonly AsyncLocal<OutboxCopyMark> _outboxCopyMark = new();
+
+  private enum OutboxCopyMark : byte {
+    None = 0,
+    HandledLocally = 1,
+    LocalDeferred = 2,
+  }
+
+  private static OutboxCopyMark _markFor(in DispatchDecision decision) {
+    if (decision.MarkHandledLocally) {
+      return OutboxCopyMark.HandledLocally;
+    }
+    return decision.Local == LocalRun.AtScheduledTime ? OutboxCopyMark.LocalDeferred : OutboxCopyMark.None;
+  }
+
+  /// <summary>
+  /// Writes a published event's copy as the policy decided: to the outbox (marked when handled here,
+  /// marked deferred when its local handling waits for the schedule), to the event store only, or not
+  /// at all. Starts the write and returns its task, so the caller's local run does not delay it.
+  /// </summary>
+  private Task _publishCopyAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope,
+      DispatchOptions? options, in DispatchDecision decision) {
+    if (!decision.WriteOutbox && !decision.WriteEventStoreOnly) {
+      return Task.CompletedTask;
+    }
+    var mark = _markFor(in decision);
+    if (mark == OutboxCopyMark.None) {
+      return PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly: !decision.WriteOutbox, options, recordLocalDispatch: decision.Local == LocalRun.Now);
+    }
+    var previous = _outboxCopyMark.Value;
+    _outboxCopyMark.Value = mark;
+    try {
+      return PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly: !decision.WriteOutbox, options, recordLocalDispatch: decision.Local == LocalRun.Now);
+    } finally {
+      _outboxCopyMark.Value = previous;
+    }
+  }
+
+  /// <summary>
+  /// The dispatch context of a published or cascaded outbox copy, carrying the caller's mark (#1398,
+  /// #1401): a copy this service already handled says so, and a copy whose local handling was deferred
+  /// is handled here when it comes back.
+  /// </summary>
+  private static MessageDispatchContext _outboxCopyDispatchContext() {
+    var mark = _outboxCopyMark.Value;
+    return new MessageDispatchContext {
+      Mode = mark == OutboxCopyMark.HandledLocally ? DispatchModes.Both : DispatchModes.Outbox,
+      Source = MessageSource.Outbox,
+      LocalDeferred = mark == OutboxCopyMark.LocalDeferred,
+    };
+  }
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
@@ -3553,6 +3668,10 @@ public abstract partial class Dispatcher(
         _trackInSingletonTracker(streamId.Value, eventType, messageId.Value);
       }
 
+      // The Publish policy decides (#1395): every local receptor runs here, and the event goes out
+      var decision = _decide(DispatchPolicies.Publish, eventData, eventType, _publishHasLocalHandler(eventData, eventType, options: null), options: null, unmarkedKind: MessageTraits.Event);
+      _throwIfRejected(in decision, eventType);
+
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
@@ -3576,22 +3695,26 @@ public abstract partial class Dispatcher(
       // flows (a detached-stage or worker emit). Without this, PublishAsync passed sourceEnvelope=null and the
       // child fabricated a fresh correlation + null scope across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      // The local path runs below, so the stored envelope records it (see _recordLocalDispatchAsync).
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, recordLocalDispatch: true);
+      // The local path runs below, so the stored envelope records it (see _recordLocalDispatchAsync), and
+      // the copy is marked as handled here (#1398). The outbox write does not wait on the local outcome.
+      var outboxTask = _publishCopyAsync(eventData, eventType, messageId, establishingEnvelope, options: null, decision);
 
-      try {
-        await publisher(eventData);
-        // CancellationToken.None: this PublishAsync overload takes no token, and the local
-        // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
-        await _publishToForeignLookupsAsync(eventData, eventType, null, CancellationToken.None).ConfigureAwait(false);
-      } catch {
-        // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
-        try { await outboxTask; } catch { /* outbox exception is secondary */ }
-        throw;
+      if (decision.Local == LocalRun.Now) {
+        try {
+          await publisher(eventData);
+          // CancellationToken.None: this PublishAsync overload takes no token, and the local
+          // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
+          await _publishToForeignLookupsAsync(eventData, eventType, null, CancellationToken.None).ConfigureAwait(false);
+          await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, CancellationToken.None).ConfigureAwait(false);
+        } catch {
+          // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
+          try { await outboxTask; } catch { /* outbox exception is secondary */ }
+          throw;
+        }
+
+        // Process tags after successful receptor completion
+        await _processTagsIfEnabledAsync(eventData, eventType);
       }
-
-      // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(eventData, eventType);
 
       await outboxTask;
 
@@ -3661,6 +3784,11 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
+      // The Publish policy (or the caller's selected one) decides (#1395), including a schedule: a
+      // future ScheduledFor defers local handling to the copy that comes back (#1401)
+      var decision = _decide(DispatchPolicies.Publish, eventData, eventType, _publishHasLocalHandler(eventData, eventType, options), options, unmarkedKind: MessageTraits.Event);
+      _throwIfRejected(in decision, eventType);
+
       // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
         await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
@@ -3674,19 +3802,16 @@ public abstract partial class Dispatcher(
       // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
 
-      // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
-      // the outbox-pickup query. Without this branch the local receptor fires inline despite the
-      // scheduled time being in the future — observed in a production saga watchdog:
-      // the watchdog re-arm cascaded several ticks + a completion-abandoned event within
-      // milliseconds because the local watchdog-tick receptor re-armed synchronously each re-publish.
-      // Past or null ScheduledFor preserves the historical immediate-dispatch semantics.
-      var deferLocal = options.ScheduledFor is DateTimeOffset scheduledAt && scheduledAt > DateTimeOffset.UtcNow;
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options, recordLocalDispatch: !deferLocal);
-      if (!deferLocal) {
+      // ScheduledFor gates the in-process local receptors the same way it gates the outbox pickup query:
+      // without it the local receptor fired inline despite a future schedule, which once made a saga
+      // watchdog re-arm several ticks within milliseconds. The policy decides it (LocalRun.AtScheduledTime).
+      var outboxTask = _publishCopyAsync(eventData, eventType, messageId, establishingEnvelope, options, decision);
+      if (decision.Local == LocalRun.Now) {
         var publisher = GetReceptorPublisher(eventData, eventType);
         try {
           await publisher(eventData);
           await _publishToForeignLookupsAsync(eventData, eventType, null, options.CancellationToken).ConfigureAwait(false);
+          await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, options.CancellationToken).ConfigureAwait(false);
         } catch {
           try { await outboxTask; } catch { /* outbox exception is secondary */ }
           throw;
@@ -4295,7 +4420,7 @@ public abstract partial class Dispatcher(
       MessageId = messageId,
       Payload = populatedPayload,
       Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+      DispatchContext = _outboxCopyDispatchContext()
     };
     envelope.AddHop(hop);
 
@@ -5682,7 +5807,7 @@ public abstract partial class Dispatcher(
       MessageId = messageId,
       Payload = populatedPayload,
       Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+      DispatchContext = _outboxCopyDispatchContext()
     };
     envelope.AddHop(hop);
 

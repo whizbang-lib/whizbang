@@ -1837,9 +1837,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Emits the stage-aware void receptor section. Default-stage void receptors fire
-  /// unconditionally; explicit [FireAt] void receptors fire gated by <c>if (!isDefaultDispatch)</c>
-  /// on the cascade path and are skipped entirely on the publish path (they fire later via
-  /// ReceptorInvoker at their declared lifecycle stage — emitting them here would double-fire).
+  /// unconditionally, and so do receptors declared at a local stage (#1400); receptors declared at a
+  /// pipeline stage fire gated by <c>if (!isDefaultDispatch)</c> on the cascade path and are skipped
+  /// entirely on the publish path (they fire later via ReceptorInvoker at their declared lifecycle
+  /// stage — emitting them here would double-fire).
   /// </summary>
   private static void _appendStageFilteredVoidReceptors(
       StringBuilder sb,
@@ -1848,8 +1849,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       List<ReceptorInfo> voidReceptors,
       string handleArgs,
       bool publishPathDeclaresIsDefaultDispatch) {
-    var defaultVoidReceptors = voidReceptors.Where(r => r.HasDefaultStage).ToList();
-    var explicitVoidReceptors = voidReceptors.Where(r => !r.HasDefaultStage).ToList();
+    // A receptor declared at a local stage runs whenever this service handles the message in-process,
+    // exactly like a default one: nothing fires the local stages through the receptor invoker (#1400).
+    var defaultVoidReceptors = voidReceptors.Where(r => r.FiresOnLocalDispatch).ToList();
+    var explicitVoidReceptors = voidReceptors.Where(r => !r.FiresOnLocalDispatch).ToList();
 
     foreach (var receptor in defaultVoidReceptors) {
       _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");

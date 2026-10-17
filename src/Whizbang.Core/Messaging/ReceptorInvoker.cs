@@ -261,6 +261,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     if (!isPostInbox || _serviceName is null || receptors.Count == 0) {
       return false;
     }
+    // A scheduled copy whose local handling was deferred is handled here when it comes back (#1401)
+    if (envelope.DispatchContext.LocalDeferred) {
+      return false;
+    }
     var sourceService = envelope.Hops.Count > 0 ? envelope.Hops[^1].ServiceInstance.ServiceName : null;
     if (!string.Equals(sourceService, _serviceName, StringComparison.OrdinalIgnoreCase)) {
       return false;

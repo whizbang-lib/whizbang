@@ -171,7 +171,7 @@ public static class DispatchScenarios {
       _row(31, "Event_NoHandler_GoesOut", publish, E, owned: false, handler: false, NONE, outbox: true),
       _row(32, "Event_Handled_Scheduled_RunsWhenItComesBack", publish, E, owned: false, handler: true, LATER, outbox: true, scheduled: true),
       _row(33, "Event_NoHandler_NoOutbox_DefersOrLogs", publish, E, owned: false, handler: false, NONE, outbox: true, hasOutbox: false),
-      _row(34, "Event_Handled_NoOutbox_RunsHereOnly", publish, E, owned: false, handler: true, NOW, outbox: false, hasOutbox: false),
+      _row(34, "Event_Handled_NoOutbox_RunsHereAndDefersOrLogs", publish, E, owned: false, handler: true, NOW, outbox: true, hasOutbox: false),
       _row(35, "OwnedCommand_Handled_StaysHere", publish, C, owned: true, handler: true, NOW, outbox: false),
       _row(36, "OwnedCommand_NoHandler_Throws", publish, C, owned: true, handler: false, NONE, outbox: false, DispatchRejection.NoHandler),
       _row(37, "OwnedEvent_Handled_RunsHereAndGoesOut", publish, E, owned: true, handler: true, NOW, outbox: true),
