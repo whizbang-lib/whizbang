@@ -220,4 +220,27 @@ public sealed class DispatchOptions {
     MaxPayloadBytes = maxPayloadBytes;
     return this;
   }
+
+  /// <summary>
+  /// The dispatch policy to use instead of the call's own, or null (the default) for the call's own.
+  /// A developer's own policies are registered through <see cref="Policy.IDispatchPolicyRegistry"/>.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#custom-policies</docs>
+  public Policy.DispatchPolicyId? Policy { get; set; }
+
+  /// <summary>Sets <see cref="Policy"/>. Returns this instance for chaining.</summary>
+  public DispatchOptions WithPolicy(Policy.DispatchPolicyId policy) {
+    Policy = policy;
+    return this;
+  }
+
+  /// <summary>This call's overrides of the policy's defaults.</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#behaviors</docs>
+  public DispatchBehaviors Behaviors { get; set; }
+
+  /// <summary>Sets <see cref="Behaviors"/>. Returns this instance for chaining.</summary>
+  public DispatchOptions WithBehaviors(DispatchBehaviors behaviors) {
+    Behaviors = behaviors;
+    return this;
+  }
 }

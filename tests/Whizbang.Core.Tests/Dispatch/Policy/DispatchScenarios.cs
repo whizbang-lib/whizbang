@@ -236,6 +236,13 @@ public static class DispatchScenarios {
       _row(80, "Event_NoHandler_Scheduled_NoOutbox_AllowOverride_DefersOrLogs", cascade, E, owned: false, handler: false, NONE, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
       _row(81, "Event_Handled_Scheduled_NoOutbox_AllowOverride_RunsWhenItComesBack", cascade, E, owned: false, handler: true, LATER, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
       _row(82, "Command_RoutedLocal_NoHandler_ContinueOverride_DoesNothing", cascade, C, owned: false, handler: false, NONE, outbox: false, route: DispatchModes.Local, behaviors: DispatchBehaviors.ContinueWhenNoHandler),
+
+      // A caller that needs the handler's result (a typed local invoke) under another selected policy
+      _row(83, "ResultRequired_NotHandledHere_Throws", send, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.ResultUnavailable, resultRequired: true),
+      _row(84, "ResultRequired_RoutedOutbox_Throws", send, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ResultUnavailable, route: DispatchModes.Outbox, resultRequired: true),
+      _row(85, "ResultRequired_Scheduled_Throws", publish, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ResultUnavailable, scheduled: true, resultRequired: true),
+      _row(86, "ResultRequired_Handled_RunsHereAndGoesOut", send, C, owned: false, handler: true, NOW, outbox: true, resultRequired: true),
+      _row(87, "ResultRequired_NotHandledHere_Throws", cascade, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.ResultUnavailable, resultRequired: true),
     ];
 
     // A batch policy decides each message exactly as its single-message sibling does, so every row of

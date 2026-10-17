@@ -49,6 +49,12 @@ public static class DispatchRules {
   public static readonly DispatchRule ScheduledDefersBoth = _scheduledDefersBoth;
 
   /// <summary>
+  /// A caller that needs the handler's result (a typed local invoke) gets it only when the handler runs
+  /// during the call; any other decision is refused.
+  /// </summary>
+  public static readonly DispatchRule ResultRequiresLocalRun = _resultRequiresLocalRun;
+
+  /// <summary>
   /// With no outbox: a message this service handles now simply is not sent on; otherwise the
   /// policy's <see cref="NoOutboxBehavior"/> applies.
   /// </summary>
@@ -152,6 +158,11 @@ public static class DispatchRules {
       Reason = DispatchReason.Scheduled,
     };
   }
+
+  private static DispatchDecision _resultRequiresLocalRun(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) =>
+    situation.ResultRequired && current.Local != LocalRun.Now
+      ? DispatchDecision.Rejected(DispatchRejection.ResultUnavailable, DispatchReason.HandlerRequired)
+      : current;
 
   private static DispatchDecision _noOutbox(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) {
     if (!current.WriteOutbox || situation.OutboxAvailable) {

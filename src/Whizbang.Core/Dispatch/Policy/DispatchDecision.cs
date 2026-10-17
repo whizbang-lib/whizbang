@@ -39,6 +39,9 @@ public enum DispatchRejection : byte {
 
   /// <summary>The caller asked both to fail and to continue when there is no local handler.</summary>
   ConflictingBehaviors = 6,
+
+  /// <summary>The caller needs the handler's result, but the handler does not run during the call.</summary>
+  ResultUnavailable = 7,
 }
 
 /// <summary>The rule that last shaped a decision, recorded for logs and traces.</summary>

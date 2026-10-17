@@ -19,6 +19,7 @@ public static class DispatchPolicies {
     DispatchRules.CommandCannotBeStoreOnly,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun,
     DispatchRules.NoOutbox);
 
   /// <summary><c>SendManyAsync</c>: <see cref="Send"/> for each message, with the batch checked first.</summary>
@@ -31,6 +32,7 @@ public static class DispatchPolicies {
     DispatchRules.CommandCannotBeStoreOnly,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun,
     DispatchRules.NoOutbox);
 
   /// <summary><c>LocalInvokeAsync</c>: local only, returns the handler's result, fails without a handler.</summary>
@@ -41,7 +43,8 @@ public static class DispatchPolicies {
     DispatchRules.BehaviorsAreConsistent,
     DispatchRules.LocalCallNeverSendsOut,
     DispatchRules.HandlerRequired,
-    DispatchRules.ScheduledDefersBoth);
+    DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun);
 
   /// <summary><c>LocalSendManyAsync</c>: local only for each message, with the batch checked first.</summary>
   public static readonly DispatchPolicy LocalSendMany = new(
@@ -51,7 +54,8 @@ public static class DispatchPolicies {
     DispatchRules.BehaviorsAreConsistent,
     DispatchRules.LocalCallNeverSendsOut,
     DispatchRules.HandlerRequired,
-    DispatchRules.ScheduledDefersBoth);
+    DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun);
 
   /// <summary><c>PublishAsync</c>: every local receptor runs, and the message goes to the outbox.</summary>
   public static readonly DispatchPolicy Publish = new(
@@ -63,6 +67,7 @@ public static class DispatchPolicies {
     DispatchRules.CommandCannotBeStoreOnly,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun,
     DispatchRules.NoOutbox);
 
   /// <summary><c>PublishManyAsync</c>: <see cref="Publish"/> for each message, with the batch checked first.</summary>
@@ -76,6 +81,7 @@ public static class DispatchPolicies {
     DispatchRules.CommandCannotBeStoreOnly,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun,
     DispatchRules.NoOutbox);
 
   /// <summary>A message returned by a handler, or cascaded explicitly: its route decides, and owned commands stay local.</summary>
@@ -88,6 +94,7 @@ public static class DispatchPolicies {
     DispatchRules.CommandCannotBeStoreOnly,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth,
+    DispatchRules.ResultRequiresLocalRun,
     DispatchRules.NoOutbox);
 
   /// <summary>Every built-in policy, in id order.</summary>

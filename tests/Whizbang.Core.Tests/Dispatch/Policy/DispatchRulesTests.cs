@@ -412,4 +412,29 @@ public class DispatchRulesTests {
 
     await Assert.That(result).IsEqualTo(_baselineUnhandled);
   }
+
+  // ResultRequiresLocalRun
+
+  [Test]
+  [Arguments(LocalRun.None)]
+  [Arguments(LocalRun.AtScheduledTime)]
+  public async Task ResultRequiresLocalRun_HandlerNotRunDuringTheCall_RejectsAsync(LocalRun local) {
+    var result = _apply(DispatchRules.ResultRequiresLocalRun, _situation(resultRequired: true), _baselineHandled with { Local = local });
+
+    await Assert.That(result.Reject).IsEqualTo(DispatchRejection.ResultUnavailable);
+  }
+
+  [Test]
+  public async Task ResultRequiresLocalRun_HandlerRunsNow_LeavesTheDecisionAsync() {
+    var result = _apply(DispatchRules.ResultRequiresLocalRun, _situation(resultRequired: true), _baselineHandled);
+
+    await Assert.That(result).IsEqualTo(_baselineHandled);
+  }
+
+  [Test]
+  public async Task ResultRequiresLocalRun_ResultNotRequired_LeavesTheDecisionAsync() {
+    var result = _apply(DispatchRules.ResultRequiresLocalRun, _situation(), _baselineUnhandled);
+
+    await Assert.That(result).IsEqualTo(_baselineUnhandled);
+  }
 }
