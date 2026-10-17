@@ -518,4 +518,154 @@ public class ServiceRequirementsGeneratorTests {
     await Assert.That(entries).IsEqualTo(1)
       .Because("the same requirement listed twice reports one gap as two");
   }
+  // ============================================================
+  // The service type a factory registration is made under
+  // ============================================================
+  //
+  // Validation checks a requirement only when its implementation is registered in the composition
+  // being validated, because the manifest also lists registration calls that a composition never
+  // makes. A type-based descriptor names its implementation; a factory descriptor cannot. So for a
+  // registration that builds its implementation through a factory, the manifest records the service
+  // type the descriptor will carry, or a factory-built type would silently drop out of validation.
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryBuiltImplementationRecordsTheServiceTypeItIsRegisteredUnderAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public interface IWorker { }
+      public sealed class Worker : IWorker {
+        public Worker(IClock clock) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<IWorker, Worker>(sp => new Worker(null!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),],[typeof(global::TestApp.IWorker),])")
+      .Because("the descriptor will say IWorker and nothing about Worker, so the manifest must");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryHostedServiceRecordsIHostedServiceAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public sealed class Worker {
+        public Worker(IClock clock) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddHostedService<Worker>(sp => new Worker(null!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    // AddHostedService registers under IHostedService, whatever its type argument says.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),],[typeof(global::Microsoft.Extensions.Hosting.IHostedService),])");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ATypeBasedRegistrationRecordsNoFactoryServiceTypeAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public interface IWorker { }
+      public sealed class Worker : IWorker {
+        public Worker(IClock clock) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<IWorker, Worker>();
+          services.AddHostedService<Worker>();
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    // Both descriptors name Worker as their implementation, so presence is read from them directly.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]),");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryRegistrationNamedAfterItsOwnServiceTypeRecordsNoFactoryServiceTypeAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser {
+        public Closer(IHook hook) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => new Closer(sp.GetRequiredService<IHook>()));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    // The requirement is already named after the service type the descriptor carries.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.ICloser),[typeof(global::TestApp.IHook),]),");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task FactoryServiceTypesFromEveryRegistrationOfATypeAreMergedAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public interface IWorker { }
+      public interface IOtherWorker { }
+      public sealed class Worker : IWorker, IOtherWorker {
+        public Worker(IClock clock) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<Worker>();
+          services.AddSingleton<IWorker, Worker>(sp => new Worker(null!));
+          services.AddSingleton<IOtherWorker, Worker>(sp => new Worker(null!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    // One entry per type, so a factory registration made in one place must not lose the service
+    // type recorded by another; whichever of them a composition makes has to count.
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),],[typeof(global::TestApp.IOtherWorker),typeof(global::TestApp.IWorker),])");
+  }
+
+  private static string _flatten(Microsoft.CodeAnalysis.GeneratorDriverRunResult result) =>
+    string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source))
+      .Replace(" ", "", StringComparison.Ordinal)
+      .Replace("\r", "", StringComparison.Ordinal)
+      .Replace("\n", "", StringComparison.Ordinal)
+      .Replace("global::Whizbang.Core.DependencyInjection.", "", StringComparison.Ordinal);
 }

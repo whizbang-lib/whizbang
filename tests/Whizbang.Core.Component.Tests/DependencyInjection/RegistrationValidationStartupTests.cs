@@ -31,6 +31,7 @@ public class RegistrationValidationStartupTests {
   [Test]
   public async Task StartupFailsNamingADependencyNothingRegistersAsync() {
     var services = new ServiceCollection();
+    services.AddSingleton<Consumer>();
     var check = new RegistrationValidationStartup(
       services,
       [new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)])],
@@ -46,6 +47,7 @@ public class RegistrationValidationStartupTests {
   [Test]
   public async Task StartupPassesWhenADriverRegisteredTheDependencyLaterAsync() {
     var services = new ServiceCollection();
+    services.AddSingleton<Consumer>();
     var check = new RegistrationValidationStartup(
       services,
       [new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)])],
@@ -63,6 +65,7 @@ public class RegistrationValidationStartupTests {
   [Test]
   public async Task DisabledValidationDoesNotThrowAsync() {
     var services = new ServiceCollection();
+    services.AddSingleton<Consumer>();
     var check = new RegistrationValidationStartup(
       services,
       [new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)])],
@@ -75,6 +78,22 @@ public class RegistrationValidationStartupTests {
     await Assert.That(services.Any(d => d.ServiceType == typeof(IAbsent))).IsFalse()
       .Because("the escape hatch exists for partial compositions that deliberately register a "
              + "subset, so it must skip a genuinely unsatisfied requirement");
+  }
+
+  [Test]
+  public async Task StartupPassesWhenTheDependentTypeIsNeverRegisteredAsync() {
+    var services = new ServiceCollection();
+    var check = new RegistrationValidationStartup(
+      services,
+      [new ServiceRequirement(typeof(Consumer), [typeof(IAbsent)])],
+      enabled: true);
+
+    // The manifest names every registration call in the source, including ones this composition
+    // never makes. A host that skips an optional feature must not be failed for what that feature's
+    // types would have needed.
+    await check.StartAsync(CancellationToken.None);
+
+    await Assert.That(services.Any(d => d.ServiceType == typeof(IAbsent))).IsFalse();
   }
 
   [Test]
