@@ -42,16 +42,16 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E13 | Worker-stage cascades ignore `[DefaultRouting]` | todo |
 | E14 | RPC-extraction cascade passes no event id, envelope or token (no tracking, non-idempotent ids, no source security) | todo |
 | E15 | RPC-extraction path skips envelope registry, trace store, tags, PostLifecycle, ImmediateDetached, metrics, perspective-sync wait | todo |
-| E16 | Send/LocalInvoke run only the first receptor for a message type; publish runs all | todo |
+| E16 | Send/LocalInvoke run only the first receptor for a message type; publish runs all | question #1412 |
 | E17 | `if (!isDefaultDispatch)` branch in generated cascade publishers is unreachable | fixed (removed with the publisher rewrite) |
 | E18 | Dispatcher-level `[AwaitPerspectiveSync]` reads LocalImmediateInline only (no-op for default receptors; double wait for explicit Inline); sync snippets never wait | todo |
 | E19 | Void LocalInvoke paths never process tags | todo |
-| E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | todo |
+| E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | question #1413 |
 | E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | todo |
 | E22 | Generated cascade arms omit `recordLocalDispatch`: another host can double-fire a cascade that ran locally | todo |
 | E23 | Send and batch outbox writes ignore `DispatchOutboxCollector.Current` (bypass the atomic commit) | todo |
-| E24 | `PublishOnceAsync` claims then publishes non-atomically; a failed publish keeps the claim and the event is lost | todo |
-| E25 | Default interface methods for batch-options overloads drop `options`; security builder exposes only some overloads | todo |
+| E24 | `PublishOnceAsync` claims then publishes non-atomically; a failed publish keeps the claim and the event is lost | question #1414 |
+| E25 | Default interface methods for batch-options overloads drop `options`; security builder exposes only some overloads | question #1415 |
 | E26 | LocalInvoke (non-options), receipt overloads, CascadeMessageAsync, batch publish skip the schema-ready gate | todo |
 | E27 | `_localInvokeWithOptionsAsync` passes `hasHandler: true`, so ContinueWhenNoHandler cannot apply | todo |
 | E29 | The worker-stage invoker had no event cascader unless a transport consumer was added: every result returned at a worker stage was discarded | fixed |
