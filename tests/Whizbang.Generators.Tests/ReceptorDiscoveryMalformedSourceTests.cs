@@ -205,14 +205,14 @@ public class ReceptorDiscoveryMalformedSourceTests {
   // ============================================================
 
   /// <summary>What the dispatcher emits in place of a sync wait when the receptor declared none.</summary>
-  private const string NO_SYNC_MARKER = "// No [AwaitPerspectiveSync] attributes - skip sync checking";
+  private const string PUBLISHER_WAIT = "AwaitPerspectiveSyncForReceptorAsync";
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task AwaitPerspectiveSyncWithNoArgument_IsSkippedWithoutCrashingAsync() {
     var result = await _assertAttributeWasSkippedAsync("[AwaitPerspectiveSync]");
 
-    await Assert.That(_emitted(result, "Dispatcher.g.cs")).Contains(NO_SYNC_MARKER)
+    await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(PUBLISHER_WAIT)
       .Because("no perspective type was named, so the invoker must carry no wait at all — a half-built wait blocks the message for its whole timeout and then throws");
     await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).Contains("SyncAttributes: null");
   }
@@ -255,7 +255,7 @@ public class ReceptorDiscoveryMalformedSourceTests {
   public async Task AwaitPerspectiveSyncWithANonTypeArgument_IsSkippedWithoutCrashingAsync() {
     var result = await _assertAttributeWasSkippedAsync("[AwaitPerspectiveSync(\"OrderPerspective\")]");
 
-    await Assert.That(_emitted(result, "Dispatcher.g.cs")).Contains(NO_SYNC_MARKER)
+    await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(PUBLISHER_WAIT)
       .Because("a string is not a perspective type, so no wait may be generated from it");
     await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).DoesNotContain("OrderPerspective");
   }
@@ -344,7 +344,7 @@ public class ReceptorDiscoveryMalformedSourceTests {
     // Each guard has to hold independently — one attribute being declined must not be what
     // happens to make the others look declined.
     await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(ROUTING_OVERRIDE);
-    await Assert.That(_emitted(result, "Dispatcher.g.cs")).Contains(NO_SYNC_MARKER);
+    await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(PUBLISHER_WAIT);
     await Assert.That(_emitted(result, "ReceptorRegistry.g.cs"))
       .Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
       .Because("and the receptor still fires at the default stages while the author finishes typing");

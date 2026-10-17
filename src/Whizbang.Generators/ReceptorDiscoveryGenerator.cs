@@ -574,74 +574,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   };
 
   /// <summary>
-  /// Generates C# code for sync await operations to be inserted into invoker delegates.
-  /// Called by SendAsync-generated invokers BEFORE calling the receptor.
-  /// Returns empty string if no sync attributes or message is not an IEvent.
-  /// </summary>
-  /// <param name="syncAttributes">The sync attributes from the receptor.</param>
-  /// <param name="messageType">The fully qualified message type.</param>
-  /// <param name="isMessageAnEvent">True if the message type implements IEvent.</param>
-  /// <returns>Generated sync await code, or empty string.</returns>
-  private static string _generateSyncAwaitCode(SyncAttributeInfo[]? syncAttributes, string messageType, bool isMessageAnEvent) {
-    if (syncAttributes is null || syncAttributes.Length == 0) {
-      return "// No [AwaitPerspectiveSync] attributes - skip sync checking";
-    }
-
-    // Perspectives only process events, not commands or other message types.
-    // Waiting for perspective sync on a non-event would wait forever and timeout.
-    if (!isMessageAnEvent) {
-      return "// [AwaitPerspectiveSync] ignored - message is not an IEvent (perspectives only process events)";
-    }
-
-    var sb = new StringBuilder();
-    sb.AppendLine("var syncAwaiter = scope.ServiceProvider.GetService<global::Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();");
-    sb.AppendLine("          var streamIdExtractor = scope.ServiceProvider.GetService<global::Whizbang.Core.IStreamIdExtractor>();");
-    sb.AppendLine("          if (syncAwaiter != null && streamIdExtractor != null) {");
-    sb.AppendLine($"            var streamId = streamIdExtractor.ExtractStreamId(msg, typeof({messageType}));");
-    sb.AppendLine("            if (streamId.HasValue) {");
-
-    // Generate await call for each sync attribute
-    foreach (var attr in syncAttributes) {
-      // Determine timeout - use default if -1
-      var timeoutMs = attr.TimeoutMs == -1 ? 5000 : attr.TimeoutMs;
-
-      // Generate event types array
-      string eventTypesCode;
-      if (attr.EventTypes is { Length: > 0 }) {
-        var eventTypesList = string.Join(", ", attr.EventTypes.Select(et => $"typeof({et})"));
-        eventTypesCode = $"new global::System.Type[] {{ {eventTypesList} }}";
-      } else {
-        eventTypesCode = "null";
-      }
-
-      // Capture the sync result
-      sb.AppendLine("              var syncResult = await syncAwaiter.WaitForStreamAsync(");
-      sb.AppendLine($"                typeof({attr.PerspectiveType}),");
-      sb.AppendLine("                streamId.Value,");
-      sb.AppendLine($"                {eventTypesCode},");
-      sb.AppendLine($"                global::System.TimeSpan.FromMilliseconds({timeoutMs}));");
-
-      // Check the result based on FireBehavior
-      // 0 = FireOnSuccess (throw on timeout - default)
-      // 1 = FireAlways (don't throw, let handler check SyncContext)
-      // 2 = FireOnEachEvent (future streaming mode)
-      if (attr.FireBehavior == 0) {
-        sb.AppendLine("              if (syncResult.Outcome == global::Whizbang.Core.Perspectives.Sync.SyncOutcome.TimedOut) {");
-        sb.AppendLine("                throw new global::Whizbang.Core.Perspectives.Sync.PerspectiveSyncTimeoutException(");
-        sb.AppendLine($"                  typeof({attr.PerspectiveType}),");
-        sb.AppendLine($"                  global::System.TimeSpan.FromMilliseconds({timeoutMs}),");
-        sb.AppendLine($"                  $\"Perspective sync timed out waiting for {{typeof({attr.PerspectiveType}).Name}} to process stream {{streamId.Value}} within {timeoutMs}ms.\");");
-        sb.AppendLine("              }");
-      }
-    }
-
-    sb.AppendLine("            }");
-    sb.AppendLine("          }");
-
-    return sb.ToString();
-  }
-
-  /// <summary>
   /// Extracts the [DefaultRouting] attribute value from a receptor class.
   /// Returns the fully qualified DispatchModes enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchModes.Local")
   /// or null if no [DefaultRouting] attribute is found.
@@ -1427,7 +1359,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
@@ -1454,7 +1388,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
@@ -1574,7 +1510,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = anySendNonVoidSnippet
@@ -1812,6 +1750,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
       var call = receptor.IsSync ? "r.Handle(typedEvt)" : $"await r.HandleAsync({handleArgs})";
       sb.AppendLine("          {");
+      if (receptor.IsMessageAnEvent && receptor.SyncAttributes is { Length: > 0 }) {
+        // This receptor waits for its perspectives first; the outcome reaches it through its sync context
+        var waitToken = withEnvelopeAndToken ? "cancellationToken" : "default";
+        sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedEvt, typeof({messageType}), \"{receptor.ClassName}\", {waitToken}));");
+      }
       sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
       sb.AppendLine("            if (r is not null) {");
       if (receptor.IsVoid) {

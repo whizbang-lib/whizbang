@@ -182,10 +182,10 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher).Contains("WaitForStreamAsync");
-    await Assert.That(dispatcher).Contains("FromMilliseconds(1234)");
-    // FireAlways (1) suppresses the FireOnSuccess timeout-throw block
-    await Assert.That(dispatcher).DoesNotContain("SyncOutcome.TimedOut");
+    // The publisher waits for this receptor through the dispatcher, which reads the attribute's settings
+    // from the registry entry above (#1410 follow-up); no wait code is inlined into the dispatcher
+    await Assert.That(dispatcher).Contains("AwaitPerspectiveSyncForReceptorAsync(");
+    await Assert.That(dispatcher).DoesNotContain("WaitForStreamAsync");
   }
 
   /// <summary>
@@ -224,9 +224,9 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher).Contains("WaitForStreamAsync");
-    await Assert.That(dispatcher).Contains("FromMilliseconds(5000)");
-    await Assert.That(dispatcher).Contains("PerspectiveSyncTimeoutException");
+    // The fallback timeout and the throw on timeout apply at run time from the registry entry's -1 and
+    // FireOnSuccess (DispatchPerspectiveSyncComponentTests pins both); the publisher only asks to wait
+    await Assert.That(dispatcher).Contains("AwaitPerspectiveSyncForReceptorAsync(");
   }
 
   /// <summary>
@@ -260,7 +260,8 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher).Contains("[AwaitPerspectiveSync] ignored - message is not an IEvent");
+    // Perspectives process events only, so a command's receptor never waits
+    await Assert.That(dispatcher).DoesNotContain("AwaitPerspectiveSyncForReceptorAsync");
     await Assert.That(dispatcher).DoesNotContain("WaitForStreamAsync");
   }
 
@@ -656,7 +657,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher).Contains("No [AwaitPerspectiveSync] attributes - skip sync checking");
+    await Assert.That(dispatcher).DoesNotContain("AwaitPerspectiveSyncForReceptorAsync");
     await Assert.That(dispatcher).DoesNotContain("WaitForStreamAsync");
   }
 

@@ -967,46 +967,84 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeSynced_AwaitsPerspectiveThenInvokesReceptorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttributeTimedOut_FireOnSuccess_ThrowsAndSkipsReceptorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepSyncRpcTests.cs:LocalInvokeAsync_Void_SyncAttribute_NoStreamId_SkipsAwaiterAsync</tests>
-  private async ValueTask _awaitPerspectiveSyncIfNeededAsync(
+  private async ValueTask<SyncContext?> _awaitPerspectiveSyncIfNeededAsync(
       object message,
       Type messageType,
       CancellationToken ct = default) {
     // Perspectives only process events, not commands or other message types.
     // Waiting for perspective sync on a non-event would wait forever and timeout.
-    if (message is not IEvent) {
-      return;
+    if (message is not IEvent || _receptorRegistry is null) {
+      return null;
     }
 
-    // Short-circuit if no receptor registry available
-    if (_receptorRegistry is null) {
-      return;
+    // The local handler with [AwaitPerspectiveSync], at either local stage: a receptor with no [FireAt]
+    // is registered at LocalImmediateDetached, so reading the inline stage alone missed it (#1410 follow-up)
+    var syncReceptor = _localReceptorsFor(messageType).FirstOrDefault(r => r.SyncAttributes is { Count: > 0 });
+    return syncReceptor is null ? null : await _awaitPerspectiveSyncForAsync(message, messageType, syncReceptor, ct).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Waits for one receptor's <c>[AwaitPerspectiveSync]</c> perspectives before it runs, from the
+  /// generated publisher, which runs every local receptor and waits for each that asks (#1410 follow-up).
+  /// Returns the sync context for <see cref="SetSyncContext"/> to hand to the receptor.
+  /// </summary>
+  /// <param name="message">The message the receptor is about to handle.</param>
+  /// <param name="messageType">The message's type.</param>
+  /// <param name="receptorId">The receptor's registry id.</param>
+  /// <param name="cancellationToken">Cancels the wait.</param>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchPerspectiveSyncComponentTests.cs</tests>
+  protected async Task<SyncContext?> AwaitPerspectiveSyncForReceptorAsync(object message, Type messageType, string receptorId,
+      CancellationToken cancellationToken) {
+    if (message is not IEvent || _receptorRegistry is null) {
+      return null;
     }
+    var receptor = _localReceptorsFor(messageType).FirstOrDefault(r => r.ReceptorId == receptorId && r.SyncAttributes is { Count: > 0 });
+    return receptor is null ? null : await _awaitPerspectiveSyncForAsync(message, messageType, receptor, cancellationToken).ConfigureAwait(false);
+  }
 
-    // Get receptors for LocalImmediateInline stage (local dispatch stage)
-    var receptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline);
-
-    // Check if any receptor has sync attributes
-    var syncReceptor = receptors.FirstOrDefault(r => r.SyncAttributes is { Count: > 0 });
-    if (syncReceptor?.SyncAttributes is null) {
-      return;
+  /// <summary>
+  /// Hands a receptor the outcome of its perspective wait. Synchronous on purpose: an async-local value
+  /// set inside an async method does not reach its caller, so the wait returns the context and the code
+  /// that is about to invoke the receptor sets it here (#1410 follow-up).
+  /// </summary>
+  /// <param name="context">The wait's outcome, or null when there was no wait.</param>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchPerspectiveSyncComponentTests.cs</tests>
+  protected static void SetSyncContext(SyncContext? context) {
+    if (context is not null) {
+      SyncContextAccessor.CurrentContext = context;
     }
+  }
 
+  /// <summary>Every receptor registered at a local stage for a message type, each once.</summary>
+  private List<ReceptorInfo> _localReceptorsFor(Type messageType) {
+    var receptors = new List<ReceptorInfo>();
+    foreach (var stage in _localStages) {
+      receptors.AddRange(_receptorRegistry!.GetReceptorsFor(messageType, stage)
+        .Where(receptor => !receptors.Exists(r => r.ReceptorId == receptor.ReceptorId)));
+    }
+    return receptors;
+  }
+
+  private async ValueTask<SyncContext?> _awaitPerspectiveSyncForAsync(object message, Type messageType, ReceptorInfo syncReceptor,
+      CancellationToken ct) {
     // Extract stream ID from message
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
     if (streamId is null) {
       // No stream ID - can't do stream-based sync
-      return;
+      return null;
     }
 
     // Create a scope to resolve scoped services (IPerspectiveSyncAwaiter)
     await using var scope = _scopeFactory.CreateAsyncScope();
     var syncAwaiter = scope.ServiceProvider.GetService<IPerspectiveSyncAwaiter>();
     if (syncAwaiter is null) {
-      return;
+      return null;
     }
 
-    // Await sync for each attribute
-    foreach (var syncAttr in syncReceptor.SyncAttributes) {
+    SyncContext? syncContext = null;
+    foreach (var syncAttr in syncReceptor.SyncAttributes!) {
       var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
       var eventTypes = syncAttr.EventTypes?.ToArray();
 
@@ -1020,8 +1058,8 @@ public abstract partial class Dispatcher(
           eventIdToAwait: null,
           ct);
 
-      // Create and set SyncContext for receptor access via AsyncLocal
-      var syncContext = new SyncContext {
+      // The context the receptor reads through SyncContextAccessor, set by the caller
+      syncContext = new SyncContext {
         StreamId = streamId.Value,
         PerspectiveType = syncAttr.PerspectiveType,
         Outcome = syncResult.Outcome,
@@ -1029,7 +1067,6 @@ public abstract partial class Dispatcher(
         ElapsedTime = syncResult.ElapsedTime,
         FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
       };
-      SyncContextAccessor.CurrentContext = syncContext;
 
       // If FireBehavior is FireOnSuccess and we timed out, throw an exception
       if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
@@ -1040,6 +1077,7 @@ public abstract partial class Dispatcher(
       }
       // FireBehavior.FireAlways continues regardless of timeout
     }
+    return syncContext;
   }
 
   /// <summary>
@@ -1349,7 +1387,7 @@ public abstract partial class Dispatcher(
         }
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, cancellationToken);
+        SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, cancellationToken));
 
         // Invoke using delegate - zero reflection, strongly typed
         var result = await invoker(message);
@@ -1651,8 +1689,7 @@ public abstract partial class Dispatcher(
     var messageType = message.GetType();
 
     // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
-    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
-      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
+    var hasSyncAttributes = _receptorRegistry is not null && _localReceptorsFor(messageType).Exists(r => r.SyncAttributes is { Count: > 0 });
 
     // Check if there are ImmediateDetached or PostLifecycle receptors — if so, must go through async path
     var hasImmediateDetached = _hasImmediateDetachedReceptors(messageType);
@@ -1750,7 +1787,7 @@ public abstract partial class Dispatcher(
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+      SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType));
 
       var result = await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
 
@@ -1968,8 +2005,7 @@ public abstract partial class Dispatcher(
     var messageType = actualMessage.GetType();
 
     // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
-    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
-      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
+    var hasSyncAttributes = _receptorRegistry is not null && _localReceptorsFor(messageType).Exists(r => r.SyncAttributes is { Count: > 0 });
 
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
@@ -2022,7 +2058,7 @@ public abstract partial class Dispatcher(
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
+      SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType));
 
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
@@ -2100,7 +2136,7 @@ public abstract partial class Dispatcher(
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+      SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType));
 
       var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
 
@@ -2156,7 +2192,7 @@ public abstract partial class Dispatcher(
     Type messageType
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType));
 
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
@@ -2194,7 +2230,7 @@ public abstract partial class Dispatcher(
     var sw = Stopwatch.StartNew();
     try {
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
+      SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType));
 
       var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
 
@@ -2362,7 +2398,7 @@ public abstract partial class Dispatcher(
     } else {
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+      SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
       await asyncInvoker(message);
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
     }
@@ -2389,7 +2425,7 @@ public abstract partial class Dispatcher(
     }
     options.CancellationToken.ThrowIfCancellationRequested();
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
     syncInvoker(message);
     await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
   }
@@ -2408,7 +2444,7 @@ public abstract partial class Dispatcher(
   ) {
     options.CancellationToken.ThrowIfCancellationRequested();
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
     await _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, caller.MemberName, caller.FilePath, caller.LineNumber);
   }
 
@@ -2424,7 +2460,7 @@ public abstract partial class Dispatcher(
     CallerLocation caller
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
 
     var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
@@ -2477,7 +2513,7 @@ public abstract partial class Dispatcher(
     CallerLocation caller
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
 
     var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
@@ -2639,7 +2675,7 @@ public abstract partial class Dispatcher(
     int callerLineNumber
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType));
 
     var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
     _envelopeRegistry?.Register(envelope);
@@ -2698,7 +2734,7 @@ public abstract partial class Dispatcher(
     DispatchOptions options
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    SetSyncContext(await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken));
 
     var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, "", "", 0);
     _envelopeRegistry?.Register(envelope);

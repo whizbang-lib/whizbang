@@ -251,3 +251,58 @@ public sealed class ExNoPersistTriggerReceptor : IReceptor<ExNoPersistTrigger, R
   public ValueTask<Routed<ExFollowUpEvent>> HandleAsync(ExNoPersistTrigger message, CancellationToken cancellationToken = default) =>
     ValueTask.FromResult(Route.LocalNoPersist(new ExFollowUpEvent(message.Id)));
 }
+
+// ── E18: [AwaitPerspectiveSync] waits once, before the receptor, on every path ─────────────────
+
+/// <summary>Stands in for a perspective type; the recording awaiter never looks at it.</summary>
+public sealed class ExAwaitedPerspective;
+
+/// <summary>Records each wait and each handling in one ordered log, so a test sees both count and order.</summary>
+public static class ExSyncLog {
+  private static readonly System.Collections.Concurrent.ConcurrentQueue<(string What, Guid Id)> _entries = new();
+
+  public static void Add(string what, Guid id) => _entries.Enqueue((what, id));
+
+  public static IReadOnlyList<string> For(Guid id) => [.. _entries.Where(e => e.Id == id).Select(e => e.What)];
+}
+
+public record ExAwaitedEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+[Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSync(typeof(ExAwaitedPerspective))]
+public sealed class ExAwaitedEventReceptor : IReceptor<ExAwaitedEvent> {
+  public ValueTask HandleAsync(ExAwaitedEvent message, CancellationToken cancellationToken = default) {
+    ExSyncLog.Add("handled", message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public record ExAwaitedInlineEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+[FireAt(LifecycleStage.LocalImmediateInline)]
+[Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSync(typeof(ExAwaitedPerspective))]
+public sealed class ExAwaitedInlineEventReceptor : IReceptor<ExAwaitedInlineEvent> {
+  public ValueTask HandleAsync(ExAwaitedInlineEvent message, CancellationToken cancellationToken = default) {
+    ExSyncLog.Add("handled", message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public record ExAwaitedSyncEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+[Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSync(typeof(ExAwaitedPerspective))]
+public sealed class ExAwaitedSyncEventReceptor : ISyncReceptor<ExAwaitedSyncEvent> {
+  public void Handle(ExAwaitedSyncEvent message) => ExSyncLog.Add("handled", message.Id);
+}
+
+// ── E31: a FireAlways receptor sees the outcome of its wait ────────────────────────────────────
+
+public record ExFireAlwaysEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+[Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSync(typeof(ExAwaitedPerspective), FireBehavior = Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways)]
+public sealed class ExFireAlwaysEventReceptor : IReceptor<ExFireAlwaysEvent> {
+  public ValueTask HandleAsync(ExFireAlwaysEvent message, CancellationToken cancellationToken = default) {
+    var outcome = Whizbang.Core.Perspectives.Sync.SyncContextAccessor.CurrentContext?.Outcome;
+    ExSyncLog.Add(outcome is null ? "handled without a sync context" : $"handled after {outcome}", message.Id);
+    return ValueTask.CompletedTask;
+  }
+}

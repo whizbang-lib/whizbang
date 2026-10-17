@@ -44,7 +44,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E15 | RPC-extraction path skips envelope registry, trace store, tags, PostLifecycle, ImmediateDetached, metrics, perspective-sync wait | fixed (extraction runs through the traced invoke path) |
 | E16 | Send/LocalInvoke run only the first receptor for a message type; publish runs all | question #1412 |
 | E17 | `if (!isDefaultDispatch)` branch in generated cascade publishers is unreachable | fixed (removed with the publisher rewrite) |
-| E18 | Dispatcher-level `[AwaitPerspectiveSync]` reads LocalImmediateInline only (no-op for default receptors; double wait for explicit Inline); sync snippets never wait | todo |
+| E18 | Dispatcher-level `[AwaitPerspectiveSync]` reads LocalImmediateInline only (no-op for default receptors; double wait for explicit Inline); sync snippets never wait | fixed |
 | E19 | Void LocalInvoke paths never process tags | fixed (and a cascade's local run) |
 | E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | question #1413 |
 | E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | fixed |
@@ -56,6 +56,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E27 | `_localInvokeWithOptionsAsync` passes `hasHandler: true`, so ContinueWhenNoHandler cannot apply | not-a-defect: a result-required call refuses without a handler by design (DispatchRules); the real check is now passed |
 | E29 | The worker-stage invoker had no event cascader unless a transport consumer was added: every result returned at a worker stage was discarded | fixed |
 | E30 | LocalInvoke<TResult> on a tuple-returning receptor ran the receptor twice (failed cast, then re-run through extraction), and swallowed an InvalidCastException the receptor threw itself | fixed |
+| E31 | A receptor's sync context was set inside an async method, so it never reached the receptor; FireAlways receptors could not see their outcome | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
