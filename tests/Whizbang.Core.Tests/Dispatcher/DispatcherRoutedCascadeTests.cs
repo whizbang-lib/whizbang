@@ -568,7 +568,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var routed = Route.Outbox(evt);
 
     // Act + Assert
-    Func<Task> send = () => dispatcher.SendAsync(routed, MessageContext.New());
+    Task send() => dispatcher.SendAsync(routed, MessageContext.New());
     await Assert.That(send).Throws<ReceptorNotFoundException>()
       .Because("Route.Outbox sends the message out; this host has no outbox to send it through");
     await Assert.That(dispatcher.GetSentMessages()).IsEmpty()

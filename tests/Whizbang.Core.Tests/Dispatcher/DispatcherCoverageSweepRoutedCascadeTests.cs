@@ -835,7 +835,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
       invoker: _ => new ValueTask<object>(Route.Outbox(new SweepCascadedOwnedCommand("owned-cascade"))));
 
     // Act + Assert
-    Func<Task> send = () => dispatcher.SendAsync((object)new SweepRoutedCommand("cascade-owned"), MessageContext.New());
+    Task send() => dispatcher.SendAsync((object)new SweepRoutedCommand("cascade-owned"), MessageContext.New());
     await Assert.That(send).Throws<ReceptorNotFoundException>();
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(0);
   }
@@ -860,7 +860,7 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     var dispatcher = new SweepRoutedDispatcher(_buildProvider(ownedDomains: _parentOwnedDomains));
 
     // Act + Assert
-    Func<Task> cascade = () => dispatcher.CascadeMessageAsync(
+    Task cascade() => dispatcher.CascadeMessageAsync(
       new SweepCascadedOwnedCommand("owned-direct"),
       sourceEnvelope: null,
       DispatchModes.Outbox);

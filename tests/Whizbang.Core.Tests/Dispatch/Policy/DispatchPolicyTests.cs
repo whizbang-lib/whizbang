@@ -77,12 +77,12 @@ public class DispatchPolicyTests {
   [Test]
   public async Task Decide_StopsAtTheFirstRejectionAsync() {
     var ran = false;
-    DispatchRule reject = (in DispatchSituation _, DispatchPolicy _, in DispatchDecision _) =>
+    static DispatchDecision reject(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) =>
       DispatchDecision.Rejected(DispatchRejection.NoRoute, DispatchReason.RouteDecides);
-    DispatchRule after = (in DispatchSituation _, DispatchPolicy _, in DispatchDecision current) => {
+    DispatchDecision after(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) {
       ran = true;
       return current;
-    };
+    }
     var policy = new DispatchPolicy(new DispatchPolicyId(1000), "Stops", DispatchExpectations.None, NoOutboxBehavior.Throw, reject, after);
     var situation = DispatchScenario.ToSituation(ScenarioKind.Command, owned: false, handler: true, route: null, scheduled: false, outbox: true);
 

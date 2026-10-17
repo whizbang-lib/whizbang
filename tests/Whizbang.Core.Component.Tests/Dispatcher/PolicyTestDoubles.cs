@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
@@ -105,4 +107,21 @@ public sealed class PolicyContextKeepingEnvelopeSerializer : IEnvelopeSerializer
 
   public object DeserializeMessage(MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope, string messageTypeName) =>
     throw new NotSupportedException("Outbox entries recorded by these tests are never delivered");
+}
+
+/// <summary>Captures warnings and above from every logger category.</summary>
+public sealed class PolicyWarningLog : ILoggerProvider {
+  public ConcurrentQueue<string> Entries { get; } = new();
+  public ILogger CreateLogger(string categoryName) => new Logger(Entries);
+  public void Dispose() { }
+
+  private sealed class Logger(ConcurrentQueue<string> entries) : ILogger {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (IsEnabled(logLevel)) {
+        entries.Enqueue(formatter(state, exception));
+      }
+    }
+  }
 }

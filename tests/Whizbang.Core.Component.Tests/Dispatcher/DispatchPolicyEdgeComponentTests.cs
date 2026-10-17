@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -307,6 +308,68 @@ public class DispatchPolicyEdgeComponentTests {
 
     await Assert.That(async () => await provider.GetRequiredService<IDispatcher>().SendAsync(new PbUnhandledCommand(Guid.CreateVersion7())))
       .ThrowsExactly<ReceptorNotFoundException>();
+  }
+
+  // A work coordinator registered but resolving to nothing, on the paths that write the outbox
+
+  [Test]
+  public async Task Send_NothingHandlesItAndTheWorkCoordinatorResolvesToNothing_RefusesAndWarnsAsync() {
+    var warnings = new PolicyWarningLog();
+    await using var provider = _buildProvider(null!, services => services.AddLogging(logging => logging.AddProvider(warnings)));
+
+    Task send() => provider.GetRequiredService<IDispatcher>().SendAsync(new PbUnhandledCommand(Guid.CreateVersion7()));
+
+    await Assert.That(send).Throws<ReceptorNotFoundException>();
+    await Assert.That(warnings.Entries.Any(e => e.Contains("IWorkCoordinatorStrategy not registered", StringComparison.Ordinal))).IsTrue()
+      .Because("the host is told which registration is missing");
+  }
+
+  [Test]
+  public async Task Send_NothingHandlesItAndTheWorkCoordinatorResolvesToNothingWithoutLogging_RefusesAsync() {
+    await using var provider = _buildProvider(null!);
+
+    Task send() => provider.GetRequiredService<IDispatcher>().SendAsync(new PbUnhandledCommand(Guid.CreateVersion7()));
+
+    await Assert.That(send).Throws<ReceptorNotFoundException>()
+      .Because("a host with no logging still gets the refusal");
+  }
+
+  [Test]
+  public async Task SendMany_AllHandledHereAndTheWorkCoordinatorResolvesToNothing_DeliversLocallyAndWarnsAsync() {
+    var warnings = new PolicyWarningLog();
+    await using var provider = _buildProvider(null!, services => services.AddLogging(logging => logging.AddProvider(warnings)));
+    var first = new PbUnownedCommand(Guid.CreateVersion7());
+    var second = new PbUnownedCommand(Guid.CreateVersion7());
+
+    var receipts = (await provider.GetRequiredService<IDispatcher>().SendManyAsync<PbUnownedCommand>([first, second])).ToList();
+
+    await Assert.That(receipts.Select(r => r.Status)).IsEquivalentTo([DeliveryStatus.Delivered, DeliveryStatus.Delivered]);
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), first.Id)).IsEqualTo(1);
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), second.Id)).IsEqualTo(1);
+    await Assert.That(warnings.Entries).IsNotEmpty()
+      .Because("the copies other services would have received were skipped, and the host is told");
+  }
+
+  [Test]
+  public async Task SendMany_AllHandledHereAndTheWorkCoordinatorResolvesToNothingWithoutLogging_DeliversLocallyAsync() {
+    await using var provider = _buildProvider(null!);
+    var command = new PbUnownedCommand(Guid.CreateVersion7());
+
+    var receipts = (await provider.GetRequiredService<IDispatcher>().SendManyAsync<PbUnownedCommand>([command])).ToList();
+
+    await Assert.That(receipts.Select(r => r.Status)).IsEquivalentTo([DeliveryStatus.Delivered]);
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), command.Id)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task SendMany_OneNothingHandlesAndTheWorkCoordinatorResolvesToNothing_FailsAsync() {
+    await using var provider = _buildProvider(null!);
+    object[] batch = [new PbUnownedCommand(Guid.CreateVersion7()), new PbUnhandledCommand(Guid.CreateVersion7())];
+
+    Task sendMany() => provider.GetRequiredService<IDispatcher>().SendManyAsync(batch);
+
+    await Assert.That(sendMany).Throws<InvalidOperationException>()
+      .Because("a message nothing here handles has nowhere to go, so the batch says so");
   }
 
   private static ServiceCollection _baseServices() {

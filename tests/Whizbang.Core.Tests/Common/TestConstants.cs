@@ -115,7 +115,10 @@ public static class TestConstants {
   /// Whizbang.Core.Component.Tests with the Core test separation (#1264), so their receptors are
   /// discovered in that assembly, not this one.</para>
   ///
-  /// <para>Total: 126 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>DispatcherDisposalTests.cs adds 1 (HandledDisposalEventReceptor: the host shutting down while a
+  /// published event's handler runs).</para>
+  ///
+  /// <para>Total: 127 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 126;
+  public const int EXPECTED_RECEPTOR_COUNT = 127;
 }
