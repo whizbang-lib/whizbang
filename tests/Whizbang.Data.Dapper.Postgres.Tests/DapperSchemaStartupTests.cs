@@ -163,12 +163,32 @@ public class DapperSchemaStartupTests {
 
     var acquire = SchemaInitializationLock.AcquireAsync(_database.ConnectionString, "public", [new SilentObserver(), observer], cancel.Token);
     await observer.Contended.Task;
+    // Contention is reported before the blocking wait is sent. Canceling in that window can reach the
+    // server before the wait does, cancel nothing, and leave the wait queued: the test then raced the
+    // server rather than testing the cancel. Cancel once the wait is queued for the lock.
+    await _waitUntilAdvisoryWaitersAsync(holder, held, expected: 1);
     await cancel.CancelAsync();
 
     await Assert.That(async () => await acquire).Throws<OperationCanceledException>();
     await Assert.That(await holder.ExecuteScalarAsync<long>(
       "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held)).IsEqualTo(0L)
       .Because("a canceled wait gives its connection back instead of staying queued for the lock");
+  }
+
+  /// <summary>
+  /// Waits until the server shows <paramref name="expected"/> advisory lock requests queued and not
+  /// granted. Postgres has no notification for a lock wait starting, so this reads the state it waits
+  /// for, bounded so a wait that never queues fails here instead of hanging the test.
+  /// </summary>
+  private static async Task _waitUntilAdvisoryWaitersAsync(NpgsqlConnection holder, NpgsqlTransaction held, long expected) {
+    var deadline = DateTime.UtcNow.AddSeconds(30);
+    while (await holder.ExecuteScalarAsync<long>(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held) != expected) {
+      if (DateTime.UtcNow > deadline) {
+        throw new TimeoutException($"The schema lock wait never queued: expected {expected} waiting advisory lock request(s).");
+      }
+      await Task.Delay(20);
+    }
   }
 
   /// <summary>Watches nothing: the default for every notification is to carry on.</summary>
