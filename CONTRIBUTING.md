@@ -276,6 +276,26 @@ pull request, and every pull request is reviewed against the same standard.
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
   package versions.
 
+**Review checks** (reported, not required): the "Report · Review checks" job comments on each pull
+request with the findings a reviewer would otherwise type by hand, each on its file and line where it
+has one: a commit that is not signed off, no closing keyword (or one inside backticks), a target branch
+other than `develop`, an existing migration edited, en-GB spelling, em-dashes, real time in test code,
+and `Guid.NewGuid()` in library code. The PR quality gate comment lists uncovered new lines and branches
+and Sonar findings the same way. A line containing `review-checks:allow` is skipped, and
+`.github/review-checks-ignore.txt` lists paths the checks skip.
+
+Both comments carry the findings in a hidden block as well. A maintainer turns them into a draft review
+with their own `gh` login:
+
+```bash
+pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <number>          # -WhatIf shows the plan only
+```
+
+It starts a pending review (or adds to the one already started), puts each finding on its line, puts
+the rest in the review summary, and never submits. Running it again adds only what is new. CI holds no
+personal token: the comments are posted with the workflow's own token, and the draft is written from
+the maintainer's machine.
+
 **What the reviewer checks**
 
 - **Correctness and fit**: the change does what its description says, handles failure paths, and fits

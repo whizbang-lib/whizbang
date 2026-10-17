@@ -1078,6 +1078,55 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pwsh -NoProfile -File .github/scripts/Test-DcoSignoff.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA"
 
+  review-checks:
+    name: Report · Review checks
+    # Deterministic review findings on the pull request's added lines, description, target branch and
+    # sign-offs, posted as one comment: a table for people, and a hidden block a maintainer turns into a
+    # draft review with scripts/Invoke-PrReviewDraft.ps1 (their own gh login; CI holds no personal token).
+    # Report only, deliberately not in ci-result's needs: the gates decide what merges. The rules live in
+    # scripts/lib/ReviewFindings.psm1, tested by script-tests.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write   # the comment
+    steps:
+      # The full history: the DCO check reads base..head with git log.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Run the review checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr view "$PR" --repo "${{ github.repository }}" --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+          CLOSING=$(gh pr view "$PR" --repo "${{ github.repository }}" --json closingIssuesReferences --jq '.closingIssuesReferences | length')
+          pwsh -NoProfile -File .github/scripts/Get-ReviewChecks.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA" \
+            -BaseRef "$BASE_REF" -HeadRef "$HEAD_REF" -PullRequest "$PR" -BodyFile "$RUNNER_TEMP/pr-body.md" \
+            -ClosingIssueCount "$CLOSING" -RunUrl "$RUN_URL" -OutFile "$RUNNER_TEMP/review-checks.md"
+      # A fork's token cannot comment; the findings are then in this job's log only.
+      - name: Post the review-checks comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER="<!-- pr-review-checks -->"
+          # Post the new comment first, then delete the older ones, so the PR always has one (as the gate does).
+          OLD=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${MARKER}\"))) | .id")
+          gh api --method POST "repos/${{ github.repository }}/issues/${PR}/comments" -F body=@"$RUNNER_TEMP/review-checks.md" >/dev/null
+          for id in ${OLD}; do
+            gh api --method DELETE "repos/${{ github.repository }}/issues/comments/${id}" >/dev/null || echo "::warning::could not delete old review-checks comment ${id}"
+          done
+
   ci-result:
     name: Gate · CI result
     # The one required check on develop AND main. It passes only when every suite ran green in this

@@ -1,0 +1,9 @@
+# Paths the review checks (.github/scripts/Get-ReviewChecks.ps1) skip: one glob per line, matched with
+# PowerShell -like against the repository-relative path. For a single line, put "review-checks:allow" on
+# it instead of adding its file here.
+#
+# The checks' own source and tests spell out the words and patterns they look for.
+scripts/lib/ReviewFindings.psm1
+.github/scripts/tests/ReviewFindings.Tests.ps1
+.github/scripts/tests/Invoke-PrReviewDraft.Tests.ps1
+.github/scripts/tests/Get-ReviewChecks.Tests.ps1
