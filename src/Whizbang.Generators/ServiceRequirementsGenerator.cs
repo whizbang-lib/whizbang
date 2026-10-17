@@ -48,6 +48,9 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     "AddHostedService",
   ];
 
+  private const string ADD_HOSTED_SERVICE = "AddHostedService";
+  private const string HOSTED_SERVICE_TYPE = "global::Microsoft.Extensions.Hosting.IHostedService";
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var typeRegistrations = context.SyntaxProvider.CreateSyntaxProvider(
@@ -175,9 +178,43 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Validation applies a requirement only when its implementation is registered, and reads that
+    // from the descriptors. A call with arguments may build the implementation through a factory,
+    // whose descriptor carries only the service type, so record the service type it will carry.
+    // Recording it for an instance argument too costs nothing: that descriptor is also matched by
+    // its instance's type.
+    var factoryServiceTypes = new List<string>();
+    if (invocation.ArgumentList.Arguments.Count > 0) {
+      var serviceType = _factoryServiceType(ctx, generic, ct);
+      var implementationName = TypeNameUtilities.FullyQualified(implementation);
+      if (serviceType is not null && !string.Equals(serviceType, implementationName, System.StringComparison.Ordinal)) {
+        factoryServiceTypes.Add(serviceType);
+      }
+    }
+
     return new RequirementInfo(
       TypeNameUtilities.FullyQualified(implementation),
-      dependencies);
+      dependencies,
+      factoryServiceTypes);
+  }
+
+  /// <summary>
+  /// The service type a registration's descriptor will carry, or null when it cannot be named.
+  /// </summary>
+  /// <remarks>
+  /// AddHostedService registers under <c>IHostedService</c> whatever its type argument is; every
+  /// other registration method registers under its first type argument.
+  /// </remarks>
+  private static string? _factoryServiceType(
+      GeneratorSyntaxContext ctx, GenericNameSyntax generic, CancellationToken ct) {
+    if (string.Equals(generic.Identifier.ValueText, ADD_HOSTED_SERVICE, System.StringComparison.Ordinal)) {
+      return HOSTED_SERVICE_TYPE;
+    }
+    if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
+        is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
+      return null;
+    }
+    return TypeNameUtilities.FullyQualified(serviceType);
   }
 
   /// <summary>
@@ -223,16 +260,14 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
 
     // Name the requirement after the service being registered, so a failure says which
     // registration is unsatisfiable rather than naming a lambda.
-    string owner;
-    if (member.Name is GenericNameSyntax generic && generic.TypeArgumentList.Arguments.Any()) {
-      if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
-          is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
-        return null;
-      }
-      owner = TypeNameUtilities.FullyQualified(serviceType);
-    } else {
+    if (member.Name is not GenericNameSyntax generic || !generic.TypeArgumentList.Arguments.Any()) {
       return null;
     }
+    if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
+        is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
+      return null;
+    }
+    var owner = TypeNameUtilities.FullyQualified(serviceType);
 
     var dependencies = new List<string>();
     foreach (var call in invocation.DescendantNodes().OfType<InvocationExpressionSyntax>()) {
@@ -258,7 +293,15 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     if (dependencies.Count == 0) {
       return null;
     }
-    return new RequirementInfo(owner, dependencies);
+
+    // The requirement is named after the type argument, which is the descriptor's service type for
+    // every registration method but AddHostedService: that one registers under IHostedService, so
+    // record it or the factory registration would never be recognised as present.
+    var factoryServiceTypes = new List<string>();
+    if (string.Equals(generic.Identifier.ValueText, ADD_HOSTED_SERVICE, System.StringComparison.Ordinal)) {
+      factoryServiceTypes.Add(HOSTED_SERVICE_TYPE);
+    }
+    return new RequirementInfo(owner, dependencies, factoryServiceTypes);
   }
 
   /// <summary>
@@ -291,7 +334,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     sb.Append("namespace ").Append(assemblyName).AppendLine(".DependencyInjection;");
     sb.AppendLine();
     sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Constructor dependencies of every registered type in this compilation.");
+    sb.AppendLine("/// Constructor dependencies of every type a registration call in this compilation registers.");
     sb.AppendLine("/// </summary>");
     sb.AppendLine("internal static class WhizbangServiceRequirements {");
     sb.AppendLine();
@@ -299,15 +342,30 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     sb.AppendLine("  internal static readonly global::Whizbang.Core.DependencyInjection.ServiceRequirement[] All = [");
 
     // Two registrations of the same type contribute the same requirement; emitting it twice would
-    // report the same gap twice and overstate how many things are broken.
-    var seen = new HashSet<string>(System.StringComparer.Ordinal);
-    foreach (var item in items.OrderBy(i => i.ImplementationType, System.StringComparer.Ordinal)) {
-      if (!seen.Add(item.ImplementationType)) {
-        continue;
-      }
+    // report the same gap twice and overstate how many things are broken. The service types its
+    // factory registrations were made under are merged, though: a composition may make any one of
+    // those registrations, and each must be recognised as registering the type.
+    foreach (var group in items
+        .GroupBy(i => i.ImplementationType, System.StringComparer.Ordinal)
+        .OrderBy(g => g.Key, System.StringComparer.Ordinal)) {
+      var item = group.First();
+      var factoryServiceTypes = group
+        .SelectMany(i => i.FactoryServiceTypes)
+        .Distinct(System.StringComparer.Ordinal)
+        .OrderBy(t => t, System.StringComparer.Ordinal)
+        .ToList();
+
       sb.Append("    new global::Whizbang.Core.DependencyInjection.ServiceRequirement(typeof(").Append(item.ImplementationType).AppendLine("), [");
       foreach (var dep in item.Dependencies) {
         sb.Append("      typeof(").Append(dep).AppendLine("),");
+      }
+      if (factoryServiceTypes.Count == 0) {
+        sb.AppendLine("    ]),");
+        continue;
+      }
+      sb.AppendLine("    ], [");
+      foreach (var serviceType in factoryServiceTypes) {
+        sb.Append("      typeof(").Append(serviceType).AppendLine("),");
       }
       sb.AppendLine("    ]),");
     }
@@ -318,6 +376,12 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     spc.AddSource("WhizbangServiceRequirements.g.cs", sb.ToString());
   }
 
-  /// <summary>One registered implementation and the service types its constructor requires.</summary>
-  private sealed record RequirementInfo(string ImplementationType, List<string> Dependencies);
+  /// <summary>
+  /// One registered implementation, the service types its constructor requires, and the service
+  /// types any factory registration of it is made under.
+  /// </summary>
+  private sealed record RequirementInfo(
+    string ImplementationType,
+    List<string> Dependencies,
+    List<string> FactoryServiceTypes);
 }
