@@ -474,7 +474,7 @@ public class MessageExtractorRoutingTests {
   private sealed record TestEvent(string Name) : IEvent;
 
   [DefaultRouting(DispatchModes.Local)]
-  private sealed record LocalRoutedEvent : IEvent;
+  public sealed record LocalRoutedEvent([property: StreamId] Guid StreamId = default) : IEvent;
 
   #endregion
 }
