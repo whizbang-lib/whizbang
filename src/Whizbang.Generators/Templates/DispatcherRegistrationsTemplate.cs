@@ -180,7 +180,16 @@ namespace Whizbang.Core.Generated {
         new global::Whizbang.Core.Messaging.DispatcherEventCascader(sp,
           sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>>()
             ?? global::Microsoft.Extensions.Logging.Abstractions.NullLogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>.Instance));
-      services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
+      // Built explicitly so the cascader above always reaches it. The perspective-sync awaiter waits on
+      // the work coordinator a storage driver registers; a host with no driver has nothing to wait on
+      // and gets none, as it did when the container picked the constructor.
+      services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(
+        sp.GetRequiredService<IReceptorRegistry>(),
+        sp,
+        sp.GetService<global::Whizbang.Core.Messaging.IEventCascader>(),
+        sp.GetService<global::Whizbang.Core.Messaging.IWorkCoordinator>() is null
+          ? null
+          : sp.GetService<global::Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>()));
       // Default dedup store: records receptor invocations on the envelope itself.
       // TryAddSingleton lets a consumer replace this with a DB-backed implementation.
       services.TryAddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();

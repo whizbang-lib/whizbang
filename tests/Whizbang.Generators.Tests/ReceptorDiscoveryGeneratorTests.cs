@@ -1414,7 +1414,7 @@ public class VoidSyncHandler : ISyncReceptor<VoidSyncCommand> {
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_PublishToReceptorsUntyped_KeepsFireAtGuardedByIsDefaultDispatchAsync() {
+  public async Task Generator_PipelineStageReceptor_IsLeftToItsStageNotThePublishersAsync() {
     const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
@@ -1434,21 +1434,15 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(registry).IsNotNull();
 
-    var content = dispatcher!;
-    var untypedStart = content.IndexOf("async Task PublishToReceptorsUntyped", StringComparison.Ordinal);
-    await Assert.That(untypedStart).IsGreaterThan(-1);
-    var untypedEnd = content.IndexOf("return PublishToReceptorsUntyped;", untypedStart, StringComparison.Ordinal);
-    await Assert.That(untypedEnd).IsGreaterThan(untypedStart);
-    var untypedBody = content[untypedStart..untypedEnd];
-
-    await Assert.That(untypedBody).Contains("isDefaultDispatch")
-      .Because("cascade path still declares isDefaultDispatch from sourceEnvelope");
-    await Assert.That(untypedBody).Contains("if (!isDefaultDispatch)")
-      .Because("cascade path still gates [FireAt] receptors behind the isDefaultDispatch flag");
-    await Assert.That(untypedBody).Contains("FireAtReceptor")
-      .Because("[FireAt] receptor must still be present in the cascade path — just behind the runtime guard");
+    await Assert.That(dispatcher!).DoesNotContain("PublishToReceptorsUntyped")
+      .Because("a receptor declared only at a pipeline stage does not run on a local publish or cascade, so " +
+               "the message has no publisher and the policy sees no local handler (#1410 follow-up)");
+    await Assert.That(registry!).Contains("global::MyApp.Receptors.FireAtReceptor")
+      .Because("it fires at its declared stage through the registry");
   }
 
   [Test]
@@ -1516,7 +1510,9 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     await Assert.That(registrations).IsNotNull();
     await Assert.That(registrations).Contains("AddWhizbangReceptorRegistry");
     await Assert.That(registrations).Contains("IReceptorRegistry, GeneratedReceptorRegistry");
-    await Assert.That(registrations).Contains("IReceptorInvoker, ReceptorInvoker");
+    await Assert.That(registrations).Contains("AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(");
+    await Assert.That(registrations).Contains("TryAddSingleton<global::Whizbang.Core.Messaging.IEventCascader>")
+      .Because("the invoker cascades what a receptor returns at a worker stage in every host, not only one with a transport consumer");
   }
 
   [Test]

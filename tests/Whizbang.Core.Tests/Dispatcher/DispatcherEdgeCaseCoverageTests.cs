@@ -78,17 +78,16 @@ public class DispatcherEdgeCaseCoverageTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_GenericTyped_WithDispatchOptions_RoutedNone_ThrowsReceptorNotFoundExceptionAsync() {
+  public async Task SendAsync_GenericTyped_WithDispatchOptions_RoutedNone_ThrowsArgumentExceptionAsync() {
     var dispatcher = _createDispatcher();
     var routedNone = Route.None();
     var options = new DispatchOptions();
 
-    // The generic typed SendAsync<TMessage> path does not unwrap IRouted —
-    // it goes through _sendAsyncInternalWithOptionsAsync which tries receptor lookup directly.
-    // RoutedNone has no receptor, so ReceptorNotFoundException is thrown.
+    // A Routed<T> passed to a send is honored on the generic overload as on the object one (#1395),
+    // so a RoutedNone is refused the same way: it has no inner message to dispatch.
     await Assert.That(async () =>
       await dispatcher.SendAsync<RoutedNone>(routedNone, options))
-      .ThrowsExactly<ReceptorNotFoundException>();
+      .ThrowsExactly<ArgumentException>();
   }
 
   [Test]
