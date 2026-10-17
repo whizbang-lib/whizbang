@@ -209,8 +209,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var isPostInbox = stage == LifecycleStage.PostInboxInline || stage == LifecycleStage.PostInboxDetached;
 
     if (_shouldSkipSameServicePostInbox(envelope, messageType, stage, receptors, isPostInbox)
-        || _shouldSkipOwnedDomainFilter(envelope, message, messageType, stage, receptors, isPreOutbox)
-        || _shouldSkipLocalDispatchPreOutbox(envelope, messageType, stage, receptors, isPreOutbox)) {
+        || _shouldSkipOwnedDomainFilter(envelope, message, messageType, stage, receptors, isPreOutbox)) {
       return;
     }
 
@@ -304,29 +303,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   }
 
   /// <summary>
-  /// Double-fire prevention: when the envelope was dispatched with the LocalDispatch flag, the
-  /// handler already fired at LocalImmediate — returning true here skips PreOutbox. Only applies
-  /// when owned domains are configured (preserves backward compat).
-  /// </summary>
-  private bool _shouldSkipLocalDispatchPreOutbox(
-      IMessageEnvelope envelope,
-      Type messageType,
-      LifecycleStage stage,
-      IReadOnlyList<ReceptorInfo> receptors,
-      bool isPreOutbox) {
-    if (_ownedDomains.Count == 0 || !isPreOutbox || receptors.Count == 0
-        || !envelope.DispatchContext.Mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
-      return false;
-    }
-    _ensureLogger();
-    if (_logger is not null) {
-      Log.SkippedLocalDispatchPreOutbox(_logger, stage, messageType.Name, envelope.MessageId.Value);
-    }
-    return true;
-  }
-
-  /// <summary>
-  /// Double-fire prevention for RUNTIME registrations, with or without owned domains: on the outbox
+  /// Double-fire prevention on the outbox copy of a message this service already handled (marked
+  /// <see cref="Dispatch.DispatchModes.LocalDispatch"/>): a receptor that also fires at a local stage is
+  /// dropped, because the local run already ran it. A runtime registration always; a generated receptor
+  /// when owned domains are configured. A receptor registered only at PreOutbox observes the outbox and
+  /// is always kept, now that every send, publish and cascade marks the copies it handled (#1398).
+  /// Details for RUNTIME registrations, with or without owned domains: on the outbox
   /// copy of a message this service already dispatched locally (<see cref="Dispatch.DispatchModes.LocalDispatch"/>),
   /// drops a runtime receptor that is also registered at a local dispatch stage, because that local
   /// dispatch already ran it. A framework registrar registers one receptor at the local stage AND at
@@ -351,7 +333,13 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     List<ReceptorInfo>? kept = null;
     for (var i = 0; i < receptors.Count; i++) {
       var receptor = receptors[i];
-      if (receptor.RuntimeInstance is not null && _isRegisteredForLocalDispatch(messageType, receptor.RuntimeInstance)) {
+      var ranLocally = receptor.RuntimeInstance is not null
+        ? _isRegisteredForLocalDispatch(messageType, receptor.RuntimeInstance)
+        // A generated receptor also registered at a local stage: with owned domains configured its
+        // outbox echo is suppressed (with none, every stage fires, as it always has). One registered
+        // only at PreOutbox observes the outbox and never ran locally, so it is kept either way.
+        : _ownedDomains.Count > 0 && _isGeneratedReceptorRegisteredForLocalDispatch(messageType, receptor.ReceptorId);
+      if (ranLocally) {
         kept ??= [.. receptors.Take(i)];
         continue;
       }
@@ -368,6 +356,10 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
     return kept;
   }
+
+  private bool _isGeneratedReceptorRegisteredForLocalDispatch(Type messageType, string receptorId) =>
+    _registry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline).Any(r => r.RuntimeInstance is null && r.ReceptorId == receptorId)
+    || _registry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached).Any(r => r.RuntimeInstance is null && r.ReceptorId == receptorId);
 
   private bool _isRegisteredForLocalDispatch(Type messageType, object instance) =>
     _registry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline).Any(r => ReferenceEquals(r.RuntimeInstance, instance))

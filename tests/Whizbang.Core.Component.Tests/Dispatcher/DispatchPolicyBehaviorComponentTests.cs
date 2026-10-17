@@ -118,6 +118,18 @@ public class DispatchPolicyBehaviorComponentTests {
   }
 
   [Test]
+  public async Task Publish_ReceptorDeclaredAtALocalStage_RunsExactlyOnceAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var evt = new PbHookedEvent(Guid.CreateVersion7());
+
+    await provider.GetRequiredService<IDispatcher>().PublishAsync(evt);
+
+    await Assert.That(PolicyProbe.Count(nameof(PbLocalStageHook), evt.Id)).IsEqualTo(1)
+      .Because("the publish fan-out runs it; nothing else may run it a second time");
+  }
+
+  [Test]
   public async Task PublishMany_VoidOnlyReceptor_RunsLocallyAndQueuesAsync() {
     var outbox = new PolicyRecordingOutbox();
     await using var provider = _buildProvider(outbox);

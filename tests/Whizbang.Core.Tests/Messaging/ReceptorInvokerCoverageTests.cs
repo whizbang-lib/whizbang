@@ -233,14 +233,14 @@ namespace Whizbang.Core.Tests.Messaging {
         .Because("an owned command reaching PreOutbox already ran at LocalImmediate — firing its receptor again duplicates that work");
     }
 
-    // Bug this guards: the LocalDispatch double-fire guard (ReceptorInvoker._shouldSkipLocalDispatchPreOutbox)
-    // stops a command already routed via the LocalDispatch flag from also firing its PreOutbox
-    // receptor. If this regressed under logging, every command dispatched with LocalDispatch in a
-    // logging-enabled host would run its handler twice: once locally, once again at PreOutbox.
+    // Bug this guards: the LocalDispatch double-fire guard stops a command that already ran locally from
+    // running the same receptor again at PreOutbox. If it regressed under logging, a logging-enabled
+    // host would run such a handler twice: once locally, once again at PreOutbox.
     [Test]
-    public async Task InvokeAsync_ForeignCommandWithLocalDispatchFlagAtPreOutbox_SkipsReceptorEvenWithLoggerRegisteredAsync() {
+    public async Task InvokeAsync_ForeignCommandWithLocalDispatchFlagAtPreOutbox_SkipsAReceptorThatRanLocallyEvenWithLoggerRegisteredAsync() {
       var tracker = new FiringTracker();
       var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
       registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
 
       var services = new ServiceCollection();
@@ -255,7 +255,7 @@ namespace Whizbang.Core.Tests.Messaging {
       await invoker.InvokeAsync(envelope, LifecycleStage.PreOutboxInline);
 
       await Assert.That(tracker.Count).IsEqualTo(0)
-        .Because("the command already fired locally via the LocalDispatch flag — PreOutbox must not run its receptor a second time");
+        .Because("the command already ran this receptor locally via the LocalDispatch flag; PreOutbox must not run it a second time");
     }
 
     // Bug this guards: LifecycleStageTracker dedup (ReceptorInvoker._tryClaimStageTracker) stops a

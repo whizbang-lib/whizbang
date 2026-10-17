@@ -278,15 +278,15 @@ public class ReceptorInvokerOwnedDomainTests {
   // ========================================
 
   [Test]
-  public async Task PreOutboxInline_WhenDispatchContextHasLocalDispatch_SkipsAsync() {
-    // Envelope dispatched with Mode=Local (or Both) → LocalImmediateInline already fired
-    // PreOutboxInline should skip to prevent double invocation
+  public async Task PreOutboxInline_LocalDispatchCopy_ReceptorThatAlsoRanLocally_SkipsAsync() {
+    // Mode=Local (or Both) on the outbox copy: the receptor also registered at a local stage already
+    // ran there, so with an owned domain configured its outbox echo is suppressed
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.LocalImmediateInline);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxInline);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
-    // Mode=Local includes LocalDispatch flag
     await invoker.InvokeAsync(
       _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Local),
       LifecycleStage.PreOutboxInline);
@@ -295,18 +295,21 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   [Test]
-  public async Task PreOutboxInline_WhenDispatchContextHasBothMode_SkipsAsync() {
-    // Mode=Both (LocalDispatch | Outbox) → local already fired, skip PreOutbox
+  [Arguments(DispatchModes.Local)]
+  [Arguments(DispatchModes.Both)]
+  public async Task PreOutboxInline_LocalDispatchCopy_ReceptorRegisteredOnlyAtPreOutbox_RunsAsync(DispatchModes mode) {
+    // A receptor registered only at PreOutbox observes the outbox; it never ran locally, so a copy
+    // marked as handled here must not silence it (every handled send, publish and cascade is marked, #1398)
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxInline);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
     await invoker.InvokeAsync(
-      _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Both),
+      _wrap(new OwnedEvent(Guid.NewGuid()), mode: mode),
       LifecycleStage.PreOutboxInline);
 
-    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
   }
 
   // ========================================
@@ -384,9 +387,24 @@ public class ReceptorInvokerOwnedDomainTests {
   }
 
   [Test]
-  public async Task PreOutboxDetached_WhenDispatchContextHasLocalDispatch_SkipsAsync() {
+  public async Task PreOutboxDetached_LocalDispatchCopy_ReceptorRegisteredOnlyAtPreOutbox_RunsAsync() {
     var tracker = new InvocationTracker();
     var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxDetached);
+    var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
+
+    await invoker.InvokeAsync(
+      _wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Local),
+      LifecycleStage.PreOutboxDetached);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PreOutboxDetached_LocalDispatchCopy_ReceptorThatAlsoRanLocally_SkipsAsync() {
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.LocalImmediateDetached);
     registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxDetached);
     var invoker = _createInvoker(registry, ["Whizbang.Core.Tests.Messaging"]);
 
