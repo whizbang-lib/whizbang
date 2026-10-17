@@ -243,4 +243,14 @@ public sealed class DispatchOptions {
     Behaviors = behaviors;
     return this;
   }
+
+  /// <summary>What a batch call does when one message's local handler fails. <see cref="BatchFailureMode.Stop"/> by default.</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  public BatchFailureMode BatchFailure { get; set; }
+
+  /// <summary>Sets <see cref="BatchFailure"/>. Returns this instance for chaining.</summary>
+  public DispatchOptions WithBatchFailure(BatchFailureMode batchFailure) {
+    BatchFailure = batchFailure;
+    return this;
+  }
 }

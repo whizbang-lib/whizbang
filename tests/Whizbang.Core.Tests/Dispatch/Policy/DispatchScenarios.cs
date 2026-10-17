@@ -223,7 +223,7 @@ public static class DispatchScenarios {
       _row(71, "RoutedNone_Throws", publish, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoRoute, route: DispatchModes.None),
       _row(72, "Command_RoutedEventStoreOnly_Throws", publish, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.CommandCannotBeStoreOnly, route: DispatchModes.EventStoreOnly),
       _row(73, "Event_RoutedLocal_Scheduled_Throws", publish, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.CannotScheduleInProcess, route: DispatchModes.Local, scheduled: true),
-      _row(74, "RoutedNone_Throws", cascade, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoRoute, route: DispatchModes.None),
+      _row(74, "RoutedNone_RefusedAndTheCascadeSkipsItQuietly", cascade, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoRoute, route: DispatchModes.None),
 
       // Contradictory overrides on every policy family
       _row(75, "BothHandlerOverrides_Throws", local, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ConflictingBehaviors, behaviors: DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler),

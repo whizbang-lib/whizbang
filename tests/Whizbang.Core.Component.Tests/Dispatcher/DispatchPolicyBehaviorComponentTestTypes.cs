@@ -92,10 +92,16 @@ namespace Whizbang.Core.Component.Tests.PolicyBehavior {
       ValueTask.FromResult((new PbRpcResponse(message.Id), new PbEvent(message.Id)));
   }
 
-  /// <summary>Cascades a command routed to the event store only, which the policy refuses (M).</summary>
-  public sealed class PbStoreOnlyTriggerReceptor : IReceptor<PbStoreOnlyTrigger, Routed<PbUnownedCommand>> {
-    public ValueTask<Routed<PbUnownedCommand>> HandleAsync(PbStoreOnlyTrigger message, CancellationToken cancellationToken = default) =>
-      ValueTask.FromResult(Route.EventStoreOnly(new PbUnownedCommand(message.Id)));
+  public record PbStoreOnlyAck(Guid Id);
+
+  /// <summary>
+  /// Cascades a command routed to the event store only, which the policy refuses (M). The routed command
+  /// rides in a tuple: a receptor's top-level Routed result is unwrapped by the generated invokers before
+  /// the cascade sees its route (tracked separately).
+  /// </summary>
+  public sealed class PbStoreOnlyTriggerReceptor : IReceptor<PbStoreOnlyTrigger, (PbStoreOnlyAck, Routed<PbUnownedCommand>)> {
+    public ValueTask<(PbStoreOnlyAck, Routed<PbUnownedCommand>)> HandleAsync(PbStoreOnlyTrigger message, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult((new PbStoreOnlyAck(message.Id), Route.EventStoreOnly(new PbUnownedCommand(message.Id))));
   }
 }
 

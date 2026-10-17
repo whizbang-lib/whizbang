@@ -94,8 +94,9 @@ public class SendReceptorShapeIntegrationTests {
   [Arguments(SendOverload.UntypedWithOptions)]
   [Arguments(SendOverload.Typed)]
   [Arguments(SendOverload.TypedWithOptions)]
-  public async Task SendAsync_UnownedVoidReceptor_RunsInProcessInsteadOfTheOutboxAsync(SendOverload overload) {
-    // A local receptor wins over the outbox whether or not the namespace is owned
+  public async Task SendAsync_UnownedVoidReceptor_RunsInProcessAndSendsAMarkedCopyAsync(SendOverload overload) {
+    // An unowned command runs its local receptor here and also goes to the outbox for the other
+    // services that handle it, marked as handled here so this service does not run it again (#1396)
     var outbox = new RecordingOutbox();
     var dispatcher = _buildDispatcher(outbox);
     var command = new UnownedVoidCommand(Guid.CreateVersion7());
@@ -104,8 +105,8 @@ public class SendReceptorShapeIntegrationTests {
 
     await Assert.That(SendShapeInvocations.CountFor(command.Id)).IsEqualTo(1);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(outbox.QueuedOf(command)).IsEmpty()
-      .Because("before #1379 an unowned void-receptor command took an outbox round trip");
+    // The copy's mark is asserted by DispatchPolicyBehaviorComponentTests; this serializer keeps only types
+    await Assert.That(outbox.QueuedOf(command)).Count().IsEqualTo(1);
   }
 
   [Test]

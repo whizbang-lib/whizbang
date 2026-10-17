@@ -826,18 +826,17 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_CascadedOwnedCommandRoutedOutbox_IsDowngradedToLocalAsync() {
-    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing —
-    // owned commands must stay local (no transport), so the outbox cascade never fires
+  public async Task SendAsync_CascadedOwnedCommandRoutedOutbox_NoHandler_ThrowsAndNeverReachesTheOutboxAsync() {
+    // Arrange - receptor cascades an owned-namespace COMMAND with explicit Outbox routing. An owned
+    // command never leaves its service (Route.Outbox included), and with no handler here it is a wiring
+    // error: refused, as SendAsync refuses it, instead of silently dropped (#1403)
     var dispatcher = new SweepRoutedDispatcher(
       _buildProvider(ownedDomains: _parentOwnedDomains),
       invoker: _ => new ValueTask<object>(Route.Outbox(new SweepCascadedOwnedCommand("owned-cascade"))));
 
-    // Act
-    var receipt = await dispatcher.SendAsync((object)new SweepRoutedCommand("cascade-owned"), MessageContext.New());
-
-    // Assert - downgraded to Local: nothing reached the outbox cascade seam
-    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    // Act + Assert
+    Func<Task> send = () => dispatcher.SendAsync((object)new SweepRoutedCommand("cascade-owned"), MessageContext.New());
+    await Assert.That(send).Throws<ReceptorNotFoundException>();
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(0);
   }
 
@@ -856,17 +855,16 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_OwnedCommandOutboxMode_IsDowngradedToLocalAsync() {
-    // Arrange - CascadeMessageAsync applies the same owned-command downgrade
+  public async Task CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync() {
+    // Arrange - CascadeMessageAsync applies the same shared owned rule (#1403)
     var dispatcher = new SweepRoutedDispatcher(_buildProvider(ownedDomains: _parentOwnedDomains));
 
-    // Act
-    await dispatcher.CascadeMessageAsync(
+    // Act + Assert
+    Func<Task> cascade = () => dispatcher.CascadeMessageAsync(
       new SweepCascadedOwnedCommand("owned-direct"),
       sourceEnvelope: null,
       DispatchModes.Outbox);
-
-    // Assert - downgraded: no outbox cascade for the owned command
+    await Assert.That(cascade).Throws<ReceptorNotFoundException>();
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(0);
   }
 
