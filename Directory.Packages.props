@@ -42,7 +42,7 @@
          2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects.
          The floor moved to 2.5.302 with Aspire.Hosting 13.5.4, whose StreamJsonRpc 2.25.29 asks
          for it; a later release on the same 2.x line, so the patch above still holds. -->
-    <PackageVersion Include="MessagePack" Version="2.5.302" />
+    <PackageVersion Include="MessagePack" Version="2.5.303" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
     <!-- Transitively pinned to patch GHSA-v5pm-xwqc-g5wc (CVE-2026-49451): Microsoft.AspNetCore.OpenApi 10.0.2 pulls Microsoft.OpenApi 2.0.0, which is vulnerable. 2.7.5 is the first patched 2.x release. -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.12.2" />
