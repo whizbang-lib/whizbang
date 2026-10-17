@@ -51,9 +51,10 @@ public class DispatcherSnippets {
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           var result = await receptor.HandleAsync(typedMsg);
-          // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
+          // Unwrap Routed<T> only when the caller asked for the inner type. A caller taking the result as
+          // it is (object) gets the Routed<T> itself, so the cascade keeps the receptor's route.
           // Cast to object first to avoid C# compile-time type checking (CS8121)
-          if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && routedResult.Value is TResult unwrappedValue) {
+          if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && (object)result is not TResult && routedResult.Value is TResult unwrappedValue) {
             return unwrappedValue;
           }
           return (TResult)(object)result!;
@@ -90,11 +91,8 @@ public class DispatcherSnippets {
           global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
 
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
-          // Default-stage receptors fire immediately from PublishAsync (Path 1, fast path).
-          // Explicit FireAt receptors are NOT emitted here — the generator omits them
-          // for the publish path. They fire at their declared lifecycle stage via
-          // ReceptorInvoker (from the registry). The cascade path below still emits
-          // them, gated by a runtime isDefaultDispatch flag derived from sourceEnvelope.
+          // Every receptor that fires when this service handles the message in-process. A receptor
+          // declared only at a pipeline stage fires there through the receptor invoker instead.
           __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
@@ -139,8 +137,8 @@ public class DispatcherSnippets {
           }
 
           var typedEvt = (__MESSAGE_TYPE__)evt;
-          // Cascade paths: null envelope OR IsDefaultDispatch flag = default dispatch (skip explicit [FireAt] receptors)
-          var isDefaultDispatch = sourceEnvelope is null || sourceEnvelope.DispatchContext.IsDefaultDispatch;
+          // Every receptor that fires when this service handles the message in-process. A receptor
+          // declared only at a pipeline stage fires there through the receptor invoker instead.
           __RECEPTOR_INVOCATIONS__
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
@@ -266,7 +264,7 @@ public class DispatcherSnippets {
         var result = receptor.Handle(typedMsg);
         // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
         // Cast to object first to avoid C# compile-time type checking (CS8121)
-        if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && routedResult.Value is TResult unwrappedValue) {
+        if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && (object)result is not TResult && routedResult.Value is TResult unwrappedValue) {
           return unwrappedValue;
         }
         return (TResult)(object)result!;
@@ -387,12 +385,8 @@ public class DispatcherSnippets {
             // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
             var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                         ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-            var result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-            // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
-            if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {
-              return routedResult.Value;
-            }
-            return result;
+            // Returned as it is: the worker's cascade reads a Routed<T> result's route
+            return await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
           },
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
@@ -478,11 +472,8 @@ public class DispatcherSnippets {
               // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
               var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                           ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+              // Kept as it is: the worker's cascade reads a Routed<T> result's route
               result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-              // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
-              if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {
-                result = routedResult.Value;
-              }
             } catch (System.Exception ex) {
               handlerException = ex;
               status = global::Whizbang.Core.Tracing.HandlerStatus.Failed;
@@ -620,12 +611,8 @@ public class DispatcherSnippets {
           var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                       ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
-          var result = await receptor.HandleAsync(typedMsg);
-          // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
-          if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {
-            return routedResult.Value;
-          }
-          return result;
+          // Returned as it is: a Routed<T> reaches the cascade with its route
+          return await receptor.HandleAsync(typedMsg);
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();

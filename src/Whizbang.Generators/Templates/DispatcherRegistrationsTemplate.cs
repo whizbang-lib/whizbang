@@ -172,6 +172,14 @@ namespace Whizbang.Core.Generated {
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
       services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
+      // The invoker cascades what a receptor returns at a lifecycle stage. Without a cascader the
+      // container chose the invoker's constructor that has none, and every result returned at a
+      // worker stage was discarded without a word in any host that did not also add a transport
+      // consumer (#1410 follow-up). TryAdd: a transport consumer's registration is the same type.
+      services.TryAddSingleton<global::Whizbang.Core.Messaging.IEventCascader>(sp =>
+        new global::Whizbang.Core.Messaging.DispatcherEventCascader(sp,
+          sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>>()
+            ?? global::Microsoft.Extensions.Logging.Abstractions.NullLogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>.Instance));
       services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
       // Default dedup store: records receptor invocations on the envelope itself.
       // TryAddSingleton lets a consumer replace this with a DB-backed implementation.

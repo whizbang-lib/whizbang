@@ -72,6 +72,8 @@ public class DispatchExecutorShapeComponentTests {
 
     await Assert.That(PolicyProbe.Count(nameof(ExTypedEventReceptor), evt.Id)).IsEqualTo(1)
       .Because("a copy from another service runs the receptor through the registry");
+    await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), evt.Id)).IsEqualTo(1)
+      .Because("the worker stage cascades the receptor's result in a host that registered only the dispatcher");
   }
 
   // ── E1b: a typed event receptor declared at a pipeline stage runs at that stage only ─────────
@@ -319,8 +321,7 @@ public class DispatchExecutorShapeComponentTests {
     await _dispatcher(provider).SendAsync(trigger);
 
     await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), trigger.Id)).IsEqualTo(1);
-    await Assert.That(outbox.QueuedOf(typeof(ExFollowUpEvent))).IsEmpty()
-      .Because("Route.Local keeps the result in this service");
+    await _assertNeverTransportedAsync(outbox, "Route.Local keeps the result in this service; it is only persisted");
   }
 
   [Test]
@@ -345,7 +346,7 @@ public class DispatchExecutorShapeComponentTests {
     await _dispatcher(provider).LocalInvokeAsync((object)trigger);
 
     await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), trigger.Id)).IsEqualTo(1);
-    await Assert.That(outbox.QueuedOf(typeof(ExFollowUpEvent))).IsEmpty();
+    await _assertNeverTransportedAsync(outbox, "Route.Local keeps the result in this service; it is only persisted");
   }
 
   [Test]
@@ -368,8 +369,24 @@ public class DispatchExecutorShapeComponentTests {
 
     await _invokeAtStageAsync(provider, trigger, LifecycleStage.PostInboxDetached, MessageSource.Inbox);
 
-    await Assert.That(outbox.QueuedOf(typeof(ExFollowUpEvent))).IsEmpty()
-      .Because("the worker stage keeps a routed result's route too");
+    await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), trigger.Id)).IsEqualTo(1)
+      .Because("the result cascades and runs here; without this the next assertion holds vacuously");
+    await Assert.That(outbox.QueuedOf(typeof(ExFollowUpEvent))).IsNotEmpty()
+      .Because("Route.Local persists the result");
+    await _assertNeverTransportedAsync(outbox, "the worker stage keeps a routed result's route too");
+  }
+
+  [Test]
+  public async Task PostInbox_ReceptorReturnsRouteOutbox_QueuesTheResultAndDoesNotRunItHereAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var trigger = new ExRouteOutboxTrigger(Guid.CreateVersion7());
+
+    await _invokeAtStageAsync(provider, trigger, LifecycleStage.PostInboxDetached, MessageSource.Inbox);
+
+    await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), trigger.Id)).IsEqualTo(0)
+      .Because("the worker stage keeps Route.Outbox: the result goes on without running here");
+    await Assert.That(outbox.QueuedOf(typeof(ExFollowUpEvent)).Count(m => m.Destination is not null)).IsEqualTo(1);
   }
 
   // ── E10: a runtime-registered receptor's result cascades on every path ───────────────────────
@@ -427,6 +444,16 @@ public class DispatchExecutorShapeComponentTests {
       .Because("the receptor runs here exactly once");
     await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), id)).IsEqualTo(1)
       .Because("its result cascades and runs here exactly once");
+  }
+
+  /// <summary>
+  /// Route.Local persists a result through an outbox row with no destination (event store only), so
+  /// "never transported" means every queued copy has a null destination; a lost route defaults to Both,
+  /// whose copy carries one.
+  /// </summary>
+  private static async Task _assertNeverTransportedAsync(PolicyRecordingOutbox outbox, string because) {
+    var queued = outbox.QueuedOf(typeof(ExFollowUpEvent));
+    await Assert.That(queued.All(m => m.Destination is null)).IsTrue().Because(because);
   }
 
   private static async Task _invokeAtStageAsync<TMessage>(ServiceProvider provider, TMessage message, LifecycleStage stage, MessageSource source)
