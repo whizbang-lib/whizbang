@@ -53,6 +53,14 @@ public class DispatcherLocalDispatchRecordTests {
 
   private const string RECEPTOR_ID_SUFFIX = nameof(LocalDispatchRecordProbeReceptor);
 
+  /// <summary>A command whose receptor returns the probe event, so the dispatcher cascades it.</summary>
+  public record LocalDispatchRecordTrigger(Guid Id) : ICommand;
+
+  public class LocalDispatchRecordTriggerReceptor : IReceptor<LocalDispatchRecordTrigger, LocalDispatchRecordProbeEvent> {
+    public ValueTask<LocalDispatchRecordProbeEvent> HandleAsync(LocalDispatchRecordTrigger message, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(new LocalDispatchRecordProbeEvent(message.Id));
+  }
+
   /// <summary>An event two services both handle with the same receptor class.</summary>
   public record SharedHandlerProbeEvent([property: StreamId] Guid StreamId) : IEvent;
 
@@ -164,6 +172,40 @@ public class DispatcherLocalDispatchRecordTests {
       .Because("the local path ran the receptor inline, in the publishing call");
     await Assert.That(record.ServiceName).IsNotEqualTo(string.Empty)
       .Because("the record names the service whose local path fired, as the invoker's records do");
+  }
+
+  /// <summary>
+  /// A cascade that runs the event's receptors on the local path records that too, as a publish does,
+  /// whether the cascade is asked for directly or comes from a receptor's result (#1410 follow-up).
+  /// </summary>
+  [Test]
+  [Arguments("CascadeMessageAsync")]
+  [Arguments("receptor result")]
+  public async Task Cascade_EventWithADefaultStageReceptor_StoredEnvelopeRecordsTheLocalFiringAsync(string how) {
+    var (dispatcher, stored) = _dispatcher();
+    var id = Guid.CreateVersion7();
+
+    if (how == "CascadeMessageAsync") {
+      await dispatcher.CascadeMessageAsync(new LocalDispatchRecordProbeEvent(id), sourceEnvelope: null, DispatchModes.Both);
+    } else {
+      await dispatcher.LocalInvokeAsync(new LocalDispatchRecordTrigger(id));
+    }
+
+    var records = stored.SelectMany(r => r).Where(r => r.ReceptorId.EndsWith(RECEPTOR_ID_SUFFIX, StringComparison.Ordinal)).ToList();
+    await Assert.That(records).Count().IsEqualTo(1)
+      .Because("the cascade ran the receptor here, so the stored copy says so and no other host fires it again");
+    await Assert.That(records[0].Stage).IsEqualTo(LifecycleStage.LocalImmediateInline);
+  }
+
+  /// <summary>A cascade that does not run here (outbox only) records nothing.</summary>
+  [Test]
+  public async Task Cascade_OutboxOnly_RecordsNothingAsync() {
+    var (dispatcher, stored) = _dispatcher();
+
+    await dispatcher.CascadeMessageAsync(new LocalDispatchRecordProbeEvent(Guid.CreateVersion7()), sourceEnvelope: null, DispatchModes.Outbox);
+
+    await Assert.That(stored.SelectMany(r => r)).IsEmpty()
+      .Because("recording a firing that has not happened would stop the receptor where it does run");
   }
 
   /// <summary>A publish scheduled for later runs nothing locally, so it records nothing.</summary>

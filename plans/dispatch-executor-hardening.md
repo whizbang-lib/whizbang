@@ -48,7 +48,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E19 | Void LocalInvoke paths never process tags | fixed (and a cascade's local run) |
 | E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | question #1413 |
 | E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | fixed |
-| E22 | Generated cascade arms omit `recordLocalDispatch`: another host can double-fire a cascade that ran locally | todo |
+| E22 | Generated cascade arms omit `recordLocalDispatch`: another host can double-fire a cascade that ran locally | fixed |
 | E23 | Send and batch outbox writes ignore `DispatchOutboxCollector.Current` (bypass the atomic commit) | fixed |
 | E24 | `PublishOnceAsync` claims then publishes non-atomically; a failed publish keeps the claim and the event is lost | question #1414 |
 | E25 | Default interface methods for batch-options overloads drop `options`; security builder exposes only some overloads | question #1415 |

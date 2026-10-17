@@ -3925,7 +3925,9 @@ public abstract partial class Dispatcher(
       var envelope = _createOutboxEnvelopeWithHop(eventData, eventType, messageId, sourceEnvelope, destination);
       _stampExplicitPriority(envelope, priority);   // an explicit number on the options is the caller's declaration
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
-      if (recordLocalDispatch) {
+      // A copy marked handled here (a cascade that ran the event's receptors, which reaches this through
+      // the generated outbox cascade) records it as a publish does (#1410 follow-up)
+      if (recordLocalDispatch || _outboxCopyMark.Value == OutboxCopyMark.HandledLocally) {
         await _recordLocalDispatchAsync(envelope, eventType, scope.ServiceProvider).ConfigureAwait(false);
       }
 
