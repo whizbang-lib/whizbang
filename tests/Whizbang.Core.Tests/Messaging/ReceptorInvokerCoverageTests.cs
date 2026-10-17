@@ -250,6 +250,25 @@ namespace Whizbang.Core.Tests.Messaging {
       await Assert.That(tracker.Count).IsEqualTo(0);
     }
 
+    // A runtime registration at the detached local stage is not the generated receptor being checked.
+    [Test]
+    public async Task InvokeAsync_LocalDispatchCopyAtPreOutbox_KeepsAGeneratedReceptorThatNeverRanLocallyAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateDetached,
+        _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", new FiringTracker()) with { RuntimeInstance = new object() });
+      registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IOptions<RoutingOptions>>(Options.Create(new RoutingOptions().OwnDomains("Some.Unrelated.Domain")));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+
+      await invoker.InvokeAsync(_envelope(new ForeignEchoCommand(), mode: DispatchModes.Both), LifecycleStage.PreOutboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(1)
+        .Because("only the same generated receptor at a local stage means it already ran");
+    }
+
     // Bug this guards: the owned-domain filter (ReceptorInvoker._shouldSkipOwnedDomainFilter) skips
     // an owned command reaching PreOutbox because that command already ran at LocalImmediate. If
     // this regressed under logging, any host with logging configured would re-run that command's

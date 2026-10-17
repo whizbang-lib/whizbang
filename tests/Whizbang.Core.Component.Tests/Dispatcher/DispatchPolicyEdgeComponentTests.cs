@@ -258,7 +258,44 @@ public class DispatchPolicyEdgeComponentTests {
     await Assert.That(PolicyProbe.Count(nameof(PbSyncCommandWithLifecycleHook), command.Id)).IsEqualTo(1);
   }
 
+  [Test]
+  public async Task LocalInvokeVoidWithOptions_PlainSyncReceptor_RunsOnceAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var command = new PbSyncCommand(Guid.CreateVersion7());
+
+    await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync((object)command, new DispatchOptions());
+
+    await Assert.That(PolicyProbe.Count(nameof(PbSyncCommandReceptor), command.Id)).IsEqualTo(1)
+      .Because("with no trace store and nothing after the handler, the sync receptor takes the direct path");
+  }
+
+  [Test]
+  public async Task Publish_CommandNothingHereHandles_GoesOutWithoutALocalRunAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+
+    await provider.GetRequiredService<IDispatcher>().PublishAsync(new PbUnhandledCommand(Guid.CreateVersion7()));
+
+    await Assert.That(outbox.QueuedOf(typeof(PbUnhandledCommand))).Count().IsEqualTo(1);
+  }
+
   // Registrations that resolve to nothing
+
+  [Test]
+  public async Task Send_HandledHereWithAWorkCoordinatorResolvingToNothing_ReturnsTheLocalReceiptAsync() {
+    var services = _baseServices();
+    services.AddScoped<IWorkCoordinatorStrategy>(_ => null!);
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    await using var provider = services.BuildServiceProvider();
+    var command = new PbUnownedCommand(Guid.CreateVersion7());
+
+    var receipt = await provider.GetRequiredService<IDispatcher>().SendAsync(command);
+
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), command.Id)).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("handled here with nowhere to send it, the local run is the delivery");
+  }
 
   [Test]
   public async Task Send_WorkCoordinatorRegisteredButResolvingToNothing_ThrowsReceptorNotFoundAsync() {
