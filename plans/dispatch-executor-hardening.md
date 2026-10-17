@@ -24,19 +24,19 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | # | Suspected defect | Status |
 |---|---|---|
 | E0 | Owned command, result-returning receptor, publish/cascade: silently dropped (#1410) | fixed |
-| E0b | Integrity checkpoint advances its watermark, then fails on an empty service identity every cycle | red-written |
-| E1 | Event with a result-returning receptor (R not object): never runs on publish/cascade in its own service | todo |
-| E1b | Typed event receptors in the publisher are not stage-filtered: `[FireAt(pipeline)]` with R=object fires twice | todo |
-| E2 | Sync receptors (void or result) never run on publish/cascade; owned command with only a void sync receptor throws NoHandler on publish | todo |
-| E3 | Registry entries for sync receptors resolve the async interface: worker stages throw for `ISyncReceptor` | todo |
-| E4 | Polymorphic receptors (interface/base message type) unreachable on every local path | todo |
-| E5 | Generic overloads key on the static type: `SendAsync<TMessage>`, `SendManyAsync<T>`, `LocalSendManyAsync<T>`, `PublishManyAsync<TEvent>`, perspective wait; generic `SendAsync` ignores `Routed<T>` | todo |
+| E0b | Integrity checkpoint advances its watermark, then fails on an empty service identity every cycle | red-written, fix written |
+| E1 | Event with a result-returning receptor (R not object): never runs on publish/cascade in its own service | red |
+| E1b | Typed event receptors in the publisher are not stage-filtered: `[FireAt(pipeline)]` with R=object fires twice | red |
+| E2 | Sync receptors (void or result) never run on publish/cascade; owned command with only a void sync receptor throws NoHandler on publish | red |
+| E3 | Registry entries for sync receptors resolve the async interface: worker stages throw for `ISyncReceptor` | red |
+| E4 | Polymorphic receptors (interface/base message type) unreachable on every local path | red |
+| E5 | Generic overloads key on the static type: `SendAsync<TMessage>`, `SendManyAsync<T>`, `LocalSendManyAsync<T>`, `PublishManyAsync<TEvent>`, perspective wait; generic `SendAsync` ignores `Routed<T>` | red |
 | E6 | Overloads with divergent fallbacks: `LocalInvokeAsync<TMessage,TResult>(m, ctx)` no sync/RPC; generic void `(m, ctx)` ignores foreign assemblies; options/receipt overloads no RPC extraction | todo |
 | E7 | Cascaded command not among the assembly's response types falls through the generated `CascadeToOutboxAsync` silently; command arms resolve an event topic | todo |
-| E7b | "Has a handler" counts a publisher entry that runs nothing (pipeline-stage-only receptor, response-type-only entry): owned command dropped, unowned copy marked handled | todo |
-| E8 | Generated invokers unwrap a top-level `Routed<T>` result before the dispatcher sees it: the route is lost and defaults to Both | todo |
-| E9 | Batch path drops `ScheduledFor`/`LocalDeferred`, priority, payload limit, token/timeout, NoRebroadcast, outbox collector, composite fan-out, schema gate, tracking; no-outbox throws instead of deferring | todo |
-| E10 | Runtime receptors: results discarded on publish/cascade; send takes only the first; synthetic envelope; no token | todo |
+| E7b | "Has a handler" counts a publisher entry that runs nothing (pipeline-stage-only receptor, response-type-only entry): owned command dropped, unowned copy marked handled | red |
+| E8 | Generated invokers unwrap a top-level `Routed<T>` result before the dispatcher sees it: the route is lost and defaults to Both | red |
+| E9 | Batch path drops `ScheduledFor`/`LocalDeferred`, priority, payload limit, token/timeout, NoRebroadcast, outbox collector, composite fan-out, schema gate, tracking; no-outbox throws instead of deferring | red |
+| E10 | Runtime receptors: results discarded on publish/cascade; send takes only the first; synthetic envelope; no token | red |
 | E11 | `_trackEventForSync` ignores the ambient scoped tracker: cascaded events invisible to LocalInvokeAndSync / WaitForPerspectives | todo |
 | E12 | `PublishAsync(e, options)` skips singleton tracking; neither publish overload tracks the scoped tracker; LocalNoPersist cascades are tracked | todo |
 | E13 | Worker-stage cascades ignore `[DefaultRouting]` | todo |
@@ -95,3 +95,17 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 ## Consumer verification
 
 - [ ] JDX full integration suite on the patched packages with the send-rewriting test wrapper removed
+
+## Verified not a defect (tests kept)
+
+- Runtime receptor result on SendAsync cascades (E10, send half)
+- A routed result returned at a worker stage keeps its route (E8, registry half)
+- PublishMany with no outbox handles events locally without throwing (E9, no-outbox half)
+- LocalSendMany refuses a future schedule like LocalInvoke (E9)
+
+## Consumer run (JDX full integration suite, 0.2621.0, real sends): 72 of 1,478 failed
+
+- 1 platform defect: E0 (#1410)
+- 69 JDX test-infrastructure flakes that pass in isolation (static FastEndpoints resolver holding a disposed host; saga reader ordering)
+- 1 JDX fixture bug predating the release (connection string key)
+- 1 consumer test setup mistake
