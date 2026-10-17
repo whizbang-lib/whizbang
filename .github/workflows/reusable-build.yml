@@ -85,7 +85,7 @@ jobs:
           echo "hashed $(wc -l < build-determinism/assemblies.sha256) assemblies at version '${VERSION:-<props default>}'"
 
       - name: Upload determinism manifest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: determinism-manifest-${{ github.run_id }}
           path: build-determinism/
@@ -103,7 +103,7 @@ jobs:
       # disk, and the test jobs run on their own download of this artifact, so nothing pack
       # consumes can carry instrumentation.
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Test jobs execute test modules directly from bin/ (Run-Tests.ps1 -NoBuild uses
           # --test-modules, no MSBuild), so only PACKABLE projects (src/ + tools/: CLI,
@@ -142,7 +142,7 @@ jobs:
         run: pwsh -NoProfile -File .github/scripts/Get-TestSlice.ps1 -GitHubOutput
 
       - name: Upload build slice (postgres)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-postgres-${{ github.run_id }}
           path: ${{ steps.slices.outputs.postgres }}
@@ -152,7 +152,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (inmemory)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-inmemory-${{ github.run_id }}
           path: ${{ steps.slices.outputs.inmemory }}
@@ -162,7 +162,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (rabbitmq)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-rabbitmq-${{ github.run_id }}
           path: ${{ steps.slices.outputs.rabbitmq }}
@@ -172,7 +172,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (servicebus)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-servicebus-${{ github.run_id }}
           path: ${{ steps.slices.outputs.servicebus }}
@@ -182,7 +182,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (integration)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-integration-${{ github.run_id }}
           path: ${{ steps.slices.outputs.integration }}
@@ -192,7 +192,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (component)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-component-${{ github.run_id }}
           path: ${{ steps.slices.outputs.component }}
@@ -202,7 +202,7 @@ jobs:
           include-hidden-files: true   # the coverage source-root mapping files (see the full upload)
 
       - name: Upload build slice (azureblob)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-azureblob-${{ github.run_id }}
           path: ${{ steps.slices.outputs.azureblob }}
