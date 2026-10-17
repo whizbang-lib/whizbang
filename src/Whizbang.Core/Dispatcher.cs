@@ -372,7 +372,8 @@ public abstract partial class Dispatcher(
 
   private static DispatchPolicyEngine _resolvePolicyEngine(IServiceProvider serviceProvider) {
     var registry = serviceProvider.GetService<IDispatchPolicyRegistry>();
-    var hooks = serviceProvider.GetServices<IDispatchPolicyHook>().ToArray();
+    // GetService, not GetServices: a host's minimal provider may not resolve enumerables at all
+    var hooks = serviceProvider.GetService<IEnumerable<IDispatchPolicyHook>>()?.ToArray() ?? [];
     return registry is null && hooks.Length == 0
       ? DispatchPolicyEngine.Default
       : new DispatchPolicyEngine(registry ?? new DispatchPolicyRegistry(), new DispatchPolicyHookChain(hooks));
