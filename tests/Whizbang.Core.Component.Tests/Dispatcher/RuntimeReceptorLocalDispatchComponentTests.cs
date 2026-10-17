@@ -219,6 +219,132 @@ public class RuntimeReceptorLocalDispatchComponentTests {
     await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
   }
 
+  [Test]
+  public async Task PreOutbox_LocallyDispatchedCopy_SkipsAReceptorRegisteredAtTheDetachedLocalStageButRunsTheRestAsync() {
+    // The same instance at LocalImmediateDetached (not Inline) still counts as having run locally;
+    // a second receptor registered only at PreOutbox still runs on the same copy.
+    await using var provider = _buildProvider(new RecordingOutbox(), ownedDomain: null);
+    var ranLocally = new RecordingRuntimeReceptor<UnownedRuntimeCommand>();
+    _registry(provider).Register(ranLocally, LifecycleStage.LocalImmediateDetached);
+    _registry(provider).Register(ranLocally, LifecycleStage.PreOutboxInline);
+    _registry(provider).Register(new AnsweringRuntimeReceptor<UnownedRuntimeCommand>(), LifecycleStage.PreOutboxInline);
+    var command = new UnownedRuntimeCommand(Guid.CreateVersion7());
+
+    await _invokeAtPreOutboxAsync(provider, command, DispatchModes.Both);
+
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1)
+      .Because("only the receptor that never ran locally runs at PreOutbox");
+  }
+
+  [Test]
+  public async Task LocalInvokeTypedWithOptions_RuntimeReceptorWithAResult_AnswersAsync() {
+    await using var provider = _buildProvider(new RecordingOutbox());
+    _registry(provider).Register(new AnsweringRuntimeReceptor<RuntimeResultCommand>(), LifecycleStage.LocalImmediateInline);
+    var command = new RuntimeResultCommand(Guid.CreateVersion7());
+
+    var result = await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync<RuntimeResult>((object)command, new DispatchOptions());
+
+    await Assert.That(result.Id).IsEqualTo(command.Id);
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
+  }
+
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task LocalInvokeWithReceipt_RuntimeReceptorWithAResult_AnswersWithAReceiptAsync(bool withOptions) {
+    await using var provider = _buildProvider(new RecordingOutbox());
+    _registry(provider).Register(new AnsweringRuntimeReceptor<RuntimeResultCommand>(), LifecycleStage.LocalImmediateInline);
+    var command = new RuntimeResultCommand(Guid.CreateVersion7());
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+
+    var invoked = withOptions
+      ? await dispatcher.LocalInvokeWithReceiptAsync<RuntimeResult>((object)command, new DispatchOptions())
+      : await dispatcher.LocalInvokeWithReceiptAsync<RuntimeResult>((object)command);
+
+    await Assert.That(invoked.Value.Id).IsEqualTo(command.Id);
+    await Assert.That(invoked.Receipt).IsNotNull();
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task LocalInvokeVoidWithOptions_SyncReceptorBesideAnImmediateDetachedHook_RunsBothOnceAsync() {
+    await using var provider = _buildProvider(new RecordingOutbox());
+    var command = new SyncVoidCommand(Guid.CreateVersion7());
+    var before = SyncVoidCommandImmediateDetachedHook.Count;
+
+    await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync((object)command, new DispatchOptions());
+
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
+    await Assert.That(SyncVoidCommandImmediateDetachedHook.Count - before).IsEqualTo(1)
+      .Because("a sync handler with an ImmediateDetached hook takes the full path, which fires the hook once");
+  }
+
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task SendObject_SystemCommandWithARuntimeReceptor_HandlesItAndBroadcastsAMarkedCopyAsync(bool withOptions) {
+    var outbox = new RecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    _registry(provider).Register(new SystemCommandRuntimeReceptor<ClearCacheCommand>(), LifecycleStage.LocalImmediateInline);
+    var id = Guid.CreateVersion7();
+    var command = new ClearCacheCommand(CacheKey: id.ToString());
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+
+    if (withOptions) {
+      await dispatcher.SendAsync((object)command, MessageContext.New(), new DispatchOptions());
+    } else {
+      await dispatcher.SendAsync((object)command, MessageContext.New());
+    }
+
+    await Assert.That(RuntimeReceptorProbe.CountFor(id)).IsEqualTo(1);
+    var queued = outbox.QueuedOf(typeof(ClearCacheCommand));
+    await Assert.That(queued).Count().IsEqualTo(1);
+    await Assert.That(queued[0].Envelope.DispatchContext.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue();
+  }
+
+  [Test]
+  public async Task SendManyObject_SystemCommandHandledLocally_QueuesOneMarkedCopyAsync() {
+    var outbox = new RecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    _registry(provider).Register(new SystemCommandRuntimeReceptor<ClearCacheCommand>(), LifecycleStage.LocalImmediateInline);
+    var id = Guid.CreateVersion7();
+
+    await provider.GetRequiredService<IDispatcher>().SendManyAsync([(object)new ClearCacheCommand(CacheKey: id.ToString())]);
+
+    await Assert.That(RuntimeReceptorProbe.CountFor(id)).IsEqualTo(1);
+    await Assert.That(outbox.QueuedOf(typeof(ClearCacheCommand))).Count().IsEqualTo(1)
+      .Because("the batch queues the copy itself; the local send inside it must not queue a second");
+  }
+
+  [Test]
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task Send_SystemCommandHandledLocallyWithNoOutbox_ReturnsTheLocalReceiptAsync(bool untyped) {
+    await using var provider = _buildProviderWithoutOutbox();
+    _registry(provider).Register(new SystemCommandRuntimeReceptor<ClearCacheCommand>(), LifecycleStage.LocalImmediateInline);
+    var id = Guid.CreateVersion7();
+    var command = new ClearCacheCommand(CacheKey: id.ToString());
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+
+    var receipt = untyped
+      ? await dispatcher.SendAsync((object)command, MessageContext.New())
+      : await dispatcher.SendAsync(command);
+
+    await Assert.That(RuntimeReceptorProbe.CountFor(id)).IsEqualTo(1);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("with no outbox to broadcast through, the local run is the delivery");
+  }
+
+  private static ServiceProvider _buildProviderWithoutOutbox() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
+    services.AddSingleton<IEnvelopeSerializer, ContextKeepingEnvelopeSerializer>();
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    return services.BuildServiceProvider();
+  }
+
   private static async Task _invokeAtPreOutboxAsync(ServiceProvider provider, UnownedRuntimeCommand command, DispatchModes mode) {
     await using var scope = provider.CreateAsyncScope();
     var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();

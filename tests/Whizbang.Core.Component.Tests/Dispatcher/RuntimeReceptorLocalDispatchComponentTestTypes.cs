@@ -76,6 +76,26 @@ namespace Whizbang.Core.Component.Tests.RuntimeLocalReceptors {
   /// <summary>
   /// A COMPILE-TIME receptor for a framework system command, keyed by the command's correlation id.
   /// </summary>
+  /// <summary>A command answered by a generated void SYNC receptor, with an ImmediateDetached hook beside it.</summary>
+  public record SyncVoidCommand(Guid Id) : ICommand, IRuntimeProbeMessage;
+
+  public sealed class SyncVoidCommandReceptor : ISyncReceptor<SyncVoidCommand> {
+    public void Handle(SyncVoidCommand message) => RuntimeReceptorProbe.RecordHandled(message.Id);
+  }
+
+  [FireAt(LifecycleStage.ImmediateDetached)]
+  [ReceptorIdempotent]
+  public sealed class SyncVoidCommandImmediateDetachedHook : IReceptor<SyncVoidCommand> {
+    private static int _count;
+
+    public static int Count => Volatile.Read(ref _count);
+
+    public ValueTask HandleAsync(SyncVoidCommand message, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _count);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   public sealed class DiagnosticsCommandProbeReceptor : IReceptor<DiagnosticsCommand> {
     public ValueTask HandleAsync(DiagnosticsCommand message, CancellationToken cancellationToken = default) {
       RuntimeReceptorProbe.RecordHandled(message.CorrelationId!.Value);
