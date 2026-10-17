@@ -229,3 +229,16 @@ public sealed class ExRpcDefaultLocalCommandReceptor : IReceptor<ExRpcDefaultLoc
     return ValueTask.FromResult((new ExRpcResponse(message.Id), new ExFollowUpEvent(message.Id)));
   }
 }
+
+// ── A returned value that is neither a command nor an event, owned, with no handler ────────────
+
+public sealed record ExPlainResult(Guid Id) : IMessage;
+
+public record ExPlainResultTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExPlainResultTriggerReceptor : IReceptor<ExPlainResultTrigger, ExPlainResult> {
+  public ValueTask<ExPlainResult> HandleAsync(ExPlainResultTrigger message, CancellationToken cancellationToken = default) {
+    PolicyProbe.Record(nameof(ExPlainResultTriggerReceptor), message.Id);
+    return ValueTask.FromResult(new ExPlainResult(message.Id));
+  }
+}

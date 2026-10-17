@@ -3155,6 +3155,15 @@ public abstract partial class Dispatcher(
       // A cascade routed nowhere (Route.None) has nothing to do; it has always been skipped quietly
       return;
     }
+    if (decision.Reject == DispatchRejection.NoHandler && message is not ICommand && message is not IEvent) {
+      // A returned value that is neither a command nor an event (a response record that implements
+      // IMessage), owned, with nothing here to handle it: it is a result, not an instruction, so the
+      // call whose receptor returned it does not fail. It goes nowhere, so say so (#1410 follow-up).
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        Log.UnhandledResultSkipped(CascadeLogger, messageType.Name);
+      }
+      return;
+    }
     _throwIfRejected(in decision, messageType);
 
     if (decision.WriteEventStoreOnly && message is IEvent) {
@@ -5777,5 +5786,12 @@ public abstract partial class Dispatcher(
       Level = LogLevel.Debug,
       Message = "[RPC] The receptor for {MessageType} returned {ResultType}; extracting the requested {RequestedType} from it")]
     public static partial void ExtractingResponse(ILogger logger, string messageType, string resultType, string requestedType);
+
+    [LoggerMessage(
+      EventId = 7,
+      Level = LogLevel.Warning,
+      Message = "[CASCADE] A receptor returned {MessageType}, which is neither a command nor an event; nothing in this service " +
+                "handles it and it belongs to this service, so it is not sent anywhere. It was skipped.")]
+    public static partial void UnhandledResultSkipped(ILogger logger, string messageType);
   }
 }

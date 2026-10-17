@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -310,6 +311,22 @@ public class DispatchExecutorShapeComponentTests {
       .ThrowsExactly<ReceptorNotFoundException>();
   }
 
+  [Test]
+  public async Task Send_ReceptorReturnsAnOwnedPlainMessageNothingHandles_SkipsItWithAWarningAsync() {
+    var warnings = new PolicyWarningLog();
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox, services => services.AddLogging(logging => logging.AddProvider(warnings)));
+    var trigger = new ExPlainResultTrigger(Guid.CreateVersion7());
+
+    await _dispatcher(provider).SendAsync(trigger);
+
+    await Assert.That(PolicyProbe.Count(nameof(ExPlainResultTriggerReceptor), trigger.Id)).IsEqualTo(1);
+    await Assert.That(outbox.QueuedOf(typeof(ExPlainResult))).IsEmpty()
+      .Because("an owned message never leaves its service");
+    await Assert.That(warnings.Entries.Any(e => e.Contains(nameof(ExPlainResult), StringComparison.Ordinal))).IsTrue()
+      .Because("a returned message nothing here handles and nothing can send on is skipped out loud, not silently");
+  }
+
   // ── E8: a routed result keeps its route ──────────────────────────────────────────────────────
 
   [Test]
@@ -469,8 +486,9 @@ public class DispatchExecutorShapeComponentTests {
     await invoker.InvokeAsync(envelope, stage, new LifecycleExecutionContext { CurrentStage = stage, MessageSource = source });
   }
 
-  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox) {
+  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox, Action<IServiceCollection>? configure = null) {
     var services = new ServiceCollection();
+    configure?.Invoke(services);
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped<IWorkCoordinatorStrategy>(_ => outbox);
     services.AddSingleton<IEnvelopeSerializer, PolicyContextKeepingEnvelopeSerializer>();
