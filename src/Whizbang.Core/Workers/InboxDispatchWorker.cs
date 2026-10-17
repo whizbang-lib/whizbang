@@ -1000,6 +1000,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (typedEnvelope is null || receptorInvoker is null) {
       return;
     }
+    // PostInbox is where this service handles the message, so ImmediateDetached fires once, after it,
+    // and after no other stage (#1386): after the detached stage when one runs (a receptor without
+    // [FireAt] runs there), otherwise after the inline stage.
+    var isHandlingStage = inlineStage == LifecycleStage.PostInboxInline;
 
     // Slice 4 of pump-then-process.md: gate by receptor registry. When the service has no
     // receptor registered for either the detached or inline form of this stage, skip the
@@ -1071,8 +1075,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             }
             var ctx = lifecycleContext with { CurrentStage = detachedStage };
             await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
-            await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-              ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+            if (isHandlingStage) {
+              await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+                ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+            }
           } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
             // graceful shutdown
           } catch (Exception ex) {
@@ -1096,8 +1102,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       if (hasInline) {
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
-        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+        if (isHandlingStage && !hasDetached) {
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+        }
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
       // A stage interrupted by shutdown is not a message that failed — it never finished being

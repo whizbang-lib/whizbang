@@ -1201,6 +1201,59 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
   }
 
   /// <summary>
+  /// A void receptor declared at a LOCAL stage (LocalImmediateInline / LocalImmediateDetached) runs
+  /// whenever this service handles the message in-process (#1400). Nothing fires the local stages through
+  /// the receptor invoker, so the publish and cascade fan-out must run it, unguarded, like a default one.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("LocalImmediateInline")]
+  [Arguments("LocalImmediateDetached")]
+  public async Task Generator_PublishAndCascade_RunVoidReceptorsDeclaredAtALocalStageAsync(string stage) {
+    var source = $@"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SomeEvent : IEvent;
+
+[FireAt(LifecycleStage.{stage})]
+public class LocalStageHook : IReceptor<SomeEvent> {{
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}}
+
+[FireAt(LifecycleStage.PostAllPerspectivesDetached)]
+public class PipelineStageHook : IReceptor<SomeEvent> {{
+  public ValueTask HandleAsync(SomeEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var content = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs")!;
+    var publishStart = content.IndexOf("async Task PublishToReceptors(TEvent evt)", StringComparison.Ordinal);
+    var publishEnd = content.IndexOf("return PublishToReceptors;", publishStart, StringComparison.Ordinal);
+    var publishBody = content[publishStart..publishEnd];
+
+    await Assert.That(publishBody).Contains("LocalStageHook")
+      .Because("a receptor declared at a local stage runs when this service publishes the event");
+    await Assert.That(publishBody).DoesNotContain("PipelineStageHook")
+      .Because("a receptor declared at a pipeline stage still fires only at that stage");
+
+    var untypedStart = content.IndexOf("PublishToReceptorsUntyped", StringComparison.Ordinal);
+    var untypedBody = content[untypedStart..];
+    var guardIndex = untypedBody.IndexOf("if (!isDefaultDispatch)", StringComparison.Ordinal);
+    var hookIndex = untypedBody.IndexOf("LocalStageHook", StringComparison.Ordinal);
+    await Assert.That(hookIndex).IsGreaterThan(-1);
+    await Assert.That(guardIndex == -1 || hookIndex < guardIndex).IsTrue()
+      .Because("on the cascade path the local-stage receptor runs unguarded, not only outside the default dispatch");
+  }
+
+  /// <summary>
   /// The send and local-invoke lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve the
   /// command's HANDLER. An explicit [FireAt] receptor is a lifecycle hook that fires at its declared
   /// stage, never the handler, so every send table must omit it, the way PublishToReceptors does.

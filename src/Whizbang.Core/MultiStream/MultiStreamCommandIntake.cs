@@ -8,8 +8,8 @@ namespace Whizbang.Core.MultiStream;
 
 /// <summary>
 /// The receptor that takes a multi-stream command in. It validates the command and records a run with one work item per
-/// stream; it runs no stream itself. Every instance then claims and works the streams it owns. Registered at the stages a
-/// receptor without <c>[FireAt]</c> runs at, so the command is recorded whether it is dispatched locally or arrives from
+/// stream; it runs no stream itself. Every instance then claims and works the streams it owns. Registered at the local
+/// dispatch, PreOutbox and PostInbox stages, so the command is recorded whether it is dispatched locally or arrives from
 /// the transport; recording is idempotent on the run id, so both make one run.
 /// </summary>
 /// <typeparam name="TCommand">The command type.</typeparam>

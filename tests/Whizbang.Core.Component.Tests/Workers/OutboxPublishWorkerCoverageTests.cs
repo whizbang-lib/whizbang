@@ -492,8 +492,8 @@ public class OutboxPublishWorkerCoverageTests {
       .Because("pre-outbox resolves the invoker once and post-outbox resolves again from the same scope");
 
     var invokedStages = receptorInvoker.InvokedStages.ToList();
-    await Assert.That(invokedStages.Count).IsEqualTo(4)
-      .Because("only the pre-outbox direct-invoke stages (2 stages x itself + ImmediateDetached) should have fired");
+    await Assert.That(invokedStages.Count).IsEqualTo(2)
+      .Because("only the two pre-outbox direct-invoke stages should have fired; no outbox stage chains ImmediateDetached (#1386)");
     await Assert.That(invokedStages).Contains(LifecycleStage.PreOutboxDetached);
     await Assert.That(invokedStages).Contains(LifecycleStage.PreOutboxInline);
     await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostOutboxDetached)

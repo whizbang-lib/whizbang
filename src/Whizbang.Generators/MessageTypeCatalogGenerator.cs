@@ -139,7 +139,8 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         IsCollective: _implementsInterface(typeSymbol, COLLECTIVE_EVENT_INTERFACE),
         IsComposite: _implementsInterface(typeSymbol, COMPOSITE_EVENT_INTERFACE),
         IsCompacted: _implementsInterface(typeSymbol, COMPACTED_EVENT_INTERFACE),
-        MaxPayloadBytes: _maxPayloadBytes(typeSymbol)
+        MaxPayloadBytes: _maxPayloadBytes(typeSymbol),
+        DefaultRouting: _defaultRouting(typeSymbol)
     );
   }
 
@@ -163,6 +164,31 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, MAX_PAYLOAD_SIZE_ATTRIBUTE));
       if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
         return System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+      }
+    }
+    return null;
+  }
+
+  private const string DEFAULT_ROUTING_ATTRIBUTE = "global::Whizbang.Core.Dispatch.DefaultRoutingAttribute";
+  private const string DISPATCH_MODES = "global::Whizbang.Core.Dispatch.DispatchModes";
+
+  // The message type's [DefaultRouting], found on the type or a base type (the attribute is inherited),
+  // rendered as source: a named DispatchModes member when the value has one, otherwise a cast.
+  private static string? _defaultRouting(INamedTypeSymbol typeSymbol) {
+    for (var type = typeSymbol; type is not null; type = type.BaseType) {
+      var attribute = type.GetAttributes().FirstOrDefault(a =>
+        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, DEFAULT_ROUTING_ATTRIBUTE));
+      if (attribute?.ConstructorArguments.FirstOrDefault().Value is { } value) {
+        var mode = System.Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+        return mode switch {
+          0 => $"{DISPATCH_MODES}.None",
+          1 => $"{DISPATCH_MODES}.LocalDispatch",
+          2 => $"{DISPATCH_MODES}.Outbox",
+          3 => $"{DISPATCH_MODES}.Both",
+          4 => $"{DISPATCH_MODES}.EventStoreOnly",
+          5 => $"{DISPATCH_MODES}.Local",
+          _ => $"({DISPATCH_MODES}){mode.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+        };
       }
     }
     return null;
@@ -300,6 +326,11 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     source.AppendLine("  internal static void Initialize() {");
     source.AppendLine("    ServiceRegistrationCallbacks.MessageTypeCatalog = static services =>");
     source.AppendLine("      services.AddSingleton<IMessageTypeCatalog, GeneratedMessageTypeCatalog>();");
+    // Message-type [DefaultRouting], registered without DI so the cascade can read it without
+    // reflection from any dispatcher, however it was built.
+    foreach (var info in ordered.Where(i => i.DefaultRouting is not null)) {
+      source.AppendLine($"    global::Whizbang.Core.Dispatch.MessageDefaultRouting.Register(typeof({info.TypeName}), {info.DefaultRouting});");
+    }
     source.AppendLine("  }");
     source.AppendLine("}");
 
@@ -357,6 +388,9 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     if (info.MaxPayloadBytes is { } maxPayloadBytes) {
       initParts.Add($"MaxPayloadBytes = {maxPayloadBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}L");
     }
+    if (info.DefaultRouting is { } defaultRouting) {
+      initParts.Add($"DefaultRouting = {defaultRouting}");
+    }
     // Type-definition fingerprint (F-3): every entry carries its deterministic settings + schema hashes.
     // These two are always added, so initParts is never empty — the initializer is unconditional.
     initParts.Add($"SettingsHash = \"{info.SettingsHash}\"");
@@ -384,5 +418,6 @@ internal sealed record MessageTypeCatalogEntryInfo(
     bool IsCollective = false,
     bool IsComposite = false,
     bool IsCompacted = false,
-    long? MaxPayloadBytes = null
+    long? MaxPayloadBytes = null,
+    string? DefaultRouting = null
 );

@@ -190,8 +190,8 @@ public sealed partial class ScheduledIntegritySweepReceptor(
 }
 
 /// <summary>
-/// Registers <see cref="ScheduledIntegritySweepReceptor"/> at the three default lifecycle stages —
-/// the same runtime-registration rationale as <see cref="ScheduledStreamCloseReceptorRegistrar"/>.
+/// Registers <see cref="ScheduledIntegritySweepReceptor"/> at the same three stages, for the same runtime-registration
+/// rationale, as <see cref="ScheduledStreamCloseReceptorRegistrar"/>.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S6672:Generic logger injection should match enclosing type", Justification = "The registrar never logs. It receives the logger for the receptor it constructs and hands it straight over, so the category names the type that actually writes the entries.")]

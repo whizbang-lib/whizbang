@@ -16,6 +16,7 @@ using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Dispatch.Policy;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
@@ -226,9 +227,9 @@ public abstract partial class Dispatcher(
   /// treat a void-receptor command as unhandled: dropped when owned, sent through the outbox when not.
   /// </summary>
   /// <docs>fundamentals/dispatcher/routing#owned-domain-routing</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidReceptor_InvokesLocallyWithoutOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_SyncReceptor_InvokesLocallyWithoutOutboxAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocallyWithoutOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_SyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendManyAsync_VoidReceptor_InvokesLocallyAsync</tests>
   private ReceptorInvoker<object>? _lookupSendInvoker(object message, Type messageType) {
     if (_lookupReceptorInvoker<object>(message, messageType) is { } invoker) {
@@ -249,8 +250,294 @@ public abstract partial class Dispatcher(
         return ValueTask.FromResult<object>(null!);
       };
     }
+    if (_lookupRuntimeLocalInvoker(messageType) is { } runtimeInvoker) {
+      return async msg => (await runtimeInvoker(msg))!;
+    }
     return null;
   }
+
+  /// <summary>
+  /// The local handler a RUNTIME registration provides: a receptor registered into
+  /// <see cref="IReceptorRegistry"/> at <see cref="LifecycleStage.LocalImmediateInline"/> or
+  /// <see cref="LifecycleStage.LocalImmediateDetached"/>, the stages a generated receptor without
+  /// <c>[FireAt]</c> handles local dispatch at. The framework registers its own receptors for its own
+  /// message types this way, because the generator only sees the consuming assembly's syntax. Asked
+  /// only after every generated lookup misses, so a compile-time receptor always wins; consulting the
+  /// generated tables alone left these commands unhandled on every local path (#1385).
+  /// </summary>
+  /// <remarks>
+  /// The registry's delegates take an envelope, which the local-dispatch entries never read (the
+  /// runtime adapter ignores it, and so does the generated one); the dispatch path that calls this
+  /// keeps the real envelope for tracing, tags and lifecycle stages. A fresh scope is created per
+  /// invocation, as the generated invokers do, with the ambient message context established in it.
+  /// </remarks>
+  /// <docs>fundamentals/dispatcher/routing#runtime-registered-receptors</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/RuntimeReceptorLocalDispatchComponentTests.cs</tests>
+  private Func<object, ValueTask<object?>>? _lookupRuntimeLocalInvoker(Type messageType) {
+    if (_receptorRegistry is null) {
+      return null;
+    }
+    // Only a receptor registered at runtime counts: the registry also lists source-generated receptors,
+    // which the generated lookups already resolved (and which may not even be registered in the container)
+    var receptor = _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline))
+      ?? _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached));
+    if (receptor is null) {
+      return null;
+    }
+    return async message => {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+      var envelope = new MessageEnvelope<object> {
+        MessageId = MessageId.New(),
+        Payload = message,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      };
+      return await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, CancellationToken.None).ConfigureAwait(false);
+    };
+  }
+
+  /// <summary>
+  /// <see cref="_lookupRuntimeLocalInvoker"/> shaped for a typed local invoke. A runtime receptor
+  /// registered without a response type answers null.
+  /// </summary>
+  private ReceptorInvoker<TResult>? _lookupRuntimeLocalInvoker<TResult>(Type messageType) =>
+    _lookupRuntimeLocalInvoker(messageType) is { } runtimeInvoker
+      ? async msg => (TResult)(await runtimeInvoker(msg))!
+      : null;
+
+  private static ReceptorInfo? _firstRuntimeReceptor(IReadOnlyList<ReceptorInfo> registered) =>
+    registered.FirstOrDefault(receptor => receptor.RuntimeInstance is not null);
+
+  /// <summary>
+  /// True when publishing <paramref name="eventType"/> has any local receptor to run here: a generated
+  /// one (this assembly or another) or one registered at runtime at a local stage.
+  /// </summary>
+  private bool _hasLocalPublishReceptors(Type eventType) {
+    if (GetUntypedReceptorPublisher(eventType) is not null) {
+      return true;
+    }
+    return _foreignLookups().Any(lookup => lookup.LookupUntypedReceptorPublisher(eventType) is not null)
+      || _runtimeLocalReceptorsFor(eventType).Count > 0;
+  }
+
+  /// <summary>
+  /// Whether a publish has a local handler, as far as the policy needs to know. An event's publisher is
+  /// a no-op when nothing handles it, so an event is treated as handled here unless the caller asked to
+  /// fail without a handler; a command (an owned one fails without its handler) is checked exactly.
+  /// </summary>
+  private bool _publishHasLocalHandler(object message, Type eventType, DispatchOptions? options) =>
+    (message is IEvent && (options is null || (options.Behaviors & DispatchBehaviors.ThrowWhenNoHandler) == 0))
+    || _hasLocalPublishReceptors(eventType);
+
+  /// <summary>
+  /// The receptors registered at runtime (<see cref="IReceptorRegistry.Register"/>) at a local stage,
+  /// each once even when registered at both local stages.
+  /// </summary>
+  private List<ReceptorInfo> _runtimeLocalReceptorsFor(Type messageType) {
+    var runtime = new List<ReceptorInfo>();
+    if (_receptorRegistry is null) {
+      return runtime;
+    }
+    foreach (var stage in _localStages) {
+      foreach (var receptor in _receptorRegistry.GetReceptorsFor(messageType, stage)) {
+        if (receptor.RuntimeInstance is { } instance && !runtime.Exists(r => ReferenceEquals(r.RuntimeInstance, instance))) {
+          runtime.Add(receptor);
+        }
+      }
+    }
+    return runtime;
+  }
+
+  private static readonly LifecycleStage[] _localStages = [LifecycleStage.LocalImmediateInline, LifecycleStage.LocalImmediateDetached];
+
+  /// <summary>
+  /// Runs every receptor registered at runtime at a local stage for a published or cascaded message
+  /// (#1399), each in its own scope with the cascade's security context.
+  /// </summary>
+  private async Task _publishToRuntimeLocalReceptorsAsync(object message, Type messageType, CancellationToken cancellationToken) {
+    var receptors = _runtimeLocalReceptorsFor(messageType);
+    foreach (var receptor in receptors) {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+      var envelope = new MessageEnvelope<object> {
+        MessageId = MessageId.New(),
+        Payload = message,
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+      };
+      await receptor.InvokeAsync(scope.ServiceProvider, message, envelope, receptor.CallerInfo, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private static DispatchPolicyEngine _resolvePolicyEngine(IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IDispatchPolicyRegistry>();
+    // GetService, not GetServices: a host's minimal provider may not resolve enumerables at all
+    var hooks = serviceProvider.GetService<IEnumerable<IDispatchPolicyHook>>()?.ToArray() ?? [];
+    return registry is null && hooks.Length == 0
+      ? DispatchPolicyEngine.Default
+      : new DispatchPolicyEngine(registry ?? new DispatchPolicyRegistry(), new DispatchPolicyHookChain(hooks));
+  }
+
+  /// <summary>
+  /// What the policy knows about a message: its kind from the interfaces it implements (a type that
+  /// is neither a command nor an event takes <paramref name="unmarkedKind"/>), and the cached
+  /// namespace traits of its type.
+  /// </summary>
+  private MessageTraits _traitsOf(object message, Type messageType, MessageTraits unmarkedKind) {
+    var kind = message switch {
+      IEvent => MessageTraits.Event,
+      ICommand => MessageTraits.Command,
+      _ => unmarkedKind,
+    };
+    if (message is ICompositeEvent) {
+      kind |= MessageTraits.Composite;
+    }
+    return kind | _namespaceTraits.GetOrAdd(messageType, static (type, self) => self._computeNamespaceTraits(type), this);
+  }
+
+  private MessageTraits _computeNamespaceTraits(Type messageType) {
+    var traits = MessageTraits.None;
+    if (MessageKindDetector.IsFrameworkSystemType(messageType)) {
+      traits |= MessageTraits.SystemCommand;
+    }
+    if (_isOwnedNamespace(messageType.Namespace)) {
+      traits |= MessageTraits.Owned;
+    }
+    return traits;
+  }
+
+  /// <summary>
+  /// Asks the dispatch policy what to do with one message. The call site describes only its own
+  /// situation; the policy (the call's own, or the one the caller selected) decides.
+  /// </summary>
+  /// <param name="callPolicy">The policy of the call, for example <see cref="DispatchPolicies.Send"/>.</param>
+  /// <param name="message">The message (read for its kind only).</param>
+  /// <param name="messageType">The message type.</param>
+  /// <param name="hasHandler">Whether this service has a local handler for it.</param>
+  /// <param name="options">The caller's options: schedule, overrides and selected policy.</param>
+  /// <param name="route">The route the caller chose, or null.</param>
+  /// <param name="unmarkedKind">The kind of a message that is neither a command nor an event.</param>
+  /// <param name="resultRequired">Whether the caller needs the handler's result.</param>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Builds the policy's situation from the facts each call site already holds. The last three are optional and most callers omit them, and a parameter object would be allocated per dispatch on the hot path the policy must not slow down.")]
+  private DispatchDecision _decide(
+      DispatchPolicy callPolicy,
+      object message,
+      Type messageType,
+      bool hasHandler,
+      DispatchOptions? options,
+      DispatchModes? route = null,
+      MessageTraits unmarkedKind = MessageTraits.Command,
+      bool resultRequired = false) {
+    var policy = _policyEngine.Resolve(callPolicy, options?.Policy);
+    var scheduledFor = options?.ScheduledFor;
+    var situation = new DispatchSituation(
+      messageType,
+      _traitsOf(message, messageType, unmarkedKind),
+      hasHandler ? LocalHandlers.Generated : LocalHandlers.None,
+      route,
+      scheduledFor,
+      IsScheduledInFuture: scheduledFor is DateTimeOffset at && at > _timeProvider.GetUtcNow(),
+      OutboxAvailable: _outboxRegistered,
+      options?.Behaviors ?? DispatchBehaviors.None,
+      resultRequired);
+    return _policyEngine.Decide(policy, in situation);
+  }
+
+  /// <summary>
+  /// Throws the exception a refused dispatch has always surfaced as: a missing handler or outbox is a
+  /// <see cref="ReceptorNotFoundException"/>, a route that goes nowhere or contradictory overrides an
+  /// <see cref="ArgumentException"/>, and anything else a <see cref="DispatchRejectedException"/>.
+  /// </summary>
+  private void _throwIfRejected(in DispatchDecision decision, Type messageType) {
+    switch (decision.Reject) {
+      case DispatchRejection.None:
+        return;
+      case DispatchRejection.NoHandler:
+        throw new ReceptorNotFoundException(messageType);
+      case DispatchRejection.NoOutbox:
+        _logMissingWorkCoordinator(messageType);
+        throw new ReceptorNotFoundException(messageType);
+      case DispatchRejection.NoRoute:
+        throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.");
+      case DispatchRejection.ConflictingBehaviors:
+        throw new ArgumentException(
+          $"DispatchBehaviors.ThrowWhenNoHandler and DispatchBehaviors.ContinueWhenNoHandler cannot both be set (message type {messageType.Name}).");
+      case DispatchRejection.CommandCannotBeStoreOnly:
+        throw new DispatchRejectedException(decision.Reject, messageType,
+          $"{messageType.Name} is a command routed to the event store only; commands are not stored. Route it Local, Outbox or Both.");
+      case DispatchRejection.CannotScheduleInProcess:
+        throw new DispatchRejectedException(decision.Reject, messageType,
+          $"{messageType.Name} is scheduled for later but never leaves this service, so nothing can deliver it later. Send it through the outbox or drop the schedule.");
+      default:
+        throw new DispatchRejectedException(decision.Reject, messageType,
+          $"{messageType.Name} needs its handler's result, but the selected dispatch policy does not run the handler during the call.");
+    }
+  }
+
+  /// <summary>Says why a message that has to reach the outbox could not: no work coordinator is registered.</summary>
+  private void _logMissingWorkCoordinator(Type messageType) {
+    using var scope = _scopeFactory.CreateScope();
+    var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+    logger?.LogWarning(
+      "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
+      "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+      "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
+      messageType.Name);
+#pragma warning restore CA1848
+  }
+
+  /// <summary>Rethrows a held local failure with its original stack, once the outbox copy is queued.</summary>
+  private static void _rethrowIfFailed(Exception? localFailure) {
+    if (localFailure is not null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(localFailure); }
+  }
+
+  /// <summary>
+  /// Applies <see cref="DispatchOptions.Timeout"/>: when set, returns a copy of the options whose token
+  /// is the caller's linked with a timer on the dispatcher's clock, and the scope that owns both. The
+  /// copy flows through the whole call, so the deadline reaches the local run, cascades, the outbox write
+  /// and its flush. The token lives in this one place, so a future distributed cancellation links here.
+  /// </summary>
+  private DispatchOptions _withTimeout(DispatchOptions options, out DispatchTimeoutScope? scope) {
+    if (options.Timeout is not TimeSpan timeout) {
+      scope = null;
+      return options;
+    }
+    scope = new DispatchTimeoutScope(timeout, _timeProvider, options.CancellationToken);
+    return options.CloneWithCancellation(scope.Token);
+  }
+
+  /// <summary>The timer and linked token behind a dispatch's <see cref="DispatchOptions.Timeout"/>.</summary>
+  private sealed class DispatchTimeoutScope : IDisposable {
+    private readonly CancellationTokenSource _timer;
+    private readonly CancellationTokenSource _linked;
+
+    public DispatchTimeoutScope(TimeSpan timeout, TimeProvider timeProvider, CancellationToken callerToken) {
+      _timer = new CancellationTokenSource(timeout, timeProvider);
+      _linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _timer.Token);
+    }
+
+    public CancellationToken Token => _linked.Token;
+
+    public void Dispose() {
+      _linked.Dispose();
+      _timer.Dispose();
+    }
+  }
+
+  /// <summary>The receipt of a dispatch the policy let through without running or sending anything.</summary>
+  private static DeliveryReceipt _nothingToDoReceipt(Type messageType, IMessageContext context) =>
+    DeliveryReceipt.Accepted(MessageId.New(), messageType.Name, context.CorrelationId, context.CausationId);
+
+
+  /// <summary>
+  /// The dispatch mode of an outbox copy. A copy of a message this service already handled locally
+  /// carries <see cref="DispatchModes.LocalDispatch"/>, so the sender's PreOutbox stage does not run
+  /// that handler a second time.
+  /// </summary>
+  private static DispatchModes _outboxModeFor(IDeliveryReceipt? handledLocallyReceipt) =>
+    handledLocallyReceipt is null ? DispatchModes.Outbox : DispatchModes.Both;
 
   private Func<object, ValueTask<object?>>? _lookupReceptorInvokerAny(object message, Type messageType) {
     var own = GetReceptorInvokerAny(message, messageType);
@@ -262,7 +549,7 @@ public abstract partial class Dispatcher(
         return foreign;
       }
     }
-    return null;
+    return _lookupRuntimeLocalInvoker(messageType);
   }
 
   private Dispatch.DispatchModes? _lookupReceptorDefaultRouting(Type messageType) {
@@ -388,6 +675,96 @@ public abstract partial class Dispatcher(
   private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = serviceProvider.GetService<IEventCompletionAwaiter>();
   // Dispatcher metrics for observability (optional - null when not registered)
   private readonly DispatcherMetrics? _dispatcherMetrics = serviceProvider.GetService<DispatcherMetrics>();
+  // The central dispatch policy (#1395): every call asks it whether to run locally, write the outbox,
+  // store only, defer, or refuse. Developer hooks and custom policies come from the container.
+  private readonly DispatchPolicyEngine _policyEngine = _resolvePolicyEngine(serviceProvider);
+  // The clock a ScheduledFor is compared against, so a test can drive it.
+  private readonly TimeProvider _timeProvider = serviceProvider.GetService<TimeProvider>() ?? TimeProvider.System;
+  // Whether a work coordinator (the outbox) is registered at all. Asked once; the scoped strategy is
+  // still resolved per write, and a registration that resolves to nothing is handled there.
+  private readonly bool _outboxRegistered =
+    serviceProvider.GetService<IServiceProviderIsService>()?.IsService(typeof(IWorkCoordinatorStrategy)) ?? true;
+  // The namespace-derived traits of each message type (owned, system command), computed once per type.
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MessageTraits> _namespaceTraits = new();
+
+  // How the next outbox copy built on this async flow is marked. Set by a caller around its outbox
+  // write (publish, cascade) so the generated cascade code needs no new parameter.
+  private static readonly AsyncLocal<OutboxCopyMark> _outboxCopyMark = new();
+
+  private enum OutboxCopyMark : byte {
+    None = 0,
+    HandledLocally = 1,
+    LocalDeferred = 2,
+  }
+
+  private static OutboxCopyMark _markFor(in DispatchDecision decision) {
+    if (decision.MarkHandledLocally) {
+      return OutboxCopyMark.HandledLocally;
+    }
+    return decision.Local == LocalRun.AtScheduledTime ? OutboxCopyMark.LocalDeferred : OutboxCopyMark.None;
+  }
+
+  /// <summary>
+  /// Runs a published event's local receptors: the generated ones, those found in other assemblies,
+  /// then runtime registrations, and processes its tags once they all succeed. A local failure first
+  /// observes the outbox copy's write, so that task never goes unobserved, then surfaces.
+  /// </summary>
+  private async Task _runPublishReceptorsAsync<TEvent>(ReceptorPublisher<TEvent> publisher, TEvent eventData, Type eventType,
+      Task outboxTask, CancellationToken cancellationToken) {
+    // Both PublishAsync overloads refuse a null event before they get here
+    object message = eventData!;
+    try {
+      await publisher(eventData);
+      await _publishToForeignLookupsAsync(message, eventType, null, cancellationToken).ConfigureAwait(false);
+      await _publishToRuntimeLocalReceptorsAsync(message, eventType, cancellationToken).ConfigureAwait(false);
+    } catch {
+      // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
+      try { await outboxTask; } catch { /* outbox exception is secondary */ }
+      throw;
+    }
+
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(message, eventType, cancellationToken);
+  }
+
+  /// <summary>
+  /// Writes a published event's copy as the policy decided: to the outbox (marked when handled here,
+  /// marked deferred when its local handling waits for the schedule), to the event store only, or not
+  /// at all. Starts the write and returns its task, so the caller's local run does not delay it.
+  /// </summary>
+#pragma warning disable RCS1229 // The mark must cover only the synchronous start of the write, which captures it; awaiting here would add a state machine to every publish.
+  private Task _publishCopyAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope,
+      DispatchOptions? options, in DispatchDecision decision) {
+    if (!decision.WriteOutbox && !decision.WriteEventStoreOnly) {
+      return Task.CompletedTask;
+    }
+    var mark = _markFor(in decision);
+    if (mark == OutboxCopyMark.None) {
+      return PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly: !decision.WriteOutbox, options, recordLocalDispatch: decision.Local == LocalRun.Now);
+    }
+    var previous = _outboxCopyMark.Value;
+    _outboxCopyMark.Value = mark;
+    try {
+      return PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly: !decision.WriteOutbox, options, recordLocalDispatch: decision.Local == LocalRun.Now);
+    } finally {
+      _outboxCopyMark.Value = previous;
+    }
+  }
+#pragma warning restore RCS1229
+
+  /// <summary>
+  /// The dispatch context of a published or cascaded outbox copy, carrying the caller's mark (#1398,
+  /// #1401): a copy this service already handled says so, and a copy whose local handling was deferred
+  /// is handled here when it comes back.
+  /// </summary>
+  private static MessageDispatchContext _outboxCopyDispatchContext() {
+    var mark = _outboxCopyMark.Value;
+    return new MessageDispatchContext {
+      Mode = mark == OutboxCopyMark.HandledLocally ? DispatchModes.Both : DispatchModes.Outbox,
+      Source = MessageSource.Outbox,
+      LocalDeferred = mark == OutboxCopyMark.LocalDeferred,
+    };
+  }
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
@@ -671,116 +1048,13 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<IDeliveryReceipt> SendAsync(
+  public Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
-  ) {
-    ArgumentNullException.ThrowIfNull(message);
-
-    ArgumentNullException.ThrowIfNull(context);
-
-    var sw = Stopwatch.StartNew();
-    string? messageTypeName = null;
-    try {
-      // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
-      // We extract the inner message and use that for receptor dispatch
-      if (message is IRouted routed) {
-        // RoutedNone (Route.None()) has no inner value to dispatch
-        if (routed.Mode == DispatchModes.None || routed.Value == null) {
-          throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
-        }
-        message = routed.Value;
-      }
-
-      var messageType = message.GetType();
-      messageTypeName = messageType.Name;
-
-      // Get strongly-typed delegate from generated code
-      var invoker = _lookupSendInvoker(message, messageType);
-
-      // If no local receptor exists, check for work coordinator strategy
-      if (invoker == null) {
-        // Owned-domain commands should NOT go to the outbox — the owning service
-        // is expected to have a local receptor, so a missing one is a wiring error.
-        // Fail loudly: returning Accepted here silently dropped the command (#1379).
-        if (_isOwnedNamespace(messageType.Namespace)) {
-          throw new ReceptorNotFoundException(messageType);
-        }
-
-        // Try strategy-based outbox pattern (new work coordinator pattern)
-        // Route to outbox for remote delivery (AOT-compatible, no reflection)
-        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
-      }
-
-      // Create envelope with hop for observability
-      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-
-      // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
-      _envelopeRegistry?.Register(envelope);
-      try {
-        // Store envelope if trace store is configured
-        if (_traceStore != null) {
-          await _traceStore.StoreAsync(envelope);
-        }
-
-        // Start dispatch activity to serve as parent for handler traces
-        // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
-
-        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-        // This enables cross-scope sync where one handler emits events and another waits
-        await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
-
-        // Invoke using delegate - zero reflection, strongly typed
-        var result = await invoker(message);
-
-        // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-        // Pass messageType so we can look up receptor's [DefaultRouting] attribute
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
-
-        // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType);
-
-        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
-
-      } finally {
-        // Unregister envelope after receptor completes (or throws)
-        _envelopeRegistry?.Unregister(envelope);
-      }
-
-      _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-
-      // Return delivery receipt
-      var destination = messageType.Name; // Will be enhanced with actual receptor name in future
-      return DeliveryReceipt.Delivered(
-        envelope.MessageId,
-        destination,
-        context.CorrelationId,
-        context.CausationId,
-        streamId
-      );
-    } catch (Exception ex) {
-      _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName ?? "Unknown"),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
-      throw;
-    } finally {
-      sw.Stop();
-      _dispatcherMetrics?.SendDuration.Record(sw.Elapsed.TotalMilliseconds);
-    }
-  }
+  ) => _sendObjectAsync(message, context, DispatchPolicies.Send, ownsOutboxWrite: true, callerMemberName, callerFilePath, callerLineNumber);
 
   /// <summary>
   /// Sends a typed message with dispatch options (AOT-compatible).
@@ -829,52 +1103,158 @@ public abstract partial class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+    var (unwrapped, route) = _unwrapRouted(message);
+    return await _sendCoreAsync(unwrapped, unwrapped.GetType(), context, options, route, DispatchPolicies.Send, ownsOutboxWrite: true,
+      callerMemberName, callerFilePath, callerLineNumber);
+  }
+
+
+  /// <summary>
+  /// The untyped send. <paramref name="policy"/> is the calling method's dispatch policy;
+  /// <paramref name="ownsOutboxWrite"/> is false only for callers that queue the outbox copy
+  /// themselves (SendManyAsync).
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  private async Task<IDeliveryReceipt> _sendObjectAsync(
+    object message,
+    IMessageContext context,
+    DispatchPolicy policy,
+    bool ownsOutboxWrite,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+    var (unwrapped, route) = _unwrapRouted(message);
+    return await _sendCoreAsync(unwrapped, unwrapped.GetType(), context, options: null, route, policy, ownsOutboxWrite,
+      callerMemberName, callerFilePath, callerLineNumber);
+  }
+
+
+  /// <summary>
+  /// Unwraps a <c>Route.X(message)</c> passed to a send, keeping its route (#1395). A route that sends
+  /// nothing fails before the message type is known, so the error is counted under the Unknown type.
+  /// </summary>
+  private (object Message, DispatchModes? Route) _unwrapRouted(object message) {
+    if (message is not IRouted routed) {
+      return (message, null);
+    }
+    if (routed.Mode == DispatchModes.None || routed.Value == null) {
+      var error = new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      _dispatcherMetrics?.Errors.Add(1,
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "Unknown"),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, error.GetType().Name));
+      throw error;
+    }
+    return (routed.Value, routed.Mode);
+  }
+
+  /// <summary>
+  /// The envelope for a send: typed when the caller's static type is the message's, otherwise built
+  /// from the runtime type (a send of an <c>object</c>).
+  /// </summary>
+  private MessageEnvelope<TMessage> _createSendEnvelope<TMessage>(TMessage message, IMessageContext context, MessageDispatchContext dispatchContext,
+      string callerMemberName, string callerFilePath, int callerLineNumber) where TMessage : notnull =>
+    typeof(TMessage) == typeof(object)
+      ? (MessageEnvelope<TMessage>)(object)_createEnvelope((object)message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber)
+      : _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber);
+
+  /// <summary>
+  /// The one send path behind every <c>SendAsync</c> overload and the batch calls' single messages. The
+  /// caller's policy decides (#1395): run the handler here, write the outbox (marked when handled here,
+  /// scheduled when asked), both, nothing, or refuse. The outbox copy is written whatever the local
+  /// outcome (owner decision): a local failure is held until the copy is queued, then surfaced.
+  /// </summary>
+  /// <param name="message">The message, unwrapped from any route wrapper.</param>
+  /// <param name="messageType">The type the handler lookup uses: the caller's static type, or the runtime type for an <c>object</c>.</param>
+  /// <param name="context">The message context.</param>
+  /// <param name="options">The caller's options, or null.</param>
+  /// <param name="route">The route the caller chose, or null.</param>
+  /// <param name="policy">The calling method's policy.</param>
+  /// <param name="ownsOutboxWrite">False for a batch call that queues the outbox copy itself.</param>
+  /// <param name="callerMemberName">The calling member.</param>
+  /// <param name="callerFilePath">The calling file.</param>
+  /// <param name="callerLineNumber">The calling line.</param>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface parameter required as this method is called from public API with IMessageContext")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "The one executor behind every SendAsync overload: the message and its context, the caller's options, route and policy, and the caller location the public overloads capture. A parameter object would be allocated on every send.")]
+  private async Task<IDeliveryReceipt> _sendCoreAsync<TMessage>(
+      TMessage message,
+      Type messageType,
+      IMessageContext context,
+      DispatchOptions? options,
+      DispatchModes? route,
+      DispatchPolicy policy,
+      bool ownsOutboxWrite,
+      string callerMemberName,
+      string callerFilePath,
+      int callerLineNumber) where TMessage : notnull {
+    DispatchTimeoutScope? timeoutScope = null;
+    if (options is not null) {
+      options = _withTimeout(options, out timeoutScope);
+    }
+    using var timeoutDisposal = timeoutScope;
+    var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+    _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
-    string? messageTypeName = null;
+    var messageTypeName = messageType.Name;
     try {
-      // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
-      if (message is IRouted routed) {
-        if (routed.Mode == DispatchModes.None || routed.Value == null) {
-          throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
-        }
-        message = routed.Value;
-      }
-
-      var messageType = message.GetType();
-      messageTypeName = messageType.Name;
       var invoker = _lookupSendInvoker(message, messageType);
-
-      if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
+      var decision = _decide(policy, message, messageType, hasHandler: invoker != null, options, route);
+      _throwIfRejected(in decision, messageType);
+      var writeOutbox = decision.WriteOutbox && ownsOutboxWrite;
+      if (decision.Local != LocalRun.Now || invoker == null) {
+        return writeOutbox
+          ? await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options,
+              scheduledFor: decision.DeferUntil, localDeferred: decision.Local == LocalRun.AtScheduledTime)
+          : _nothingToDoReceipt(messageType, context);
       }
 
-      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createSendEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+        callerMemberName, callerFilePath, callerLineNumber);
+      if (options is not null) {
+        _stampExplicitPriority(envelope, options.Priority);
+      }
+      Exception? localFailure = null;
       _envelopeRegistry?.Register(envelope);
       try {
         if (_traceStore != null) {
-          await _traceStore.StoreAsync(envelope, options.CancellationToken);
+          await _traceStore.StoreAsync(envelope, cancellationToken);
         }
-
-        options.CancellationToken.ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Start dispatch activity to serve as parent for handler traces
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
+        // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+        var parentActivity = Activity.Current;
+        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+        if (dispatchActivity != null) {
+          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
+          dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+          dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
+        }
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, cancellationToken);
 
+        // Invoke using delegate - zero reflection, strongly typed
         var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
-        // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
-
-        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
+        // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken);
+        await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
+        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, cancellationToken);
+      } catch (Exception ex) when (writeOutbox) {
+        localFailure = ex;
       } finally {
         _envelopeRegistry?.Unregister(envelope);
       }
@@ -883,20 +1263,30 @@ public abstract partial class Dispatcher(
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
         new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-
-      var destination = messageType.Name;
-      return DeliveryReceipt.Delivered(
+      var delivered = DeliveryReceipt.Delivered(
         envelope.MessageId,
-        destination,
+        messageType.Name,
         context.CorrelationId,
         context.CausationId,
-        streamId
-      );
+        _streamIdExtractor?.ExtractStreamId(message, messageType));
+      if (!writeOutbox) {
+        return delivered;
+      }
+
+      // Handled here and also sent on: the outbox copy is marked as handled here so this service does
+      // not run it twice
+      IDeliveryReceipt queuedReceipt;
+      try {
+        queuedReceipt = await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options,
+          handledLocallyReceipt: delivered);
+      } catch (Exception outboxFailure) when (localFailure is not null) {
+        throw new AggregateException(localFailure, outboxFailure);
+      }
+      _rethrowIfFailed(localFailure);
+      return queuedReceipt;
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName ?? "Unknown"),
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
         new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
@@ -917,104 +1307,18 @@ public abstract partial class Dispatcher(
   private async Task<IDeliveryReceipt> _sendAsyncInternalAsync<TMessage>(
     TMessage message,
     IMessageContext context,
+    DispatchPolicy? policy = null,
+    bool ownsOutboxWrite = true,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
-    _throwIfSchemaNotReady();
-
-    var sw = Stopwatch.StartNew();
-    var messageType = typeof(TMessage);
-    var messageTypeName = messageType.Name;
-    try {
-      // Get strongly-typed delegate from generated code
-      var invoker = _lookupSendInvoker(message, messageType);
-
-      // If no local receptor exists, check for work coordinator strategy
-      if (invoker == null) {
-        // Owned-domain commands should NOT go to the outbox — the owning service
-        // is expected to have a local receptor, so a missing one is a wiring error.
-        // Fail loudly: returning Accepted here silently dropped the command (#1379).
-        if (_isOwnedNamespace(messageType.Namespace)) {
-          throw new ReceptorNotFoundException(messageType);
-        }
-
-        // Try strategy-based outbox pattern (new work coordinator pattern)
-        // Route to outbox for remote delivery (AOT-compatible, no reflection)
-        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
-      }
-
-      // Create envelope with hop for observability - generic version preserves type!
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-
-      // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
-      _envelopeRegistry?.Register(envelope);
-      try {
-        // Store envelope if trace store is configured
-        if (_traceStore != null) {
-          await _traceStore.StoreAsync(envelope);
-        }
-
-        // Start dispatch activity to serve as parent for handler traces
-        // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        var parentActivity = Activity.Current;
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
-        if (dispatchActivity != null) {
-          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-          dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-          dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
-          dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
-        }
-
-        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-        await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
-
-        // Invoke using delegate - zero reflection, strongly typed
-        var result = await invoker(message);
-
-        // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
-
-        // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType);
-
-        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
-
-      } finally {
-        // Unregister envelope after receptor completes (or throws)
-        _envelopeRegistry?.Unregister(envelope);
-      }
-
-      _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-
-      // Return delivery receipt
-      var destination = messageType.Name; // Will be enhanced with actual receptor name in future
-      return DeliveryReceipt.Delivered(
-        envelope.MessageId,
-        destination,
-        context.CorrelationId,
-        context.CausationId,
-        streamId
-      );
-    } catch (Exception ex) {
-      _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
-      throw;
-    } finally {
-      sw.Stop();
-      _dispatcherMetrics?.SendDuration.Record(sw.Elapsed.TotalMilliseconds);
-    }
+    return await _sendCoreAsync(message, typeof(TMessage), context, options: null, route: null, policy ?? DispatchPolicies.Send, ownsOutboxWrite,
+      callerMemberName, callerFilePath, callerLineNumber);
   }
+
 
   /// <summary>
   /// Internal generic implementation of SendAsync with DispatchOptions that preserves type information.
@@ -1035,76 +1339,10 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
-    _throwIfSchemaNotReady();
-
-    var sw = Stopwatch.StartNew();
-    var messageType = typeof(TMessage);
-    var messageTypeName = messageType.Name;
-    try {
-      var invoker = _lookupSendInvoker(message, messageType);
-
-      if (invoker == null) {
-        return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options);
-      }
-
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, options.Priority);
-      _envelopeRegistry?.Register(envelope);
-      try {
-        if (_traceStore != null) {
-          await _traceStore.StoreAsync(envelope, options.CancellationToken);
-        }
-
-        options.CancellationToken.ThrowIfCancellationRequested();
-
-        // Start dispatch activity to serve as parent for handler traces
-        // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-        using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
-
-        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-
-        var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
-
-        // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
-
-        // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-        await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
-
-      } finally {
-        _envelopeRegistry?.Unregister(envelope);
-      }
-
-      _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-
-      var destination = messageType.Name;
-      return DeliveryReceipt.Delivered(
-        envelope.MessageId,
-        destination,
-        context.CorrelationId,
-        context.CausationId,
-        streamId
-      );
-    } catch (Exception ex) {
-      _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
-        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
-      throw;
-    } finally {
-      sw.Stop();
-      _dispatcherMetrics?.SendDuration.Record(sw.Elapsed.TotalMilliseconds);
-    }
+    return await _sendCoreAsync(message, typeof(TMessage), context, options, route: null, DispatchPolicies.Send, ownsOutboxWrite: true,
+      callerMemberName, callerFilePath, callerLineNumber);
   }
+
 
   // ========================================
   // LOCAL INVOKE PATTERN - In-Process RPC
@@ -1569,23 +1807,10 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Cascades a single message via local dispatch and/or outbox based on the dispatch mode.
   /// </summary>
-  private async Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchModes mode) {
-#pragma warning disable CA1848
-    var msgType = msg.GetType();
-
-    if (mode.HasFlag(Dispatch.DispatchModes.Local)) {
-      var publisher = GetUntypedReceptorPublisher(msgType);
-      if (publisher != null) {
-        await publisher(msg, null, default);
-      }
-      await _publishToForeignLookupsAsync(msg, msgType, null, CancellationToken.None).ConfigureAwait(false);
-    }
-
-    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
-      await CascadeToOutboxAsync(msg, msgType);
-    }
-#pragma warning restore CA1848
-  }
+  private Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchModes mode) =>
+    // The same Cascade policy as every other cascade (#1404): Both now runs locally, LocalNoPersist is
+    // no longer dropped, Local stores the event, and a command routed store-only is refused
+    _carryOutCascadeAsync(msg, msg.GetType(), mode, localEnvelopeFor: null, sourceEnvelope: null, eventId: null, CancellationToken.None);
 
   /// <summary>
   /// Void path with tracing support for non-void receptors.
@@ -1744,7 +1969,9 @@ public abstract partial class Dispatcher(
     var messageType = actualMessage.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = _lookupReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    var invoker = _lookupReceptorInvoker<TResult>(actualMessage, messageType)
+      ?? _lookupRuntimeLocalInvoker<TResult>(messageType)
+      ?? throw new ReceptorNotFoundException(messageType);
 
     return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
   }
@@ -1811,7 +2038,7 @@ public abstract partial class Dispatcher(
 
     // Fallback to any receptor (void or non-void) for cascade support
     // This enables void LocalInvokeAsync to cascade events from non-void receptors
-    var anyInvoker = GetReceptorInvokerAny(actualMessage, messageType);
+    var anyInvoker = _lookupReceptorInvokerAny(actualMessage, messageType);
     if (anyInvoker != null) {
       return _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, actualMessage, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
@@ -2074,6 +2301,8 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchModes.None || routed.Value == null) {
@@ -2086,6 +2315,12 @@ public abstract partial class Dispatcher(
     TResult result;
     var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
+    // The LocalInvoke policy (or the caller's selected one) decides (#1395): a future schedule, a
+    // contradictory override or a policy that would not run the handler now is refused. A missing
+    // handler is reported by the lookups below, as before.
+    var decision = _decide(DispatchPolicies.LocalInvoke, message, messageType, hasHandler: true, options, resultRequired: true);
+    _throwIfRejected(in decision, messageType);
+
     var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
@@ -2097,7 +2332,9 @@ public abstract partial class Dispatcher(
         ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
         result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
       } else {
-        throw new ReceptorNotFoundException(messageType);
+        var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
+          ?? throw new ReceptorNotFoundException(messageType);
+        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, runtimeInvoker, options, caller);
       }
     }
 
@@ -2121,6 +2358,8 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchModes.None || routed.Value == null) {
@@ -2133,10 +2372,25 @@ public abstract partial class Dispatcher(
     var asyncInvoker = _lookupVoidReceptorInvoker(message, messageType);
     var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
+    // The LocalInvoke policy (or the caller's selected one) decides (#1395): a future schedule is
+    // refused, and ContinueWhenNoHandler lets a call with no handler return quietly
+    // Each lookup runs only when the one before found nothing, and the handler found is the one invoked
+    var syncInvoker = asyncInvoker is null ? _lookupVoidSyncReceptorInvoker(message, messageType) : null;
+    var anyInvoker = asyncInvoker is null && syncInvoker is null ? _lookupReceptorInvokerAny(message, messageType) : null;
+    var hasHandler = asyncInvoker != null || syncInvoker != null || anyInvoker != null;
+    var decision = _decide(DispatchPolicies.LocalInvoke, message, messageType, hasHandler, options);
+    _throwIfRejected(in decision, messageType);
+    if (decision.Local != LocalRun.Now) {
+      return;
+    }
+
     if (asyncInvoker != null) {
       await _invokeVoidAsyncReceptorAsync(asyncInvoker, message, messageType, context, options, caller);
+    } else if (syncInvoker != null) {
+      await _invokeVoidSyncReceptorAsync(syncInvoker, message, messageType, context, options, caller);
     } else {
-      await _invokeVoidSyncOrFallbackAsync(message, messageType, context, options, caller);
+      // The policy refuses a local run with no handler (NoHandler), so the any-result lookup found one
+      await _invokeVoidAnyReceptorAsync(anyInvoker!, message, messageType, context, options, caller);
     }
 
     // Wait for all perspectives to process cascaded events if requested
@@ -2154,7 +2408,9 @@ public abstract partial class Dispatcher(
     DispatchOptions options,
     CallerLocation caller
   ) {
-    if (_traceStore != null) {
+    // The full path whenever something runs after the receptor: the fast path below creates no
+    // envelope, so it fires no ImmediateDetached and no PostLifecycle stage
+    if (_traceStore != null || _hasImmediateDetachedReceptors(messageType) || _hasPostLifecycleReceptors(messageType)) {
       await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
     } else {
       options.CancellationToken.ThrowIfCancellationRequested();
@@ -2165,36 +2421,46 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Attempts sync invoker, then falls back to any-result invoker for void dispatch.
-  /// This allows void LocalInvokeAsync to call receptors that return events for cascading.
+  /// Invokes a sync void receptor, routing through tracing when anything runs after it.
   /// </summary>
-  private async ValueTask _invokeVoidSyncOrFallbackAsync(
+  private async ValueTask _invokeVoidSyncReceptorAsync(
+    VoidSyncReceptorInvoker syncInvoker,
     object message,
     Type messageType,
     IMessageContext context,
     DispatchOptions options,
     CallerLocation caller
   ) {
-    var syncInvoker = _lookupVoidSyncReceptorInvoker(message, messageType);
-    if (syncInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      syncInvoker(message);
+    if (_traceStore != null || _hasImmediateDetachedReceptors(messageType) || _hasPostLifecycleReceptors(messageType)) {
+      ValueTask wrappedInvoker(object msg) {
+        syncInvoker(msg);
+        return ValueTask.CompletedTask;
+      }
+      await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
       return;
     }
+    options.CancellationToken.ThrowIfCancellationRequested();
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    syncInvoker(message);
+  }
 
-    // Fallback: Try to find any receptor (including those that return values)
-    var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
-    if (anyInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      await _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, caller.MemberName, caller.FilePath, caller.LineNumber);
-      return;
-    }
-
-    throw new ReceptorNotFoundException(messageType);
+  /// <summary>
+  /// Invokes a receptor that returns a value for void dispatch, so void LocalInvokeAsync can call
+  /// receptors that return events for cascading.
+  /// </summary>
+  private async ValueTask _invokeVoidAnyReceptorAsync(
+    Func<object, ValueTask<object?>> anyInvoker,
+    object message,
+    Type messageType,
+    IMessageContext context,
+    DispatchOptions options,
+    CallerLocation caller
+  ) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+    await _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, caller.MemberName, caller.FilePath, caller.LineNumber);
   }
 
   /// <summary>
@@ -2227,7 +2493,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
@@ -2385,7 +2651,9 @@ public abstract partial class Dispatcher(
       return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, wrappedInvoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    throw new ReceptorNotFoundException(messageType);
+    var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
+      ?? throw new ReceptorNotFoundException(messageType);
+    return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, runtimeInvoker, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -2428,7 +2696,11 @@ public abstract partial class Dispatcher(
       return invokeResult;
     }
 
-    throw new ReceptorNotFoundException(messageType);
+    var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
+      ?? throw new ReceptorNotFoundException(messageType);
+    var runtimeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, runtimeInvoker, options);
+    await _waitForPerspectivesIfNeededAsync(options);
+    return runtimeResult;
   }
 
   /// <summary>
@@ -2522,7 +2794,7 @@ public abstract partial class Dispatcher(
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
 
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
@@ -2709,7 +2981,8 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope) {
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope,
+      CancellationToken cancellationToken = default) {
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -2751,7 +3024,7 @@ public abstract partial class Dispatcher(
       }
 
       // Dispatch based on routing mode
-      await _dispatchByModeAsync(msg, messageType, mode, sourceEnvelope, eventId);
+      await _dispatchByModeAsync(msg, messageType, mode, sourceEnvelope, eventId, cancellationToken);
     }
 
     if (extractedCount == 0) {
@@ -2955,55 +3228,67 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Carries out one cascaded message as the Cascade policy decides: the event store first (cause before
+  /// effect), then the local receptors (generated, other assemblies, runtime), then the outbox copy,
+  /// marked when handled here. The outbox copy is written whatever the local outcome; a local failure
+  /// surfaces after it.
+  /// </summary>
+  private async Task _carryOutCascadeAsync(
+      IMessage message,
+      Type messageType,
+      Dispatch.DispatchModes mode,
+      Func<IMessageEnvelope>? localEnvelopeFor,
+      IMessageEnvelope? sourceEnvelope,
+      Guid? eventId,
+      CancellationToken cancellationToken) {
+    var decision = _decide(DispatchPolicies.Cascade, message, messageType,
+      _publishHasLocalHandler(message, messageType, options: null), options: null, route: mode);
+    if (decision.Reject == DispatchRejection.NoRoute) {
+      // A cascade routed nowhere (Route.None) has nothing to do; it has always been skipped quietly
+      return;
+    }
+    _throwIfRejected(in decision, messageType);
+
+    if (decision.WriteEventStoreOnly && message is IEvent) {
+      await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+    }
+
+    Exception? localFailure = null;
+    if (decision.Local == LocalRun.Now) {
+      var localEnvelope = localEnvelopeFor?.Invoke();
+      try {
+        if (GetUntypedReceptorPublisher(messageType) is { } publisher) {
+          await publisher(message, localEnvelope, cancellationToken);
+        }
+        await _publishToForeignLookupsAsync(message, messageType, localEnvelope, cancellationToken).ConfigureAwait(false);
+        await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) when (decision.WriteOutbox) {
+        localFailure = ex;
+      }
+    }
+
+    if (decision.WriteOutbox) {
+      var previous = _outboxCopyMark.Value;
+      _outboxCopyMark.Value = _markFor(in decision);
+      try {
+        await CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+      } catch (Exception outboxFailure) when (localFailure is not null) {
+        throw new AggregateException(localFailure, outboxFailure);
+      } finally {
+        _outboxCopyMark.Value = previous;
+      }
+    }
+    _rethrowIfFailed(localFailure);
+  }
+
+  /// <summary>
   /// Dispatches a cascaded message based on routing mode: local, event store, and/or outbox.
   /// </summary>
-  private async Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) {
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    // Owned-domain commands cascaded from receptors stay local (event store + local handlers).
-    // Events ALWAYS go to transport — other services subscribe to our events.
-    // Only affects the cascade path — explicit PublishAsync/SendAsync don't go through _dispatchByModeAsync.
-    if (mode == Dispatch.DispatchModes.Outbox && msg is not IEvent && _isOwnedNamespace(messageType.Namespace)) {
-      mode = Dispatch.DispatchModes.Local; // local dispatch + event store, no transport
-    }
-
-    // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
-    // Check for LocalDispatch flag specifically, not the composite Local mode
-    if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
-        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", msgTypeName);
-      }
-      var publisher = GetUntypedReceptorPublisher(messageType);
-      if (publisher != null) {
-        // Security context is now established inside publisher via EstablishFullContextAsync
-        // No need for EstablishMessageContextForCascade here
-        await publisher(msg, null, default);
-      }
-      await _publishToForeignLookupsAsync(msg, messageType, null, CancellationToken.None).ConfigureAwait(false);
-    }
-
-    // Event store only: Store to event store without transport (for Local, EventStoreOnly)
-    // When EventStore is set but Outbox is NOT set, store with null destination
-    // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && msg is IEvent) {
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
-        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
-      }
-      await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
-    }
-
-    // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
-    // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
-        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
-      }
-      await CascadeToOutboxAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
-    }
-#pragma warning restore CA1848
-  }
+  private Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId,
+      CancellationToken cancellationToken = default) =>
+    // The Cascade policy decides (#1395); local dispatch sees no envelope on this path, as before, and
+    // the caller's token reaches the cascaded receptors and outbox write
+    _carryOutCascadeAsync(msg, messageType, mode, localEnvelopeFor: null, sourceEnvelope, eventId, cancellationToken);
 
   /// <summary>
   /// Processes tags for a successfully handled message if tag processing is enabled.
@@ -3123,7 +3408,7 @@ public abstract partial class Dispatcher(
     // must still fire even when no compile-time receptors exist.
     await using var scope = _scopeFactory.CreateAsyncScope();
 
-    // Prefer coordinator path — handles receptors + tags + ImmediateDetached
+    // Prefer coordinator path — handles receptors + tags
     if (_lifecycleCoordinator is not null) {
       var eventId = envelope.MessageId.Value;
       var tracking = _lifecycleCoordinator.BeginTracking(
@@ -3146,15 +3431,11 @@ public abstract partial class Dispatcher(
     };
 
     // Always invoke both PostLifecycle stages — ReceptorInvoker handles
-    // the no-receptor case (still processes tags as lifecycle observers)
+    // the no-receptor case (still processes tags as lifecycle observers). ImmediateDetached is not
+    // re-fired after them: it fires once, after the business receptor (#1386)
     await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleDetached, context, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
-
     await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
       context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-      context with { CurrentStage = LifecycleStage.ImmediateDetached }, ct).ConfigureAwait(false);
 
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;
@@ -3288,6 +3569,10 @@ public abstract partial class Dispatcher(
         _trackInSingletonTracker(streamId.Value, eventType, messageId.Value);
       }
 
+      // The Publish policy decides (#1395): every local receptor runs here, and the event goes out
+      var decision = _decide(DispatchPolicies.Publish, eventData, eventType, _publishHasLocalHandler(eventData, eventType, options: null), options: null, unmarkedKind: MessageTraits.Event);
+      _throwIfRejected(in decision, eventType);
+
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
@@ -3311,22 +3596,15 @@ public abstract partial class Dispatcher(
       // flows (a detached-stage or worker emit). Without this, PublishAsync passed sourceEnvelope=null and the
       // child fabricated a fresh correlation + null scope across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
-      // The local path runs below, so the stored envelope records it (see _recordLocalDispatchAsync).
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, recordLocalDispatch: true);
+      // The local path runs below, so the stored envelope records it (see _recordLocalDispatchAsync), and
+      // the copy is marked as handled here (#1398). The outbox write does not wait on the local outcome.
+      var outboxTask = _publishCopyAsync(eventData, eventType, messageId, establishingEnvelope, options: null, decision);
 
-      try {
-        await publisher(eventData);
+      if (decision.Local == LocalRun.Now) {
         // CancellationToken.None: this PublishAsync overload takes no token, and the local
-        // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
-        await _publishToForeignLookupsAsync(eventData, eventType, null, CancellationToken.None).ConfigureAwait(false);
-      } catch {
-        // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
-        try { await outboxTask; } catch { /* outbox exception is secondary */ }
-        throw;
+        // receptor invocation is likewise uncancellable — explicit opt-out, not an oversight.
+        await _runPublishReceptorsAsync(publisher, eventData, eventType, outboxTask, CancellationToken.None);
       }
-
-      // Process tags after successful receptor completion
-      await _processTagsIfEnabledAsync(eventData, eventType);
 
       await outboxTask;
 
@@ -3377,6 +3655,8 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     options.CancellationToken.ThrowIfCancellationRequested();
 
     _throwIfSchemaNotReady();
@@ -3396,6 +3676,11 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
+      // The Publish policy (or the caller's selected one) decides (#1395), including a schedule: a
+      // future ScheduledFor defers local handling to the copy that comes back (#1401)
+      var decision = _decide(DispatchPolicies.Publish, eventData, eventType, _publishHasLocalHandler(eventData, eventType, options), options, unmarkedKind: MessageTraits.Event);
+      _throwIfRejected(in decision, eventType);
+
       // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
       if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
         await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
@@ -3409,26 +3694,12 @@ public abstract partial class Dispatcher(
       // child inherits identity+scope from the hop rather than fabricating a fresh root across the boundary.
       var establishingEnvelope = _captureAmbientSourceEnvelope();
 
-      // ScheduledFor must gate the in-process local-receptor invocation the same way it gates
-      // the outbox-pickup query. Without this branch the local receptor fires inline despite the
-      // scheduled time being in the future — observed in a production saga watchdog:
-      // the watchdog re-arm cascaded several ticks + a completion-abandoned event within
-      // milliseconds because the local watchdog-tick receptor re-armed synchronously each re-publish.
-      // Past or null ScheduledFor preserves the historical immediate-dispatch semantics.
-      var deferLocal = options.ScheduledFor is DateTimeOffset scheduledAt && scheduledAt > DateTimeOffset.UtcNow;
-      var outboxTask = PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope: establishingEnvelope, options: options, recordLocalDispatch: !deferLocal);
-      if (!deferLocal) {
-        var publisher = GetReceptorPublisher(eventData, eventType);
-        try {
-          await publisher(eventData);
-          await _publishToForeignLookupsAsync(eventData, eventType, null, options.CancellationToken).ConfigureAwait(false);
-        } catch {
-          try { await outboxTask; } catch { /* outbox exception is secondary */ }
-          throw;
-        }
-
-        // Process tags after successful receptor completion
-        await _processTagsIfEnabledAsync(eventData, eventType, options.CancellationToken);
+      // ScheduledFor gates the in-process local receptors the same way it gates the outbox pickup query:
+      // without it the local receptor fired inline despite a future schedule, which once made a saga
+      // watchdog re-arm several ticks within milliseconds. The policy decides it (LocalRun.AtScheduledTime).
+      var outboxTask = _publishCopyAsync(eventData, eventType, messageId, establishingEnvelope, options, decision);
+      if (decision.Local == LocalRun.Now) {
+        await _runPublishReceptorsAsync(GetReceptorPublisher(eventData, eventType), eventData, eventType, outboxTask, options.CancellationToken);
       }
 
       await outboxTask;
@@ -3511,7 +3782,7 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_IsDowngradedToLocalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
@@ -3530,12 +3801,6 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore CA1848
 
-    // Owned-domain commands cascaded from receptors stay local (event store + local handlers).
-    // Events ALWAYS go to transport — other services subscribe to our events.
-    if (mode == Dispatch.DispatchModes.Outbox && message is not IEvent && _isOwnedNamespace(messageType.Namespace)) {
-      mode = Dispatch.DispatchModes.Local; // local dispatch + event store, no transport
-    }
-
     // Generate eventId for tracking and storage consistency
     // CRITICAL: This SAME eventId must be used for both tracking (singleton tracker)
     // AND storage (outbox/event store) so that MarkProcessed can find the tracked event
@@ -3549,57 +3814,19 @@ public abstract partial class Dispatcher(
       _trackEventForSync(messageType, eventId.Value, streamId);
     }
 
-    // Event store BEFORE local dispatch (for Local, EventStoreOnly). The order is the point, not an
-    // accident of layout: a receptor fired by this event cascades further events, and each of those
-    // stores ITSELF on the way through, so dispatching first gave the cause a LATER stream version
-    // than its own effects. A consumer replaying that stream in version order saw a name update, a
-    // status initialisation and a version bump against a job whose initialising event it had not
-    // reached yet. Storing first makes cause-before-effect structural.
-    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && message is IEvent) {
-#pragma warning disable CA1848
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
-      }
-#pragma warning restore CA1848
-      await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
-    }
-
-    // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
-    if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
-#pragma warning disable CA1848
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
-        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Dispatching locally for {MessageType}", msgTypeName);
-      }
-#pragma warning restore CA1848
-      var publisher = GetUntypedReceptorPublisher(messageType);
-      // Wrap the source envelope so IsDefaultDispatch=true — cascade local-dispatch fires only default-stage
-      // receptors. When no source envelope was threaded, capture the ambient establishing context so a
-      // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
-      // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
-      // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
-      // The wrapper also carries the cascaded message's own id as the anchor for whatever the nested
-      // receptors emit: they see the inbound message's id and handler through the wrapper, and without an
-      // anchor their emissions would derive the same ids as this handler's and be deduplicated away. A
-      // cascaded command has no event id, so it takes the next ordinal of this handling as its anchor.
-      var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
-        ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource) { EmissionAnchor = eventId ?? _mintEmissionId(sourceEnvelope, messageType) }
+    // The Cascade policy decides (#1395): the route, the owned rule (an owned command never leaves its
+    // service, #1403) and a command routed store-only (refused). The local dispatch sees the source
+    // envelope wrapped so IsDefaultDispatch=true (default-stage fan-out only); with no source envelope
+    // threaded, the ambient establishing context is captured so a detached-stage receptor still sees a
+    // hop carrying identity. The wrapper also carries the cascaded message's own id as the anchor for
+    // whatever nested receptors emit, so their emissions do not derive this handler's ids and get
+    // deduplicated away; a cascaded command takes the next ordinal of this handling as its anchor.
+    // Built only when the message runs here: building it takes an emission ordinal, as it always has
+    IMessageEnvelope cascadeEnvelopeFor() =>
+      (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
+        ? new CascadeEnvelopeWrapper(cascadeSource) { EmissionAnchor = eventId ?? _mintEmissionId(sourceEnvelope, messageType) }
         : _cascadeDefaultEnvelope;
-      if (publisher != null) {
-        await publisher(message, cascadeEnvelope, cancellationToken);
-      }
-      await _publishToForeignLookupsAsync(message, messageType, cascadeEnvelope, cancellationToken).ConfigureAwait(false);
-    }
-
-    // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
-    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
-#pragma warning disable CA1848
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
-      }
-#pragma warning restore CA1848
-      await CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
-    }
+    await _carryOutCascadeAsync(message, messageType, mode, cascadeEnvelopeFor, sourceEnvelope, eventId, cancellationToken).ConfigureAwait(false);
 
     sw.Stop();
     _dispatcherMetrics?.CascadeDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -4030,7 +4257,7 @@ public abstract partial class Dispatcher(
       MessageId = messageId,
       Payload = populatedPayload,
       Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+      DispatchContext = _outboxCopyDispatchContext()
     };
     envelope.AddHop(hop);
 
@@ -4434,6 +4661,7 @@ public abstract partial class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Writes one send's outbox copy: the message, its context and caller location, plus the optional schedule, local receipt and deferred mark the policy decided. A parameter object would be allocated on every send.")]
   private async Task<IDeliveryReceipt> _sendToOutboxViaScopeAsync<TMessage>(
     TMessage message,
     Type messageType,
@@ -4441,100 +4669,20 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    DispatchOptions? options = null
+    DispatchOptions? options = null,
+    IDeliveryReceipt? handledLocallyReceipt = null,
+    DateTimeOffset? scheduledFor = null,
+    bool localDeferred = false
   ) where TMessage : notnull {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 
-      // If no strategy is registered, throw - no local receptor and no outbox
-      if (strategy == null) {
-        // Log diagnostic warning for configuration issues (error path only, performance not critical)
-#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
-        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
-        logger?.LogWarning(
-          "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
-          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
-          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
-          messageType.Name);
-#pragma warning restore CA1848
-        throw new ReceptorNotFoundException(messageType);
+      // Handled locally already: with no outbox to broadcast through, the local run is the delivery
+      if (strategy == null && handledLocallyReceipt is not null) {
+        return handledLocallyReceipt;
       }
-
-      // Resolve destination using registry and routing strategy
-      var destination = _resolveCommandDestination(messageType);
-
-      // Create envelope with hop for observability - generic version preserves type!
-      var envelope = _createEnvelope<TMessage>(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
-      _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
-      envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
-
-      // Start dispatch activity to serve as parent for handler traces (on receiving end)
-      // The activity context will be propagated through the outbox message
-      var parentActivity = Activity.Current;
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
-      if (dispatchActivity != null) {
-        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-        dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
-        dispatchActivity.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
-        dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
-        dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
-        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
-      }
-
-      // Serialize envelope to OutboxMessage
-      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
-
-      // Queue message for batched processing — async path routes through the per-stream batcher. The
-      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
-      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
-
-      // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
-
-      // Extract stream ID from [StreamId] attribute for delivery receipt
-      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
-
-      // Return delivery receipt with Accepted status (message queued)
-      return DeliveryReceipt.Accepted(
-        envelope.MessageId,
-        destination,
-        context.CorrelationId,
-        context.CausationId,
-        streamId
-      );
-    } finally {
-      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-      if (scope is IAsyncDisposable asyncDisposable) {
-        await asyncDisposable.DisposeAsync();
-      } else {
-        scope.Dispose();
-      }
-    }
-  }
-
-  /// <summary>
-  /// Sends a message to the outbox for remote delivery using work coordinator strategy.
-  /// Creates a MessageEnvelope with proper type information and queues for batched processing.
-  /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
-  /// AOT-compatible - uses JsonTypeInfo for serialization, no reflection.
-  /// For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync&lt;TMessage&gt;.
-  /// </summary>
-  private async Task<IDeliveryReceipt> _sendToOutboxViaScopeAsync(
-    object message,
-    Type messageType,
-    IMessageContext context,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber,
-    DispatchOptions? options = null
-  ) {
-    // Create scope to resolve scoped IWorkCoordinatorStrategy
-    var scope = _scopeFactory.CreateScope();
-    try {
-      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
@@ -4553,10 +4701,8 @@ public abstract partial class Dispatcher(
       // Resolve destination using registry and routing strategy
       var destination = _resolveCommandDestination(messageType);
 
-      // Create envelope with hop for observability (returns IMessageEnvelope)
-      // WARN: This creates MessageEnvelope<object> - type information is lost
-      // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
-      var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+      // Create envelope with hop for observability, typed when the caller's type is the message's
+      var envelope = _createSendEnvelope(message, context, new MessageDispatchContext { Mode = _outboxModeFor(handledLocallyReceipt), Source = MessageSource.Local, LocalDeferred = localDeferred }, callerMemberName, callerFilePath, callerLineNumber);
       _stampExplicitPriority(envelope, options?.Priority ?? Whizbang.Core.Priority.WorkPriority.UNDECLARED);
       envelope.PayloadLimitOverride = options?.MaxPayloadBytes;
 
@@ -4574,7 +4720,7 @@ public abstract partial class Dispatcher(
       }
 
       // Serialize envelope to OutboxMessage
-      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination, scheduledFor);
 
       // Queue message for batched processing — async path routes through the per-stream batcher. The
       // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
@@ -4587,8 +4733,8 @@ public abstract partial class Dispatcher(
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
-      // Return delivery receipt with Accepted status (message queued)
-      return DeliveryReceipt.Accepted(
+      // Handled here as well: the local run is the delivery the caller sees. Otherwise the message is queued.
+      return handledLocallyReceipt ?? DeliveryReceipt.Accepted(
         envelope.MessageId,
         destination,
         context.CorrelationId,
@@ -4611,6 +4757,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   private async Task<List<IDeliveryReceipt>> _sendManyToOutboxAsync(
     List<(object message, Type messageType, IMessageContext context)> messages,
+    List<bool> handledLocally,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
@@ -4624,11 +4771,15 @@ public abstract partial class Dispatcher(
         ?? throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
 
       // Queue ALL messages to the strategy
-      foreach (var (message, messageType, context) in messages) {
+      for (var i = 0; i < messages.Count; i++) {
+        var (message, messageType, context) = messages[i];
         var destination = message is IEvent
             ? _resolveEventTopic(messageType)
             : _resolveCommandDestination(messageType);
-        var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
+        // The copy of a message this service already handled locally says so, so the sender's
+        // PreOutbox stage does not run that handler a second time
+        var mode = handledLocally[i] ? DispatchModes.Both : DispatchModes.Outbox;
+        var envelope = _createEnvelope(message, context, new MessageDispatchContext { Mode = mode, Source = MessageSource.Local }, callerMemberName, callerFilePath, callerLineNumber);
         // A batch send always has a destination: both resolvers return one (event-store-only is a publish option).
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
@@ -4663,18 +4814,113 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Flushes outbox batch and adds Accepted receipts only for messages without a local receptor.
-  /// Silently skips outbox if no strategy is registered and all messages were handled locally.
+  /// Decides every message of a batch before any of them runs, so a refused message fails the whole
+  /// batch with nothing handled and nothing queued.
   /// </summary>
-  /// <summary>
-  /// SendManyAsync's form of SendAsync's owned-domain rule: an owned command with no local
-  /// receptor is a wiring error, never an outbox write the owning service would discard.
-  /// </summary>
-  /// <tests>tests/Whizbang.Core.Integration.Tests/SendReceptorShapeIntegrationTests.cs:SendManyAsync_OwnedCommandWithNoReceptor_ThrowsAndWritesNothingAsync</tests>
-  private static void _throwIfOwnedWithoutReceptor(bool isOwned, List<bool> isLocalByMessage, Type messageType) {
-    if (isOwned && !isLocalByMessage.TrueForAll(static isLocal => isLocal)) {
-      throw new ReceptorNotFoundException(messageType);
+  private (Type[] Types, DispatchDecision[] Decisions) _decideBatch(
+      List<object> messages, Type? staticType, DispatchPolicy callPolicy, DispatchOptions options) {
+    var policy = _policyEngine.Resolve(callPolicy, options.Policy);
+    var fanOut = policy.Expects(DispatchExpectations.FanOutAllReceptors);
+    var types = new Type[messages.Count];
+    var decisions = new DispatchDecision[messages.Count];
+    for (var i = 0; i < messages.Count; i++) {
+      var message = messages[i];
+      var messageType = staticType ?? message.GetType();
+      var hasHandler = fanOut
+        ? _publishHasLocalHandler(message, messageType, options)
+        : _lookupSendInvoker(message, messageType) != null;
+      types[i] = messageType;
+      decisions[i] = _decide(policy, message, messageType, hasHandler, options, unmarkedKind: fanOut ? MessageTraits.Event : MessageTraits.Command);
+      _throwIfRejected(in decisions[i], messageType);
     }
+    return (types, decisions);
+  }
+
+  /// <summary>
+  /// Copies the policy dropped because there is no outbox to send them through: says so, once per batch.
+  /// </summary>
+  private void _warnCopiesSkippedForNoOutbox(DispatchDecision[] decisions) {
+    var skippedForNoOutbox = 0;
+    foreach (var decision in decisions) {
+      if (decision.Reason == DispatchReason.NoOutbox && decision.Local == LocalRun.Now && !decision.WriteOutbox) {
+        skippedForNoOutbox++;
+      }
+    }
+    if (skippedForNoOutbox > 0 && CascadeLogger.IsEnabled(LogLevel.Warning)) {
+      Log.OutboxDeliverySkipped(CascadeLogger, skippedForNoOutbox);
+    }
+  }
+
+  /// <summary>
+  /// The one batch path behind every batch call. Every message is decided first, so a refused message
+  /// fails the whole batch before anything runs. Then, in order, a message runs locally when the
+  /// policy says so and its outbox copy is queued when the policy says so, marked when handled here.
+  /// A local failure still queues that message's copy; the batch then stops or continues per
+  /// <see cref="DispatchOptions.BatchFailure"/>, and the copies are flushed before the failure surfaces.
+  /// </summary>
+  private async Task<IEnumerable<IDeliveryReceipt>> _dispatchManyAsync(
+      List<object> messages,
+      Type? staticType,
+      DispatchPolicy callPolicy,
+      DispatchOptions options,
+      Func<Dispatcher, object, Task<IDeliveryReceipt>> runLocally) {
+    var (types, decisions) = _decideBatch(messages, staticType, callPolicy, options);
+
+    var receipts = new List<IDeliveryReceipt>();
+    var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+    var handledLocally = new List<bool>();
+    var failures = new List<Exception>();
+    var stopAtFirstFailure = options.BatchFailure == BatchFailureMode.Stop;
+    for (var i = 0; i < messages.Count; i++) {
+      var decision = decisions[i];
+      var failed = false;
+      if (decision.Local == LocalRun.Now) {
+        try {
+          receipts.Add(await runLocally(this, messages[i]));
+        } catch (Exception ex) {
+          failures.Add(ex);
+          failed = true;
+        }
+      }
+      if (decision.WriteOutbox) {
+        handledLocally.Add(decision.MarkHandledLocally);
+        outboxMessages.Add((messages[i], types[i], MessageContext.Create(_cascadeContextFactory.NewRoot())));
+      }
+      if (failed && stopAtFirstFailure) {
+        break;
+      }
+    }
+
+    _warnCopiesSkippedForNoOutbox(decisions);
+
+    try {
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, handledLocally, receipts);
+    } catch (Exception outboxFailure) when (failures.Count > 0) {
+      failures.Add(outboxFailure);
+    }
+
+    if (failures.Count == 1 && stopAtFirstFailure) {
+      _rethrowIfFailed(failures[0]);
+    }
+    if (failures.Count > 0) {
+      throw new AggregateException(failures);
+    }
+    return receipts;
+  }
+
+  /// <summary>
+  /// Runs every local receptor for a published event, as <c>PublishAsync</c> does: generated ones in
+  /// this assembly and others, and runtime registrations at a local stage.
+  /// </summary>
+  private async Task<IDeliveryReceipt> _publishLocallyAsync(object eventData, Type eventType, CancellationToken cancellationToken) {
+    _autoGenerateStreamIdIfNeeded(eventData, eventType);
+    var publisher = GetReceptorPublisher(eventData, eventType);
+    await publisher(eventData);
+    await _publishToForeignLookupsAsync(eventData, eventType, null, cancellationToken).ConfigureAwait(false);
+    await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, cancellationToken).ConfigureAwait(false);
+    await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
+    return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
+      streamId: _streamIdExtractor?.ExtractStreamId(eventData, eventType));
   }
 
   private async Task _flushOutboxBatchAndCollectReceiptsAsync(
@@ -4687,7 +4933,7 @@ public abstract partial class Dispatcher(
     }
 
     try {
-      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
+      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages, hasLocalReceptor);
       // Only add Accepted receipts for messages without a local receptor
       // (locally-handled messages already have Delivered receipts)
       for (var i = 0; i < outboxReceipts.Count; i++) {
@@ -5043,57 +5289,27 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
-    ArgumentNullException.ThrowIfNull(messages);
+  public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+    SendManyAsync(messages, new DispatchOptions());
 
+  /// <inheritdoc />
+  public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(options);
     var sw = Stopwatch.StartNew();
     try {
-      var messageList = messages.ToList();
+      var messageList = messages.Cast<object>().ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
-      var receipts = new List<IDeliveryReceipt>();
-
-      // All messages go to outbox for cross-service delivery.
-      // Events route via _resolveEventTopic, commands via _resolveCommandDestination.
-      // Messages with local receptors are ALSO processed locally.
-      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
-      var hasLocalReceptor = new List<bool>();
-
-      var messageType = typeof(TMessage);
-      var isOwned = _isOwnedNamespace(messageType.Namespace);
-      // Any receptor shape counts as local: result-returning, void, sync or void sync. Resolved
-      // for every message before any runs, so an unhandled owned command fails the batch whole.
-      var isLocalByMessage = messageList.ConvertAll(message => _lookupSendInvoker(message, messageType) != null);
-      _throwIfOwnedWithoutReceptor(isOwned, isLocalByMessage, messageType);
-
-      for (var i = 0; i < messageList.Count; i++) {
-        var message = messageList[i];
-        var isLocal = isLocalByMessage[i];
-
-        if (isLocal) {
-          // Has local receptor - process locally (Delivered receipt)
-          var cascade = _cascadeContextFactory.NewRoot();
-          var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
-          receipts.Add(receipt);
-        }
-
-        // Queue for outbox delivery (cross-service propagation), except an owned command this
-        // service just handled: its only subscriber is this service, which discards the echo
-        if (!(isLocal && isOwned)) {
-          hasLocalReceptor.Add(isLocal);
-          var outboxCascade = _cascadeContextFactory.NewRoot();
-          outboxMessages.Add((message, messageType, MessageContext.Create(outboxCascade)));
-        }
-      }
-
-      // Flush outbox batch and collect receipts for non-local messages
-      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
-
-      return receipts;
+      // Each message: the SendMany policy, on the static type, run locally through the typed send
+      return await _dispatchManyAsync(messageList, typeof(TMessage), DispatchPolicies.SendMany, options,
+        static (self, message) => self._sendAsyncInternalAsync<TMessage>((TMessage)message,
+          MessageContext.Create(self._cascadeContextFactory.NewRoot()), DispatchPolicies.SendMany, ownsOutboxWrite: false));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
+
 
   /// <summary>
   /// Sends multiple messages and collects all delivery receipts.
@@ -5104,57 +5320,26 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) {
-    ArgumentNullException.ThrowIfNull(messages);
+  public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) =>
+    SendManyAsync(messages, new DispatchOptions());
 
+  /// <inheritdoc />
+  public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages, DispatchOptions options) {
+    ArgumentNullException.ThrowIfNull(messages);
+    ArgumentNullException.ThrowIfNull(options);
     var sw = Stopwatch.StartNew();
     try {
       var messageList = messages.ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
-      var receipts = new List<IDeliveryReceipt>();
-
-      // All messages go to outbox for cross-service delivery.
-      // Events route via _resolveEventTopic, commands via _resolveCommandDestination.
-      // Messages with local receptors are ALSO processed locally.
-      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
-      var hasLocalReceptor = new List<bool>();
-
-      // Resolved for every message before any runs, so an unhandled owned command fails the batch whole
-      var isLocalByMessage = messageList.ConvertAll(message => _lookupSendInvoker(message, message.GetType()) != null);
-      for (var i = 0; i < messageList.Count; i++) {
-        var messageType = messageList[i].GetType();
-        _throwIfOwnedWithoutReceptor(_isOwnedNamespace(messageType.Namespace), [isLocalByMessage[i]], messageType);
-      }
-
-      for (var i = 0; i < messageList.Count; i++) {
-        var message = messageList[i];
-        var messageType = message.GetType();
-        var isLocal = isLocalByMessage[i];
-
-        if (isLocal) {
-          // Has local receptor - process locally (Delivered receipt)
-          var receipt = await SendAsync(message);
-          receipts.Add(receipt);
-        }
-
-        // Queue for outbox delivery (cross-service propagation), except an owned command this
-        // service just handled: its only subscriber is this service, which discards the echo
-        if (!(isLocal && _isOwnedNamespace(messageType.Namespace))) {
-          hasLocalReceptor.Add(isLocal);
-          var cascade = _cascadeContextFactory.NewRoot();
-          outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
-        }
-      }
-
-      // Flush outbox batch and collect receipts for non-local messages
-      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
-
-      return receipts;
+      return await _dispatchManyAsync(messageList, staticType: null, DispatchPolicies.SendMany, options,
+        static (self, message) => self._sendObjectAsync(message, MessageContext.Create(self._cascadeContextFactory.NewRoot()),
+          DispatchPolicies.SendMany, ownsOutboxWrite: false, nameof(SendManyAsync), "", 0));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
+
 
   /// <summary>
   /// Publishes multiple typed events with event routing (namespace-specific topics).
@@ -5167,51 +5352,26 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull {
-    ArgumentNullException.ThrowIfNull(events);
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull =>
+    PublishManyAsync(events, new DispatchOptions());
 
+  /// <inheritdoc />
+  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events, DispatchOptions options) where TEvent : notnull {
+    ArgumentNullException.ThrowIfNull(events);
+    ArgumentNullException.ThrowIfNull(options);
     var sw = Stopwatch.StartNew();
     try {
-      var eventList = events.ToList();
+      var eventList = events.Cast<object>().ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
-      var receipts = new List<IDeliveryReceipt>();
-
-      // All events go to outbox for cross-service delivery.
-      // Events with local receptors are ALSO processed locally.
-      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
-      var hasLocalReceptor = new List<bool>();
-
-      var eventType = typeof(TEvent);
-      foreach (var eventData in eventList) {
-        // Any receptor shape counts as local: result-returning, void, sync or void sync
-        var invoker = GetReceptorInvoker<object>(eventData, eventType);
-        var isLocal = invoker != null;
-        hasLocalReceptor.Add(isLocal);
-
-        if (isLocal) {
-          // Auto-generate StreamId for events with [GenerateStreamId] attribute
-          _autoGenerateStreamIdIfNeeded(eventData, eventType);
-
-          // Has local receptor - process locally via publish semantics
-          var cascade = _cascadeContextFactory.NewRoot();
-          var receipt = await _sendAsyncInternalAsync<TEvent>(eventData, MessageContext.Create(cascade));
-          receipts.Add(receipt);
-        }
-
-        // ALWAYS queue for outbox delivery (cross-service propagation)
-        var outboxCascade = _cascadeContextFactory.NewRoot();
-        outboxMessages.Add((eventData, eventType, MessageContext.Create(outboxCascade)));
-      }
-
-      // Flush outbox batch and collect receipts for non-local messages
-      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
-
-      return receipts;
+      // Each event: the PublishMany policy, every local receptor (#1402), like PublishAsync
+      return await _dispatchManyAsync(eventList, typeof(TEvent), DispatchPolicies.PublishMany, options,
+        static (self, eventData) => self._publishLocallyAsync(eventData, typeof(TEvent), CancellationToken.None));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
+
 
   /// <summary>
   /// Publishes multiple events with event routing.
@@ -5223,46 +5383,25 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) {
-    ArgumentNullException.ThrowIfNull(events);
+  public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
+    PublishManyAsync(events, new DispatchOptions());
 
+  /// <inheritdoc />
+  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events, DispatchOptions options) {
+    ArgumentNullException.ThrowIfNull(events);
+    ArgumentNullException.ThrowIfNull(options);
     var sw = Stopwatch.StartNew();
     try {
       var eventList = events.ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
-      var receipts = new List<IDeliveryReceipt>();
-
-      // All events go to outbox for cross-service delivery.
-      // Events with local receptors are ALSO processed locally.
-      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
-      var hasLocalReceptor = new List<bool>();
-
-      foreach (var eventData in eventList) {
-        var eventType = eventData.GetType();
-        var invoker = GetReceptorInvoker<object>(eventData, eventType);
-        var isLocal = invoker != null;
-        hasLocalReceptor.Add(isLocal);
-
-        if (isLocal) {
-          // Has local receptor - process locally (Delivered receipt)
-          var receipt = await SendAsync(eventData);
-          receipts.Add(receipt);
-        }
-
-        // ALWAYS queue for outbox delivery (cross-service propagation)
-        var cascade = _cascadeContextFactory.NewRoot();
-        outboxMessages.Add((eventData, eventType, MessageContext.Create(cascade)));
-      }
-
-      // Flush outbox batch and collect receipts for non-local messages
-      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
-
-      return receipts;
+      return await _dispatchManyAsync(eventList, staticType: null, DispatchPolicies.PublishMany, options,
+        static (self, eventData) => self._publishLocallyAsync(eventData, eventData.GetType(), CancellationToken.None));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
+
 
   /// <summary>
   /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
@@ -5276,22 +5415,18 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+    LocalSendManyAsync(messages, new DispatchOptions());
+
+  /// <inheritdoc />
+  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(messages);
-
-    var messageList = messages.ToList();
-    var receipts = new List<IDeliveryReceipt>();
-    var messageType = typeof(TMessage);
-
-    foreach (var message in messageList) {
-      _ensureReceptorExists(message, messageType);
-      var cascade = _cascadeContextFactory.NewRoot();
-      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
-      receipts.Add(receipt);
-    }
-
-    return receipts;
+    ArgumentNullException.ThrowIfNull(options);
+    return await _dispatchManyAsync([.. messages.Cast<object>()], typeof(TMessage), DispatchPolicies.LocalSendMany, options,
+      static (self, message) => self._sendAsyncInternalAsync<TMessage>((TMessage)message,
+        MessageContext.Create(self._cascadeContextFactory.NewRoot()), DispatchPolicies.LocalSendMany, ownsOutboxWrite: false));
   }
+
 
   /// <summary>
   /// Sends multiple messages to local receptors ONLY (no outbox delivery).
@@ -5305,25 +5440,18 @@ public abstract partial class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) {
+  public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+    LocalSendManyAsync(messages, new DispatchOptions());
+
+  /// <inheritdoc />
+  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages, DispatchOptions options) {
     ArgumentNullException.ThrowIfNull(messages);
-
-    var messageList = messages.ToList();
-    var receipts = new List<IDeliveryReceipt>();
-
-    foreach (var message in messageList) {
-      _ensureReceptorExists(message, message.GetType());
-      var receipt = await SendAsync(message);
-      receipts.Add(receipt);
-    }
-
-    return receipts;
+    ArgumentNullException.ThrowIfNull(options);
+    return await _dispatchManyAsync([.. messages], staticType: null, DispatchPolicies.LocalSendMany, options,
+      static (self, message) => self._sendObjectAsync(message, MessageContext.Create(self._cascadeContextFactory.NewRoot()),
+        DispatchPolicies.LocalSendMany, ownsOutboxWrite: false, nameof(LocalSendManyAsync), "", 0));
   }
 
-  private void _ensureReceptorExists(object message, Type messageType) {
-    _ = _lookupReceptorInvoker<object>(message, messageType)
-      ?? throw new ReceptorNotFoundException(messageType);
-  }
 
   /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.
@@ -5394,7 +5522,7 @@ public abstract partial class Dispatcher(
       MessageId = messageId,
       Payload = populatedPayload,
       Hops = [],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
+      DispatchContext = _outboxCopyDispatchContext()
     };
     envelope.AddHop(hop);
 

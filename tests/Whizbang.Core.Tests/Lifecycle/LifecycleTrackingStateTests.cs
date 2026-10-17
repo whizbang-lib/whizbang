@@ -107,17 +107,15 @@ public class LifecycleTrackingStateTests {
   }
 
   [Test]
-  public async Task AnInlineStage_ChainsImmediateDetachedAfterItAsync() {
-    // ImmediateDetached is contractually part of the blocking pipeline for inline stages:
-    // it runs after the stage and is awaited, so a receptor registered there is guaranteed
-    // to have completed before the pipeline moves on.
+  public async Task AnInlineStage_ChainsNoImmediateDetachedAfterItAsync() {
+    // ImmediateDetached runs once per message, after the handler, not after each lifecycle stage
+    // (#1386): advancing to an inline stage invokes that stage and nothing else.
     var (tracking, provider, invoker, _) = _build();
     await using var _p = provider;
 
     await tracking.AdvanceToAsync(LifecycleStage.PreDistributeInline, provider, CancellationToken.None);
 
-    await Assert.That(invoker.Stages).IsEquivalentTo(
-      [LifecycleStage.PreDistributeInline, LifecycleStage.ImmediateDetached]);
+    await Assert.That(invoker.Stages).IsEquivalentTo([LifecycleStage.PreDistributeInline]);
   }
 
   [Test]

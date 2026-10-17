@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Whizbang.Core.Dispatch;
 
@@ -245,29 +244,20 @@ public static class MessageExtractor {
   /// 2. Receptor attribute (policy)
   /// 3. Individual wrapper (explicit per-item)
   /// 4. Collection wrapper (convenience default)
-  /// 5. System default: Outbox (LOWEST - enables cross-service delivery)
+  /// 5. System default: Both (LOWEST - local handlers and cross-service delivery)
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// This method uses GetCustomAttribute which is not AOT compatible. A future enhancement
-  /// will replace this with a source-generated static RoutingMetadata lookup table that provides
-  /// message type defaults without reflection.
-  /// </para>
-  /// <para>
-  /// The default is Outbox for cross-service delivery. Use Route.Local() when you want
-  /// to restrict cascade to local receptors only.
-  /// </para>
+  /// The message type's attribute is read from <see cref="MessageDefaultRouting"/>, which each
+  /// assembly's generated message catalog fills at load time, so no reflection is used.
   /// </remarks>
   private static DispatchModes _resolveMode(
     IMessage message,
     DispatchModes? receptorDefault,
     DispatchModes? individualWrapperMode,
     DispatchModes? collectionWrapperMode) {
-    // Priority 1: Message type attribute (HIGHEST - policy enforcement)
-    // Uses reflection (not AOT compatible) - will be replaced by generated lookup
-    var messageAttr = message.GetType().GetCustomAttribute<DefaultRoutingAttribute>();
-    if (messageAttr != null) {
-      return messageAttr.Mode;
+    // Priority 1: Message type attribute (HIGHEST - policy enforcement), registered by generated code
+    if (MessageDefaultRouting.Find(message.GetType()) is DispatchModes messageDefault) {
+      return messageDefault;
     }
 
     // Priority 2: Receptor attribute (policy)

@@ -88,6 +88,13 @@ public sealed record MessageTypeCatalogEntry(
   /// </summary>
   /// <docs>fundamentals/messages/payload-size-limit</docs>
   public long? MaxPayloadBytes { get; init; }
+
+  /// <summary>
+  /// The type's <see cref="Dispatch.DefaultRoutingAttribute"/> mode (declared on it or a base type), or
+  /// null when it has none. Read at compile time, so the cascade needs no reflection.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
+  public Dispatch.DispatchModes? DefaultRouting { get; init; }
 }
 
 /// <summary>

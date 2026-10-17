@@ -790,13 +790,14 @@ public class OutboxPublishWorkerErrorPathTests {
     await fx.Channel.WriteAsync(_work(), cts.Token);
     await publishedEvent.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    // Each of the 4 outbox stages chains an ImmediateDetached invocation in the same closure.
+    // The 4 outbox stages, and no ImmediateDetached: the sender forwards the message, it does not
+    // handle it, so ImmediateDetached does not fire here (#1386).
     await Assert.That(invoker.Stages()).IsEquivalentTo([
-      LifecycleStage.PreOutboxDetached, LifecycleStage.ImmediateDetached,
-      LifecycleStage.PreOutboxInline, LifecycleStage.ImmediateDetached,
-      LifecycleStage.PostOutboxDetached, LifecycleStage.ImmediateDetached,
-      LifecycleStage.PostOutboxInline, LifecycleStage.ImmediateDetached,
-    ]).Because("Without a coordinator the worker must invoke receptors directly: each outbox stage followed by its chained ImmediateDetached, Pre stages before publish and Post stages after.");
+      LifecycleStage.PreOutboxDetached,
+      LifecycleStage.PreOutboxInline,
+      LifecycleStage.PostOutboxDetached,
+      LifecycleStage.PostOutboxInline,
+    ]).Because("Without a coordinator the worker must invoke receptors directly, Pre stages before publish and Post stages after.");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);

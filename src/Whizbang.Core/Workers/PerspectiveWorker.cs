@@ -3147,7 +3147,7 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Runs immediately after a successful RunWithEventsAsync and before the coordinator's
   /// ReportCompletionAsync call. Covers cursor update, batch-tracker bookkeeping, the
-  /// PostPerspectiveInline + ImmediateDetached lifecycle receptor fans, and the WhenAll
+  /// PostPerspectiveInline lifecycle receptor fan, and the WhenAll
   /// SignalPerspectiveComplete callouts.
   /// </summary>
   private async Task _applyDrainModePerspectiveCompletionAsync(
@@ -3199,15 +3199,13 @@ public partial class PerspectiveWorker(
       batchContext.BatchIsNewByEventId.AddOrUpdate(id, true, (_, _) => true);
     }
 
-    // Fire PostPerspectiveInline + ImmediateDetached. The invoker is a no-op when
-    // no receptors exist at the stage (compile-time or runtime), so skipping based
-    // on a startup-cached flag would miss integration-test receptors registered later.
+    // Fire PostPerspectiveInline. The invoker is a no-op when no receptors exist at the stage
+    // (compile-time or runtime), so skipping based on a startup-cached flag would miss
+    // integration-test receptors registered later. ImmediateDetached is not fired here: a
+    // perspective projects the event, it does not handle it (#1386).
     await _invokeLifecycleReceptorsForEventsAsync(
       filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
       LifecycleStage.PostPerspectiveInline, LifecycleReplayOptions.None, ct);
-    await _invokeLifecycleReceptorsForEventsAsync(
-      filteredEvents, streamCtx, result.PerspectiveType, result.LastEventId,
-      LifecycleStage.ImmediateDetached, LifecycleReplayOptions.None, ct);
 
     if (batchContext.LifecycleCoordinator is not null) {
       foreach (var envelope in filteredEvents) {
@@ -4213,8 +4211,6 @@ public partial class PerspectiveWorker(
               // Inline: blocks pipeline
               await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline,
                 context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
-              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-                context with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
             }
           }
         } catch (Exception ex) {
@@ -4631,9 +4627,6 @@ public partial class PerspectiveWorker(
         await _invokeLifecycleReceptorsForEventsAsync(
           processedEvents, streamCtx, result.PerspectiveType, result.LastEventId,
           LifecycleStage.PostPerspectiveInline, replayOpts, cancellationToken);
-        await _invokeLifecycleReceptorsForEventsAsync(
-          processedEvents, streamCtx, result.PerspectiveType, result.LastEventId,
-          LifecycleStage.ImmediateDetached, replayOpts, cancellationToken);
         LogPostPerspectiveInlineCompleted(_logger);
 
         // Process tags at PostPerspectiveInline (per-perspective, with scope context)
@@ -4845,8 +4838,6 @@ public partial class PerspectiveWorker(
       // Inline: blocks pipeline
       await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
         context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);
-      await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-        context with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
     }
   }
 
@@ -4866,8 +4857,6 @@ public partial class PerspectiveWorker(
         }
         var ctx = context with { CurrentStage = stage };
         await invoker.InvokeAsync(envelope, stage, ctx, ct);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         // Graceful shutdown
       } catch (Exception ex) {
@@ -4908,8 +4897,6 @@ public partial class PerspectiveWorker(
         }
         var ctx = context with { CurrentStage = stage };
         await invoker.InvokeAsync(envelope, stage, ctx, default);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
       } catch (OperationCanceledException) {
         // Graceful shutdown
       } catch (Exception ex) {

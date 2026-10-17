@@ -42,8 +42,8 @@ public class FlushApiSourceInvariantTests {
       .Because("Dispatcher cascade/publish/send paths are fire-and-forget — they never consume the WorkBatch. Forcing a synchronous flush here bypasses Interval/Batch batching (the 2026-03-12 regression). Use strategy.FlushAsync(flags) instead.");
 
     var fireAndForgetHits = _countOccurrences(dispatcher, "strategy.FlushAsync(WorkBatchOptions");
-    await Assert.That(fireAndForgetHits).IsGreaterThanOrEqualTo(5)
-      .Because("Dispatcher has five flush call sites (cascade, publish-dynamic, send-via-scope, send-via-scope<T>, send-many). All five must use fire-and-forget FlushAsync.");
+    await Assert.That(fireAndForgetHits).IsGreaterThanOrEqualTo(4)
+      .Because("Dispatcher has four flush call sites (cascade, publish-dynamic, send-via-scope, send-many; the typed and object send-via-scope overloads are one method since #1395). All must use fire-and-forget FlushAsync.");
   }
 
   [Test]

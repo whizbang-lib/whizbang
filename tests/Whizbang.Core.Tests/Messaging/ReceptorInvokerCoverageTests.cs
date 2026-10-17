@@ -208,6 +208,67 @@ namespace Whizbang.Core.Tests.Messaging {
         .Because("a message that already fired at LocalImmediate on this same service must not re-fire its PostInbox receptor, logger or not");
     }
 
+    // #1401: a scheduled copy whose local handling was deferred comes back to its own service, which
+    // must handle it then; the same-service skip applies only to copies that were handled locally.
+    [Test]
+    public async Task InvokeAsync_SameServicePostInbox_LocalDeferredCopy_RunsTheReceptorAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.PostInboxInline, _receptor(typeof(ServiceEchoCommand), "EchoReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IServiceInstanceProvider>(new StubServiceInstanceProvider("checkout-service"));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+      var envelope = _envelope(new ServiceEchoCommand(), hops: [_hop("checkout-service")]);
+      envelope = new MessageEnvelope<ServiceEchoCommand> {
+        MessageId = envelope.MessageId,
+        Payload = envelope.Payload,
+        Hops = envelope.Hops,
+        DispatchContext = envelope.DispatchContext with { LocalDeferred = true },
+      };
+
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(1)
+        .Because("the publishing service handles its own scheduled message when the copy comes back");
+    }
+
+    // A generated receptor registered at the detached local stage still counts as having run locally.
+    [Test]
+    public async Task InvokeAsync_LocalDispatchCopyAtPreOutbox_SkipsAGeneratedReceptorRegisteredAtTheDetachedLocalStageAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateDetached, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+      registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IOptions<RoutingOptions>>(Options.Create(new RoutingOptions().OwnDomains("Some.Unrelated.Domain")));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+
+      await invoker.InvokeAsync(_envelope(new ForeignEchoCommand(), mode: DispatchModes.Both), LifecycleStage.PreOutboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(0);
+    }
+
+    // A runtime registration at the detached local stage is not the generated receptor being checked.
+    [Test]
+    public async Task InvokeAsync_LocalDispatchCopyAtPreOutbox_KeepsAGeneratedReceptorThatNeverRanLocallyAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateDetached,
+        _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", new FiringTracker()) with { RuntimeInstance = new object() });
+      registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IOptions<RoutingOptions>>(Options.Create(new RoutingOptions().OwnDomains("Some.Unrelated.Domain")));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+
+      await invoker.InvokeAsync(_envelope(new ForeignEchoCommand(), mode: DispatchModes.Both), LifecycleStage.PreOutboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(1)
+        .Because("only the same generated receptor at a local stage means it already ran");
+    }
+
     // Bug this guards: the owned-domain filter (ReceptorInvoker._shouldSkipOwnedDomainFilter) skips
     // an owned command reaching PreOutbox because that command already ran at LocalImmediate. If
     // this regressed under logging, any host with logging configured would re-run that command's
@@ -233,14 +294,14 @@ namespace Whizbang.Core.Tests.Messaging {
         .Because("an owned command reaching PreOutbox already ran at LocalImmediate — firing its receptor again duplicates that work");
     }
 
-    // Bug this guards: the LocalDispatch double-fire guard (ReceptorInvoker._shouldSkipLocalDispatchPreOutbox)
-    // stops a command already routed via the LocalDispatch flag from also firing its PreOutbox
-    // receptor. If this regressed under logging, every command dispatched with LocalDispatch in a
-    // logging-enabled host would run its handler twice: once locally, once again at PreOutbox.
+    // Bug this guards: the LocalDispatch double-fire guard stops a command that already ran locally from
+    // running the same receptor again at PreOutbox. If it regressed under logging, a logging-enabled
+    // host would run such a handler twice: once locally, once again at PreOutbox.
     [Test]
-    public async Task InvokeAsync_ForeignCommandWithLocalDispatchFlagAtPreOutbox_SkipsReceptorEvenWithLoggerRegisteredAsync() {
+    public async Task InvokeAsync_ForeignCommandWithLocalDispatchFlagAtPreOutbox_SkipsAReceptorThatRanLocallyEvenWithLoggerRegisteredAsync() {
       var tracker = new FiringTracker();
       var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
       registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
 
       var services = new ServiceCollection();
@@ -255,7 +316,7 @@ namespace Whizbang.Core.Tests.Messaging {
       await invoker.InvokeAsync(envelope, LifecycleStage.PreOutboxInline);
 
       await Assert.That(tracker.Count).IsEqualTo(0)
-        .Because("the command already fired locally via the LocalDispatch flag — PreOutbox must not run its receptor a second time");
+        .Because("the command already ran this receptor locally via the LocalDispatch flag; PreOutbox must not run it a second time");
     }
 
     // Bug this guards: LifecycleStageTracker dedup (ReceptorInvoker._tryClaimStageTracker) stops a
