@@ -277,14 +277,13 @@ public abstract partial class Dispatcher(
     if (_receptorRegistry is null) {
       return null;
     }
-    var registered = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline);
-    if (registered.Count == 0) {
-      registered = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached);
-    }
-    if (registered.Count == 0) {
+    // Only a receptor registered at runtime counts: the registry also lists source-generated receptors,
+    // which the generated lookups already resolved (and which may not even be registered in the container)
+    var receptor = _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline))
+      ?? _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached));
+    if (receptor is null) {
       return null;
     }
-    var receptor = registered[0];
     return async message => {
       await using var scope = _scopeFactory.CreateAsyncScope();
       SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
@@ -306,6 +305,9 @@ public abstract partial class Dispatcher(
     _lookupRuntimeLocalInvoker(messageType) is { } runtimeInvoker
       ? async msg => (TResult)(await runtimeInvoker(msg))!
       : null;
+
+  private static ReceptorInfo? _firstRuntimeReceptor(IReadOnlyList<ReceptorInfo> registered) =>
+    registered.FirstOrDefault(receptor => receptor.RuntimeInstance is not null);
 
   /// <summary>
   /// True when publishing <paramref name="eventType"/> has any local receptor to run here: a generated
