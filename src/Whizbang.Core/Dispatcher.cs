@@ -328,7 +328,8 @@ public abstract partial class Dispatcher(
   /// </summary>
   private bool _publishHasLocalHandler(object message, Type eventType, DispatchOptions? options) =>
     (message is IEvent && (options is null || (options.Behaviors & DispatchBehaviors.ThrowWhenNoHandler) == 0))
-    || _hasLocalPublishReceptors(eventType);
+    || _hasLocalPublishReceptors(eventType)
+    || (message is not IEvent && _lookupCommandResultInvoker(message, eventType) is not null);
 
   /// <summary>
   /// The receptors registered at runtime (<see cref="IReceptorRegistry.Register"/>) at a local stage,
@@ -539,7 +540,11 @@ public abstract partial class Dispatcher(
   private static DispatchModes _outboxModeFor(IDeliveryReceipt? handledLocallyReceipt) =>
     handledLocallyReceipt is null ? DispatchModes.Outbox : DispatchModes.Both;
 
-  private Func<object, ValueTask<object?>>? _lookupReceptorInvokerAny(object message, Type messageType) {
+  private Func<object, ValueTask<object?>>? _lookupReceptorInvokerAny(object message, Type messageType) =>
+    _lookupGeneratedReceptorInvokerAny(message, messageType) ?? _lookupRuntimeLocalInvoker(messageType);
+
+  /// <summary>The result-returning generated receptor for a message, in this assembly or another; runtime registrations are not consulted.</summary>
+  private Func<object, ValueTask<object?>>? _lookupGeneratedReceptorInvokerAny(object message, Type messageType) {
     var own = GetReceptorInvokerAny(message, messageType);
     if (own is not null) {
       return own;
@@ -549,7 +554,37 @@ public abstract partial class Dispatcher(
         return foreign;
       }
     }
-    return _lookupRuntimeLocalInvoker(messageType);
+    return null;
+  }
+
+  /// <summary>
+  /// A command's result-returning generated receptor, async or sync, adapted to one shape. Runtime
+  /// registrations are left out: the publish path runs those itself.
+  /// </summary>
+  private Func<object, ValueTask<object?>>? _lookupCommandResultInvoker(object message, Type messageType) {
+    if (_lookupGeneratedReceptorInvokerAny(message, messageType) is { } invoker) {
+      return invoker;
+    }
+    if (_lookupSyncReceptorInvoker<object>(message, messageType) is { } syncInvoker) {
+      return msg => ValueTask.FromResult<object?>(syncInvoker(msg));
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Runs a command's result-returning receptor when this service handles the command on a publish or a
+  /// cascade, and cascades its result as <c>LocalInvokeAsync</c> does (#1410). The generated publisher
+  /// runs a command's void receptors only, and an owned command never leaves its service (#1403), so
+  /// nothing else would run this one. An event's result-returning receptors run in its pipeline instead.
+  /// </summary>
+  private async Task _runCommandResultReceptorAsync(object message, Type messageType, IMessageEnvelope? sourceEnvelope, CancellationToken cancellationToken) {
+    if (message is IEvent || _lookupCommandResultInvoker(message, messageType) is not { } invoker) {
+      return;
+    }
+    cancellationToken.ThrowIfCancellationRequested();
+    var cascade = sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope);
+    await _localInvokeVoidWithAnyInvokerAndTracingAsync(invoker, message, messageType, MessageContext.Create(cascade),
+      nameof(_runCommandResultReceptorAsync), callerFilePath: string.Empty, callerLineNumber: 0).ConfigureAwait(false);
   }
 
   private Dispatch.DispatchModes? _lookupReceptorDefaultRouting(Type messageType) {
@@ -717,6 +752,7 @@ public abstract partial class Dispatcher(
       await publisher(eventData);
       await _publishToForeignLookupsAsync(message, eventType, null, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(message, eventType, cancellationToken).ConfigureAwait(false);
+      await _runCommandResultReceptorAsync(message, eventType, sourceEnvelope: null, cancellationToken).ConfigureAwait(false);
     } catch {
       // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
       try { await outboxTask; } catch { /* outbox exception is secondary */ }
@@ -3262,6 +3298,7 @@ public abstract partial class Dispatcher(
         }
         await _publishToForeignLookupsAsync(message, messageType, localEnvelope, cancellationToken).ConfigureAwait(false);
         await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+        await _runCommandResultReceptorAsync(message, messageType, sourceEnvelope, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (decision.WriteOutbox) {
         localFailure = ex;
       }
@@ -4918,6 +4955,7 @@ public abstract partial class Dispatcher(
     await publisher(eventData);
     await _publishToForeignLookupsAsync(eventData, eventType, null, cancellationToken).ConfigureAwait(false);
     await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, cancellationToken).ConfigureAwait(false);
+    await _runCommandResultReceptorAsync(eventData, eventType, sourceEnvelope: null, cancellationToken).ConfigureAwait(false);
     await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
     return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
       streamId: _streamIdExtractor?.ExtractStreamId(eventData, eventType));

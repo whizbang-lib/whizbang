@@ -1822,10 +1822,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // only when there are explicit receptors to gate (otherwise CS0219 fires).
     var publishPathDeclaresIsDefaultDispatch = !useCancellationToken;
 
-    var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
+    // A command's result-returning receptors are left to the dispatcher, which runs them through the
+    // typed invoker and cascades their result (#1410); emitted here they resolved IReceptor<T, object>,
+    // which only an object-returning receptor is registered as, and discarded the result.
+    var typedReceptors = receptorsForType.Where(r => !r.IsVoid && r.IsMessageAnEvent).ToList();
     var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
 
-    // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results).
+    // An event's typed receptors (IReceptor<T, TResponse>) fire here.
     foreach (var receptor in typedReceptors) {
       _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: true, indent: "          ");
     }
