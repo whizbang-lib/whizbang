@@ -38,6 +38,30 @@ public sealed class PolicyRecordingOutbox : IWorkCoordinatorStrategy {
 }
 
 /// <summary>
+/// An outbox whose flush signals that it started and then waits until the dispatch is canceled, so a
+/// test can cancel at an exact point without timing.
+/// </summary>
+public sealed class BlockingFlushOutbox : IWorkCoordinatorStrategy {
+  /// <summary>Completes when the dispatcher starts flushing.</summary>
+  public TaskCompletionSource FlushStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public void QueueOutboxMessage(OutboxMessage message) { }
+  public void QueueInboxMessage(InboxMessage message) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+
+  public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => FlushAndGetBatchAsync(flags, ct);
+
+  public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
+    FlushStarted.TrySetResult();
+    await Task.Delay(Timeout.Infinite, ct);
+    return new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
+  }
+}
+
+/// <summary>
 /// Keeps what the assertions read: the payload type name and the dispatch context. Nothing recorded
 /// with it is ever delivered.
 /// </summary>

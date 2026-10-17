@@ -493,6 +493,39 @@ public abstract partial class Dispatcher(
     }
   }
 
+  /// <summary>
+  /// Applies <see cref="DispatchOptions.Timeout"/>: when set, returns a copy of the options whose token
+  /// is the caller's linked with a timer on the dispatcher's clock, and the scope that owns both. The
+  /// copy flows through the whole call, so the deadline reaches the local run, cascades, the outbox write
+  /// and its flush. The token lives in this one place, so a future distributed cancellation links here.
+  /// </summary>
+  private DispatchOptions _withTimeout(DispatchOptions options, out DispatchTimeoutScope? scope) {
+    if (options.Timeout is not TimeSpan timeout) {
+      scope = null;
+      return options;
+    }
+    scope = new DispatchTimeoutScope(timeout, _timeProvider, options.CancellationToken);
+    return options.CloneWithCancellation(scope.Token);
+  }
+
+  /// <summary>The timer and linked token behind a dispatch's <see cref="DispatchOptions.Timeout"/>.</summary>
+  private sealed class DispatchTimeoutScope : IDisposable {
+    private readonly CancellationTokenSource _timer;
+    private readonly CancellationTokenSource _linked;
+
+    public DispatchTimeoutScope(TimeSpan timeout, TimeProvider timeProvider, CancellationToken callerToken) {
+      _timer = new CancellationTokenSource(timeout, timeProvider);
+      _linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, _timer.Token);
+    }
+
+    public CancellationToken Token => _linked.Token;
+
+    public void Dispose() {
+      _linked.Dispose();
+      _timer.Dispose();
+    }
+  }
+
   /// <summary>The receipt of a dispatch the policy let through without running or sending anything.</summary>
   private static DeliveryReceipt _nothingToDoReceipt(Type messageType, IMessageContext context) =>
     DeliveryReceipt.Accepted(MessageId.New(), messageType.Name, context.CorrelationId, context.CausationId);
@@ -1046,6 +1079,8 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     var sw = Stopwatch.StartNew();
     string? messageTypeName = null;
     try {
@@ -1094,7 +1129,7 @@ public abstract partial class Dispatcher(
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
         var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
@@ -1431,6 +1466,9 @@ public abstract partial class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     _throwIfSchemaNotReady();
 
     var sw = Stopwatch.StartNew();
@@ -1472,7 +1510,7 @@ public abstract partial class Dispatcher(
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
         var result = await invoker(message);
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
@@ -2484,6 +2522,8 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchModes.None || routed.Value == null) {
@@ -2539,6 +2579,8 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchModes.None || routed.Value == null) {
@@ -2666,7 +2708,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
@@ -2967,7 +3009,7 @@ public abstract partial class Dispatcher(
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
 
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
@@ -3154,7 +3196,8 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope) {
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope,
+      CancellationToken cancellationToken = default) {
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -3196,7 +3239,7 @@ public abstract partial class Dispatcher(
       }
 
       // Dispatch based on routing mode
-      await _dispatchByModeAsync(msg, messageType, mode, sourceEnvelope, eventId);
+      await _dispatchByModeAsync(msg, messageType, mode, sourceEnvelope, eventId, cancellationToken);
     }
 
     if (extractedCount == 0) {
@@ -3456,9 +3499,11 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Dispatches a cascaded message based on routing mode: local, event store, and/or outbox.
   /// </summary>
-  private Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) =>
-    // The Cascade policy decides (#1395); local dispatch sees no envelope on this path, as before
-    _carryOutCascadeAsync(msg, messageType, mode, localEnvelopeFor: null, sourceEnvelope, eventId, CancellationToken.None);
+  private Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId,
+      CancellationToken cancellationToken = default) =>
+    // The Cascade policy decides (#1395); local dispatch sees no envelope on this path, as before, and
+    // the caller's token reaches the cascaded receptors and outbox write
+    _carryOutCascadeAsync(msg, messageType, mode, localEnvelopeFor: null, sourceEnvelope, eventId, cancellationToken);
 
   /// <summary>
   /// Processes tags for a successfully handled message if tag processing is enabled.
@@ -3836,6 +3881,8 @@ public abstract partial class Dispatcher(
     }
 #pragma warning restore S2955
 
+    options = _withTimeout(options, out var timeoutScope);
+    using var timeoutDisposal = timeoutScope;
     options.CancellationToken.ThrowIfCancellationRequested();
 
     _throwIfSchemaNotReady();

@@ -186,10 +186,43 @@ public class DispatchPolicyBehaviorComponentTests {
     await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), command.Id)).IsEqualTo(0);
   }
 
-  private static ServiceProvider _buildProvider(PolicyRecordingOutbox outbox) {
+  [Test]
+  public async Task Send_TimeoutElapsesDuringTheOutboxFlush_CancelsTheDispatchAsync() {
+    var outbox = new BlockingFlushOutbox();
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+    await using var provider = _buildProvider(outbox, clock);
+    var command = new PbUnownedCommand(Guid.CreateVersion7());
+
+    var send = provider.GetRequiredService<IDispatcher>().SendAsync(command, new DispatchOptions { Timeout = TimeSpan.FromSeconds(5) });
+    await outbox.FlushStarted.Task;
+    clock.Advance(TimeSpan.FromSeconds(6));
+
+    await Assert.That(async () => await send).Throws<OperationCanceledException>()
+      .Because("DispatchOptions.Timeout cancels the dispatch on the dispatcher's clock, flush included");
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), command.Id)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Send_CallerCancelsDuringTheOutboxFlush_CancelsTheDispatchAsync() {
+    var outbox = new BlockingFlushOutbox();
+    await using var provider = _buildProvider(outbox);
+    using var cancellation = new CancellationTokenSource();
+    var command = new PbUnownedCommand(Guid.CreateVersion7());
+
+    var send = provider.GetRequiredService<IDispatcher>().SendAsync(command, new DispatchOptions().WithCancellationToken(cancellation.Token));
+    await outbox.FlushStarted.Task;
+    await cancellation.CancelAsync();
+
+    await Assert.That(async () => await send).Throws<OperationCanceledException>();
+  }
+
+  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox, TimeProvider? clock = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped<IWorkCoordinatorStrategy>(_ => outbox);
+    if (clock is not null) {
+      services.AddSingleton(clock);
+    }
     services.AddSingleton<IEnvelopeSerializer, PolicyContextKeepingEnvelopeSerializer>();
     services.Configure<RoutingOptions>(options => options.OwnDomains(OWNED_DOMAIN));
     services.AddReceptors();

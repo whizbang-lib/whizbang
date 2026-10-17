@@ -253,4 +253,11 @@ public sealed class DispatchOptions {
     BatchFailure = batchFailure;
     return this;
   }
+
+  /// <summary>A copy of these options with another cancellation token (used to apply <see cref="Timeout"/>).</summary>
+  internal DispatchOptions CloneWithCancellation(CancellationToken cancellationToken) {
+    var copy = (DispatchOptions)MemberwiseClone();
+    copy.CancellationToken = cancellationToken;
+    return copy;
+  }
 }
