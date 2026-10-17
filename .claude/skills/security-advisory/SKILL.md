@@ -45,6 +45,9 @@ they can check against their lock file.
   the patched version. Whizbang ships many packages from one repo: list every affected id, not just
   `SoftwareExtravaganza.Whizbang.Core`, so a consumer who only references the transport or data package
   still matches.
+- Write the range as `>= <first affected>, < <fixed release>`, never `<= <last affected release>`. The
+  prereleases of the fixed version built before the fix (`0.2619.0-alpha.12` to `alpha.162`, say) sort
+  above the last affected release, so a `<=` range silently leaves them out.
 - The prose names the same packages and states, in this order:
   - the first affected published version and its date, and why it is the first ("the first with GraphQL
     lenses");
@@ -93,7 +96,52 @@ Then expand, in this order:
    to do, not why we were allowed to break it.
 5. **Workarounds** — a configuration change that mitigates without upgrading, or "None; upgrade to
    <version> or later."
-6. **Credit** — the reporter, by the name they chose, unless they asked not to be named.
+6. **Credit**: the advisory's credits field, not the prose. `finder` for whoever found the defect,
+   `reporter` for whoever reported it, by the name they chose, unless they asked not to be named.
+
+### The template
+
+GitHub renders the description under the headings below; use them, in this order, with the fixed
+sentences exactly as written and the `<placeholders>` filled. The impact, configuration and mechanism
+paragraphs are free prose; the version sentences are not, so every advisory reads the same and a reader
+can compare two of them line by line.
+
+```markdown
+### Impact
+
+<CVE sentence: VULNTYPE in COMPONENT of PRODUCT <first affected> up to, but not including, <fixed release>
+allows ATTACKER to IMPACT via VECTOR.>
+
+Affected: `<package id>`[ and `<package id>`], every published version from <first affected>
+(<its date>, <why it is the first>) up to, but not including, <fixed release>. That covers the releases
+<first stable release in the range> through <last affected release>.[ <An earlier version that predates
+the code>, which predates <the feature>, is not affected.]
+
+<What an attacker gets, who is at risk, under which configuration; the mechanism.>
+
+Not affected: <the configurations and paths that are not>.
+
+### Patches
+
+Fixed in **<fixed release>** (released <date the package went live on nuget.org>). Upgrade to <fixed
+release> or later.[ <A number that was never released> was never released.] Prerelease builds from
+<first prerelease with the fix> onward contain the fix, but are listed as affected because this advisory
+tracks releases; use <fixed release> or later. <What the fixed versions do.>
+
+Upgrading changes <what>: <each visible change, and the step that restores what a client needs>.
+
+### Workarounds
+
+Until upgrading, <the mitigation>. | None; upgrade to <fixed release> or later.
+
+### References
+
+- Fix: <the fix PR's URL>
+```
+
+"Released" is the date the fixed package went live on nuget.org, from the registration's `published`
+timestamp, as an Eastern date. The first prerelease with the fix is found by the `.nuspec` procedure in
+section 2.
 
 **No proof of concept, no exploit steps, no working payload.** Describe the class of problem and the
 affected path. A reviewer needs the mechanism; an attacker must not be handed the recipe.
@@ -122,7 +170,10 @@ An advisory is not finished when it reads well:
   is pushed.
 - Request a CVE through GitHub once the advisory is ready to publish, if the defect affects a published
   package.
-- Add the advisory's `GHSA-…` id to the release notes for the version that fixes it.
+- Add the advisory's `GHSA-…` id to the release notes for the version that fixes it: a `## Security`
+  section at the top of that version's GitHub release, one linked id per line and nothing else. The notes
+  are public, so a summary there discloses the issue before the advisory is published. Immutable releases
+  lock the tag and assets, not the notes: `gh release edit <tag> --notes-file <file>` works on them.
 
 ## 6. The docs site renders the published advisories; nobody maintains a list by hand
 
@@ -141,6 +192,9 @@ up, going stale silently while contradicting the machine-readable record.
 
 - [ ] No banned time words; no forward-looking promises.
 - [ ] Exact boundaries found by the procedure in section 2, not from the first package version.
+- [ ] Description built from the template in section 3: headings, CVE sentence, and the Affected and
+      Patches sentences word for word, including the prereleases that already contain the fix.
+- [ ] Range written `>= <first affected>, < <fixed release>`, not `<= <last affected release>`.
 - [ ] Structured range has its lower bound; the prose states the same first affected version (with date),
       fixed release (with date), covered releases, and "Upgrade to <fixed version> or later."
 - [ ] No category stands in for a version ("pre-releases", "older versions", "production-ready").
@@ -150,6 +204,6 @@ up, going stale silently while contradicting the machine-readable record.
 - [ ] Impact paragraph first; what is *not* affected stated explicitly.
 - [ ] CWE as specific as the defect allows; CVSS vector recorded and consistent with the prose.
 - [ ] No proof of concept or exploit steps.
-- [ ] Reporter credited as they asked.
+- [ ] Finder and reporter in the credits field, as they asked.
 - [ ] The patched version is published on NuGet.
 - [ ] The release notes for that version name the `GHSA-…` id.
