@@ -37,8 +37,8 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E8 | Generated invokers unwrap a top-level `Routed<T>` result before the dispatcher sees it: the route is lost and defaults to Both | fixed |
 | E9 | Batch path drops `ScheduledFor`/`LocalDeferred`, priority, payload limit, token/timeout, NoRebroadcast, outbox collector, composite fan-out, schema gate, tracking; no-outbox throws instead of deferring | fixed |
 | E10 | Runtime receptors: results discarded on publish/cascade; send takes only the first; synthetic envelope; no token | fixed |
-| E11 | `_trackEventForSync` ignores the ambient scoped tracker: cascaded events invisible to LocalInvokeAndSync / WaitForPerspectives | todo |
-| E12 | `PublishAsync(e, options)` skips singleton tracking; neither publish overload tracks the scoped tracker; LocalNoPersist cascades are tracked | todo |
+| E11 | `_trackEventForSync` ignores the ambient scoped tracker: cascaded events invisible to LocalInvokeAndSync / WaitForPerspectives | fixed |
+| E12 | `PublishAsync(e, options)` skips singleton tracking; neither publish overload tracks the scoped tracker; LocalNoPersist cascades are tracked | fixed |
 | E13 | Worker-stage cascades ignore `[DefaultRouting]` | fixed |
 | E14 | RPC-extraction cascade passes no event id, envelope or token (no tracking, non-idempotent ids, no source security) | fixed (the extracted response cascades with the invoke envelope and token through the shared loop) |
 | E15 | RPC-extraction path skips envelope registry, trace store, tags, PostLifecycle, ImmediateDetached, metrics, perspective-sync wait | fixed (extraction runs through the traced invoke path) |

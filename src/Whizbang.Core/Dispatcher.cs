@@ -2928,7 +2928,7 @@ public abstract partial class Dispatcher(
       // Generate eventId and track event in scoped/singleton trackers
       Guid? eventId = null;
       if (msg is IEvent) {
-        eventId = _generateEventIdAndTrack(msg, messageType, sourceEnvelope);
+        eventId = _generateEventIdAndTrack(msg, messageType, sourceEnvelope, track: _persists(mode));
       }
 
       // Dispatch based on routing mode
@@ -2953,7 +2953,7 @@ public abstract partial class Dispatcher(
   /// Generates an event ID (UUIDv7), resolves/auto-generates StreamId, and tracks
   /// the event in both scoped and singleton trackers for sync coordination.
   /// </summary>
-  private Guid _generateEventIdAndTrack(object msg, Type messageType, IMessageEnvelope? sourceEnvelope) {
+  private Guid _generateEventIdAndTrack(object msg, Type messageType, IMessageEnvelope? sourceEnvelope, bool track = true) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     var eventId = _mintEmissionId(sourceEnvelope, messageType);
     var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
@@ -2964,11 +2964,11 @@ public abstract partial class Dispatcher(
     // Cascade StreamId propagation: inherit from source command when event's StreamId is still empty
     streamId = _cascadeStreamIdFromSourceIfNeeded(msg, messageType, streamId, sourceEnvelope);
 
-    // Track in scoped tracker (same request scope)
-    _trackInScopedTracker(streamId, messageType, eventId);
-
-    // Track in singleton tracker for cross-scope sync
-    _trackInSingletonTracker(streamId, messageType, eventId);
+    // Tracked for perspective sync only when it will reach a perspective: a LocalNoPersist event never
+    // does, and a sync wait on it could only time out (#1410 follow-up)
+    if (track) {
+      _trackEventForSync(messageType, eventId, streamId);
+    }
 
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var eventTypeName = messageType.Name;
@@ -3483,7 +3483,7 @@ public abstract partial class Dispatcher(
       // Without this, events published via PublishAsync are invisible to IPerspectiveSyncAwaiter,
       // causing WaitForStreamAsync to return NoPendingEvents immediately.
       if (streamId.HasValue) {
-        _trackInSingletonTracker(streamId.Value, eventType, messageId.Value);
+        _trackEventForSync(eventType, messageId.Value, streamId.Value);
       }
 
       // The Publish policy decides (#1395): every local receptor runs here, and the event goes out
@@ -3590,6 +3590,11 @@ public abstract partial class Dispatcher(
       _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
       var messageId = MessageId.New();
+
+      // Tracked for perspective sync as the plain overload tracks it (#1410 follow-up)
+      if (_streamIdExtractor?.ExtractStreamId(eventData, eventType) is { } trackedStreamId) {
+        _trackEventForSync(eventType, messageId.Value, trackedStreamId);
+      }
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
@@ -3730,7 +3735,9 @@ public abstract partial class Dispatcher(
     if (message is IEvent) {
       eventId = _mintEmissionId(sourceEnvelope, messageType);
       var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
-      _trackEventForSync(messageType, eventId.Value, streamId);
+      if (_persists(mode)) {
+        _trackEventForSync(messageType, eventId.Value, streamId);
+      }
     }
 
     // The Cascade policy decides (#1395): the route, the owned rule (an owned command never leaves its
@@ -3791,41 +3798,15 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Tracks a cascaded event in both scoped and singleton trackers for perspective sync.
   /// </summary>
+  /// <summary>Whether a message dispatched with this mode is stored, and so reaches a perspective.</summary>
+  private static bool _persists(Dispatch.DispatchModes mode) =>
+    (mode & (Dispatch.DispatchModes.Outbox | Dispatch.DispatchModes.EventStore)) != 0;
+
   private void _trackEventForSync(Type messageType, Guid eventId, Guid streamId) {
-    // Track in scoped tracker (same request scope)
-    _scopedEventTracker?.TrackEmittedEvent(streamId, messageType, eventId);
-
-    // CRITICAL: Also track in singleton tracker for cross-scope sync
-    if (_syncEventTracker is not null && _trackedEventTypeRegistry is not null) {
-      var perspectiveNames = _trackedEventTypeRegistry.GetPerspectiveNames(messageType);
-#pragma warning disable CA1848
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync SINGLETON tracker check: EventType={EventType}, PerspectiveCount={Count}, Perspectives=[{Perspectives}]",
-          TypeNameFormatter.DisplayName(messageType), perspectiveNames.Count, string.Join(", ", perspectiveNames));
-      }
-#pragma warning restore CA1848
-      foreach (var perspectiveName in perspectiveNames) {
-        _syncEventTracker.TrackEvent(messageType, eventId, streamId, perspectiveName);
-#pragma warning disable CA1848
-        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-          CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync tracked in SINGLETON: StreamId={StreamId}, EventType={EventType}, EventId={EventId}, Perspective={Perspective}",
-            streamId, messageType.Name, eventId, perspectiveName);
-        }
-#pragma warning restore CA1848
-      }
-    } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-#pragma warning disable CA1848
-      CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync SINGLETON tracker DISABLED - _syncEventTracker={HasTracker}, _trackedEventTypeRegistry={HasRegistry}",
-        _syncEventTracker is not null, _trackedEventTypeRegistry is not null);
-#pragma warning restore CA1848
-    }
-
-#pragma warning disable CA1848
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Tracked event for sync - StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
-        streamId, messageType.Name, eventId);
-    }
-#pragma warning restore CA1848
+    // The scoped tracker of the current request (the field, or the ambient one for a singleton dispatcher)
+    // and the singleton tracker, as every other emission path tracks (#1410 follow-up)
+    _trackInScopedTracker(streamId, messageType, eventId);
+    _trackInSingletonTracker(streamId, messageType, eventId);
   }
 
   /// <summary>

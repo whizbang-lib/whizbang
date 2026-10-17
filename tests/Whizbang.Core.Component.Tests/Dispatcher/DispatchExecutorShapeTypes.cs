@@ -242,3 +242,12 @@ public sealed class ExPlainResultTriggerReceptor : IReceptor<ExPlainResultTrigge
     return ValueTask.FromResult(new ExPlainResult(message.Id));
   }
 }
+
+// ── E12: a result routed LocalNoPersist never reaches a perspective, so nothing waits on it ─────
+
+public record ExNoPersistTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExNoPersistTriggerReceptor : IReceptor<ExNoPersistTrigger, Routed<ExFollowUpEvent>> {
+  public ValueTask<Routed<ExFollowUpEvent>> HandleAsync(ExNoPersistTrigger message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(Route.LocalNoPersist(new ExFollowUpEvent(message.Id)));
+}

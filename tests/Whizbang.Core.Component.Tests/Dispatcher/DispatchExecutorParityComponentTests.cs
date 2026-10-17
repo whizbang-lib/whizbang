@@ -254,6 +254,65 @@ public class DispatchExecutorParityComponentTests {
     await Assert.That(ExContextProbeCommandReceptor.SeenCorrelation(command.Id)).IsEqualTo(correlation.Value);
   }
 
+  // ── E11 / E12: perspective sync tracking sees every emitted event that will reach a perspective ──
+
+  [Test]
+  public async Task Cascade_InsideARequestScope_TracksTheEventForSyncAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var id = Guid.CreateVersion7();
+
+    var tracked = await _trackedWhileAsync(() => _dispatcher(provider).CascadeMessageAsync(new ExVoidEvent(id), sourceEnvelope: null, DispatchModes.Both));
+
+    await Assert.That(tracked.Any(e => e.StreamId == id && e.EventType == typeof(ExVoidEvent))).IsTrue()
+      .Because("a cascade inside a request scope is visible to that scope's LocalInvokeAndSync and WaitForPerspectives");
+  }
+
+  [Test]
+  public async Task Publish_InsideARequestScope_TracksTheEventForSyncAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var id = Guid.CreateVersion7();
+
+    var tracked = await _trackedWhileAsync(() => _dispatcher(provider).PublishAsync(new ExVoidEvent(id)));
+
+    await Assert.That(tracked.Any(e => e.StreamId == id && e.EventType == typeof(ExVoidEvent))).IsTrue();
+  }
+
+  [Test]
+  public async Task PublishWithOptions_InsideARequestScope_TracksTheEventForSyncAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var id = Guid.CreateVersion7();
+
+    var tracked = await _trackedWhileAsync(() => _dispatcher(provider).PublishAsync(new ExVoidEvent(id), new DispatchOptions()));
+
+    await Assert.That(tracked.Any(e => e.StreamId == id && e.EventType == typeof(ExVoidEvent))).IsTrue()
+      .Because("the options overload tracks as the plain one does");
+  }
+
+  [Test]
+  public async Task LocalNoPersistResult_IsNotTrackedForSyncAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var trigger = new ExNoPersistTrigger(Guid.CreateVersion7());
+
+    var tracked = await _trackedWhileAsync(async () => await _dispatcher(provider).LocalInvokeAsync((object)trigger));
+
+    await Assert.That(PolicyProbe.Count(nameof(ExFollowUpEventReceptor), trigger.Id)).IsEqualTo(1)
+      .Because("the result runs here; without this the next assertion holds vacuously");
+    await Assert.That(tracked.Any(e => e.StreamId == trigger.Id)).IsFalse()
+      .Because("a LocalNoPersist event never reaches a perspective, so a sync wait on it could only time out");
+  }
+
+  private static async Task<IReadOnlyList<Whizbang.Core.Perspectives.Sync.TrackedEvent>> _trackedWhileAsync(Func<Task> dispatch) {
+    var previous = Whizbang.Core.Perspectives.Sync.ScopedEventTrackerAccessor.CurrentTracker;
+    var tracker = new Whizbang.Core.Perspectives.Sync.ScopedEventTracker();
+    Whizbang.Core.Perspectives.Sync.ScopedEventTrackerAccessor.CurrentTracker = tracker;
+    try {
+      await dispatch();
+    } finally {
+      Whizbang.Core.Perspectives.Sync.ScopedEventTrackerAccessor.CurrentTracker = previous;
+    }
+    return tracker.GetEmittedEvents();
+  }
+
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
   private static IDispatcher _dispatcher(ServiceProvider provider) => provider.GetRequiredService<IDispatcher>();
