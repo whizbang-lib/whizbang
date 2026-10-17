@@ -57,7 +57,14 @@ public class DispatcherSnippets {
           if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && (object)result is not TResult && routedResult.Value is TResult unwrappedValue) {
             return unwrappedValue;
           }
-          return (TResult)(object)result!;
+          if ((object?)result is null) {
+            return default!;
+          }
+          // A result that is not the requested type (a tuple holding it, say) goes back whole, so the
+          // dispatcher extracts the response from it instead of running the receptor again
+          return (object)result is TResult typedResult
+            ? typedResult
+            : throw new global::Whizbang.Core.Dispatch.ReceptorResultMismatchException(result, typeof(TResult));
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
             await asyncDisposable.DisposeAsync();
@@ -267,7 +274,13 @@ public class DispatcherSnippets {
         if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && (object)result is not TResult && routedResult.Value is TResult unwrappedValue) {
           return unwrappedValue;
         }
-        return (TResult)(object)result!;
+        if ((object?)result is null) {
+          return default!;
+        }
+        // A result that is not the requested type goes back whole, so the dispatcher extracts the response
+        return (object)result is TResult typedResult
+          ? typedResult
+          : throw new global::Whizbang.Core.Dispatch.ReceptorResultMismatchException(result, typeof(TResult));
       }
 
       return InvokeReceptor;
@@ -391,7 +404,8 @@ public class DispatcherSnippets {
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
-          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          DefaultRouting: __DEFAULT_ROUTING__
         )
       };
     }
@@ -425,7 +439,8 @@ public class DispatcherSnippets {
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
-          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          DefaultRouting: __DEFAULT_ROUTING__
         )
       };
     }
@@ -498,7 +513,8 @@ public class DispatcherSnippets {
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
-          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          DefaultRouting: __DEFAULT_ROUTING__
         )
       };
     }
@@ -569,7 +585,8 @@ public class DispatcherSnippets {
           SyncAttributes: __SYNC_ATTRIBUTES__,
           FireDuringReplay: __FIRE_DURING_REPLAY__,
           IsIdempotent: __IS_IDEMPOTENT__,
-          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__
+          IsOnceAcrossServices: __IS_ONCE_ACROSS_SERVICES__,
+          DefaultRouting: __DEFAULT_ROUTING__
         )
       };
     }

@@ -31,7 +31,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E3 | Registry entries for sync receptors resolve the async interface: worker stages throw for `ISyncReceptor` | fixed |
 | E4 | Polymorphic receptors (interface/base message type) unreachable on every local path | fixed |
 | E5 | Generic overloads key on the static type: `SendAsync<TMessage>`, `SendManyAsync<T>`, `LocalSendManyAsync<T>`, `PublishManyAsync<TEvent>`, perspective wait; generic `SendAsync` ignores `Routed<T>` | fixed |
-| E6 | Overloads with divergent fallbacks: `LocalInvokeAsync<TMessage,TResult>(m, ctx)` no sync/RPC; generic void `(m, ctx)` ignores foreign assemblies; options/receipt overloads no RPC extraction | todo |
+| E6 | Overloads with divergent fallbacks: `LocalInvokeAsync<TMessage,TResult>(m, ctx)` no sync/RPC; generic void `(m, ctx)` ignores foreign assemblies; options/receipt overloads no RPC extraction | fixed |
 | E7 | Cascaded command not among the assembly's response types falls through the generated `CascadeToOutboxAsync` silently; command arms resolve an event topic | todo |
 | E7b | "Has a handler" counts a publisher entry that runs nothing (pipeline-stage-only receptor, response-type-only entry): owned command dropped, unowned copy marked handled | fixed |
 | E8 | Generated invokers unwrap a top-level `Routed<T>` result before the dispatcher sees it: the route is lost and defaults to Both | fixed |
@@ -39,23 +39,24 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E10 | Runtime receptors: results discarded on publish/cascade; send takes only the first; synthetic envelope; no token | fixed |
 | E11 | `_trackEventForSync` ignores the ambient scoped tracker: cascaded events invisible to LocalInvokeAndSync / WaitForPerspectives | todo |
 | E12 | `PublishAsync(e, options)` skips singleton tracking; neither publish overload tracks the scoped tracker; LocalNoPersist cascades are tracked | todo |
-| E13 | Worker-stage cascades ignore `[DefaultRouting]` | todo |
-| E14 | RPC-extraction cascade passes no event id, envelope or token (no tracking, non-idempotent ids, no source security) | todo |
-| E15 | RPC-extraction path skips envelope registry, trace store, tags, PostLifecycle, ImmediateDetached, metrics, perspective-sync wait | todo |
+| E13 | Worker-stage cascades ignore `[DefaultRouting]` | fixed |
+| E14 | RPC-extraction cascade passes no event id, envelope or token (no tracking, non-idempotent ids, no source security) | fixed (the extracted response cascades with the invoke envelope and token through the shared loop) |
+| E15 | RPC-extraction path skips envelope registry, trace store, tags, PostLifecycle, ImmediateDetached, metrics, perspective-sync wait | fixed (extraction runs through the traced invoke path) |
 | E16 | Send/LocalInvoke run only the first receptor for a message type; publish runs all | question #1412 |
 | E17 | `if (!isDefaultDispatch)` branch in generated cascade publishers is unreachable | fixed (removed with the publisher rewrite) |
 | E18 | Dispatcher-level `[AwaitPerspectiveSync]` reads LocalImmediateInline only (no-op for default receptors; double wait for explicit Inline); sync snippets never wait | todo |
 | E19 | Void LocalInvoke paths never process tags | todo |
 | E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | question #1413 |
-| E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | todo |
+| E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | fixed |
 | E22 | Generated cascade arms omit `recordLocalDispatch`: another host can double-fire a cascade that ran locally | todo |
-| E23 | Send and batch outbox writes ignore `DispatchOutboxCollector.Current` (bypass the atomic commit) | todo |
+| E23 | Send and batch outbox writes ignore `DispatchOutboxCollector.Current` (bypass the atomic commit) | fixed |
 | E24 | `PublishOnceAsync` claims then publishes non-atomically; a failed publish keeps the claim and the event is lost | question #1414 |
 | E25 | Default interface methods for batch-options overloads drop `options`; security builder exposes only some overloads | question #1415 |
-| E26 | LocalInvoke (non-options), receipt overloads, CascadeMessageAsync, batch publish skip the schema-ready gate | todo |
-| E27 | `_localInvokeWithOptionsAsync` passes `hasHandler: true`, so ContinueWhenNoHandler cannot apply | todo |
+| E26 | LocalInvoke (non-options), receipt overloads, CascadeMessageAsync, batch publish skip the schema-ready gate | fixed |
+| E27 | `_localInvokeWithOptionsAsync` passes `hasHandler: true`, so ContinueWhenNoHandler cannot apply | not-a-defect: a result-required call refuses without a handler by design (DispatchRules); the real check is now passed |
 | E29 | The worker-stage invoker had no event cascader unless a transport consumer was added: every result returned at a worker stage was discarded | fixed |
-| E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | todo |
+| E30 | LocalInvoke<TResult> on a tuple-returning receptor ran the receptor twice (failed cast, then re-run through extraction), and swallowed an InvalidCastException the receptor threw itself | fixed |
+| E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
 

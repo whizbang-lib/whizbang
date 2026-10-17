@@ -60,6 +60,10 @@ namespace Whizbang.Core.Messaging;
 /// invoker uses this to recognize, at PreOutbox, a runtime receptor that already ran when the message
 /// was dispatched locally.
 /// </param>
+/// <param name="DefaultRouting">
+/// The receptor's <c>[DefaultRouting]</c>, if it declares one: where a message it returns goes when the
+/// message carries no route of its own. A cascade from a lifecycle stage applies it, as a local call does.
+/// </param>
 /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
@@ -71,7 +75,8 @@ public sealed record ReceptorInfo(
     bool FireDuringReplay = false,
     bool IsIdempotent = false,
     bool IsOnceAcrossServices = false,
-    object? RuntimeInstance = null
+    object? RuntimeInstance = null,
+    Dispatch.DispatchModes? DefaultRouting = null
 );
 
 /// <summary>

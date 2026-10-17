@@ -93,7 +93,6 @@ public class DispatcherBranchCoverageATests {
       envelopeRegistry: envelopeRegistry,
       streamIdExtractor: streamIdExtractor,
       receptorRegistry: receptorRegistry) {
-    private int _defaultRoutingLookups;
 
     public Type HandledType { get; init; } = typeof(BranchACommand);
     public ReceptorInvoker<object>? Invoker { get; init; }
@@ -102,7 +101,6 @@ public class DispatcherBranchCoverageATests {
     public Func<object, ValueTask<object?>>? AnyInvoker { get; init; }
 
     public List<IMessage> OutboxCascades { get; } = [];
-    public int DefaultRoutingLookups => Volatile.Read(ref _defaultRoutingLookups);
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       var invoker = Invoker;
@@ -129,10 +127,7 @@ public class DispatcherBranchCoverageATests {
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) =>
       AnyInvoker is not null && messageType == HandledType ? AnyInvoker : null;
 
-    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) {
-      Interlocked.Increment(ref _defaultRoutingLookups);
-      return null;
-    }
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
 
     protected override Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
       OutboxCascades.Add(message);
@@ -740,7 +735,7 @@ public class DispatcherBranchCoverageATests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_RpcExtraction_ReceptorReturnsNull_LogsNullResultTypeAndThrowsAsync() {
+  public async Task LocalInvokeAsync_RpcExtraction_ReceptorReturnsNull_NamesTheNullResultAndThrowsAsync() {
     // Arrange - debug logging on, receptor returns null
     var logs = new List<string>();
     await using var sp = _buildProvider(logs: logs);
@@ -752,57 +747,8 @@ public class DispatcherBranchCoverageATests {
     await Assert.That(async () =>
         await dispatcher.LocalInvokeAsync<BranchAResponse>((object)new BranchACommand(Guid.CreateVersion7()), MessageContext.New()))
       .ThrowsExactly<InvalidOperationException>()
-      .WithMessageContaining("of type null");
-    await Assert.That(logs.Any(m => m.Contains("RpcExtraction: Receptor returned null, IsNull=True", StringComparison.Ordinal))).IsTrue()
+      .WithMessageContaining("of type null")
       .Because("the diagnostic names a null result as \"null\" rather than failing to describe it");
-  }
-
-  // ========================================
-  // CASCADE EXCLUDING RESPONSE (lines 1498, 1509)
-  // ========================================
-
-  [Test]
-  public async Task CascadeEventsExcludingResponseAsync_NullResult_LogsNullResultTypeAndCascadesNothingAsync() {
-    // Arrange
-    var logs = new List<string>();
-    await using var sp = _buildProvider(logs: logs);
-    var dispatcher = new BranchADispatcher(sp);
-
-    // Act
-    await dispatcher.CascadeEventsExcludingResponseAsync<BranchAResponse>(null, null, typeof(BranchACommand));
-
-    // Assert
-    await Assert.That(logs.Any(m => m.Contains("ResultType=null, ExtractedType=BranchAResponse", StringComparison.Ordinal))).IsTrue();
-    await Assert.That(logs.Any(m => m.Contains("Result is null, skipping cascade", StringComparison.Ordinal))).IsTrue();
-    await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(0);
-    await Assert.That(dispatcher.DefaultRoutingLookups).IsEqualTo(0)
-      .Because("a null result stops before routing is looked up");
-  }
-
-  [Test]
-  [Arguments(true)]
-  [Arguments(false)]
-  public async Task CascadeEventsExcludingResponseAsync_OriginalMessageType_DecidesWhetherReceptorRoutingIsConsultedAsync(bool withOriginalType) {
-    // Arrange
-    var lookup = new CountingLookup();
-    await using var sp = _buildProvider(lookups: [lookup]);
-    var dispatcher = new BranchADispatcher(sp);
-    var cascaded = new BranchAEvent(Guid.CreateVersion7());
-
-    // Act
-    if (withOriginalType) {
-      await dispatcher.CascadeEventsExcludingResponseAsync<BranchAResponse>(cascaded, null, typeof(BranchACommand));
-    } else {
-      await dispatcher.CascadeEventsExcludingResponseAsync<BranchAResponse>(cascaded, null);
-    }
-
-    // Assert
-    var expectedLookups = withOriginalType ? 1 : 0;
-    await Assert.That(dispatcher.DefaultRoutingLookups).IsEqualTo(expectedLookups)
-      .Because("without the original message type there is no receptor whose routing could be asked for");
-    await Assert.That(lookup.RoutingLookups).IsEqualTo(expectedLookups);
-    await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(1);
-    await Assert.That(ReferenceEquals(dispatcher.OutboxCascades[0], cascaded)).IsTrue();
   }
 
   // ========================================

@@ -93,6 +93,21 @@ public class DispatchExecutorParityComponentTests {
     await _assertRpcAsync(result.Value, command.Id);
   }
 
+  [Test]
+  public async Task LocalInvokeObject_ATupleReceptorWithDefaultRouting_CascadesTheRestByThatRouteAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var command = new ExRpcDefaultLocalCommand(Guid.CreateVersion7());
+
+    var response = await _dispatcher(provider).LocalInvokeAsync<ExRpcResponse>((object)command);
+
+    await Assert.That(response.Id).IsEqualTo(command.Id);
+    await Assert.That(PolicyProbe.Count(nameof(ExRpcDefaultLocalCommandReceptor), command.Id)).IsEqualTo(1);
+    await _assertRanHereAndNeverTransportedAsync(outbox, command.Id);
+    await Assert.That(outbox.QueuedOf(typeof(ExRpcResponse))).IsEmpty()
+      .Because("the response goes back to the caller; it is never cascaded");
+  }
+
   // ── E13: a receptor's [DefaultRouting] holds at a worker stage as on a local call ─────────────
 
   [Test]
@@ -193,18 +208,26 @@ public class DispatchExecutorParityComponentTests {
     await Assert.That(PolicyProbe.Count(nameof(ExRpcCommandReceptor), id)).IsEqualTo(0);
   }
 
-  // ── E27: ContinueWhenNoHandler applies to the result-returning options overload ──────────────
+  // ── E27: a call that needs a result refuses without a handler, ContinueWhenNoHandler or not ──
 
   [Test]
-  public async Task LocalInvokeObjectWithOptions_ContinueWhenNoHandler_ReturnsDefaultInsteadOfThrowingAsync() {
+  public async Task LocalInvokeObjectWithOptions_ContinueWhenNoHandler_StillRefusesBecauseAResultIsNeededAsync() {
     await using var provider = _buildProvider(new PolicyRecordingOutbox());
     var unhandled = new PbUnhandledCommand(Guid.CreateVersion7());
 
-    var result = await _dispatcher(provider).LocalInvokeAsync<PbUnhandledResult>(
-      (object)unhandled, new DispatchOptions().WithBehaviors(DispatchBehaviors.ContinueWhenNoHandler));
+    await Assert.That(async () => await _dispatcher(provider).LocalInvokeAsync<PbUnhandledResult>(
+        (object)unhandled, new DispatchOptions().WithBehaviors(DispatchBehaviors.ContinueWhenNoHandler)))
+      .ThrowsExactly<ReceptorNotFoundException>()
+      .Because("there is no result to return without a handler; the policy refuses rather than invent one");
+  }
 
-    await Assert.That(result).IsNull()
-      .Because("the caller asked to continue when nothing handles the message, as the void overload already honors");
+  [Test]
+  public async Task LocalInvokeVoidWithOptions_ContinueWhenNoHandler_ReturnsQuietlyAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var unhandled = new PbUnhandledCommand(Guid.CreateVersion7());
+
+    await _dispatcher(provider).LocalInvokeAsync(
+      (object)unhandled, new DispatchOptions().WithBehaviors(DispatchBehaviors.ContinueWhenNoHandler));
   }
 
   // ── E28: the caller's explicit context reaches the receptor on a send as on a local invoke ───

@@ -219,3 +219,13 @@ public sealed class ExContextProbeCommandReceptor : IReceptor<ExContextProbeComm
     return ValueTask.CompletedTask;
   }
 }
+
+public record ExRpcDefaultLocalCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+[DefaultRouting(DispatchModes.Local)]
+public sealed class ExRpcDefaultLocalCommandReceptor : IReceptor<ExRpcDefaultLocalCommand, (ExRpcResponse, ExFollowUpEvent)> {
+  public ValueTask<(ExRpcResponse, ExFollowUpEvent)> HandleAsync(ExRpcDefaultLocalCommand message, CancellationToken cancellationToken = default) {
+    PolicyProbe.Record(nameof(ExRpcDefaultLocalCommandReceptor), message.Id);
+    return ValueTask.FromResult((new ExRpcResponse(message.Id), new ExFollowUpEvent(message.Id)));
+  }
+}

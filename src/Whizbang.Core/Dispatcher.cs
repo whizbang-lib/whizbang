@@ -303,8 +303,67 @@ public abstract partial class Dispatcher(
   /// </summary>
   private ReceptorInvoker<TResult>? _lookupRuntimeLocalInvoker<TResult>(Type messageType) =>
     _lookupRuntimeLocalInvoker(messageType) is { } runtimeInvoker
-      ? async msg => (TResult)(await runtimeInvoker(msg))!
+      ? async msg => await runtimeInvoker(msg) switch {
+        null => default!,
+        TResult typed => typed,
+        var other => throw new ReceptorResultMismatchException(other, typeof(TResult))
+      }
       : null;
+
+  /// <summary>
+  /// The invoker a result-returning local call runs, the same for every LocalInvoke overload: the async
+  /// result receptor, else the sync one, else a runtime registration. Each hands back a result that is
+  /// not the requested type whole, as a <see cref="ReceptorResultMismatchException"/>, for
+  /// <see cref="_invokeAndCascadeAsync"/> to extract the response from (#1410 follow-up).
+  /// </summary>
+  private ReceptorInvoker<TResult>? _lookupResultInvoker<TResult>(object message, Type messageType) {
+    if (_lookupReceptorInvoker<TResult>(message, messageType) is { } asyncInvoker) {
+      return asyncInvoker;
+    }
+    if (_lookupSyncReceptorInvoker<TResult>(message, messageType) is { } syncInvoker) {
+      return msg => new ValueTask<TResult>(syncInvoker(msg));
+    }
+    if (_lookupRuntimeLocalInvoker<TResult>(messageType) is { } runtimeInvoker) {
+      return runtimeInvoker;
+    }
+    // Last, any result-returning receptor (a lookup that offers only the type-erased invoker)
+    if (_lookupReceptorInvokerAny(message, messageType) is { } anyInvoker) {
+      return async msg => await anyInvoker(msg) switch {
+        null => throw new InvalidOperationException(
+          $"Could not extract {typeof(TResult).Name} from receptor result of type null. " +
+          $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}."),
+        TResult typed => typed,
+        var other => throw new ReceptorResultMismatchException(other, typeof(TResult))
+      };
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Runs a result-returning receptor once and returns the caller's response, cascading what else it
+  /// returned. A result that is not the requested type (a tuple holding it) is not run again: the
+  /// response is extracted from it and the rest cascades with the invoke's envelope and token.
+  /// </summary>
+  private async ValueTask<TResult> _invokeAndCascadeAsync<TResult>(ReceptorInvoker<TResult> invoker, object message, Type messageType,
+      IMessageEnvelope envelope, CancellationToken cancellationToken) {
+    TResult result;
+    try {
+      result = await invoker(message);
+    } catch (ReceptorResultMismatchException mismatch) {
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        Log.ExtractingResponse(CascadeLogger, messageType.Name, mismatch.Result.GetType().Name, typeof(TResult).Name);
+      }
+      if (!Internal.ResponseExtractor.TryExtractResponse<TResult>(mismatch.Result, out var response)) {
+        throw new InvalidOperationException(
+          $"Could not extract {typeof(TResult).Name} from receptor result of type {mismatch.Result.GetType().Name}. " +
+          $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}.", mismatch);
+      }
+      await _cascadeEventsFromResultAsync(mismatch.Result, messageType, envelope, excludedResponse: response, cancellationToken);
+      return response!;
+    }
+    await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
+    return result;
+  }
 
   private static ReceptorInfo? _firstRuntimeReceptor(IReadOnlyList<ReceptorInfo> registered) =>
     registered.FirstOrDefault(receptor => receptor.RuntimeInstance is not null);
@@ -575,7 +634,7 @@ public abstract partial class Dispatcher(
     var envelope = sourceEnvelope ?? _createEnvelope(message, MessageContext.Create(_cascadeContextFactory.NewRoot()),
       new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       nameof(CascadeLocalResultAsync), string.Empty, 0);
-    await _cascadeEventsFromResultAsync(result, messageType, envelope, cancellationToken).ConfigureAwait(false);
+    await _cascadeEventsFromResultAsync(result, messageType, envelope, cancellationToken: cancellationToken).ConfigureAwait(false);
   }
 
   private Dispatch.DispatchModes? _lookupReceptorDefaultRouting(Type messageType) {
@@ -1238,6 +1297,8 @@ public abstract partial class Dispatcher(
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
     _throwIfSchemaNotReady();
+    // The caller's context is the one the receptor sees, as on a local invoke (#1410 follow-up)
+    MessageContextAccessor.CurrentContext = context;
 
     var sw = Stopwatch.StartNew();
     var messageTypeName = messageType.Name;
@@ -1285,7 +1346,7 @@ public abstract partial class Dispatcher(
         var result = await invoker(message);
 
         // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken);
+        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
         await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
         await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, cancellationToken);
       } catch (Exception ex) when (writeOutbox) {
@@ -1463,6 +1524,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
 
     ArgumentNullException.ThrowIfNull(context);
@@ -1481,30 +1544,10 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Try async receptor first (async takes precedence)
-    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
-    if (asyncInvoker != null) {
-      // Use wrapper that catches InvalidCastException and falls back to RPC extraction
-      // This handles the case where receptor returns a complex type (tuple, etc.)
-      // but caller requests a specific type from within that complex type
-      return _localInvokeWithCastFallbackAsync(asyncInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
-    }
-
-    // Fallback to sync receptor - wrap as async and route through tracing path
-    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
-    if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
-      return _localInvokeWithCastFallbackAsync(wrappedInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
-    }
-
-    // RPC extraction fallback: receptor returns complex type containing TResult
-    // Extract TResult from the result and cascade remaining values
-    var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
-    if (anyInvoker != null) {
-      return _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
-    }
-
-    throw new ReceptorNotFoundException(messageType);
+    // One lookup for every result overload; a receptor returning a tuple that holds the response is
+    // run once and the response extracted from its result
+    var invoker = _lookupResultInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    return _localInvokeWithCastFallbackAsync(invoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   // ========================================
@@ -1578,6 +1621,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
 
     ArgumentNullException.ThrowIfNull(context);
@@ -1705,25 +1750,6 @@ public abstract partial class Dispatcher(
         new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
       return result;
-    } catch (InvalidCastException ex) {
-      // The typed invoker failed because the receptor returns a complex type
-      // containing TResult, not TResult directly. Fall back to RPC extraction.
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = messageType.Name;
-        var resultTypeName = typeof(TResult).Name;
-        CascadeLogger.LogDebug(ex, "[RPC] InvalidCastException caught, falling back to RPC extraction for {MessageType} -> {ResultType}",
-          msgTypeName, resultTypeName);
-      }
-#pragma warning restore CA1848
-
-      var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
-      if (anyInvoker != null) {
-        return await _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
-      }
-
-      // If no invoker found at all, re-throw the original exception
-      throw;
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
@@ -1734,128 +1760,6 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.LocalInvokeDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
   }
-
-  /// <summary>
-  /// RPC extraction path for LocalInvokeAsync when receptor returns a complex type containing TResult.
-  /// Extracts TResult from the result and cascades all remaining values.
-  /// </summary>
-  /// <typeparam name="TResult">The type requested by the RPC caller.</typeparam>
-  /// <param name="invoker">The type-erased receptor invoker.</param>
-  /// <param name="message">The message to dispatch.</param>
-  /// <param name="messageType">The runtime type of the message.</param>
-  /// <returns>The extracted TResult value.</returns>
-  /// <exception cref="InvalidOperationException">Thrown when TResult cannot be extracted from the receptor result.</exception>
-  /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
-  private async ValueTask<TResult> _localInvokeWithRpcExtractionAsync<TResult>(
-    Func<object, ValueTask<object?>> invoker,
-    object message,
-    Type messageType
-  ) {
-    // Start dispatch activity to serve as parent for handler traces
-    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
-
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var msgTypeName = messageType.Name;
-      var resultTypeName = typeof(TResult).Name;
-      CascadeLogger.LogDebug("[RPC] RpcExtraction: Invoking receptor for {MessageType}, extracting {ResultType}",
-        msgTypeName, resultTypeName);
-    }
-
-    // 1. Invoke receptor to get full result
-    var fullResult = await invoker(message);
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var resultTypeName = fullResult?.GetType().Name ?? "null";
-      var isNull = fullResult == null;
-      CascadeLogger.LogDebug("[RPC] RpcExtraction: Receptor returned {ResultType}, IsNull={IsNull}",
-        resultTypeName, isNull);
-    }
-
-    // 2. Extract the requested TResult from the result
-    if (!Internal.ResponseExtractor.TryExtractResponse<TResult>(fullResult, out var response)) {
-      throw new InvalidOperationException(
-        $"Could not extract {typeof(TResult).Name} from receptor result of type {fullResult?.GetType().Name ?? "null"}. " +
-        $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}.");
-    }
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var resultTypeName = typeof(TResult).Name;
-      CascadeLogger.LogDebug("[RPC] RpcExtraction: Successfully extracted {ResultType}", resultTypeName);
-    }
-
-    // 3. Cascade remaining messages (excluding the extracted response)
-    await CascadeEventsExcludingResponseAsync(fullResult, response, messageType);
-
-    // 4. Return the extracted response
-    return response!;
-#pragma warning restore CA1848
-  }
-
-  /// <summary>
-  /// Cascades events from a result, excluding the RPC response that was returned to the caller.
-  /// Uses ReferenceEquals to identify the exact instance to exclude.
-  /// </summary>
-  /// <typeparam name="TResult">The type of the extracted RPC response.</typeparam>
-  /// <param name="result">The full receptor result containing multiple values.</param>
-  /// <param name="extractedResponse">The value that was extracted and returned to the RPC caller.</param>
-  /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
-  /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
-  /// <remarks>
-  /// Internal rather than private so the null-result answer can be asserted. The only caller
-  /// reaches this after response extraction succeeded, and extraction refuses a null result, so
-  /// the guard cannot fire through the RPC path — it is what keeps a future caller from walking a
-  /// null result and cascading nothing by accident rather than by decision.
-  /// </remarks>
-  internal async Task CascadeEventsExcludingResponseAsync<TResult>(
-    object? result,
-    TResult? extractedResponse,
-    Type? originalMessageType = null
-  ) {
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      var resultTypeName = result?.GetType().Name ?? "null";
-      var extractedTypeName = typeof(TResult).Name;
-      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ResultType={ResultType}, ExtractedType={ExtractedType}",
-        resultTypeName, extractedTypeName);
-    }
-
-    if (result == null) {
-      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Result is null, skipping cascade");
-      return;
-    }
-
-    Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
-        ? _lookupReceptorDefaultRouting(originalMessageType)
-        : null;
-
-    var extractedCount = 0;
-    var skippedCount = 0;
-    foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
-      if (!EqualityComparer<TResult>.Default.Equals(extractedResponse, default) && ReferenceEquals(msg, extractedResponse)) {
-        skippedCount++;
-        continue;
-      }
-
-      extractedCount++;
-      await _cascadeSingleMessageAsync(msg, mode);
-    }
-
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascaded {CascadeCount} messages, skipped {SkipCount} (RPC response)",
-        extractedCount, skippedCount);
-    }
-#pragma warning restore CA1848
-  }
-
-  /// <summary>
-  /// Cascades a single message via local dispatch and/or outbox based on the dispatch mode.
-  /// </summary>
-  private Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchModes mode) =>
-    // The same Cascade policy as every other cascade (#1404): Both now runs locally, LocalNoPersist is
-    // no longer dropped, Local stores the event, and a command routed store-only is refused
-    _carryOutCascadeAsync(msg, msg.GetType(), mode, localEnvelopeFor: null, sourceEnvelope: null, eventId: null, CancellationToken.None);
 
   /// <summary>
   /// Void path with tracing support for non-void receptors.
@@ -1949,12 +1853,8 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
-      // Invoke using delegate - zero reflection, strongly typed
-      var result = await invoker(message);
-
-      // Auto-cascade: Extract and publish any IEvent instances from receptor return value
-      // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      // Runs the receptor once; its result cascades, less the response when the response is extracted from it
+      var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -1994,6 +1894,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2014,8 +1916,7 @@ public abstract partial class Dispatcher(
     var messageType = actualMessage.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = _lookupReceptorInvoker<TResult>(actualMessage, messageType)
-      ?? _lookupRuntimeLocalInvoker<TResult>(messageType)
+    var invoker = _lookupResultInvoker<TResult>(actualMessage, messageType)
       ?? throw new ReceptorNotFoundException(messageType);
 
     return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
@@ -2036,6 +1937,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2133,12 +2036,8 @@ public abstract partial class Dispatcher(
           dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source.Name ?? "none");
         }
 
-        // Invoke using delegate with unwrapped message - zero reflection, strongly typed
-        var result = await invoker(actualMessage);
-
-        // Auto-cascade: Extract and publish any IEvent instances from receptor return value
-        // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-        await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+        // Runs the receptor once; its result cascades, less the response when the response is extracted from it
+        var result = await _invokeAndCascadeAsync(invoker, actualMessage, messageType, envelope, CancellationToken.None);
 
         // Process tags after successful receptor completion
         await _processTagsIfEnabledAsync(actualMessage, messageType);
@@ -2342,6 +2241,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2361,27 +2262,14 @@ public abstract partial class Dispatcher(
     var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
     // The LocalInvoke policy (or the caller's selected one) decides (#1395): a future schedule, a
-    // contradictory override or a policy that would not run the handler now is refused. A missing
-    // handler is reported by the lookups below, as before.
-    var decision = _decide(DispatchPolicies.LocalInvoke, message, messageType, hasHandler: true, options, resultRequired: true);
+    // contradictory override, a policy that would not run the handler now, and a missing handler are all
+    // refused. A call that needs a result cannot continue without a handler, ContinueWhenNoHandler or not.
+    var invoker = _lookupResultInvoker<TResult>(message, messageType);
+    var decision = _decide(DispatchPolicies.LocalInvoke, message, messageType, hasHandler: invoker is not null, options, resultRequired: true);
     _throwIfRejected(in decision, messageType);
 
-    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
-
-    if (asyncInvoker != null) {
-      result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
-    } else {
-      var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
-      if (syncInvoker != null) {
-        // Wrap sync invoker as async and route through tracing path
-        ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
-        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
-      } else {
-        var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
-          ?? throw new ReceptorNotFoundException(messageType);
-        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, runtimeInvoker, options, caller);
-      }
-    }
+    // Not refused, so the handler exists and runs now
+    result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, invoker!, options, caller);
 
     // Wait for all perspectives to process cascaded events if requested
     await _waitForPerspectivesIfNeededAsync(options);
@@ -2400,6 +2288,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2537,8 +2427,7 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
+      var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
@@ -2667,6 +2556,8 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2683,22 +2574,8 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Try async receptor first
-    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
-    if (asyncInvoker != null) {
-      return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
-    }
-
-    // Fallback to sync receptor
-    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
-    if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
-      return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, wrappedInvoker, callerMemberName, callerFilePath, callerLineNumber);
-    }
-
-    var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
-      ?? throw new ReceptorNotFoundException(messageType);
-    return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, runtimeInvoker, callerMemberName, callerFilePath, callerLineNumber);
+    var invoker = _lookupResultInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -2710,6 +2587,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public async ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     options.CancellationToken.ThrowIfCancellationRequested();
     var cascade = _cascadeContextFactory.NewRoot();
     var context = MessageContext.Create(cascade);
@@ -2726,26 +2605,10 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
 
-    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
-    if (asyncInvoker != null) {
-      var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, asyncInvoker, options);
-      await _waitForPerspectivesIfNeededAsync(options);
-      return invokeResult;
-    }
-
-    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
-    if (syncInvoker != null) {
-      ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
-      var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, wrappedInvoker, options);
-      await _waitForPerspectivesIfNeededAsync(options);
-      return invokeResult;
-    }
-
-    var runtimeInvoker = _lookupRuntimeLocalInvoker<TResult>(messageType)
-      ?? throw new ReceptorNotFoundException(messageType);
-    var runtimeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, runtimeInvoker, options);
+    var invoker = _lookupResultInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, invoker, options);
     await _waitForPerspectivesIfNeededAsync(options);
-    return runtimeResult;
+    return invokeResult;
   }
 
   /// <summary>
@@ -2775,9 +2638,7 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
-      var result = await invoker(message);
-
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, CancellationToken.None);
       await _processTagsIfEnabledAsync(message, messageType);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
@@ -2837,9 +2698,7 @@ public abstract partial class Dispatcher(
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, context.CorrelationId.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      var result = await invoker(message);
-
-      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, options.CancellationToken);
+      var result = await _invokeAndCascadeAsync(invoker, message, messageType, envelope, options.CancellationToken);
       await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
@@ -3026,13 +2885,13 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope sourceEnvelope,
-      CancellationToken cancellationToken = default) {
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType, IMessageEnvelope? sourceEnvelope,
+      object? excludedResponse = null, CancellationToken cancellationToken = default) {
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var resultTypeName = result?.GetType().Name ?? "null";
-      var origMsgTypeName = originalMessageType.Name;
+      var origMsgTypeName = originalMessageType?.Name ?? "(unknown)";
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
         resultTypeName, origMsgTypeName);
     }
@@ -3045,7 +2904,7 @@ public abstract partial class Dispatcher(
 
     // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     // This is done via the generated GetReceptorDefaultRouting method
-    var receptorDefault = _lookupReceptorDefaultRouting(originalMessageType);
+    var receptorDefault = originalMessageType is null ? null : _lookupReceptorDefaultRouting(originalMessageType);
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
     }
@@ -3054,6 +2913,10 @@ public abstract partial class Dispatcher(
     // This handles tuples, arrays, nested structures, Routed<T> wrappers, etc. using ITuple interface (AOT-safe)
     var extractedCount = 0;
     foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+      // A response extracted for the caller of a local invoke is returned, not cascaded
+      if (excludedResponse is not null && ReferenceEquals(msg, excludedResponse)) {
+        continue;
+      }
       extractedCount++;
       var messageType = msg.GetType();
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -3832,6 +3695,8 @@ public abstract partial class Dispatcher(
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
@@ -4417,7 +4282,9 @@ public abstract partial class Dispatcher(
       _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
 
       // Serialize and create envelope
-      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local });
+      // Marked as the typed path marks a copy: handled here only when the decision ran it here, deferred
+      // when its local handling waits for the schedule (#1410 follow-up)
+      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, _outboxCopyDispatchContext());
       // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance,
       // and an explicit number on the options is kept.
       _stampExplicitPriority(jsonEnvelope, priority);
@@ -4723,14 +4590,17 @@ public abstract partial class Dispatcher(
     var scope = _scopeFactory.CreateScope();
     try {
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+      // A dispatch step that opened an outbox collector commits this copy with its other effects, as a
+      // publish's copy does (#1410 follow-up)
+      var collector = DispatchOutboxCollector.Current;
 
       // Handled locally already: with no outbox to broadcast through, the local run is the delivery
-      if (strategy == null && handledLocallyReceipt is not null) {
+      if (strategy == null && collector is null && handledLocallyReceipt is not null) {
         return handledLocallyReceipt;
       }
 
       // If no strategy is registered, throw - no local receptor and no outbox
-      if (strategy == null) {
+      if (strategy == null && collector is null) {
         // Log diagnostic warning for configuration issues (error path only, performance not critical)
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
         var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
@@ -4767,13 +4637,17 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination, scheduledFor);
 
-      // Queue message for batched processing — async path routes through the per-stream batcher. The
-      // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
-      var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
+      if (collector is not null) {
+        collector.Add(newOutboxMessage);
+      } else {
+        // Queue message for batched processing — async path routes through the per-stream batcher. The
+        // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
+        var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
+        await strategy!.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
 
-      // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
+        // Flush strategy to execute the batch (strategy determines when to actually flush)
+        await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
+      }
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -4812,8 +4686,12 @@ public abstract partial class Dispatcher(
     // Create ONE scope for all messages
     var scope = _scopeFactory.CreateScope();
     try {
-      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>()
-        ?? throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
+      // A dispatch step that opened an outbox collector commits these copies with its other effects
+      var collector = DispatchOutboxCollector.Current;
+      var strategy = collector is not null
+        ? null
+        : scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>()
+          ?? throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
 
       // Queue ALL messages to the strategy
       for (var i = 0; i < messages.Count; i++) {
@@ -4835,7 +4713,11 @@ public abstract partial class Dispatcher(
         // A batch send always has a destination: both resolvers return one (event-store-only is a publish option).
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination, decision.DeferUntil);
 
-        await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+        if (collector is not null) {
+          collector.Add(newOutboxMessage);
+        } else {
+          await strategy!.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+        }
 
         // Extract stream ID from [StreamId] attribute for delivery receipt
         var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -4850,8 +4732,10 @@ public abstract partial class Dispatcher(
         ));
       }
 
-      // Flush ONCE for all messages
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      // Flush ONCE for all messages (a collector's step commits them instead)
+      if (strategy is not null) {
+        await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      }
 
     } finally {
       // Dispose scope asynchronously
@@ -4915,6 +4799,8 @@ public abstract partial class Dispatcher(
       DispatchPolicy callPolicy,
       DispatchOptions options,
       Func<Dispatcher, object, CancellationToken, Task<IDeliveryReceipt>> runLocally) {
+    // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
+    _throwIfSchemaNotReady();
     // The caller's token and timeout cover the whole batch, as they cover a single dispatch
     options = _withTimeout(options, out var timeoutScope);
     using var timeoutDisposal = timeoutScope;
@@ -5885,5 +5771,11 @@ public abstract partial class Dispatcher(
       Message = "[DISPATCHER] SendManyAsync: No IWorkCoordinatorStrategy registered — " +
                 "outbox delivery skipped. All {MessageCount} messages were handled by local receptors.")]
     public static partial void OutboxDeliverySkipped(ILogger logger, int messageCount);
+
+    [LoggerMessage(
+      EventId = 6,
+      Level = LogLevel.Debug,
+      Message = "[RPC] The receptor for {MessageType} returned {ResultType}; extracting the requested {RequestedType} from it")]
+    public static partial void ExtractingResponse(ILogger logger, string messageType, string resultType, string requestedType);
   }
 }
