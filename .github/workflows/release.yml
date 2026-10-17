@@ -418,7 +418,7 @@ jobs:
       # .github/workflows without it.
       - name: Mint the release app token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -532,7 +532,7 @@ jobs:
 
     steps:
       - name: Download the tested packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.locate-tested-packages.outputs.artifact-name }}
           run-id: ${{ needs.locate-tested-packages.outputs.run-id }}
@@ -556,7 +556,7 @@ jobs:
         run: ls -la ./packages
 
       - name: Upload NuGet packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-packages-${{ github.run_id }}
           path: ./packages/*.nupkg
@@ -587,7 +587,7 @@ jobs:
 
     steps:
       - name: Download packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nuget-packages-${{ github.run_id }}
           path: ./packages
@@ -605,7 +605,7 @@ jobs:
       # as the signature, and its DSSE envelope as the in-toto provenance. Verify with
       # `gh attestation verify <package>.nupkg --repo <owner>/<repo>` or `cosign verify-blob-attestation`.
       - name: Download the attestation bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: attestation-bundle-${{ github.run_id }}
           path: ./attestation

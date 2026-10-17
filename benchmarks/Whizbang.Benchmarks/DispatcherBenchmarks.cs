@@ -36,14 +36,14 @@ public class DispatcherBenchmarks {
   [GlobalSetup]
   public void Setup() {
     // Dispatcher without tracing
-    var services = new ServiceCollection();
+    var services = _benchmarkServices();
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var serviceProvider = services.BuildServiceProvider();
     _dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
 
     // Dispatcher with tracing
-    var servicesWithTracing = new ServiceCollection();
+    var servicesWithTracing = _benchmarkServices();
     servicesWithTracing.AddReceptors();
     servicesWithTracing.AddSingleton<ITraceStore>(new InMemoryTraceStore());
     servicesWithTracing.AddWhizbangDispatcher();
@@ -173,9 +173,10 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public static async Task ColdStart_FirstLocalInvokeAsync() {
+  [SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "BenchmarkDotNet requires instance benchmark methods")]
+  public async Task ColdStart_FirstLocalInvokeAsync() {
     // Simulate cold start by creating fresh dispatcher
-    var services = new ServiceCollection();
+    var services = _benchmarkServices();
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var serviceProvider = services.BuildServiceProvider();
@@ -350,5 +351,12 @@ public class DispatcherBenchmarks {
     public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
       return Task.FromResult(new List<IMessageEnvelope>());
     }
+  }
+
+  // The dispatcher needs an IServiceInstanceProvider; without one every benchmark failed in setup
+  private static ServiceCollection _benchmarkServices() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(Guid.NewGuid(), "benchmark", "localhost", 1));
+    return services;
   }
 }

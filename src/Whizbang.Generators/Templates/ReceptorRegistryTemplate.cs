@@ -148,7 +148,8 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
         await receptor.HandleAsync((TMessage)msg, ct);
         return null;
       },
-      SyncAttributes: null
+      SyncAttributes: null,
+      RuntimeInstance: receptor
     );
     _addRuntime(typeof(TMessage), stage, receptor, info);
   }
@@ -190,7 +191,8 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
         var result = await receptor.HandleAsync((TMessage)msg, ct);
         return result;
       },
-      SyncAttributes: null
+      SyncAttributes: null,
+      RuntimeInstance: receptor
     );
     _addRuntime(typeof(TMessage), stage, receptor, info);
   }

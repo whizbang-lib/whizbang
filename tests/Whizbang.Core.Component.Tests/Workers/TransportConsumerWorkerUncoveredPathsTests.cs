@@ -616,7 +616,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   // ========================================
 
   [Test]
-  public async Task InvokePostLifecycleForEvent_FallbackPath_InvokesImmediateDetachedForEachStageAsync() {
+  public async Task InvokePostLifecycleForEvent_FallbackPath_FiresTheTerminalStagesButNoImmediateDetachedAsync() {
     // Arrange - no coordinator => fallback path
     var spyInvoker = new UncoveredReceptorInvoker();
     var eventId = Guid.CreateVersion7();
@@ -638,10 +638,15 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       work, typedEnvelope, spyInvoker, lifecycleContext, scopedProvider, CancellationToken.None, detachedTasks.Add);
     await Task.WhenAll(detachedTasks);
 
-    // Assert - ImmediateDetached should be invoked for each of the 4 terminal stages
-    var immediateAsyncCount = spyInvoker.GetInvokedStages().Count(s => s == LifecycleStage.ImmediateDetached);
-    await Assert.That(immediateAsyncCount).IsEqualTo(4)
-      .Because("ImmediateDetached should be invoked once for each of the 4 terminal stages");
+    // Assert - the four terminal stages fire, and ImmediateDetached does not: it runs once per message,
+    // after the handler, never after a terminal stage (#1386)
+    var stages = spyInvoker.GetInvokedStages();
+    await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesDetached);
+    await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesInline);
+    await Assert.That(stages).Contains(LifecycleStage.PostLifecycleDetached);
+    await Assert.That(stages).Contains(LifecycleStage.PostLifecycleInline);
+    await Assert.That(stages.Count(s => s == LifecycleStage.ImmediateDetached)).IsEqualTo(0)
+      .Because("ImmediateDetached is not re-fired after a terminal stage");
   }
 
   // ========================================

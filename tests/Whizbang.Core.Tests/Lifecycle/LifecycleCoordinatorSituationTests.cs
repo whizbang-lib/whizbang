@@ -153,10 +153,10 @@ public class LifecycleCoordinatorSituationTests {
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — tags fire at each stage + ImmediateDetached after each
-    // 4 stages + 4 ImmediateDetached = 8 tag processor calls
-    await Assert.That(stagesFired.Count).IsEqualTo(8);
-    // Verify the non-ImmediateDetached stages are present
+    // Assert — tags fire at each stage traversed: 4 tag processor calls. No ImmediateDetached is
+    // chained after a stage (#1386)
+    await Assert.That(stagesFired.Count).IsEqualTo(4);
+    await Assert.That(stagesFired.Contains(LifecycleStage.ImmediateDetached)).IsFalse();
     await Assert.That(stagesFired.Contains(LifecycleStage.PreOutboxDetached)).IsTrue();
     await Assert.That(stagesFired.Contains(LifecycleStage.PreOutboxInline)).IsTrue();
     await Assert.That(stagesFired.Contains(LifecycleStage.PostOutboxDetached)).IsTrue();
@@ -199,10 +199,10 @@ public class LifecycleCoordinatorSituationTests {
 
   #endregion
 
-  #region Test 5: ImmediateDetached fires after each stage
+  #region Test 5: ImmediateDetached does not fire after a stage
 
   [Test]
-  public async Task ImmediateDetached_FiresAfterEachStage_AutomaticallyAsync() {
+  public async Task ImmediateDetached_DoesNotFireAfterAStageAsync() {
     // Arrange
     var tracker = new StageInvocationTracker();
     var registry = new TrackingReceptorRegistry(tracker);
@@ -226,9 +226,10 @@ public class LifecycleCoordinatorSituationTests {
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — ImmediateDetached fires after each stage = 2 times
+    // Assert — ImmediateDetached runs once per message, after the handler, not after a lifecycle
+    // stage (#1386): advancing through two stages fires it 0 times
     var immediateFirings = tracker.GetFiringsForStage(LifecycleStage.ImmediateDetached);
-    await Assert.That(immediateFirings).IsEqualTo(2);
+    await Assert.That(immediateFirings).IsEqualTo(0);
   }
 
   #endregion
@@ -370,7 +371,7 @@ public class LifecycleCoordinatorSituationTests {
     // Assert
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleDetached)).IsEqualTo(3);
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(3);
-    // ImmediateDetached fires after each stage = 6 times (2 stages × 3 events)
+    // The coordinator never chains ImmediateDetached after a stage (#1386)
     await Assert.That(tracker.GetFiringsForStage(LifecycleStage.ImmediateDetached)).IsEqualTo(0)
       .Because("No ImmediateDetached receptor registered, so count stays at 0");
   }
@@ -505,17 +506,12 @@ public class LifecycleCoordinatorSituationTests {
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — stages fired in order (each stage + ImmediateDetached after = 8 total)
-    await Assert.That(stagesTraversed.Count).IsEqualTo(8);
-    // Verify stage order (non-ImmediateDetached stages at indices 0, 2, 4, 6)
+    // Assert — the 4 stages fired in order, with no ImmediateDetached chained after any (#1386)
+    await Assert.That(stagesTraversed.Count).IsEqualTo(4);
     await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PreOutboxDetached);
-    await Assert.That(stagesTraversed[1]).IsEqualTo(LifecycleStage.ImmediateDetached);
-    await Assert.That(stagesTraversed[2]).IsEqualTo(LifecycleStage.PreOutboxInline);
-    await Assert.That(stagesTraversed[3]).IsEqualTo(LifecycleStage.ImmediateDetached);
-    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostOutboxDetached);
-    await Assert.That(stagesTraversed[5]).IsEqualTo(LifecycleStage.ImmediateDetached);
-    await Assert.That(stagesTraversed[6]).IsEqualTo(LifecycleStage.PostOutboxInline);
-    await Assert.That(stagesTraversed[7]).IsEqualTo(LifecycleStage.ImmediateDetached);
+    await Assert.That(stagesTraversed[1]).IsEqualTo(LifecycleStage.PreOutboxInline);
+    await Assert.That(stagesTraversed[2]).IsEqualTo(LifecycleStage.PostOutboxDetached);
+    await Assert.That(stagesTraversed[3]).IsEqualTo(LifecycleStage.PostOutboxInline);
   }
 
   #endregion
@@ -550,11 +546,11 @@ public class LifecycleCoordinatorSituationTests {
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
     coordinator.AbandonTracking(eventId);
 
-    // Assert — 4 stages + 4 ImmediateDetached = 8 total
-    await Assert.That(stagesTraversed.Count).IsEqualTo(8);
+    // Assert — the 4 stages, with no ImmediateDetached chained after any (#1386)
+    await Assert.That(stagesTraversed.Count).IsEqualTo(4);
     await Assert.That(stagesTraversed[0]).IsEqualTo(LifecycleStage.PostInboxDetached);
-    await Assert.That(stagesTraversed[4]).IsEqualTo(LifecycleStage.PostLifecycleDetached);
-    await Assert.That(stagesTraversed[6]).IsEqualTo(LifecycleStage.PostLifecycleInline);
+    await Assert.That(stagesTraversed[2]).IsEqualTo(LifecycleStage.PostLifecycleDetached);
+    await Assert.That(stagesTraversed[3]).IsEqualTo(LifecycleStage.PostLifecycleInline);
 
     // IsComplete should be true after PostLifecycleInline
     await Assert.That(tracking.IsComplete).IsTrue();
@@ -603,7 +599,7 @@ public class LifecycleCoordinatorSituationTests {
   #region Test 15: Tags fire count equals stages traversed
 
   [Test]
-  public async Task Tags_FireCount_EqualsStagesTraversed_IncludingImmediateDetachedAsync() {
+  public async Task Tags_FireCount_EqualsStagesTraversedAsync() {
     // Arrange
     var tagFireCount = 0;
     var tagProcessor = new StageCapturingTagProcessor(_ => Interlocked.Increment(ref tagFireCount));
@@ -631,8 +627,9 @@ public class LifecycleCoordinatorSituationTests {
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleDetached, scope.ServiceProvider, CancellationToken.None);
     await tracking.AdvanceToAndDrainAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
 
-    // Assert — 6 stages + 6 ImmediateDetached = 12 tag fires
-    await Assert.That(tagFireCount).IsEqualTo(12);
+    // Assert — 6 stages = 6 tag fires. The coordinator no longer chains ImmediateDetached after a
+    // stage (#1386), so tags see exactly the stages traversed
+    await Assert.That(tagFireCount).IsEqualTo(6);
   }
 
   #endregion

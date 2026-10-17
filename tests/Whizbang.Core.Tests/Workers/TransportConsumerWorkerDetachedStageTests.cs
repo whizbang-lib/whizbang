@@ -62,14 +62,14 @@ public class TransportConsumerWorkerDetachedStageTests {
         .Because("A scope without IReceptorInvoker must make the detached task a clean no-op, never a fault.");
     }
 
-    // The inline invoker still receives the full inline sequence:
-    // PostAllPerspectivesInline, ImmediateDetached, PostLifecycleInline, ImmediateDetached.
+    // The inline invoker still receives the full inline sequence: PostAllPerspectivesInline, then
+    // PostLifecycleInline. No ImmediateDetached is chained after a terminal stage (#1386).
     var stages = inlineInvoker.InvokedStages;
-    await Assert.That(stages).Count().IsEqualTo(4)
-      .Because("Detached stages resolve their invoker from the scope (which has none) — only the 4 inline invocations may reach the inline invoker.");
+    await Assert.That(stages).Count().IsEqualTo(2)
+      .Because("Detached stages resolve their invoker from the scope (which has none) — only the 2 inline invocations may reach the inline invoker.");
     await Assert.That(stages).Contains(LifecycleStage.PostAllPerspectivesInline);
     await Assert.That(stages).Contains(LifecycleStage.PostLifecycleInline);
-    await Assert.That(stages).Contains(LifecycleStage.ImmediateDetached);
+    await Assert.That(stages).DoesNotContain(LifecycleStage.ImmediateDetached);
   }
 
   [Test]

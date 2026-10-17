@@ -22,7 +22,6 @@ namespace Whizbang.Core.Messaging;
 /// <list type="bullet">
 /// <item><description>Each stage fires exactly once per event (no duplicate firings)</description></item>
 /// <item><description>Tags fire at ALL stages as lifecycle observers</description></item>
-/// <item><description>ImmediateDetached fires automatically after each stage transition</description></item>
 /// <item><description>PostLifecycle fires once via WhenAll pattern for multi-path events</description></item>
 /// </list>
 /// <para>
@@ -64,10 +63,13 @@ public enum LifecycleStage {
   AfterReceptorCompletion = -1,
 
   /// <summary>
-  /// Executed immediately from dispatcher channel (default).
-  /// Detached: fire-and-forget, runs in its own scope. Does not block message flow.
-  /// Best for: Most receptors, fire-and-forget patterns.
+  /// Executed once per message on each service that handles it, right after its handler: after the
+  /// business receptor on local dispatch, after the PostInbox stage on a service receiving the message
+  /// from the transport. Never re-fired after a later stage, and not fired on a service that only
+  /// forwards the message (the outbox stages) or projects it (the perspective stages).
+  /// Best for: timing, metrics and activity tracking around a handler.
   /// </summary>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#immediatedetached</docs>
   ImmediateDetached,
 
   /// <summary>

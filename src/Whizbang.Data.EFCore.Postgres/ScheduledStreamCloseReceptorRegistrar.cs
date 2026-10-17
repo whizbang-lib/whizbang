@@ -14,9 +14,10 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Registers <see cref="ScheduledStreamCloseReceptor"/> with <see cref="IReceptorRegistry"/> at startup.
 /// <see cref="ScheduledStreamClose"/> is a framework command defined in <c>Whizbang.Core</c>, and
 /// source-generated receptor discovery only sees the consumer's own syntax, so a built-in receptor needs
-/// runtime registration to join the dispatch pipeline. Registered at the three default lifecycle stages a
-/// receptor without <c>[FireAt]</c> fires at (<see cref="LifecycleStage.LocalImmediateInline"/> /
-/// <see cref="LifecycleStage.PreOutboxInline"/> / <see cref="LifecycleStage.PostInboxInline"/>), so the
+/// runtime registration to join the dispatch pipeline. Registered at the three stages a framework receptor needs: <see cref="LifecycleStage.LocalImmediateInline"/>, where local
+/// dispatch finds a runtime handler; <see cref="LifecycleStage.PreOutboxInline"/>, where the sending service handles an
+/// outbox copy that nothing dispatched locally; and <see cref="LifecycleStage.PostInboxInline"/>, for a copy arriving
+/// from another service. So the
 /// occurrence reaches it whether it fires in-process or arrives over the inbox. No-ops if no registry is
 /// present (schema-only / diagnostic hosts still boot).
 /// </summary>

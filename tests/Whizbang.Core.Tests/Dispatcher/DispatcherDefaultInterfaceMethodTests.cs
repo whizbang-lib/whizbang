@@ -185,6 +185,23 @@ public class DispatcherDefaultInterfaceMethodTests {
 #pragma warning disable CS0618
 
   [Test]
+  public async Task BatchOverloadsWithOptions_ByDefault_DelegateToTheOverloadsWithoutAsync() {
+    // An implementer that predates the options overloads keeps working: each default forwards to the
+    // overload it already implements (here, one that throws NotImplementedException)
+    IDispatcher dispatcher = new MinimalDispatcher();
+    var options = new DispatchOptions();
+    object[] untyped = [new TestMessage(Guid.NewGuid())];
+    TestMessage[] typed = [new TestMessage(Guid.NewGuid())];
+
+    await Assert.That(async () => await dispatcher.SendManyAsync(typed, options)).ThrowsExactly<NotImplementedException>();
+    await Assert.That(async () => await dispatcher.SendManyAsync(untyped, options)).ThrowsExactly<NotImplementedException>();
+    await Assert.That(async () => await dispatcher.PublishManyAsync(typed, options)).ThrowsExactly<NotImplementedException>();
+    await Assert.That(async () => await dispatcher.PublishManyAsync(untyped, options)).ThrowsExactly<NotImplementedException>();
+    await Assert.That(async () => await dispatcher.LocalSendManyAsync(typed, options)).ThrowsExactly<NotImplementedException>();
+    await Assert.That(async () => await dispatcher.LocalSendManyAsync(untyped, options)).ThrowsExactly<NotImplementedException>();
+  }
+
+  [Test]
   public async Task LocalInvokeAndSyncAsync_TypedResult_WithoutAwaiterSupport_ThrowsAsync() {
     IDispatcher dispatcher = new MinimalDispatcher();
     var message = new TestMessage(Guid.CreateVersion7());

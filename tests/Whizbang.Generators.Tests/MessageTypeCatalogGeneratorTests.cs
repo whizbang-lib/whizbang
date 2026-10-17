@@ -339,4 +339,95 @@ public class MessageTypeCatalogGeneratorTests {
       .Because("the attribute is inherited, so a derived message keeps its base type's limit");
     await Assert.That(line("PlainEvent").Contains("MaxPayloadBytes")).IsFalse();
   }
+
+  [Test]
+  public async Task Generator_RegistersMessageDefaultRouting_WithoutReflectionAsync() {
+    // The cascade reads a message type's [DefaultRouting] from the generated registration (#1395), so
+    // the attribute must reach it at compile time, including through a base type.
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp;
+
+      [DefaultRouting(DispatchModes.Local)]
+      public record LocalOnlyEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.Outbox)]
+      public record OutboxCommand : ICommand;
+
+      public record DerivedLocalEvent : LocalOnlyEvent;
+
+      public record PlainEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+    var lines = generated.Split('\n');
+    string entry(string type) => lines.Single(l => l.Contains($"new(typeof(global::MyApp.{type})"));
+
+    await Assert.That(entry("LocalOnlyEvent")).Contains("DefaultRouting = global::Whizbang.Core.Dispatch.DispatchModes.Local");
+    await Assert.That(entry("OutboxCommand")).Contains("DefaultRouting = global::Whizbang.Core.Dispatch.DispatchModes.Outbox");
+    await Assert.That(entry("DerivedLocalEvent")).Contains("DefaultRouting = global::Whizbang.Core.Dispatch.DispatchModes.Local")
+      .Because("the attribute is inherited, so a derived message keeps its base type's routing");
+    await Assert.That(entry("PlainEvent").Contains("DefaultRouting")).IsFalse();
+    await Assert.That(generated).Contains(
+      "global::Whizbang.Core.Dispatch.MessageDefaultRouting.Register(typeof(global::MyApp.LocalOnlyEvent), global::Whizbang.Core.Dispatch.DispatchModes.Local);");
+    await Assert.That(generated).Contains(
+      "global::Whizbang.Core.Dispatch.MessageDefaultRouting.Register(typeof(global::MyApp.DerivedLocalEvent), global::Whizbang.Core.Dispatch.DispatchModes.Local);");
+    await Assert.That(generated.Contains("MessageDefaultRouting.Register(typeof(global::MyApp.PlainEvent)")).IsFalse();
+  }
+
+  [Test]
+  public async Task Generator_CombinedDefaultRoutingFlags_RenderAsACastAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp;
+
+      [DefaultRouting(DispatchModes.LocalDispatch | DispatchModes.Outbox | DispatchModes.EventStore)]
+      public record EverywhereEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "MessageTypeCatalog.g.cs")!;
+
+    await Assert.That(generated).Contains("(global::Whizbang.Core.Dispatch.DispatchModes)7");
+  }
+
+  [Test]
+  public async Task Generator_EveryNamedDispatchMode_RendersByNameAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp;
+
+      [DefaultRouting(DispatchModes.None)]
+      public record NoneEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.LocalDispatch)]
+      public record LocalDispatchEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.Both)]
+      public record BothEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.EventStoreOnly)]
+      public record StoreOnlyEvent : IEvent;
+
+""";
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source), "MessageTypeCatalog.g.cs")!;
+
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.NoneEvent), global::Whizbang.Core.Dispatch.DispatchModes.None)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.LocalDispatchEvent), global::Whizbang.Core.Dispatch.DispatchModes.LocalDispatch)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.BothEvent), global::Whizbang.Core.Dispatch.DispatchModes.Both)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.StoreOnlyEvent), global::Whizbang.Core.Dispatch.DispatchModes.EventStoreOnly)");
+  }
 }

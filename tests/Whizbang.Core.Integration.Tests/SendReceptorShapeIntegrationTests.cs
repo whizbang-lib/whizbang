@@ -94,8 +94,9 @@ public class SendReceptorShapeIntegrationTests {
   [Arguments(SendOverload.UntypedWithOptions)]
   [Arguments(SendOverload.Typed)]
   [Arguments(SendOverload.TypedWithOptions)]
-  public async Task SendAsync_UnownedVoidReceptor_RunsInProcessInsteadOfTheOutboxAsync(SendOverload overload) {
-    // A local receptor wins over the outbox whether or not the namespace is owned
+  public async Task SendAsync_UnownedVoidReceptor_RunsInProcessAndSendsAMarkedCopyAsync(SendOverload overload) {
+    // An unowned command runs its local receptor here and also goes to the outbox for the other
+    // services that handle it, marked as handled here so this service does not run it again (#1396)
     var outbox = new RecordingOutbox();
     var dispatcher = _buildDispatcher(outbox);
     var command = new UnownedVoidCommand(Guid.CreateVersion7());
@@ -104,14 +105,18 @@ public class SendReceptorShapeIntegrationTests {
 
     await Assert.That(SendShapeInvocations.CountFor(command.Id)).IsEqualTo(1);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(outbox.QueuedOf(command)).IsEmpty()
-      .Because("before #1379 an unowned void-receptor command took an outbox round trip");
+    // The copy's mark is asserted by DispatchPolicyBehaviorComponentTests; this serializer keeps only types
+    await Assert.That(outbox.QueuedOf(command)).Count().IsEqualTo(1);
   }
 
   [Test]
   [Arguments(SendOverload.Untyped)]
   [Arguments(SendOverload.Typed)]
+  [Arguments(SendOverload.UntypedWithOptions)]
+  [Arguments(SendOverload.TypedWithOptions)]
   public async Task SendAsync_OwnedCommandWithNoReceptor_ThrowsAndWritesNothingAsync(SendOverload overload) {
+    // Every overload, with or without DispatchOptions: #1379 left the options overloads routing an
+    // unhandled owned command to the outbox, and #1385 closed that gap.
     var outbox = new RecordingOutbox();
     var dispatcher = _buildDispatcher(outbox);
     var command = new OwnedUnhandledCommand(Guid.CreateVersion7());
@@ -119,22 +124,6 @@ public class SendReceptorShapeIntegrationTests {
     await Assert.That(async () => await _sendAsync(dispatcher, command, overload))
       .ThrowsExactly<ReceptorNotFoundException>();
     await Assert.That(outbox.QueuedOf(command)).IsEmpty();
-  }
-
-  [Test]
-  [Arguments(SendOverload.UntypedWithOptions)]
-  [Arguments(SendOverload.TypedWithOptions)]
-  public async Task SendAsync_WithOptions_OwnedCommandWithNoReceptor_StillRoutesToTheOutboxAsync(SendOverload overload) {
-    // Records the deliberate scope of #1379: the overloads taking DispatchOptions never had the
-    // owned-domain short-circuit and keep routing an unhandled owned command to the outbox.
-    var outbox = new RecordingOutbox();
-    var dispatcher = _buildDispatcher(outbox);
-    var command = new OwnedUnhandledCommand(Guid.CreateVersion7());
-
-    var receipt = await _sendAsync(dispatcher, command, overload);
-
-    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
-    await Assert.That(outbox.QueuedOf(command)).Count().IsEqualTo(1);
   }
 
   // ========================================

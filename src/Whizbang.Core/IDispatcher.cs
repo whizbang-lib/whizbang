@@ -700,6 +700,19 @@ public interface IDispatcher {
   Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages);
 
   /// <summary>
+  /// Sends multiple typed messages with dispatch options: a selected policy, overrides, and what to do
+  /// when one message's local handler fails (<see cref="DispatchOptions.BatchFailure"/>). The default
+  /// implementation ignores the options and sends as <see cref="SendManyAsync{TMessage}(IEnumerable{TMessage})"/> does.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull =>
+    SendManyAsync(messages);
+
+  /// <summary>Sends multiple messages with dispatch options (see the typed overload).</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages, DispatchOptions options) => SendManyAsync(messages);
+
+  /// <summary>
   /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
   /// Messages are processed in-process via strongly-typed delegates (AOT-compatible).
   /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
@@ -724,6 +737,15 @@ public interface IDispatcher {
   /// <docs>fundamentals/dispatcher/dispatch-patterns#localsendmanyasync</docs>
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
 
+  /// <summary>Sends multiple typed messages to local receptors only, with dispatch options.</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull =>
+    LocalSendManyAsync(messages);
+
+  /// <summary>Sends multiple messages to local receptors only, with dispatch options.</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages, DispatchOptions options) => LocalSendManyAsync(messages);
+
   /// <summary>
   /// Publishes multiple events with event routing (namespace-specific topics).
   /// Each event is processed locally (if handlers exist) and queued to the outbox.
@@ -743,6 +765,15 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
   Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events);
+
+  /// <summary>Publishes multiple typed events with dispatch options (see <see cref="SendManyAsync{TMessage}(IEnumerable{TMessage}, DispatchOptions)"/>).</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events, DispatchOptions options) where TEvent : notnull =>
+    PublishManyAsync(events);
+
+  /// <summary>Publishes multiple events with dispatch options.</summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events, DispatchOptions options) => PublishManyAsync(events);
 
   /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.

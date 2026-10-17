@@ -27,6 +27,20 @@ public class DispatcherDisposalTests {
   // Test event for publishing
   public record TestEvent(string Data);
 
+  // An event this service handles, so publishing it runs the local path after the provider is gone
+  public record HandledDisposalEvent([property: StreamId] Guid Id) : IEvent;
+
+  // The host shutting down while the handler runs: the handler disposes the root provider it was given
+  private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, ServiceProvider> _shutDownDuring = new();
+
+  public sealed class HandledDisposalEventReceptor : IReceptor<HandledDisposalEvent> {
+    public async ValueTask HandleAsync(HandledDisposalEvent message, CancellationToken cancellationToken = default) {
+      if (_shutDownDuring.TryRemove(message.Id, out var root)) {
+        await root.DisposeAsync();
+      }
+    }
+  }
+
   [Test]
   public async Task PublishAsync_WhenServiceProviderDisposed_ShouldNotThrowObjectDisposedExceptionAsync() {
     // Arrange
@@ -63,4 +77,29 @@ public class DispatcherDisposalTests {
       .Because($"Dispatcher should handle disposal gracefully, but threw: {caughtException?.GetType().Name}: {caughtException?.Message}");
   }
 
+  [Test]
+  public async Task PublishAsync_ServiceProviderDisposedWhileTheHandlerRuns_FallsBackToANullLoggerAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+    var evt = new HandledDisposalEvent(Guid.CreateVersion7());
+    _shutDownDuring[evt.Id] = serviceProvider;
+
+    // Act - after the handler, the local path resolves the dispatcher's diagnostic logger from the disposed provider
+    Exception? caughtException = null;
+    try {
+      await dispatcher.PublishAsync(evt);
+    } catch (Exception ex) {
+      caughtException = ex;
+    }
+
+    // Assert
+    await Assert.That(caughtException).IsNull()
+      .Because($"a disposed provider leaves the dispatcher logging nowhere, not failing: {caughtException?.GetType().Name}: {caughtException?.Message}");
+  }
 }

@@ -1087,20 +1087,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostAllPerspectivesInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostAllPerspectivesInline, lifecycleContext, cancellationToken);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
 
       var detached2 = _fireDetachedStageStaticAsync(scopeFactory, typedEnvelope, LifecycleStage.PostLifecycleDetached, lifecycleContext);
       trackDetachedTask?.Invoke(detached2);
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, cancellationToken);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
     }
-  }
-
-  private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken cancellationToken) {
-    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
   }
 
   /// <summary>
@@ -1128,8 +1121,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         }
         var ctx = context with { CurrentStage = stage };
         await invoker.InvokeAsync(envelope, stage, ctx, default);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
       } catch (OperationCanceledException) {
         // Graceful shutdown
       } catch (Exception ex) {

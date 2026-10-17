@@ -50,6 +50,16 @@ public sealed record MessageDispatchContext {
   public bool IsDefaultDispatch { get; init; }
 
   /// <summary>
+  /// True on the outbox copy of a message whose local handling was deferred to its scheduled time:
+  /// this service handles the copy when it comes back, so the same-service PostInbox skip does not
+  /// apply to it (#1401).
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/dispatch-policy#scheduling</docs>
+  [System.Text.Json.Serialization.JsonPropertyName("ld")]
+  [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+  public bool LocalDeferred { get; init; }
+
+  /// <summary>
   /// The inbox handler this envelope is being dispatched for, when the dispatch is one handler row of an
   /// inbound message. Two handlers of the same message in one service run as separate rows; naming the
   /// handler here lets an emission derive an identity that cannot collide with the sibling handler's

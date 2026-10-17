@@ -387,7 +387,6 @@ public partial class ServiceBusConsumerWorker(
       _fireDetachedStage(typedEnvelope, LifecycleStage.PreInboxDetached, lifecycleContext, ct);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
     }
   }
 
@@ -439,10 +438,11 @@ public partial class ServiceBusConsumerWorker(
         AttemptNumber = null
       };
 
-      _fireDetachedStage(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct);
+      // PostInbox is where this service handles the message, so ImmediateDetached fires once, after the
+      // detached PostInbox stage (where a receptor without [FireAt] runs), and after no other stage (#1386)
+      _fireDetachedStage(typedEnvelope, LifecycleStage.PostInboxDetached, lifecycleContext, ct, thenImmediateDetached: true);
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
       if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
         await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
@@ -476,14 +476,9 @@ public partial class ServiceBusConsumerWorker(
 
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
-      await _invokeImmediateDetachedAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
     }
   }
 
-  private static async Task _invokeImmediateDetachedAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
-    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
-  }
 
   /// <summary>
   /// Whether any receptor was registered at runtime for this message type at this stage. Internal
@@ -499,7 +494,7 @@ public partial class ServiceBusConsumerWorker(
 
   private void _fireDetachedStage(
       IMessageEnvelope envelope, LifecycleStage stage,
-      LifecycleExecutionContext context, CancellationToken ct) {
+      LifecycleExecutionContext context, CancellationToken ct, bool thenImmediateDetached = false) {
     var task = Task.Run(async () => {
       try {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -510,8 +505,10 @@ public partial class ServiceBusConsumerWorker(
         }
         var ctx = context with { CurrentStage = stage };
         await invoker.InvokeAsync(envelope, stage, ctx, ct);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+        if (thenImmediateDetached) {
+          await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+            ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, ct);
+        }
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         // Graceful shutdown
       } catch (Exception ex) {
@@ -542,8 +539,6 @@ public partial class ServiceBusConsumerWorker(
         }
         var ctx = context with { CurrentStage = stage };
         await invoker.InvokeAsync(envelope, stage, ctx, default);
-        await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
-          ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, default);
       } catch (OperationCanceledException) {
         // Graceful shutdown
       } catch (Exception ex) {
