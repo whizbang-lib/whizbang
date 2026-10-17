@@ -313,6 +313,55 @@ public class DispatchExecutorParityComponentTests {
     return tracker.GetEmittedEvents();
   }
 
+  // ── E19: tags are processed once for every message a handler ran for, whatever the entry ─────
+
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("LocalInvokeAsync(void)")]
+  [Arguments("LocalInvokeAsync(void, options)")]
+  [Arguments("LocalInvokeAsync<TResult>")]
+  [Arguments("PublishAsync")]
+  [Arguments("PublishManyAsync")]
+  [Arguments("CascadeMessageAsync")]
+  public async Task EveryEntryThatRunsAHandler_ProcessesTheMessagesTagsOnceAsync(string entry) {
+    var tags = new RecordingTagProcessor();
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), services => services.AddSingleton<Whizbang.Core.Tags.IMessageTagProcessor>(tags));
+    var dispatcher = _dispatcher(provider);
+    var id = Guid.CreateVersion7();
+
+    object message = entry switch {
+      "SendAsync" or "LocalInvokeAsync(void)" or "LocalInvokeAsync(void, options)" => new ExVoidCommand(id),
+      "LocalInvokeAsync<TResult>" => new ExRpcCommand(id),
+      _ => new ExVoidEvent(id),
+    };
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(message); break;
+      case "LocalInvokeAsync(void)": await dispatcher.LocalInvokeAsync(message); break;
+      case "LocalInvokeAsync(void, options)": await dispatcher.LocalInvokeAsync(message, new DispatchOptions()); break;
+      case "LocalInvokeAsync<TResult>": await dispatcher.LocalInvokeAsync<ExRpcResponse>(message); break;
+      case "PublishAsync": await dispatcher.PublishAsync((ExVoidEvent)message); break;
+      case "PublishManyAsync": await dispatcher.PublishManyAsync(new[] { message }); break;
+      default: await dispatcher.CascadeMessageAsync((IMessage)message, sourceEnvelope: null, DispatchModes.Both); break;
+    }
+
+    await Assert.That(tags.CountFor(message)).IsEqualTo(1)
+      .Because($"{entry} ran a handler for the message, so its tags are processed after the handler, once");
+  }
+
+  private sealed class RecordingTagProcessor : Whizbang.Core.Tags.IMessageTagProcessor {
+    private readonly System.Collections.Concurrent.ConcurrentQueue<object> _processed = new();
+
+    public int CountFor(object message) => _processed.Count(m => ReferenceEquals(m, message));
+
+    public ValueTask ProcessTagsAsync(object message, Type messageType, LifecycleStage stage,
+        Whizbang.Core.Security.IScopeContext? scope = null, CancellationToken ct = default) {
+      if (stage == LifecycleStage.AfterReceptorCompletion) {
+        _processed.Enqueue(message);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
   private static IDispatcher _dispatcher(ServiceProvider provider) => provider.GetRequiredService<IDispatcher>();

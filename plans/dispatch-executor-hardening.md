@@ -45,7 +45,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E16 | Send/LocalInvoke run only the first receptor for a message type; publish runs all | question #1412 |
 | E17 | `if (!isDefaultDispatch)` branch in generated cascade publishers is unreachable | fixed (removed with the publisher rewrite) |
 | E18 | Dispatcher-level `[AwaitPerspectiveSync]` reads LocalImmediateInline only (no-op for default receptors; double wait for explicit Inline); sync snippets never wait | todo |
-| E19 | Void LocalInvoke paths never process tags | todo |
+| E19 | Void LocalInvoke paths never process tags | fixed (and a cascade's local run) |
 | E20 | SendAsync local run fires ImmediateDetached but not PostLifecycle; publish/cascade fire neither | question #1413 |
 | E21 | `PublishToOutboxDynamicAsync` hard-codes Mode=Both (ignores the copy mark), returns silently with no strategy, skips StreamIdGuard and the dispatch record | fixed |
 | E22 | Generated cascade arms omit `recordLocalDispatch`: another host can double-fire a cascade that ran locally | todo |

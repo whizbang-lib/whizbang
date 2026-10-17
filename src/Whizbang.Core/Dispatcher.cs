@@ -746,6 +746,15 @@ public abstract partial class Dispatcher(
   private readonly MessagePayloadLimits _payloadLimits = MessagePayloadLimits.Resolve(serviceProvider);
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+
+  /// <summary>
+  /// Whether a message's tags are processed right after its handler, so a void local invoke cannot take
+  /// the fast path that returns the handler's task directly (#1410 follow-up).
+  /// </summary>
+  private bool _processesTagsAfterReceptor =>
+    _messageTagProcessor is not null
+    && _coreOptions.EnableTagProcessing
+    && _coreOptions.TagProcessingMode == TagProcessingMode.AfterReceptorCompletion;
   // Lifecycle coordinator - centralized stage transitions
   private readonly ILifecycleCoordinator? _lifecycleCoordinator = serviceProvider.GetService<ILifecycleCoordinator>();
   // Auto-populate processor - populates message properties from envelope context
@@ -1653,7 +1662,7 @@ public abstract partial class Dispatcher(
     var asyncInvoker = _lookupVoidReceptorInvoker(message, messageType);
     if (asyncInvoker != null) {
       // If sync attributes, tracing, ImmediateDetached, or PostLifecycle exist, go through async path
-      if (_traceStore != null || hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
+      if (_traceStore != null || hasSyncAttributes || hasImmediateDetached || hasPostLifecycle || _processesTagsAfterReceptor) {
         return _localInvokeVoidWithSyncAndTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -1667,7 +1676,7 @@ public abstract partial class Dispatcher(
     var syncInvoker = _lookupVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
       // If sync attributes, ImmediateDetached, or PostLifecycle exist, must go through async path
-      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
+      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle || _processesTagsAfterReceptor) {
         return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, message, messageType);
       }
       // Invoke synchronously - returns pre-completed ValueTask
@@ -1976,7 +1985,7 @@ public abstract partial class Dispatcher(
     var syncInvoker = GetVoidSyncReceptorInvoker(actualMessage, messageType);
     if (syncInvoker != null) {
       // If sync attributes, ImmediateDetached, or PostLifecycle exist, must go through async path
-      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
+      if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle || _processesTagsAfterReceptor) {
         return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, actualMessage, messageType);
       }
       // Invoke synchronously - returns pre-completed ValueTask
@@ -2111,6 +2120,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate - zero reflection, strongly typed
         await invoker(message);
+        await _processTagsIfEnabledAsync(message, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, message, messageType);
@@ -2155,6 +2165,7 @@ public abstract partial class Dispatcher(
 
     // Invoke synchronously
     invoker(message);
+    await _processTagsIfEnabledAsync(message, messageType);
 
     // Invoke PostLifecycle and ImmediateDetached lifecycle receptors after business receptor completes
     // Create a minimal envelope for lifecycle invocation
@@ -2203,6 +2214,7 @@ public abstract partial class Dispatcher(
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
         await invoker(actualMessage);
+        await _processTagsIfEnabledAsync(actualMessage, messageType);
 
         // Invoke PostLifecycle receptors (local events don't go through perspectives)
         await _invokePostLifecycleReceptorsAsync(envelope, actualMessage, messageType);
@@ -2352,6 +2364,7 @@ public abstract partial class Dispatcher(
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
       await asyncInvoker(message);
+      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
     }
   }
 
@@ -2378,6 +2391,7 @@ public abstract partial class Dispatcher(
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
     syncInvoker(message);
+    await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
   }
 
   /// <summary>
@@ -2481,6 +2495,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
+      await _processTagsIfEnabledAsync(message, messageType, options.CancellationToken);
 
       // Invoke PostLifecycle receptors (local events don't go through perspectives)
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
@@ -3179,6 +3194,8 @@ public abstract partial class Dispatcher(
         }
         await _publishToForeignLookupsAsync(message, messageType, localEnvelope, cancellationToken).ConfigureAwait(false);
         await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+        // Tags after the handlers, as on a publish (#1410 follow-up)
+        await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (decision.WriteOutbox) {
         localFailure = ex;
       }
