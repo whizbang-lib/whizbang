@@ -32,7 +32,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E4 | Polymorphic receptors (interface/base message type) unreachable on every local path | fixed |
 | E5 | Generic overloads key on the static type: `SendAsync<TMessage>`, `SendManyAsync<T>`, `LocalSendManyAsync<T>`, `PublishManyAsync<TEvent>`, perspective wait; generic `SendAsync` ignores `Routed<T>` | fixed |
 | E6 | Overloads with divergent fallbacks: `LocalInvokeAsync<TMessage,TResult>(m, ctx)` no sync/RPC; generic void `(m, ctx)` ignores foreign assemblies; options/receipt overloads no RPC extraction | fixed |
-| E7 | Cascaded command not among the assembly's response types falls through the generated `CascadeToOutboxAsync` silently; command arms resolve an event topic | todo |
+| E7 | Cascaded command not among the assembly's response types falls through the generated `CascadeToOutboxAsync` silently; command arms resolve an event topic | fixed |
 | E7b | "Has a handler" counts a publisher entry that runs nothing (pipeline-stage-only receptor, response-type-only entry): owned command dropped, unowned copy marked handled | fixed |
 | E8 | Generated invokers unwrap a top-level `Routed<T>` result before the dispatcher sees it: the route is lost and defaults to Both | fixed |
 | E9 | Batch path drops `ScheduledFor`/`LocalDeferred`, priority, payload limit, token/timeout, NoRebroadcast, outbox collector, composite fan-out, schema gate, tracking; no-outbox throws instead of deferring | fixed |

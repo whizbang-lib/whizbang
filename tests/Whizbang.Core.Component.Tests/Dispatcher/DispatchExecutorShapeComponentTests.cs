@@ -327,6 +327,40 @@ public class DispatchExecutorShapeComponentTests {
       .Because("a returned message nothing here handles and nothing can send on is skipped out loud, not silently");
   }
 
+  // ── E7: a cascaded command another service owns is written as a send writes it ───────────────
+
+  [Test]
+  public async Task Cascade_AnUnownedCommandNoArmNames_IsQueuedToTheSameDestinationASendUsesAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var sent = new Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedUnreturnedCommand(Guid.CreateVersion7());
+    var cascaded = new Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedUnreturnedCommand(Guid.CreateVersion7());
+
+    await _dispatcher(provider).SendAsync(sent);
+    await _dispatcher(provider).CascadeMessageAsync(cascaded, sourceEnvelope: null, DispatchModes.Outbox);
+
+    var queued = outbox.QueuedOf(typeof(Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedUnreturnedCommand));
+    await Assert.That(queued).Count().IsEqualTo(2)
+      .Because("a cascaded command with no generated arm is written by its runtime type, not dropped");
+    await Assert.That(queued[1].Destination).IsEqualTo(queued[0].Destination)
+      .Because("a command goes to its owner's command destination whichever call wrote it");
+  }
+
+  [Test]
+  public async Task ReceptorResult_AnUnownedCommand_IsQueuedToTheSameDestinationASendUsesAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var id = Guid.CreateVersion7();
+
+    await _dispatcher(provider).SendAsync(new Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedReturnedCommand(Guid.CreateVersion7()));
+    await _dispatcher(provider).LocalInvokeAsync(new ExReturnsUnownedCommandTrigger(id));
+
+    var queued = outbox.QueuedOf(typeof(Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedReturnedCommand));
+    await Assert.That(queued).Count().IsEqualTo(2);
+    await Assert.That(queued[1].Destination).IsEqualTo(queued[0].Destination)
+      .Because("the generated arm resolves a command's destination as a send does, not an event topic");
+  }
+
   // ── E8: a routed result keeps its route ──────────────────────────────────────────────────────
 
   [Test]

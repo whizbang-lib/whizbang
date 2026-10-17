@@ -2183,8 +2183,8 @@ public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
 
     // Cascade section should NOT contain RoutedNone (nothing to cascade)
     await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
-    // Cascade should just return Task.CompletedTask (no events)
-    await Assert.That(cascadeSection).Contains("return Task.CompletedTask");
+    // No arm for RoutedNone: only the runtime-type fallthrough, which handles a type no arm names
+    await Assert.That(cascadeSection).Contains("return CascadeByRuntimeTypeAsync(message, messageType, sourceEnvelope, eventId, eventStoreOnly: false);");
   }
 
   /// <summary>

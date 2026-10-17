@@ -3952,7 +3952,7 @@ public abstract partial class Dispatcher(
 
       // Resolve destination topic using registry and routing strategy
       // When eventStoreOnly is true, use null destination to bypass transport
-      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+      string? destination = eventStoreOnly ? null : _resolveDestination(eventData, eventType);
 
       // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
       _cascadeStreamIdToOutboxEvent(eventData, eventType, sourceEnvelope);
@@ -4321,7 +4321,7 @@ public abstract partial class Dispatcher(
       }
 
       // Resolve destination topic using registry and routing strategy
-      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+      string? destination = eventStoreOnly ? null : _resolveDestination(eventData, eventType);
 
       // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
       _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
@@ -4523,6 +4523,31 @@ public abstract partial class Dispatcher(
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Where a message's outbox copy goes: an event to its topic, anything else to its owner's command
+  /// destination, as a send routes it. A cascade writes commands through the same outbox paths as
+  /// events and used to send them to an event topic (#1410 follow-up).
+  /// </summary>
+  private string _resolveDestination(object? message, Type messageType) =>
+    message is IEvent ? _resolveEventTopic(messageType) : _resolveCommandDestination(messageType);
+
+  /// <summary>
+  /// Writes a cascaded message whose type no generated cascade arm names to the outbox by its runtime
+  /// type, instead of dropping it (#1410 follow-up). The generated cascade switch falls through to this.
+  /// </summary>
+  /// <param name="message">The cascaded message.</param>
+  /// <param name="messageType">Its runtime type.</param>
+  /// <param name="sourceEnvelope">The cascade's source envelope.</param>
+  /// <param name="eventId">The emission id the cascade minted, if any.</param>
+  /// <param name="eventStoreOnly">True to store it without transport.</param>
+  /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchExecutorShapeComponentTests.cs</tests>
+  protected Task CascadeByRuntimeTypeAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid? eventId,
+      bool eventStoreOnly) {
+    var messageId = eventId.HasValue ? new MessageId(eventId.Value) : MessageId.New();
+    return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly);
   }
 
   /// <summary>
@@ -5479,7 +5504,7 @@ public abstract partial class Dispatcher(
     IDeferredOutboxChannel deferredChannel) {
 
     // 1. Resolve destination topic
-    string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+    string? destination = eventStoreOnly ? null : _resolveDestination(eventData, eventType);
 
     // 2. Extract aggregate ID and add to hop metadata
     var hopMetadata = _createHopMetadata(eventData!, eventType);

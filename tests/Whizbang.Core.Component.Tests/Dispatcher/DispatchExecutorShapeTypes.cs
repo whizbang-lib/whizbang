@@ -306,3 +306,12 @@ public sealed class ExFireAlwaysEventReceptor : IReceptor<ExFireAlwaysEvent> {
     return ValueTask.CompletedTask;
   }
 }
+
+// ── E7: a returned command another service owns goes to that service ───────────────────────────
+
+public record ExReturnsUnownedCommandTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+public sealed class ExReturnsUnownedCommandTriggerReceptor : IReceptor<ExReturnsUnownedCommandTrigger, Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedReturnedCommand> {
+  public ValueTask<Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedReturnedCommand> HandleAsync(ExReturnsUnownedCommandTrigger message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new Whizbang.Core.Component.Tests.ExecutorShapes.Unowned.ExUnownedReturnedCommand(message.Id));
+}
