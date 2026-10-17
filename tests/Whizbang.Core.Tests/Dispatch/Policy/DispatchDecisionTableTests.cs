@@ -49,26 +49,29 @@ public class DispatchDecisionTableTests {
       .Select(r => (r.Policy, Decision: _withoutReason(r.Policy.Decide(r.Situation))))
       .ToHashSet();
 
-    var unnamed = new List<string>();
-    foreach (var (policy, kind, owned, handler, route, scheduled, outbox) in DispatchScenarios.AllCombinations()) {
-      var situation = DispatchScenario.ToSituation(kind, owned, handler, route, scheduled, outbox);
+    // One example per distinct unnamed decision, so the failure lists what to add, once each.
+    var unnamed = new Dictionary<(DispatchPolicy, DispatchDecision), string>();
+    foreach (var (policy, kind, owned, handler, route, scheduled, outbox, behaviors, resultRequired) in DispatchScenarios.AllCombinations()) {
+      var situation = DispatchScenario.ToSituation(kind, owned, handler, route, scheduled, outbox, behaviors, resultRequired);
       var decision = _withoutReason(policy.Decide(in situation));
       if (!named.Contains((policy, decision))) {
-        unnamed.Add($"{policy.Name}: {kind} owned={owned} handler={handler} route={route?.ToString() ?? "none chosen"} scheduled={scheduled} outbox={outbox} -> {decision}");
+        unnamed.TryAdd((policy, decision),
+          $"{policy.Name}: {kind} owned={owned} handler={handler} route={route?.ToString() ?? "none chosen"} scheduled={scheduled} outbox={outbox} behaviors={behaviors} resultRequired={resultRequired} -> " +
+          $"local={decision.Local} outbox={decision.WriteOutbox} storeOnly={decision.WriteEventStoreOnly} deferred={decision.DeferUntil is not null} reject={decision.Reject}");
       }
     }
 
-    await Assert.That(unnamed).IsEmpty()
-      .Because("every distinct decision of a policy must have a named row in the decision table");
+    await Assert.That(unnamed.Count).IsEqualTo(0)
+      .Because("every distinct decision of a policy must have a named row in the decision table. Unnamed:\n" + string.Join("\n", unnamed.Values));
   }
 
   [Test]
   public async Task EveryCombination_KeepsTheInvariantsAsync() {
     var broken = new List<string>();
-    foreach (var (policy, kind, owned, handler, route, scheduled, outbox) in DispatchScenarios.AllCombinations()) {
-      var situation = DispatchScenario.ToSituation(kind, owned, handler, route, scheduled, outbox);
+    foreach (var (policy, kind, owned, handler, route, scheduled, outbox, behaviors, resultRequired) in DispatchScenarios.AllCombinations()) {
+      var situation = DispatchScenario.ToSituation(kind, owned, handler, route, scheduled, outbox, behaviors, resultRequired);
       var decision = policy.Decide(in situation);
-      var label = $"{policy.Name}: {kind} owned={owned} handler={handler} route={route} scheduled={scheduled} outbox={outbox}";
+      var label = $"{policy.Name}: {kind} owned={owned} handler={handler} route={route} scheduled={scheduled} outbox={outbox} behaviors={behaviors} resultRequired={resultRequired}";
 
       if (policy.Expects(DispatchExpectations.LocalOnly) && (decision.WriteOutbox || decision.WriteEventStoreOnly)) {
         broken.Add($"{label}: a local call left the service");
@@ -84,6 +87,19 @@ public class DispatchDecisionTableTests {
       }
       if (decision.Local == LocalRun.AtScheduledTime && !decision.WriteOutbox) {
         broken.Add($"{label}: deferred local handling has no outbox copy to come back");
+      }
+      if (!decision.IsRejected && decision.Local == LocalRun.None && !decision.WriteOutbox && !decision.WriteEventStoreOnly
+          && kind != ScenarioKind.Event && !behaviors.HasFlag(DispatchBehaviors.ContinueWhenNoHandler)) {
+        broken.Add($"{label}: a command silently does nothing");
+      }
+      if (!decision.IsRejected && !handler && behaviors.HasFlag(DispatchBehaviors.ThrowWhenNoHandler) && !behaviors.HasFlag(DispatchBehaviors.ContinueWhenNoHandler)) {
+        broken.Add($"{label}: no handler with the throw override, yet it went ahead");
+      }
+      if (!decision.IsRejected && behaviors.HasFlag(DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler)) {
+        broken.Add($"{label}: contradictory overrides were accepted");
+      }
+      if (!decision.IsRejected && scheduled && !outbox && !behaviors.HasFlag(DispatchBehaviors.AllowScheduleWithoutOutbox)) {
+        broken.Add($"{label}: a schedule was accepted with no outbox to hold it");
       }
       if (decision.WriteOutbox && !outbox && policy.NoOutbox == NoOutboxBehavior.Throw) {
         broken.Add($"{label}: the outbox is written where there is none");

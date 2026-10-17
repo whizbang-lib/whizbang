@@ -12,6 +12,7 @@ public static class DispatchPolicies {
   /// <summary><c>SendAsync</c>: a command runs its local handler when this service has one and goes to the outbox unless it is owned.</summary>
   public static readonly DispatchPolicy Send = new(
     new DispatchPolicyId(1), nameof(Send), DispatchExpectations.None, NoOutboxBehavior.Throw,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.RouteDecides,
     DispatchRules.OwnedCommandStaysLocal,
     DispatchRules.SystemCommandBroadcasts,
@@ -23,6 +24,7 @@ public static class DispatchPolicies {
   /// <summary><c>SendManyAsync</c>: <see cref="Send"/> for each message, with the batch checked first.</summary>
   public static readonly DispatchPolicy SendMany = new(
     new DispatchPolicyId(2), nameof(SendMany), DispatchExpectations.BatchValidatesFirst, NoOutboxBehavior.Throw,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.RouteDecides,
     DispatchRules.OwnedCommandStaysLocal,
     DispatchRules.SystemCommandBroadcasts,
@@ -36,6 +38,7 @@ public static class DispatchPolicies {
     new DispatchPolicyId(3), nameof(LocalInvoke),
     DispatchExpectations.LocalOnly | DispatchExpectations.ReturnsHandlerResult | DispatchExpectations.ThrowWhenNoHandler,
     NoOutboxBehavior.Throw,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.LocalCallNeverSendsOut,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth);
@@ -45,6 +48,7 @@ public static class DispatchPolicies {
     new DispatchPolicyId(4), nameof(LocalSendMany),
     DispatchExpectations.LocalOnly | DispatchExpectations.ThrowWhenNoHandler | DispatchExpectations.BatchValidatesFirst,
     NoOutboxBehavior.Throw,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.LocalCallNeverSendsOut,
     DispatchRules.HandlerRequired,
     DispatchRules.ScheduledDefersBoth);
@@ -52,6 +56,7 @@ public static class DispatchPolicies {
   /// <summary><c>PublishAsync</c>: every local receptor runs, and the message goes to the outbox.</summary>
   public static readonly DispatchPolicy Publish = new(
     new DispatchPolicyId(5), nameof(Publish), DispatchExpectations.FanOutAllReceptors, NoOutboxBehavior.DeferOrLog,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.RouteDecides,
     DispatchRules.OwnedCommandStaysLocal,
     DispatchRules.SystemCommandBroadcasts,
@@ -64,6 +69,7 @@ public static class DispatchPolicies {
   public static readonly DispatchPolicy PublishMany = new(
     new DispatchPolicyId(6), nameof(PublishMany),
     DispatchExpectations.FanOutAllReceptors | DispatchExpectations.BatchValidatesFirst, NoOutboxBehavior.DeferOrLog,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.RouteDecides,
     DispatchRules.OwnedCommandStaysLocal,
     DispatchRules.SystemCommandBroadcasts,
@@ -75,6 +81,7 @@ public static class DispatchPolicies {
   /// <summary>A message returned by a handler, or cascaded explicitly: its route decides, and owned commands stay local.</summary>
   public static readonly DispatchPolicy Cascade = new(
     new DispatchPolicyId(7), nameof(Cascade), DispatchExpectations.FanOutAllReceptors, NoOutboxBehavior.DeferOrLog,
+    DispatchRules.BehaviorsAreConsistent,
     DispatchRules.RouteDecides,
     DispatchRules.OwnedCommandStaysLocal,
     DispatchRules.SystemCommandBroadcasts,

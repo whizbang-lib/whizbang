@@ -31,6 +31,9 @@ public enum ScenarioKind {
 /// <param name="ExpectedOutbox">True when the outbox is written.</param>
 /// <param name="ExpectedStoreOnly">True when the event is stored without being sent.</param>
 /// <param name="ExpectedReject">Why the dispatch is refused, or none.</param>
+/// <param name="SameAs">The row this one repeats for a sibling policy, or null for an original row.</param>
+/// <param name="Behaviors">The caller's overrides.</param>
+/// <param name="ResultRequired">True when the caller needs the handler's result.</param>
 public sealed record DispatchScenario(
   int Row,
   string Name,
@@ -44,7 +47,10 @@ public sealed record DispatchScenario(
   LocalRun ExpectedLocal,
   bool ExpectedOutbox,
   bool ExpectedStoreOnly,
-  DispatchRejection ExpectedReject) {
+  DispatchRejection ExpectedReject,
+  int? SameAs = null,
+  DispatchBehaviors Behaviors = DispatchBehaviors.None,
+  bool ResultRequired = false) {
 
   /// <summary>The fixed scheduled time scenarios use.</summary>
   public static readonly DateTimeOffset ScheduledAt = new(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -53,7 +59,7 @@ public sealed record DispatchScenario(
   public bool ExpectedMarked => ExpectedLocal == LocalRun.Now && ExpectedOutbox;
 
   /// <summary>The situation this row describes.</summary>
-  public DispatchSituation Situation => ToSituation(Kind, Owned, Handler, Route, Scheduled, Outbox);
+  public DispatchSituation Situation => ToSituation(Kind, Owned, Handler, Route, Scheduled, Outbox, Behaviors, ResultRequired);
 
   /// <summary>The decision this row expects.</summary>
   public DispatchDecision ExpectedDecision {
@@ -67,7 +73,8 @@ public sealed record DispatchScenario(
   }
 
   /// <summary>Builds the situation for a combination of inputs.</summary>
-  public static DispatchSituation ToSituation(ScenarioKind kind, bool owned, bool handler, DispatchModes? route, bool scheduled, bool outbox) {
+  public static DispatchSituation ToSituation(ScenarioKind kind, bool owned, bool handler, DispatchModes? route, bool scheduled, bool outbox,
+      DispatchBehaviors behaviors = DispatchBehaviors.None, bool resultRequired = false) {
     var traits = kind switch {
       ScenarioKind.Command => MessageTraits.Command,
       ScenarioKind.SystemCommand => MessageTraits.Command | MessageTraits.SystemCommand,
@@ -83,11 +90,15 @@ public sealed record DispatchScenario(
       route,
       scheduled ? ScheduledAt : null,
       IsScheduledInFuture: scheduled,
-      OutboxAvailable: outbox);
+      OutboxAvailable: outbox,
+      behaviors,
+      resultRequired);
   }
 
   /// <inheritdoc />
-  public override string ToString() => $"{Policy.Name}_Row{Row:D2}_{Name}";
+  public override string ToString() => SameAs is int original
+    ? $"{Policy.Name}_Row{Row:D3}_SameAs{original:D2}_{Name}"
+    : $"{Policy.Name}_Row{Row:D2}_{Name}";
 }
 
 /// <summary>The decision table, one entry per named row.</summary>
@@ -99,8 +110,10 @@ public static class DispatchScenarios {
 
   private static DispatchScenario _row(int row, string name, DispatchPolicy policy, ScenarioKind kind,
       bool owned, bool handler, LocalRun local, bool outbox, DispatchRejection reject = OK,
-      DispatchModes? route = null, bool scheduled = false, bool hasOutbox = true, bool storeOnly = false) =>
-    new(row, name, policy, kind, owned, handler, route, scheduled, hasOutbox, local, outbox, storeOnly, reject);
+      DispatchModes? route = null, bool scheduled = false, bool hasOutbox = true, bool storeOnly = false,
+      DispatchBehaviors behaviors = DispatchBehaviors.None, bool resultRequired = false) =>
+    new(row, name, policy, kind, owned, handler, route, scheduled, hasOutbox, local, outbox, storeOnly, reject,
+      Behaviors: behaviors, ResultRequired: resultRequired);
 
   /// <summary>Every named row.</summary>
   public static IReadOnlyList<DispatchScenario> All { get; } = _build();
@@ -117,7 +130,7 @@ public static class DispatchScenarios {
     const ScenarioKind S = ScenarioKind.SystemCommand;
     const ScenarioKind E = ScenarioKind.Event;
 
-    return [
+    List<DispatchScenario> rows = [
       // Send
       _row(1, "UnownedCommand_Handled_RunsHereAndGoesOut", send, C, owned: false, handler: true, NOW, outbox: true),
       _row(2, "UnownedCommand_NoHandler_GoesOut", send, C, owned: false, handler: false, NONE, outbox: true),
@@ -180,11 +193,75 @@ public static class DispatchScenarios {
       _row(51, "SystemCommand_RoutedLocal_StillGoesOut", cascade, S, owned: false, handler: true, NOW, outbox: true, route: DispatchModes.Local),
       _row(52, "Event_RoutedLocal_Scheduled_Throws", cascade, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.CannotScheduleInProcess, route: DispatchModes.Local, scheduled: true),
       _row(53, "Event_NoHandler_NoOutbox_DefersOrLogs", cascade, E, owned: false, handler: false, NONE, outbox: true, route: DispatchModes.Both, hasOutbox: false),
+
+      // Kept in the service (routed local only) with no local handler
+      _row(54, "Command_RoutedLocal_NoHandler_Throws", send, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoHandler, route: DispatchModes.Local),
+      _row(55, "Command_RoutedLocal_NoHandler_ContinueOverride_DoesNothing", send, C, owned: false, handler: false, NONE, outbox: false, route: DispatchModes.Local, behaviors: DispatchBehaviors.ContinueWhenNoHandler),
+      _row(56, "Event_RoutedLocalNoPersist_NoHandler_DoesNothing", publish, E, owned: false, handler: false, NONE, outbox: false, route: DispatchModes.LocalNoPersist),
+      _row(57, "Event_RoutedLocalNoPersist_NoHandler_ThrowOverride_Throws", publish, E, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoHandler, route: DispatchModes.LocalNoPersist, behaviors: DispatchBehaviors.ThrowWhenNoHandler),
+      _row(58, "Event_RoutedLocal_NoHandler_IsStored", publish, E, owned: false, handler: false, NONE, outbox: false, route: DispatchModes.Local, storeOnly: true),
+      _row(59, "Command_RoutedLocal_NoHandler_Throws", cascade, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoHandler, route: DispatchModes.Local),
+
+      // Overrides of a missing handler
+      _row(60, "OwnedCommand_NoHandler_ContinueOverride_DoesNothing", send, C, owned: true, handler: false, NONE, outbox: false, behaviors: DispatchBehaviors.ContinueWhenNoHandler),
+      _row(61, "Event_NoHandler_ThrowOverride_Throws", publish, E, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoHandler, behaviors: DispatchBehaviors.ThrowWhenNoHandler),
+      _row(62, "NoHandler_ContinueOverride_DoesNothing", local, C, owned: false, handler: false, NONE, outbox: false, behaviors: DispatchBehaviors.ContinueWhenNoHandler),
+      _row(63, "NoHandler_ContinueOverride_ResultRequired_StillThrows", local, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoHandler, behaviors: DispatchBehaviors.ContinueWhenNoHandler, resultRequired: true),
+      _row(64, "BothHandlerOverrides_Throws", send, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ConflictingBehaviors, behaviors: DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler),
+
+      // Scheduled with no outbox
+      _row(65, "Event_Scheduled_NoOutbox_Throws", publish, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.NoOutbox, scheduled: true, hasOutbox: false),
+      _row(66, "Event_Scheduled_NoOutbox_AllowOverride_DefersOrLogs", publish, E, owned: false, handler: true, LATER, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
+      _row(67, "Command_Scheduled_NoOutbox_Throws", send, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.NoOutbox, scheduled: true, hasOutbox: false),
+      _row(68, "Command_Scheduled_NoOutbox_AllowOverride_StillThrows", send, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.NoOutbox, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
+
+      // Event kept local and stored, on the send and publish policies
+      _row(69, "Event_RoutedLocal_RunsHereAndIsStored", send, E, owned: false, handler: true, NOW, outbox: false, route: DispatchModes.Local, storeOnly: true),
+      _row(70, "Event_RoutedLocal_RunsHereAndIsStored", publish, E, owned: false, handler: true, NOW, outbox: false, route: DispatchModes.Local, storeOnly: true),
+
+      // Refusals on the publish and cascade policies
+      _row(71, "RoutedNone_Throws", publish, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoRoute, route: DispatchModes.None),
+      _row(72, "Command_RoutedEventStoreOnly_Throws", publish, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.CommandCannotBeStoreOnly, route: DispatchModes.EventStoreOnly),
+      _row(73, "Event_RoutedLocal_Scheduled_Throws", publish, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.CannotScheduleInProcess, route: DispatchModes.Local, scheduled: true),
+      _row(74, "RoutedNone_Throws", cascade, C, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoRoute, route: DispatchModes.None),
+
+      // Contradictory overrides on every policy family
+      _row(75, "BothHandlerOverrides_Throws", local, C, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ConflictingBehaviors, behaviors: DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler),
+      _row(76, "BothHandlerOverrides_Throws", publish, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ConflictingBehaviors, behaviors: DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler),
+      _row(77, "BothHandlerOverrides_Throws", cascade, E, owned: false, handler: true, NONE, outbox: false, DispatchRejection.ConflictingBehaviors, behaviors: DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler),
+
+      // Scheduled with no outbox, on the publish and cascade policies
+      _row(78, "Event_NoHandler_Scheduled_NoOutbox_AllowOverride_DefersOrLogs", publish, E, owned: false, handler: false, NONE, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
+      _row(79, "Event_NoHandler_Scheduled_NoOutbox_Throws", cascade, E, owned: false, handler: false, NONE, outbox: false, DispatchRejection.NoOutbox, scheduled: true, hasOutbox: false),
+      _row(80, "Event_NoHandler_Scheduled_NoOutbox_AllowOverride_DefersOrLogs", cascade, E, owned: false, handler: false, NONE, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
+      _row(81, "Event_Handled_Scheduled_NoOutbox_AllowOverride_RunsWhenItComesBack", cascade, E, owned: false, handler: true, LATER, outbox: true, scheduled: true, hasOutbox: false, behaviors: DispatchBehaviors.AllowScheduleWithoutOutbox),
+      _row(82, "Command_RoutedLocal_NoHandler_ContinueOverride_DoesNothing", cascade, C, owned: false, handler: false, NONE, outbox: false, route: DispatchModes.Local, behaviors: DispatchBehaviors.ContinueWhenNoHandler),
     ];
+
+    // A batch policy decides each message exactly as its single-message sibling does, so every row of
+    // the sibling is repeated for the batch policy and marked "same as" the original.
+    _mirror(rows, from: send, to: sendMany, firstRow: 100);
+    _mirror(rows, from: local, to: localMany, firstRow: 200);
+    _mirror(rows, from: publish, to: publishMany, firstRow: 300);
+    return rows;
+  }
+
+  private static void _mirror(List<DispatchScenario> rows, DispatchPolicy from, DispatchPolicy to, int firstRow) {
+    var next = firstRow;
+    foreach (var original in rows.Where(r => r.Policy == from && r.SameAs is null).ToList()) {
+      rows.Add(original with { Row = next++, Policy = to, SameAs = original.Row });
+    }
   }
 
   /// <summary>Every value of each input axis, so every combination can be checked.</summary>
-  public static IEnumerable<(DispatchPolicy Policy, ScenarioKind Kind, bool Owned, bool Handler, DispatchModes? Route, bool Scheduled, bool Outbox)> AllCombinations() {
+  public static IEnumerable<(DispatchPolicy Policy, ScenarioKind Kind, bool Owned, bool Handler, DispatchModes? Route, bool Scheduled, bool Outbox, DispatchBehaviors Behaviors, bool ResultRequired)> AllCombinations() {
+    DispatchBehaviors[] behaviorSets = [
+      DispatchBehaviors.None,
+      DispatchBehaviors.ThrowWhenNoHandler,
+      DispatchBehaviors.ContinueWhenNoHandler,
+      DispatchBehaviors.AllowScheduleWithoutOutbox,
+      DispatchBehaviors.ThrowWhenNoHandler | DispatchBehaviors.ContinueWhenNoHandler,
+    ];
     DispatchModes?[] routes = [null, DispatchModes.None, DispatchModes.Both, DispatchModes.Local, DispatchModes.LocalNoPersist, DispatchModes.Outbox, DispatchModes.EventStoreOnly];
     foreach (var policy in DispatchPolicies.All) {
       foreach (var kind in Enum.GetValues<ScenarioKind>()) {
@@ -193,7 +270,11 @@ public static class DispatchScenarios {
             foreach (var route in routes) {
               foreach (var scheduled in new[] { false, true }) {
                 foreach (var outbox in new[] { false, true }) {
-                  yield return (policy, kind, owned, handler, route, scheduled, outbox);
+                  foreach (var behaviors in behaviorSets) {
+                    foreach (var resultRequired in new[] { false, true }) {
+                      yield return (policy, kind, owned, handler, route, scheduled, outbox, behaviors, resultRequired);
+                    }
+                  }
                 }
               }
             }

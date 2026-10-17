@@ -36,6 +36,9 @@ public enum DispatchRejection : byte {
 
   /// <summary>The route sends the message nowhere (<see cref="DispatchModes.None"/>).</summary>
   NoRoute = 5,
+
+  /// <summary>The caller asked both to fail and to continue when there is no local handler.</summary>
+  ConflictingBehaviors = 6,
 }
 
 /// <summary>The rule that last shaped a decision, recorded for logs and traces.</summary>

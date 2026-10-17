@@ -58,6 +58,8 @@ public enum LocalHandlers : byte {
 /// <param name="ScheduledFor">The time the caller asked the message to be delivered at, or null.</param>
 /// <param name="IsScheduledInFuture">True when <paramref name="ScheduledFor"/> is later than the dispatcher's clock.</param>
 /// <param name="OutboxAvailable">True when this service can write to an outbox.</param>
+/// <param name="Behaviors">The caller's overrides of the policy's defaults.</param>
+/// <param name="ResultRequired">True when the caller needs the handler's result back.</param>
 /// <docs>fundamentals/dispatcher/dispatch-policy#situation</docs>
 public readonly record struct DispatchSituation(
   Type MessageType,
@@ -66,7 +68,9 @@ public readonly record struct DispatchSituation(
   DispatchModes? Route,
   DateTimeOffset? ScheduledFor,
   bool IsScheduledInFuture,
-  bool OutboxAvailable) {
+  bool OutboxAvailable,
+  DispatchBehaviors Behaviors = DispatchBehaviors.None,
+  bool ResultRequired = false) {
 
   /// <summary>True when the message is a command (including a system command).</summary>
   public bool IsCommand => (Traits & (MessageTraits.Command | MessageTraits.SystemCommand)) != 0;
@@ -76,6 +80,9 @@ public readonly record struct DispatchSituation(
 
   /// <summary>True when the message is a framework system command.</summary>
   public bool IsSystemCommand => (Traits & MessageTraits.SystemCommand) != 0;
+
+  /// <summary>True when the caller set the given override.</summary>
+  public bool Has(DispatchBehaviors behavior) => (Behaviors & behavior) == behavior;
 
   /// <summary>True when this service has any local handler for the message.</summary>
   public bool HasLocalHandler => (Handlers & (LocalHandlers.Generated | LocalHandlers.Runtime)) != 0;
