@@ -379,7 +379,7 @@ function Find-DiffFindings {
     foreach ($l in $added) {
       $where = "${path}:$($l.Line)"
       if ($isText) {
-        $words = @([regex]::Matches($l.Text, $script:EnGbPattern) | Where-Object { -not (_isLiteralStatus $l.Text $_) } | ForEach-Object Value | Select-Object -Unique)
+        $words = @([regex]::Matches($l.Text, $script:EnGbPattern) | Where-Object { -not (_isLiteralStatus $l.Text $_) } | ForEach-Object { $_.Value } | Select-Object -Unique)
         if ($words.Count -gt 0) {
           $pairs = ($words | ForEach-Object { """$_"" → ""$(ConvertTo-EnUsSpelling $_)""" }) -join ', '
           New-ReviewFinding -Id "style.en-us:$where" -Rule 'style.en-us' -Severity warning -Path $path -Line $l.Line `
@@ -514,6 +514,84 @@ function _tableCell([string]$Text) {
   return $t
 }
 
+# ============================================================================
+# The draft review plan
+# ============================================================================
+
+function Get-ReviewDraftPlan {
+  <#
+  .SYNOPSIS
+      Which findings go on a line, which go in the review summary, and which are already drafted.
+  .DESCRIPTION
+      Reads findings only from comments posted by the workflow's bot account: anyone can post text in
+      the same format. A block checked against a commit other than the pull request's head is stale and
+      is reported, not drafted. A finding whose path and line are in the diff becomes a line comment;
+      any other finding goes in the summary. Every body is plain text with a hidden marker naming its
+      finding, so a re-run drafts only what is new.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Comments,
+    [Parameter(Mandatory)][string]$HeadSha,
+    [Parameter(Mandatory)][AllowEmptyString()][string]$DiffText,
+    [AllowEmptyCollection()][string[]]$DraftedIds = @()
+  )
+  $commentable = Get-CommentableLines -DiffText $DiffText
+  $drafted = [System.Collections.Generic.HashSet[string]]::new([string[]]@($DraftedIds), [StringComparer]::Ordinal)
+  $threads = [System.Collections.Generic.List[object]]::new()
+  $summary = [System.Collections.Generic.List[object]]::new()
+  $stale = [System.Collections.Generic.List[object]]::new()
+  $already = 0
+
+  foreach ($comment in $Comments) {
+    if ($comment.Login -ne $script:BotLogin -or $comment.Type -ne 'Bot') { continue }
+    foreach ($block in ConvertFrom-ReviewBlock -Text $comment.Body) {
+      if ($block.Sha -ne $HeadSha) {
+        $stale.Add([pscustomobject]@{ Source = $block.Source; Sha = $block.Sha })
+        continue
+      }
+      foreach ($f in $block.Findings) {
+        $id = _markerId $f.Id
+        if (-not $drafted.Add($id)) { $already++; continue }
+        $text = Protect-ReviewText $f.Body
+        if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
+          $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+        } else {
+          $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
+          $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
+        }
+      }
+    }
+  }
+  [pscustomobject]@{ Threads = $threads.ToArray(); Summary = $summary.ToArray(); Stale = $stale.ToArray(); AlreadyDrafted = $already }
+}
+
+function Get-DraftedIds {
+  <# .SYNOPSIS The finding ids already marked in a draft review's body and comments. #>
+  param([AllowEmptyCollection()][string[]]$Texts = @())
+  foreach ($t in $Texts) {
+    if (-not $t) { continue }
+    foreach ($m in [regex]::Matches($t, '<!-- wr:(?<id>[^\s>]+) -->')) { $m.Groups['id'].Value }
+  }
+}
+
+function Protect-ReviewText {
+  <#
+  .SYNOPSIS
+      Makes CI text safe to post as the maintainer: no HTML comments, no @-mentions, bounded length.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+  $t = $Text.Replace('<!--', '').Replace('-->', '')
+  $t = [regex]::Replace($t, '@(?=[A-Za-z0-9])', "@$([char]0x200B)")
+  if ($t.Length -gt 3000) { $t = $t.Substring(0, 2997) + '...' }
+  return $t
+}
+
+function _markerId([string]$Id) {
+  return [regex]::Replace($Id, '[^A-Za-z0-9:._/\-]', '_')
+}
+
 Export-ModuleMember -Function New-ReviewFinding, ConvertTo-ReviewBlock, ConvertFrom-ReviewBlock, Test-RepoRelativePath,
   Get-GateFindings, Read-UnifiedDiff, Get-DiffFiles, Get-AddedLines, Get-CommentableLines, ConvertTo-EnUsSpelling,
-  Find-DiffFindings, Find-PullRequestFindings, ConvertTo-DcoFindings, Format-ReviewChecksComment
+  Find-DiffFindings, Find-PullRequestFindings, ConvertTo-DcoFindings, Format-ReviewChecksComment,
+  Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText
