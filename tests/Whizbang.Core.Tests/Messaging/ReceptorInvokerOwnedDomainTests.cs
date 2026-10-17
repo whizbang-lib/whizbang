@@ -436,4 +436,18 @@ public class ReceptorInvokerOwnedDomainTests {
 
     await Assert.That(tracker.Invocations).Count().IsEqualTo(3);
   }
+
+  [Test]
+  public async Task PreOutboxInline_LocalDispatchCopy_NoOwnedDomains_RunsAReceptorThatAlsoRanLocallyAsync() {
+    // With no owned domain configured every stage fires, as it always has
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.LocalImmediateInline);
+    registry.Register<OwnedEvent>("handler", LifecycleStage.PreOutboxInline);
+    var invoker = _createInvoker(registry, []);
+
+    await invoker.InvokeAsync(_wrap(new OwnedEvent(Guid.NewGuid()), mode: DispatchModes.Both), LifecycleStage.PreOutboxInline);
+
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
 }

@@ -208,6 +208,48 @@ namespace Whizbang.Core.Tests.Messaging {
         .Because("a message that already fired at LocalImmediate on this same service must not re-fire its PostInbox receptor, logger or not");
     }
 
+    // #1401: a scheduled copy whose local handling was deferred comes back to its own service, which
+    // must handle it then; the same-service skip applies only to copies that were handled locally.
+    [Test]
+    public async Task InvokeAsync_SameServicePostInbox_LocalDeferredCopy_RunsTheReceptorAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.PostInboxInline, _receptor(typeof(ServiceEchoCommand), "EchoReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IServiceInstanceProvider>(new StubServiceInstanceProvider("checkout-service"));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+      var envelope = _envelope(new ServiceEchoCommand(), hops: [_hop("checkout-service")]);
+      envelope = new MessageEnvelope<ServiceEchoCommand> {
+        MessageId = envelope.MessageId,
+        Payload = envelope.Payload,
+        Hops = envelope.Hops,
+        DispatchContext = envelope.DispatchContext with { LocalDeferred = true },
+      };
+
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(1)
+        .Because("the publishing service handles its own scheduled message when the copy comes back");
+    }
+
+    // A generated receptor registered at the detached local stage still counts as having run locally.
+    [Test]
+    public async Task InvokeAsync_LocalDispatchCopyAtPreOutbox_SkipsAGeneratedReceptorRegisteredAtTheDetachedLocalStageAsync() {
+      var tracker = new FiringTracker();
+      var registry = new FakeReceptorRegistry();
+      registry.Add(LifecycleStage.LocalImmediateDetached, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+      registry.Add(LifecycleStage.PreOutboxInline, _receptor(typeof(ForeignEchoCommand), "ForeignCommandReceptor", tracker));
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IOptions<RoutingOptions>>(Options.Create(new RoutingOptions().OwnDomains("Some.Unrelated.Domain")));
+      var invoker = new ReceptorInvoker(registry, services.BuildServiceProvider());
+
+      await invoker.InvokeAsync(_envelope(new ForeignEchoCommand(), mode: DispatchModes.Both), LifecycleStage.PreOutboxInline);
+
+      await Assert.That(tracker.Count).IsEqualTo(0);
+    }
+
     // Bug this guards: the owned-domain filter (ReceptorInvoker._shouldSkipOwnedDomainFilter) skips
     // an owned command reaching PreOutbox because that command already ran at LocalImmediate. If
     // this regressed under logging, any host with logging configured would re-run that command's

@@ -168,6 +168,28 @@ public class DispatchPolicyExtensionTests {
     await Assert.That(new InvalidDispatchPolicyException("why", cause).Message).IsEqualTo("why");
   }
 
+  [Test]
+  public async Task RejectedException_Constructors_KeepTheirPartsAsync() {
+    var cause = new InvalidOperationException("cause");
+    var full = new DispatchRejectedException(DispatchRejection.CannotScheduleInProcess, typeof(string), "why");
+
+    await Assert.That(new DispatchRejectedException().Message).IsNotEmpty();
+    await Assert.That(new DispatchRejectedException("why").Message).IsEqualTo("why");
+    await Assert.That(new DispatchRejectedException("why", cause).InnerException).IsSameReferenceAs(cause);
+    await Assert.That(full.Rejection).IsEqualTo(DispatchRejection.CannotScheduleInProcess);
+    await Assert.That(full.MessageType).IsEqualTo(typeof(string));
+    await Assert.That(new DispatchRejectedException("why").MessageType).IsNull();
+  }
+
+  [Test]
+  public async Task Options_BatchFailure_DefaultsToStopAndChainsAsync() {
+    var options = new DispatchOptions();
+
+    await Assert.That(options.BatchFailure).IsEqualTo(BatchFailureMode.Stop);
+    await Assert.That(options.WithBatchFailure(BatchFailureMode.ContinueAndAggregate)).IsSameReferenceAs(options);
+    await Assert.That(options.BatchFailure).IsEqualTo(BatchFailureMode.ContinueAndAggregate);
+  }
+
   // Registry
 
   [Test]

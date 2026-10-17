@@ -35,6 +35,48 @@ namespace Whizbang.Core.Component.Tests.PolicyBehavior {
 
   public record PbRuntimeEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
 
+  public record PbThrowingEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+  public sealed class PbThrowingEventReceptor : IReceptor<PbThrowingEvent> {
+    public ValueTask HandleAsync(PbThrowingEvent message, CancellationToken cancellationToken = default) {
+      PolicyProbe.Record(nameof(PbThrowingEventReceptor), message.Id);
+      throw new InvalidOperationException("pb-event-boom");
+    }
+  }
+
+  /// <summary>Cascades an event whose local receptor throws.</summary>
+  public record PbThrowingCascadeTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbThrowingCascadeTriggerReceptor : IReceptor<PbThrowingCascadeTrigger, PbThrowingEvent> {
+    public ValueTask<PbThrowingEvent> HandleAsync(PbThrowingCascadeTrigger message, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(new PbThrowingEvent(message.Id));
+  }
+
+  /// <summary>A command nothing handles.</summary>
+  public record PbUnhandledCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public record PbUnhandledResult(Guid Id);
+
+  public record PbSyncCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbSyncCommandReceptor : ISyncReceptor<PbSyncCommand> {
+    public void Handle(PbSyncCommand message) => PolicyProbe.Record(nameof(PbSyncCommandReceptor), message.Id);
+  }
+
+  public record PbSyncCommandWithLifecycle(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbSyncCommandWithLifecycleReceptor : ISyncReceptor<PbSyncCommandWithLifecycle> {
+    public void Handle(PbSyncCommandWithLifecycle message) => PolicyProbe.Record(nameof(PbSyncCommandWithLifecycleReceptor), message.Id);
+  }
+
+  [FireAt(LifecycleStage.PostLifecycleInline)]
+  public sealed class PbSyncCommandWithLifecycleHook : IReceptor<PbSyncCommandWithLifecycle> {
+    public ValueTask HandleAsync(PbSyncCommandWithLifecycle message, CancellationToken cancellationToken = default) {
+      PolicyProbe.Record(nameof(PbSyncCommandWithLifecycleHook), message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   public record PbRpcRequest(Guid Id) : ICommand, IPolicyProbeMessage;
 
   public record PbRpcResponse(Guid Id);
@@ -107,6 +149,9 @@ namespace Whizbang.Core.Component.Tests.PolicyBehavior {
 
 namespace Whizbang.Core.Component.Tests.PolicyBehavior.Owned {
   public record PbOwnedCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  /// <summary>An owned command this service does not handle.</summary>
+  public record PbOwnedUnhandledCommand(Guid Id) : ICommand, IPolicyProbeMessage;
 
   public record PbCascadeTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
 

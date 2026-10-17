@@ -37,6 +37,29 @@ public sealed class PolicyRecordingOutbox : IWorkCoordinatorStrategy {
     Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
 }
 
+/// <summary>An outbox whose every queue call fails, to drive the failure paths.</summary>
+public sealed class ThrowingOutbox : IWorkCoordinatorStrategy {
+  public void QueueOutboxMessage(OutboxMessage message) => throw new System.IO.IOException("outbox-boom");
+  public void QueueInboxMessage(InboxMessage message) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
+  public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) => Task.CompletedTask;
+
+  public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) =>
+    Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+}
+
+/// <summary>A developer hook that refuses every dispatch with the given cause.</summary>
+public sealed class RefusingPolicyHook(Whizbang.Core.Dispatch.Policy.DispatchRejection rejection) : Whizbang.Core.Dispatch.Policy.IDispatchPolicyHook {
+  public int Order => 1;
+
+  public Whizbang.Core.Dispatch.Policy.DispatchDecision Decide(Whizbang.Core.Dispatch.Policy.DispatchPolicy policy,
+      in Whizbang.Core.Dispatch.Policy.DispatchSituation situation, in Whizbang.Core.Dispatch.Policy.DispatchDecision proposed) =>
+    Whizbang.Core.Dispatch.Policy.DispatchDecision.Rejected(rejection, Whizbang.Core.Dispatch.Policy.DispatchReason.Hook);
+}
+
 /// <summary>
 /// An outbox whose flush signals that it started and then waits until the dispatch is canceled, so a
 /// test can cancel at an exact point without timing.

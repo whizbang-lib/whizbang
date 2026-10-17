@@ -399,4 +399,35 @@ public class MessageTypeCatalogGeneratorTests {
 
     await Assert.That(generated).Contains("(global::Whizbang.Core.Dispatch.DispatchModes)7");
   }
+
+  [Test]
+  public async Task Generator_EveryNamedDispatchMode_RendersByNameAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Dispatch;
+
+      namespace MyApp;
+
+      [DefaultRouting(DispatchModes.None)]
+      public record NoneEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.LocalDispatch)]
+      public record LocalDispatchEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.Both)]
+      public record BothEvent : IEvent;
+
+      [DefaultRouting(DispatchModes.EventStoreOnly)]
+      public record StoreOnlyEvent : IEvent;
+
+""";
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<MessageTypeCatalogGenerator>(source), "MessageTypeCatalog.g.cs")!;
+
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.NoneEvent), global::Whizbang.Core.Dispatch.DispatchModes.None)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.LocalDispatchEvent), global::Whizbang.Core.Dispatch.DispatchModes.LocalDispatch)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.BothEvent), global::Whizbang.Core.Dispatch.DispatchModes.Both)");
+    await Assert.That(generated).Contains("Register(typeof(global::MyApp.StoreOnlyEvent), global::Whizbang.Core.Dispatch.DispatchModes.EventStoreOnly)");
+  }
 }

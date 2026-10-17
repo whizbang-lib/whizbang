@@ -489,9 +489,7 @@ public abstract partial class Dispatcher(
 
   /// <summary>Rethrows a held local failure with its original stack, once the outbox copy is queued.</summary>
   private static void _rethrowIfFailed(Exception? localFailure) {
-    if (localFailure is not null) {
-      System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(localFailure).Throw();
-    }
+    if (localFailure is not null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(localFailure); }
   }
 
   /// <summary>
