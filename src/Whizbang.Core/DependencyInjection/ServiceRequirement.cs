@@ -23,7 +23,36 @@ namespace Whizbang.Core.DependencyInjection;
 /// <param name="Dependencies">Service types the constructor requires.</param>
 /// <docs>operations/dependency-injection/registration-validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationTests.cs</tests>
-public sealed record ServiceRequirement(Type ImplementationType, IReadOnlyList<Type> Dependencies);
+public sealed record ServiceRequirement(Type ImplementationType, IReadOnlyList<Type> Dependencies) {
+
+  /// <summary>
+  /// Creates a requirement for an implementation that is also registered through a factory.
+  /// </summary>
+  /// <param name="implementationType">The type whose constructor declares the dependencies.</param>
+  /// <param name="dependencies">Service types the constructor requires.</param>
+  /// <param name="factoryServiceTypes">
+  /// The service types a factory registration of <paramref name="implementationType"/> is made under.
+  /// </param>
+  public ServiceRequirement(
+      Type implementationType,
+      IReadOnlyList<Type> dependencies,
+      IReadOnlyList<Type> factoryServiceTypes)
+      : this(implementationType, dependencies) {
+    FactoryServiceTypes = factoryServiceTypes;
+  }
+
+  /// <summary>
+  /// Service types under which <see cref="ImplementationType"/> is registered through a factory.
+  /// </summary>
+  /// <remarks>
+  /// A factory descriptor carries only its service type; it cannot say what the factory builds. When
+  /// the generator sees a registration that builds this implementation through a factory under a
+  /// different service type, it records that service type here, so a composition that registers the
+  /// implementation only that way is still recognised as registering it. Empty for an implementation
+  /// every registration of which names it directly.
+  /// </remarks>
+  public IReadOnlyList<Type> FactoryServiceTypes { get; init; } = [];
+}
 
 /// <summary>
 /// A service a registered type requires that no registration provides.
