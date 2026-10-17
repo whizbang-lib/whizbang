@@ -3772,7 +3772,7 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/dispatcher/message-cascade#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_IsDowngradedToLocalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
