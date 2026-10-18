@@ -99,4 +99,20 @@ Describe 'Get-ReviewChecks.ps1' {
     $ids | Should -Contain 'pr.fix-test'
     $ids | Should -Contain 'pr.changelog'
   }
+
+  It 'reports how many findings it wrote, for the gate step' {
+    $outputs = Join-Path $TestDrive 'github-output.txt'
+    $countOut = Join-Path $TestDrive 'count-comment.md'
+    Push-Location $Repo
+    try {
+      $env:GITHUB_OUTPUT = $outputs
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef feat/x -PullRequest 10 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 0 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $countOut
+      $LASTEXITCODE | Should -Be 0 -Because 'the comment is posted before the gate step decides'
+    } finally { Remove-Item Env:GITHUB_OUTPUT; Pop-Location }
+    $count = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $countOut -Raw))[0].Findings).Count
+    $count | Should -BeGreaterThan 0
+    Get-Content $outputs | Should -Contain "findings=$count"
+  }
 }

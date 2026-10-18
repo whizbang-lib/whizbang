@@ -358,6 +358,8 @@ Describe 'Format-ReviewChecksComment' {
     $text | Should -BeLike '<!-- pr-review-checks -->*'
     $text | Should -Match ([regex]::Escape('| warning | `src/a.cs:3` | style.en-us |'))
     $text | Should -BeLike '*abc1234de*'
+    $text | Should -Match 'Gate · Review checks'
+    $text | Should -Match 'review-checks:allow'
     @(ConvertFrom-ReviewBlock -Text $text)[0].Findings[0].Id | Should -Be 'x:1'
   }
 
