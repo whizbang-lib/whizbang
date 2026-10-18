@@ -454,8 +454,10 @@ function Find-PullRequestTypeFindings {
   .SYNOPSIS
       What a pull request's type requires of it, from its Conventional Commit title.
   .DESCRIPTION
-      A fix closes an issue labeled bug and, when it changes the library, changes a test. A feature that
-      changes the library links its docs-site pull request. A library feat or fix adds a CHANGELOG.md entry.
+      A fix closes an issue labeled bug and, when it changes the library, changes a test. A library feat, fix
+      or perf has a docs-site pull request that is open or merged and links back to this one
+      (.github/scripts/Get-DocsPullRequests.ps1 finds it), unless a maintainer added docs:not-needed. A
+      library feat or fix adds a CHANGELOG.md entry.
       The title itself, and a breaking change's upgrade note, are the "Gate - Pull request type" check's
       (.github/scripts/Test-PullRequestType.ps1); a title that is not a Conventional Commit asks nothing here.
       Bots and the release pull request into main are exempt, as the gates exempt them.
@@ -466,12 +468,16 @@ function Find-PullRequestTypeFindings {
     [AllowEmptyString()][string]$Body = '',
     [AllowEmptyCollection()][string[]]$ChangedPaths = @(),
     [AllowEmptyCollection()][string[]]$ClosingIssueLabels = @(),
+    # The pull request's own labels (docs:not-needed).
+    [AllowEmptyCollection()][string[]]$Labels = @(),
+    # The docs-site pull requests found for this one: Number, State (OPEN, MERGED, CLOSED), ReferencesThis.
+    [AllowEmptyCollection()][object[]]$DocsPullRequests = @(),
     [Parameter(Mandatory)][string]$BaseRef,
     [Parameter(Mandatory)][string]$HeadRef,
     [switch]$AuthorIsBot
   )
   if ($AuthorIsBot -or ($BaseRef -eq 'main' -and $HeadRef -like 'release/*')) { return }
-  if ($Title -notmatch '^(?<type>feat|fix)(?:\([^)]*\))?!?: ') { return }
+  if ($Title -notmatch '^(?<type>feat|fix|perf)(?:\([^)]*\))?!?: ') { return }
   $type = $Matches['type']
   $library = @($ChangedPaths | Where-Object { $_ -like 'src/*' }).Count -gt 0
 
@@ -483,11 +489,20 @@ function Find-PullRequestTypeFindings {
     New-ReviewFinding -Id 'pr.fix-test' -Rule 'pr.fix-test' -Severity blocking `
       -Body 'A fix to the library adds or changes a test that fails without it (CONTRIBUTING.md, "Testing Standards"). This pull request changes no test.'
   }
-  if ($type -eq 'feat' -and $library -and $Body -notmatch 'whizbang-lib\.github\.io/pull/\d+') {
-    New-ReviewFinding -Id 'pr.feat-docs' -Rule 'pr.feat-docs' -Severity blocking `
-      -Body 'A library feature links its companion docs-site pull request (whizbang-lib/whizbang-lib.github.io) in the description, so the change and its documentation are reviewed together.'
+  if ($library -and $Labels -notcontains 'docs:not-needed') {
+    $live = @($DocsPullRequests | Where-Object { $_.State -in @('OPEN', 'MERGED') })
+    if ($live.Count -eq 0) {
+      New-ReviewFinding -Id 'pr.docs-link' -Rule 'pr.docs-link' -Severity blocking `
+        -Body ('A library change is documented in a docs-site pull request (whizbang-lib/whizbang-lib.github.io), so the change and its documentation are reviewed together. ' +
+          'Open it with "Docs for whizbang-lib/whizbang#<this pull request>" in its description: that one link is all it takes, GitHub shows it on this pull request and this check finds it. ' +
+          'Then comment /recheck here. If no documentation changes, a maintainer comments /docs-not-needed.')
+    } elseif (-not ($live | Where-Object { $_.ReferencesThis })) {
+      $numbers = ($live | ForEach-Object { "#$($_.Number)" }) -join ', '
+      New-ReviewFinding -Id 'pr.docs-backlink' -Rule 'pr.docs-backlink' -Severity blocking `
+        -Body "The docs-site pull request ($numbers) doesn't name this one. Add ""Docs for whizbang-lib/whizbang#<this pull request>"" to its description, then comment /recheck here."
+    }
   }
-  if ($library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
+  if ($type -ne 'perf' -and $library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
     New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
       -Body 'A library feat or fix adds an entry under Unreleased in CHANGELOG.md, saying what changed for a consumer.'
   }
@@ -575,8 +590,10 @@ function Get-ReviewDraftPlan {
       Reads findings only from comments posted by the workflow's bot account: anyone can post text in
       the same format. Every run keeps its comment, so only each source's latest block counts; when that
       block checked a commit other than the pull request's head, the source is stale and is reported, not
-      drafted. A finding whose path and line are in the diff becomes a line comment;
-      any other finding goes in the summary. Every body is plain text with a hidden marker naming its
+      drafted. A finding whose path and line are in the diff becomes a line comment. Any other finding
+      becomes a file-level thread, which, like a line comment, must be resolved before merge: on its own
+      file when that file is in the diff (naming the line), otherwise on the first file in the diff, saying
+      it is pinned there. Only when the diff could not be read does a finding go in the summary. Every body is plain text with a hidden marker naming its
       finding, so a re-run drafts only what is new.
   #>
   [CmdletBinding()]
@@ -587,6 +604,7 @@ function Get-ReviewDraftPlan {
     [AllowEmptyCollection()][string[]]$DraftedIds = @()
   )
   $commentable = Get-CommentableLines -DiffText $DiffText
+  $files = @(Get-DiffFiles -DiffText $DiffText | ForEach-Object { $_.Path })
   $drafted = [System.Collections.Generic.HashSet[string]]::new([string[]]@($DraftedIds), [StringComparer]::Ordinal)
   $threads = [System.Collections.Generic.List[object]]::new()
   $summary = [System.Collections.Generic.List[object]]::new()
@@ -610,7 +628,18 @@ function Get-ReviewDraftPlan {
       if (-not $drafted.Add($id)) { $already++; continue }
       $text = Protect-ReviewText $f.Body
       if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
-        $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+        $threads.Add([pscustomobject]@{ Id = $id; SubjectType = 'LINE'; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+      } elseif ($files.Count -gt 0) {
+        # A file-level thread is resolvable, where the review summary is not.
+        if ($f.Path -and $files -contains $f.Path) {
+          $path = $f.Path
+          $prefix = if ($null -ne $f.Line) { "Line $($f.Line): " } else { '' }
+        } else {
+          $path = $files[0]
+          $about = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``" } elseif ($f.Path) { "``$($f.Path)``" } else { 'the pull request' }
+          $prefix = "About $about, pinned to this file so it can be resolved: "
+        }
+        $threads.Add([pscustomobject]@{ Id = $id; SubjectType = 'FILE'; Path = $path; Line = $null; Body = "$prefix$text`n`n<!-- wr:$id -->" })
       } else {
         $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
         $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
