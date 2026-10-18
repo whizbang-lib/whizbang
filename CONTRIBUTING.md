@@ -296,6 +296,11 @@ the rest in the review summary, and never submits. Running it again adds only wh
 personal token: the comments are posted with the workflow's own token, and the draft is written from
 the maintainer's machine.
 
+AI sessions review through the `pr-review` skill (`.claude/skills/pr-review/SKILL.md`): it drafts
+these findings, applies the checks below with the document that owns each rule, and adds its comments
+to the same pending review without submitting it. A contributor can run it on their own branch before
+opening a pull request.
+
 **What the reviewer checks**
 
 - **Correctness and fit**: the change does what its description says, handles failure paths, and fits
