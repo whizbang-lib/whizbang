@@ -532,7 +532,7 @@ function Format-ReviewChecksComment {
   [void]$sb.AppendLine('<!-- pr-review-checks -->')
   [void]$sb.AppendLine('## PR review checks')
   [void]$sb.AppendLine()
-  [void]$sb.AppendLine("Checked commit ``$($Sha.Substring(0, [Math]::Min(9, $Sha.Length)))`` ([run]($RunUrl)). These report only; the gates decide what merges.")
+  [void]$sb.AppendLine("Checked commit ``$($Sha.Substring(0, [Math]::Min(9, $Sha.Length)))`` ([run]($RunUrl)). The **Gate · Review checks** check fails while any finding below is open: fix it, or mark a false positive with ``review-checks:allow`` on the line.")
   [void]$sb.AppendLine()
   if ($Findings.Count -eq 0) {
     [void]$sb.AppendLine('No findings.')
@@ -573,8 +573,9 @@ function Get-ReviewDraftPlan {
       Which findings go on a line, which go in the review summary, and which are already drafted.
   .DESCRIPTION
       Reads findings only from comments posted by the workflow's bot account: anyone can post text in
-      the same format. A block checked against a commit other than the pull request's head is stale and
-      is reported, not drafted. A finding whose path and line are in the diff becomes a line comment;
+      the same format. Every run keeps its comment, so only each source's latest block counts; when that
+      block checked a commit other than the pull request's head, the source is stale and is reported, not
+      drafted. A finding whose path and line are in the diff becomes a line comment;
       any other finding goes in the summary. Every body is plain text with a hidden marker naming its
       finding, so a re-run drafts only what is new.
   #>
@@ -592,23 +593,27 @@ function Get-ReviewDraftPlan {
   $stale = [System.Collections.Generic.List[object]]::new()
   $already = 0
 
+  # Comments arrive oldest first, so the last block seen for a source is its latest run.
+  $latest = [ordered]@{}
   foreach ($comment in $Comments) {
     if ($comment.Login -ne $script:BotLogin -or $comment.Type -ne 'Bot') { continue }
-    foreach ($block in ConvertFrom-ReviewBlock -Text $comment.Body) {
-      if ($block.Sha -ne $HeadSha) {
-        $stale.Add([pscustomobject]@{ Source = $block.Source; Sha = $block.Sha })
-        continue
-      }
-      foreach ($f in $block.Findings) {
-        $id = _markerId $f.Id
-        if (-not $drafted.Add($id)) { $already++; continue }
-        $text = Protect-ReviewText $f.Body
-        if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
-          $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
-        } else {
-          $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
-          $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
-        }
+    foreach ($block in ConvertFrom-ReviewBlock -Text $comment.Body) { $latest[$block.Source] = $block }
+  }
+
+  foreach ($block in $latest.Values) {
+    if ($block.Sha -ne $HeadSha) {
+      $stale.Add([pscustomobject]@{ Source = $block.Source; Sha = $block.Sha })
+      continue
+    }
+    foreach ($f in $block.Findings) {
+      $id = _markerId $f.Id
+      if (-not $drafted.Add($id)) { $already++; continue }
+      $text = Protect-ReviewText $f.Body
+      if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
+        $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+      } else {
+        $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
+        $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
       }
     }
   }

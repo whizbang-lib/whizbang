@@ -74,5 +74,7 @@ $findings = @(
 
 $comment = Format-ReviewChecksComment -Sha $Head -RunUrl $RunUrl -Findings $findings -PullRequest $PullRequest
 Set-Content -LiteralPath $OutFile -Value $comment -NoNewline
+# The gate step reads this after the comment is posted, so the comment always lands, findings or not.
+if ($env:GITHUB_OUTPUT) { "findings=$($findings.Count)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT }
 Write-Output "Review checks: $($findings.Count) finding(s) on $($Head.Substring(0, 9))."
 exit 0
