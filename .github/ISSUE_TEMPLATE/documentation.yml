@@ -1,0 +1,22 @@
+name: Documentation problem
+description: A docs page is wrong, missing or unclear.
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The URL of the page, or the topic that has no page.
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What is wrong or missing
+    validations:
+      required: true
+  - type: textarea
+    id: should
+    attributes:
+      label: What it should say

@@ -1,0 +1,25 @@
+# The repository's labels: name | color | description. Issue forms may add only these (Test-IssueForms.ps1);
+# GitHub drops a label the repository does not define. Create or update with:
+#   gh label create "<name>" --color <color> --description "<description>" --force
+# Type
+bug | d73a4a | Something does not work as documented
+enhancement | a2eeef | A better version of existing behavior
+feature | 0e8a16 | New capability, accepted from Discussions
+documentation | 0075ca | Documentation is wrong, missing or unclear
+question | d876e3 | An open design question or proposal awaiting a decision
+security | b60205 | A security hardening change (vulnerabilities are reported privately)
+chore | ededed | Maintenance with no behavior change
+# Triage
+needs-triage | fbca04 | Not yet reviewed by a maintainer
+duplicate | cfd3d7 | This issue or pull request already exists
+invalid | e4e669 | This doesn't seem right
+wontfix | ffffff | This will not be worked on (the closing comment says why)
+good first issue | 7057ff | Small and self-contained, with the steps in the issue
+help wanted | 008672 | Larger work where help is welcome
+# Automation
+dependencies | 0366d6 | Pull requests that update a dependency file
+automated | ededed | Opened by automation
+release | 5319e7 | Release automation
+github-actions | 000000 | Pull requests that update GitHub Actions code
+nuget | 004cc4 | Pull requests that update NuGet packages
+javascript | 168700 | Pull requests that update JavaScript code

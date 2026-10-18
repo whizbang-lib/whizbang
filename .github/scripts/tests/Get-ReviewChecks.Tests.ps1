@@ -84,4 +84,35 @@ Describe 'Get-ReviewChecks.ps1' {
     @($botBlock.Findings.Id) | Should -Not -Contain 'pr.closing-keyword'
     @($botBlock.Findings.Id) | Should -Contain 'style.en-us:src/Lib/A.cs:2'
   }
+
+  It 'reports what the title type requires, from the diff and the closing issues' {
+    $typeOut = Join-Path $TestDrive 'type-comment.md'
+    Push-Location $Repo
+    try {
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef fix/x -PullRequest 9 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 1 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $typeOut -Title 'fix(lib): a change' -ClosingIssueLabels 'enhancement,question'
+      $LASTEXITCODE | Should -Be 0
+    } finally { Pop-Location }
+    $ids = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $typeOut -Raw))[0].Findings.Id)
+    $ids | Should -Contain 'pr.fix-bug-issue'
+    $ids | Should -Contain 'pr.fix-test'
+    $ids | Should -Contain 'pr.changelog'
+  }
+
+  It 'reports how many findings it wrote, for the gate step' {
+    $outputs = Join-Path $TestDrive 'github-output.txt'
+    $countOut = Join-Path $TestDrive 'count-comment.md'
+    Push-Location $Repo
+    try {
+      $env:GITHUB_OUTPUT = $outputs
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef feat/x -PullRequest 10 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 0 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $countOut
+      $LASTEXITCODE | Should -Be 0 -Because 'the comment is posted before the gate step decides'
+    } finally { Remove-Item Env:GITHUB_OUTPUT; Pop-Location }
+    $count = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $countOut -Raw))[0].Findings).Count
+    $count | Should -BeGreaterThan 0
+    Get-Content $outputs | Should -Contain "findings=$count"
+  }
 }

@@ -1,0 +1,26 @@
+name: Design proposal or open question
+description: A design decision that needs to be made before work can start.
+title: "[Proposal]: "
+labels: ["question", "needs-triage"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What prompts the decision, and what it affects.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: Each option with its trade-offs.
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision needed
+      description: The question to answer, and by when if it blocks other work.
+    validations:
+      required: true

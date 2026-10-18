@@ -449,6 +449,50 @@ function Find-PullRequestFindings {
   }
 }
 
+function Find-PullRequestTypeFindings {
+  <#
+  .SYNOPSIS
+      What a pull request's type requires of it, from its Conventional Commit title.
+  .DESCRIPTION
+      A fix closes an issue labeled bug and, when it changes the library, changes a test. A feature that
+      changes the library links its docs-site pull request. A library feat or fix adds a CHANGELOG.md entry.
+      The title itself, and a breaking change's upgrade note, are the "Gate - Pull request type" check's
+      (.github/scripts/Test-PullRequestType.ps1); a title that is not a Conventional Commit asks nothing here.
+      Bots and the release pull request into main are exempt, as the gates exempt them.
+  #>
+  [CmdletBinding()]
+  param(
+    [AllowEmptyString()][string]$Title = '',
+    [AllowEmptyString()][string]$Body = '',
+    [AllowEmptyCollection()][string[]]$ChangedPaths = @(),
+    [AllowEmptyCollection()][string[]]$ClosingIssueLabels = @(),
+    [Parameter(Mandatory)][string]$BaseRef,
+    [Parameter(Mandatory)][string]$HeadRef,
+    [switch]$AuthorIsBot
+  )
+  if ($AuthorIsBot -or ($BaseRef -eq 'main' -and $HeadRef -like 'release/*')) { return }
+  if ($Title -notmatch '^(?<type>feat|fix)(?:\([^)]*\))?!?: ') { return }
+  $type = $Matches['type']
+  $library = @($ChangedPaths | Where-Object { $_ -like 'src/*' }).Count -gt 0
+
+  if ($type -eq 'fix' -and $ClosingIssueLabels -notcontains 'bug') {
+    New-ReviewFinding -Id 'pr.fix-bug-issue' -Rule 'pr.fix-bug-issue' -Severity blocking `
+      -Body 'A fix closes the bug report it fixes: none of the issues this closes is labeled `bug`. Link the bug report, or retitle the pull request if it is not a fix.'
+  }
+  if ($type -eq 'fix' -and $library -and -not ($ChangedPaths | Where-Object { $_ -like 'tests/*' })) {
+    New-ReviewFinding -Id 'pr.fix-test' -Rule 'pr.fix-test' -Severity blocking `
+      -Body 'A fix to the library adds or changes a test that fails without it (CONTRIBUTING.md, "Testing Standards"). This pull request changes no test.'
+  }
+  if ($type -eq 'feat' -and $library -and $Body -notmatch 'whizbang-lib\.github\.io/pull/\d+') {
+    New-ReviewFinding -Id 'pr.feat-docs' -Rule 'pr.feat-docs' -Severity blocking `
+      -Body 'A library feature links its companion docs-site pull request (whizbang-lib/whizbang-lib.github.io) in the description, so the change and its documentation are reviewed together.'
+  }
+  if ($library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
+    New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
+      -Body 'A library feat or fix adds an entry under Unreleased in CHANGELOG.md, saying what changed for a consumer.'
+  }
+}
+
 function ConvertTo-DcoFindings {
   <#
   .SYNOPSIS
@@ -488,7 +532,7 @@ function Format-ReviewChecksComment {
   [void]$sb.AppendLine('<!-- pr-review-checks -->')
   [void]$sb.AppendLine('## PR review checks')
   [void]$sb.AppendLine()
-  [void]$sb.AppendLine("Checked commit ``$($Sha.Substring(0, [Math]::Min(9, $Sha.Length)))`` ([run]($RunUrl)). These report only; the gates decide what merges.")
+  [void]$sb.AppendLine("Checked commit ``$($Sha.Substring(0, [Math]::Min(9, $Sha.Length)))`` ([run]($RunUrl)). The **Gate · Review checks** check fails while any finding below is open: fix it, or mark a false positive with ``review-checks:allow`` on the line.")
   [void]$sb.AppendLine()
   if ($Findings.Count -eq 0) {
     [void]$sb.AppendLine('No findings.')
@@ -529,8 +573,9 @@ function Get-ReviewDraftPlan {
       Which findings go on a line, which go in the review summary, and which are already drafted.
   .DESCRIPTION
       Reads findings only from comments posted by the workflow's bot account: anyone can post text in
-      the same format. A block checked against a commit other than the pull request's head is stale and
-      is reported, not drafted. A finding whose path and line are in the diff becomes a line comment;
+      the same format. Every run keeps its comment, so only each source's latest block counts; when that
+      block checked a commit other than the pull request's head, the source is stale and is reported, not
+      drafted. A finding whose path and line are in the diff becomes a line comment;
       any other finding goes in the summary. Every body is plain text with a hidden marker naming its
       finding, so a re-run drafts only what is new.
   #>
@@ -548,23 +593,27 @@ function Get-ReviewDraftPlan {
   $stale = [System.Collections.Generic.List[object]]::new()
   $already = 0
 
+  # Comments arrive oldest first, so the last block seen for a source is its latest run.
+  $latest = [ordered]@{}
   foreach ($comment in $Comments) {
     if ($comment.Login -ne $script:BotLogin -or $comment.Type -ne 'Bot') { continue }
-    foreach ($block in ConvertFrom-ReviewBlock -Text $comment.Body) {
-      if ($block.Sha -ne $HeadSha) {
-        $stale.Add([pscustomobject]@{ Source = $block.Source; Sha = $block.Sha })
-        continue
-      }
-      foreach ($f in $block.Findings) {
-        $id = _markerId $f.Id
-        if (-not $drafted.Add($id)) { $already++; continue }
-        $text = Protect-ReviewText $f.Body
-        if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
-          $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
-        } else {
-          $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
-          $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
-        }
+    foreach ($block in ConvertFrom-ReviewBlock -Text $comment.Body) { $latest[$block.Source] = $block }
+  }
+
+  foreach ($block in $latest.Values) {
+    if ($block.Sha -ne $HeadSha) {
+      $stale.Add([pscustomobject]@{ Source = $block.Source; Sha = $block.Sha })
+      continue
+    }
+    foreach ($f in $block.Findings) {
+      $id = _markerId $f.Id
+      if (-not $drafted.Add($id)) { $already++; continue }
+      $text = Protect-ReviewText $f.Body
+      if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
+        $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+      } else {
+        $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
+        $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
       }
     }
   }
@@ -596,7 +645,7 @@ function _markerId([string]$Id) {
   return [regex]::Replace($Id, '[^A-Za-z0-9:._/\-]', '_')
 }
 
-Export-ModuleMember -Function New-ReviewFinding, ConvertTo-ReviewBlock, ConvertFrom-ReviewBlock, Test-RepoRelativePath,
+Export-ModuleMember -Function New-ReviewFinding, Find-PullRequestTypeFindings, ConvertTo-ReviewBlock, ConvertFrom-ReviewBlock, Test-RepoRelativePath,
   Get-GateFindings, Read-UnifiedDiff, Get-DiffFiles, Get-AddedLines, Get-CommentableLines, ConvertTo-EnUsSpelling,
   Find-DiffFindings, Find-PullRequestFindings, ConvertTo-DcoFindings, Format-ReviewChecksComment,
   Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText

@@ -17,8 +17,8 @@ index 1111111..2222222 100644
  int c;
 '@
 
-  function New-BotComment([object[]]$Findings, [string]$Sha = $Head, [string]$Login = 'github-actions[bot]', [string]$Type = 'Bot') {
-    [pscustomobject]@{ Login = $Login; Type = $Type; Body = "table`n" + (ConvertTo-ReviewBlock -Source 'review-checks' -Sha $Sha -Findings $Findings) }
+  function New-BotComment([object[]]$Findings, [string]$Sha = $Head, [string]$Login = 'github-actions[bot]', [string]$Type = 'Bot', [string]$Source = 'review-checks') {
+    [pscustomobject]@{ Login = $Login; Type = $Type; Body = "table`n" + (ConvertTo-ReviewBlock -Source $Source -Sha $Sha -Findings $Findings) }
   }
   $script:OnLine = New-ReviewFinding -Id 'style.en-us:src/A.cs:11' -Rule 'style.en-us' -Severity warning -Body 'Use "behavior".' -Path 'src/A.cs' -Line 11
   $script:OffDiff = New-ReviewFinding -Id 'coverage-line:src/A.cs:40' -Rule 'coverage.new-line' -Severity blocking -Body 'No test runs this line.' -Path 'src/A.cs' -Line 40
@@ -51,14 +51,35 @@ Describe 'Get-ReviewDraftPlan' {
     $plan.Threads.Count + $plan.Summary.Count | Should -Be 0
   }
 
+  It 'drafts only the latest run of a source, ignoring its runs on earlier commits' {
+    # Every run keeps its comment, so a pull request carries one block per run; only the newest counts.
+    $plan = Get-ReviewDraftPlan -Comments @((New-BotComment @($OffDiff) -Sha 'fff1234'), (New-BotComment @($OnLine))) -HeadSha $Head -DiffText $Diff
+    $plan.Threads.Id | Should -Be @('style.en-us:src/A.cs:11')
+    $plan.Summary.Count | Should -Be 0
+    $plan.Stale.Count | Should -Be 0
+  }
+
+  It 'drafts only the latest of two runs on the same commit' {
+    $plan = Get-ReviewDraftPlan -Comments @((New-BotComment @($OnLine)), (New-BotComment @($OnPr))) -HeadSha $Head -DiffText $Diff
+    $plan.Threads.Count | Should -Be 0
+    $plan.Summary.Count | Should -Be 1
+  }
+
+  It 'reports a source as stale when its latest run checked another commit' {
+    $plan = Get-ReviewDraftPlan -Comments @((New-BotComment @($OnLine)), (New-BotComment @($OnPr) -Sha 'fff1234')) -HeadSha $Head -DiffText $Diff
+    $plan.Threads.Count + $plan.Summary.Count | Should -Be 0
+    @($plan.Stale).Count | Should -Be 1
+    $plan.Stale[0].Sha | Should -Be 'fff1234'
+  }
+
   It 'reports a block checked against another commit instead of drafting it' {
     $plan = Get-ReviewDraftPlan -Comments @(New-BotComment @($OnLine) -Sha 'fff1234') -HeadSha $Head -DiffText $Diff
     $plan.Threads.Count | Should -Be 0
     $plan.Stale[0].Sha | Should -Be 'fff1234'
   }
 
-  It 'skips a finding already in the draft, and one two blocks both report' {
-    $plan = Get-ReviewDraftPlan -Comments @((New-BotComment @($OnLine, $OnPr)), (New-BotComment @($OnPr))) -HeadSha $Head -DiffText $Diff `
+  It 'skips a finding already in the draft, and one two sources both report' {
+    $plan = Get-ReviewDraftPlan -Comments @((New-BotComment @($OnLine, $OnPr)), (New-BotComment @($OnPr) -Source 'pr-quality-gate')) -HeadSha $Head -DiffText $Diff `
       -DraftedIds @('style.en-us:src/A.cs:11')
     $plan.Threads.Count | Should -Be 0
     $plan.Summary.Count | Should -Be 1
