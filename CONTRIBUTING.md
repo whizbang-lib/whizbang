@@ -212,6 +212,11 @@ this repository, or whose issues were all opened after it. It reads the current 
 keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
 and the release pull request into `main` are exempt.
 
+When the issue can't come first (a pull request opened before this rule existed, or a small fix a
+maintainer agrees to file afterwards), a maintainer adds the `linked-issue:late` label. The pull request
+must still close an issue; the label only lets that issue be newer than the pull request, and the check's
+summary says it was allowed. Re-run the job after adding the label.
+
 ### Issues: types and triage
 
 Open an issue from one of the forms; each asks for what a maintainer needs to act on it, and blank issues

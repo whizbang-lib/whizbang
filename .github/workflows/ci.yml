@@ -1082,7 +1082,8 @@ jobs:
     name: Gate · Linked issue
     # Every pull request closes an issue in this repository (Fixes #N) that was opened before it, so each
     # change is tied to a work item and discussed before it is reviewed (CONTRIBUTING.md, "Open an issue
-    # first"). Bots and the release pull request into main are exempt; the rules live in
+    # first"). A maintainer's linked-issue:late label lets the issue be newer than the pull request. Bots
+    # and the release pull request into main are exempt; the rules live in
     # .github/scripts/Test-LinkedIssue.ps1, tested by script-tests. The pull request is read from the API,
     # not the event, so adding the keyword and re-running this job is enough. It runs again in the merge
     # queue, so the link cannot be removed after the pull request run passed. In ci-result's needs.

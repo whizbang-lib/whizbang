@@ -11,7 +11,10 @@
     before code is reviewed (CONTRIBUTING.md, "Open an issue first"). The link is GitHub's own: a closing
     keyword in the description (Fixes #N, Closes #N, Resolves #N), read back as the pull request's closing
     issue references. At least one of the issues it closes in this repository must have been opened before
-    the pull request.
+    the pull request, unless a maintainer added the linked-issue:late label: it allows issues opened after
+    the pull request (one opened before this gate existed, or a small fix whose issue is filed after the
+    fact), and the summary says so. The pull request must still close an issue. A label, not a comment,
+    because only people with triage access can add one.
 
     Exempt, and reported as exempt:
       - pull requests opened by a bot (Dependabot, the release and sync automation);
@@ -53,6 +56,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$script:LateIssueLabel = 'linked-issue:late'
+
 function Get-QueuedPullRequestNumber {
   <# .SYNOPSIS The pull request number a merge queue branch was made for, or 0 for any other branch. #>
   param([Parameter(Mandatory)][AllowEmptyString()][string]$HeadRef)
@@ -80,6 +85,7 @@ function ConvertFrom-PullRequestJson {
     BaseRef     = [string]$pr.baseRefName
     HeadRef     = [string]$pr.headRefName
     Body        = if ($pr.PSObject.Properties['body']) { [string]$pr.body } else { '' }
+    Labels      = @(if ($pr.PSObject.Properties['labels']) { $pr.labels.nodes | ForEach-Object { [string]$_.name } })
     Issues      = $issues
   }
 }
@@ -136,8 +142,13 @@ function Get-LinkedIssueVerdict {
   }
   if (-not ($issues | Where-Object { $_.CreatedAt -lt $pr.CreatedAt })) {
     $numbers = ($issues | ForEach-Object { "#$($_.Number)" }) -join ', '
+    $labels = if ($pr.PSObject.Properties['Labels']) { @($pr.Labels) } else { @() }
+    if ($labels -contains $script:LateIssueLabel) {
+      return [pscustomobject]@{ Pass = $true; Exempt = $false; Reason = "closes $numbers, opened after the pull request, allowed by $($script:LateIssueLabel)"; Problems = @() }
+    }
     $problem = "Every issue pull request #$($pr.Number) closes ($numbers) was opened after the pull request. The " +
-      'issue comes first, so the change is discussed before it is reviewed: link the issue that asked for this work.'
+      'issue comes first, so the change is discussed before it is reviewed: link the issue that asked for this work. ' +
+      "A maintainer can allow a later issue with the $($script:LateIssueLabel) label."
     return [pscustomobject]@{ Pass = $false; Exempt = $false; Reason = 'issue opened after the pull request'; Problems = @($problem) }
   }
   $numbers = ($issues | ForEach-Object { "#$($_.Number)" }) -join ', '
@@ -155,7 +166,7 @@ if ($number -le 0) {
 
 $owner, $name = $Repository -split '/', 2
 $query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){' +
-  'number createdAt baseRefName headRefName body author{login __typename} ' +
+  'number createdAt baseRefName headRefName body author{login __typename} labels(first:50){nodes{name}} ' +
   'closingIssuesReferences(first:50){nodes{number createdAt repository{nameWithOwner} labels(first:20){nodes{name}}}}}}}'
 $json = gh api graphql -f query=$query -f owner=$owner -f name=$name -F number=$number
 if ($LASTEXITCODE -ne 0) { Write-Output "::error::Reading pull request #$number failed (gh exit $LASTEXITCODE)."; exit 1 }

@@ -16,6 +16,8 @@ invalid | e4e669 | This doesn't seem right
 wontfix | ffffff | This will not be worked on (the closing comment says why)
 good first issue | 7057ff | Small and self-contained, with the steps in the issue
 help wanted | 008672 | Larger work where help is welcome
+# Gate overrides (maintainers only)
+linked-issue:late | c5def5 | Gate · Linked issue: the closed issue may be newer than the pull request
 # Automation
 dependencies | 0366d6 | Pull requests that update a dependency file
 automated | ededed | Opened by automation
