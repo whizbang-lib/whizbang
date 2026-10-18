@@ -139,4 +139,30 @@ public class InheritScopeAnalyzerCoverageTests {
 
     await Assert.That(diagnostics.Count(d => d.Id == "WHIZ170")).IsEqualTo(0);
   }
+
+  /// <summary>
+  /// An interface named like a perspective interface but declared outside Whizbang.Core.Perspectives is
+  /// not a perspective, so a class implementing it is not treated as a perspective class.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task LookalikePerspectiveInterfaceInAnotherNamespace_IsNotReportedAsync() {
+    const string source = """
+        using Whizbang.Core.Lenses;
+
+        namespace TestApp;
+
+        public interface IPerspectiveFor<TModel, TEvent> { }
+        public class FooModel { }
+        public class FooEvent { }
+
+        [InheritScope(OnCreate = ScopeFields.Tenant)]
+        public class LookalikeProjection : IPerspectiveFor<FooModel, FooEvent> { }
+        """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ170")).IsEqualTo(0)
+      .Because("only Whizbang's perspective interfaces mean the runner reads the attribute from another type");
+  }
 }

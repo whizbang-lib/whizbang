@@ -155,7 +155,10 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
     var stored = new PerspectiveScope {
-      TenantId = "tenant-1", UserId = "user-creator", OrganizationId = "org-1", AllowedPrincipals = ["group:owners"],
+      TenantId = "tenant-1",
+      UserId = "user-creator",
+      OrganizationId = "org-1",
+      AllowedPrincipals = ["group:owners"],
     };
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member" }, stored, false,
       new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = DateTime.UtcNow }, PerspectiveRowVersion.Absent);

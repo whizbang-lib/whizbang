@@ -104,6 +104,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (scope inheritance): `[InheritScope]` is applied the way it is documented, and checked where it takes
+  effect.** Creation records ownership: a new perspective row copies every scope field from the message that created
+  it, including the user, and `[InheritScope]` written without `OnCreate` now means the same (it used to mean tenant
+  only). `Always` is implemented: the named fields follow the latest writer on every apply, while the rest of the
+  row's scope stays as created; the apply read returns the row's stored scope so only those fields change.
+  `ScopeInheritance.Resolve` and `PerspectiveScope.WithFieldsFrom` hold the rules. WHIZ170 now reports the attribute
+  on a perspective class over another model, where the runner ignores it, instead of on models, where it works; WHIZ171
+  says all-None gives rows no scope. **Upgrade:** a model with `[InheritScope(Always = ...)]` and no `OnCreate` now
+  records every field at creation; add `OnCreate = ScopeFields.Tenant` to keep tenant only. Move any `[InheritScope]`
+  from a perspective class to its model.
 - **Breaking (build diagnostics): four diagnostic IDs that meant two things each now mean one.** The
   diagnostics without docs pages moved: `WHIZ071` "Polymorphic Base Type Discovered" is now `WHIZ072`,
   `WHIZ400` "[InheritScope] on a non-perspective type" is now `WHIZ170`, `WHIZ401` "[InheritScope] with

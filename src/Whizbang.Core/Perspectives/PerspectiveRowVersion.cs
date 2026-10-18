@@ -85,9 +85,17 @@ public readonly record struct PerspectiveRowVersion {
 /// <see cref="PerspectiveMetadata.EventType"/> and <see cref="PerspectiveMetadata.CommitSequence"/> are
 /// populated); null when the row is absent or the store did not read it.
 /// </param>
+/// <param name="Scope">
+/// The row's stored scope, so the runner can update only the fields a model's
+/// <see cref="Lenses.InheritScopeAttribute.Always"/> names; null when the row is absent, has no scope, or
+/// the store did not read it.
+/// </param>
 /// <docs>fundamentals/perspectives/perspectives#concurrent-writers</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveRowVersionTests.cs</tests>
-public sealed record PerspectiveApplyRead(PerspectiveRowVersion Version, PerspectiveMetadata? Metadata) {
+public sealed record PerspectiveApplyRead(
+    PerspectiveRowVersion Version,
+    PerspectiveMetadata? Metadata,
+    Lenses.PerspectiveScope? Scope = null) {
   /// <summary>The read of a store that does not track versions: nothing is known, so nothing is checked.</summary>
   public static PerspectiveApplyRead Unchecked { get; } = new(PerspectiveRowVersion.Unchecked, null);
 }

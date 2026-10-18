@@ -230,6 +230,44 @@ public class PerspectiveScope {
   }
 
   /// <summary>
+  /// Returns a NEW <see cref="PerspectiveScope"/> equal to this one, with the fields named by
+  /// <paramref name="fields"/> taken from <paramref name="source"/> where the source carries them.
+  /// Used by the perspective runner for <see cref="InheritScopeAttribute.Always"/>: the row keeps the
+  /// scope it was created with, and the named fields follow the latest writer.
+  /// </summary>
+  /// <param name="source">The scope to take the named fields from, usually the latest message's.</param>
+  /// <param name="fields">Bitwise combination of fields to take from <paramref name="source"/>.</param>
+  /// <returns>A new scope; neither this scope nor <paramref name="source"/> is changed.</returns>
+  /// <remarks>
+  /// A field the source does not carry (a null or empty identifier, an empty list) leaves this scope's
+  /// value in place, so a system write with no user does not erase who last wrote the row. Lists are
+  /// replaced whole, not merged, and copied, so changing the result changes neither input.
+  /// <see cref="IsSystem"/> and <see cref="IsDeclaredUnscoped"/> are kept from this scope.
+  /// </remarks>
+  /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Scoping/ScopeInheritanceTests.cs</tests>
+  public PerspectiveScope WithFieldsFrom(PerspectiveScope source, ScopeFields fields) {
+    ArgumentNullException.ThrowIfNull(source);
+    return new PerspectiveScope {
+      TenantId = _takeField(fields, ScopeFields.Tenant, source.TenantId, TenantId),
+      CustomerId = _takeField(fields, ScopeFields.Customer, source.CustomerId, CustomerId),
+      UserId = _takeField(fields, ScopeFields.User, source.UserId, UserId),
+      OrganizationId = _takeField(fields, ScopeFields.Organization, source.OrganizationId, OrganizationId),
+      AllowedPrincipals = (fields & ScopeFields.AllowedPrincipals) != 0 && source.AllowedPrincipals.Count > 0
+        ? [.. source.AllowedPrincipals]
+        : [.. AllowedPrincipals],
+      Extensions = (fields & ScopeFields.Extensions) != 0 && source.Extensions.Count > 0
+        ? [.. source.Extensions.Select(e => new ScopeExtension(e.Key, e.Value))]
+        : [.. Extensions.Select(e => new ScopeExtension(e.Key, e.Value))],
+      IsSystem = IsSystem,
+      IsDeclaredUnscoped = IsDeclaredUnscoped,
+    };
+  }
+
+  private static string? _takeField(ScopeFields fields, ScopeFields field, string? incoming, string? current) =>
+    (fields & field) != 0 && !string.IsNullOrEmpty(incoming) ? incoming : current;
+
+  /// <summary>
   /// Returns a NEW <see cref="PerspectiveScope"/> containing only the fields named by
   /// <paramref name="fields"/>. Fields not in the set are left at their type defaults
   /// (null for the four ID strings, empty list for AllowedPrincipals and Extensions).

@@ -123,7 +123,10 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
     var store = _store();
     var id = Guid.NewGuid();
     var stored = new PerspectiveScope {
-      TenantId = "tenant-1", UserId = "user-creator", OrganizationId = "org-1", AllowedPrincipals = ["group:owners"],
+      TenantId = "tenant-1",
+      UserId = "user-creator",
+      OrganizationId = "org-1",
+      AllowedPrincipals = ["group:owners"],
     };
     await store.UpsertAsync(id, _model("first"), stored, false, _metadata(7), cancellationToken);
 
