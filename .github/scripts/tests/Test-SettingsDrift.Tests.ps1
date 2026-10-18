@@ -141,7 +141,8 @@ Describe 'Compare-SecuritySettings' {
   It 'still reports a hidden setting whose parent is gone' {
     $baseline = @{ rulesets = @{ main = @{ bypass_actors = @(@{ actor_id = 9 }) } } }
     $d = @(Compare-SecuritySettings -Baseline $baseline -Live @{ rulesets = @{} })
-    $d.Setting | Should -Be @('rulesets.main.bypass_actors[0].actor_id')
+    # The ruleset is gone, so its bypass list is reported missing too, and the rulesets are now empty.
+    $d.Setting | Should -Be @('rulesets', 'rulesets.main.bypass_actors[0].actor_id')
   }
 }
 

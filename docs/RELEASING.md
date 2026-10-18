@@ -344,7 +344,11 @@ mints a token with read-only permissions (administration, environments, members 
 administration), because `GITHUB_TOKEN` cannot read rulesets' bypass actors, the Actions settings, the
 teams or the organization's settings. It compares them with `.github/settings-baseline.json` and opens
 or updates one issue labeled `security` (with `GITHUB_TOKEN`) for each run that finds a difference. The
-app holds those four read permissions for this job alone; the release jobs never request them. After
+app holds those four read permissions for this job alone; the release jobs never request them. One thing
+it cannot see: GitHub shows a ruleset's bypass actors only to someone who can edit the ruleset, so the
+check lists them as not checked rather than give a release bot write access to the settings. The
+baseline still records them, so changing who can bypass is reviewed in the baseline pull request, and the
+organization audit log records any change made outside one. After
 changing a setting on purpose, refresh the baseline in a pull request:
 `pwsh .github/scripts/Test-SettingsDrift.ps1 -Mode Capture -Repository whizbang-lib/whizbang -OutFile .github/settings-baseline.json`.
 
