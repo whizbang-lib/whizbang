@@ -3668,6 +3668,8 @@ public abstract partial class Dispatcher(
   /// After local handlers complete, publishes to outbox for cross-service delivery (if configured).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -3786,6 +3788,8 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInFuture_DoesNotInvokeLocalReceptorInlineAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInPast_InvokesLocalReceptorInlineAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -3941,6 +3945,8 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepOutboxTests.cs:CascadeMessageAsync_EventWithIHasStreamId_InheritsStreamIdFromSourceAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_OwnedCommandOutboxMode_NoHandler_ThrowsAndNeverReachesTheOutboxAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:CascadeMessageAsync_NonOwnedCommandOutboxMode_StaysOnOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
   // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
 #pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
@@ -5624,6 +5630,8 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_CreatesTypedEnvelopesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -5685,6 +5693,8 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
   /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/DispatchTangentialParityComponentTests.cs:EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DispatchExecutionIntegrationTests.cs:MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
