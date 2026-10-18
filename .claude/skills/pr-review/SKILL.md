@@ -7,7 +7,9 @@ description: >-
   request is ready. Covers the mechanical findings CI already reports, the core principles every change
   carries (no reflection and AOT, the docs repository updated, 100% line and branch coverage, code,
   docs and tests linked, generators on the template system, reuse and extensibility, deterministic
-  tests on public completion signals), and the area checks for SQL, hot paths, startup, generators,
+  tests on public completion signals, turn-key defaults, configuration bound with defaults, errors and
+  configuration on dedicated and directory pages, docs to the site's standards with visuals and
+  tested samples), and the area checks for SQL, hot paths, startup, generators,
   security and writing.
 argument-hint: "<pull request number, or a branch name to review before opening one>"
 ---
@@ -57,7 +59,7 @@ judgment comments.
 ## Step 3: The core principles, on every pull request
 
 These apply to every change that touches `src/**` or `tests/**`, whatever the files are. They are not
-optional and not triggered: walk all seven, and a breach of any is a blocking comment unless the
+optional and not triggered: walk all eleven, and a breach of any is a blocking comment unless the
 description gives a reason the maintainer has accepted.
 
 1. **No reflection; AOT compatible.** No reflection, `Type.GetType`, `Activator`, `dynamic` or
@@ -93,6 +95,30 @@ description gives a reason the maintainer has accepted.
    with XML docs, `<docs>` and `<tests>`, and docs-site coverage: useful to a consumer for monitoring,
    never a test-only internal or an `InternalsVisibleTo` back door. Owners: `testing` skill,
    `ai-docs/flaky-tests.md`.
+8. **Turn-key by default.** A new capability works from `AddWhizbang()` and the driver registration
+   with no extra wiring and safe defaults; a consumer opts out, not in, unless the description says why
+   opting in is safer. Registration is idempotent and never silently does less than asked. Owners:
+   `ai-docs/startup-registration-invariants.md`, docs site `data/turnkey-initialization`.
+9. **All configuration has a binding and a default.** Every new options class or property binds from
+   configuration under a documented section (naming the concrete type at the call site, so the binder
+   generator intercepts it and AOT holds), every property has a default that works, and code set
+   before or after binding follows the framework's precedence. Owners:
+   `src/Whizbang.Core/Configuration/ProcessWideOptionsBinding.cs` remarks, docs site
+   `operations/configuration/configuration-reference`.
+10. **Errors and configuration are documented twice.** Each new configuration key, runtime error
+    message and diagnostic has its own detail (a dedicated page or section) and an entry on the
+    directory page for quick lookup: `operations/configuration/configuration-reference` for keys,
+    `operations/diagnostics/error-reference` for runtime errors, and an `operations/diagnostics/whizNNN`
+    page plus the diagnostics index for analyzer codes. Both link to each other and to the code.
+11. **Docs meet the docs-site standards.** Required frontmatter (`title`, `category`, `order`,
+    `description`, and `pageType` / `verifiedAgainstCommit` where the section uses them), heading
+    hierarchy and markdown rules; visuals wherever they explain more than prose (Mermaid diagrams for
+    flows and structure, a GIF or video for an interactive or tooling flow, alt text on every image);
+    and complete C# samples taken from tests, with the test named in the code block metadata so the
+    sample is proven to compile and behave as described. Review the companion docs pull request against
+    these, not just its existence. Owners (docs repository): `DOCUMENTATION-STANDARDS.md`,
+    `ai-docs/standards.md`, `ai-docs/mermaid-diagrams.md`, `ai-docs/alt-text-standards.md`,
+    `ai-docs/CODE-TEST-LINKING.md`.
 
 ## Step 4: Area checks
 
