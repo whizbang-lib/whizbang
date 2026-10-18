@@ -434,14 +434,14 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
   /// fails here instead of hanging the test.
   /// </summary>
   private static async Task _waitUntilAnOutboxWriteWaitsAsync(NpgsqlConnection locker, NpgsqlTransaction held) {
-    var deadline = DateTime.UtcNow.AddSeconds(30);
+    var deadline = DateTime.UtcNow.AddSeconds(30); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     await using var waiting = new NpgsqlCommand(
       "SELECT count(*) FROM pg_locks WHERE relation = 'wh_outbox'::regclass AND NOT granted", locker, held);
     while ((long)(await waiting.ExecuteScalarAsync())! == 0) {
-      if (DateTime.UtcNow > deadline) {
+      if (DateTime.UtcNow > deadline) { // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
         throw new TimeoutException("The copy write never queued behind the lock on wh_outbox.");
       }
-      await Task.Delay(20);
+      await Task.Delay(20); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     }
   }
 
