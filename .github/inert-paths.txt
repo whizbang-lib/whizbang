@@ -18,5 +18,4 @@ logo/**
 .vscode/**
 *.md
 .github/*.md
-.github/ISSUE_TEMPLATE/**
 LICENSE
