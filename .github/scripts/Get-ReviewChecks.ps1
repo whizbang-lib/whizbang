@@ -28,7 +28,9 @@ param(
   [Parameter(Mandatory)][int]$ClosingIssueCount,
   [Parameter(Mandatory)][string]$RunUrl,
   [Parameter(Mandatory)][string]$OutFile,
-  [string]$IgnoreFile = '.github/review-checks-ignore.txt'
+  [string]$IgnoreFile = '.github/review-checks-ignore.txt',
+  # A bot opened the pull request, so it is not asked for a linked issue (as the gate exempts it).
+  [switch]$AuthorIsBot
 )
 
 Set-StrictMode -Version Latest
@@ -57,7 +59,7 @@ if ($null -eq $body) { $body = '' }
 
 $findings = @(
   ConvertTo-DcoFindings -Verdict $verdict -BaseRef $BaseRef
-  Find-PullRequestFindings -Body $body -ClosingIssueCount $ClosingIssueCount -BaseRef $BaseRef -HeadRef $HeadRef
+  Find-PullRequestFindings -Body $body -ClosingIssueCount $ClosingIssueCount -BaseRef $BaseRef -HeadRef $HeadRef -AuthorIsBot:$AuthorIsBot
   Find-DiffFindings -DiffText $diff -IgnorePaths $ignore
 )
 
