@@ -245,7 +245,7 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
       MessageId = MessageId.New(),
       Payload = new TestMessage("dispatch-mark"),
       DispatchContext = new MessageDispatchContext { Mode = mode, Source = MessageSource.Outbox, LocalDeferred = localDeferred },
-      Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }]
+      Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UnixEpoch, ServiceInstance = ServiceInstanceInfo.Unknown }]
     };
     var destination = _createUniqueDestination();
     var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e, filter: e => e.MessageId == envelope.MessageId);

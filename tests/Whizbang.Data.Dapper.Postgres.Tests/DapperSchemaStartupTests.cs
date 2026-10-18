@@ -186,13 +186,13 @@ public class DapperSchemaStartupTests {
   /// for, bounded so a wait that never queues fails here instead of hanging the test.
   /// </summary>
   private static async Task _waitUntilAdvisoryWaitersAsync(NpgsqlConnection holder, NpgsqlTransaction held, long expected) {
-    var deadline = DateTime.UtcNow.AddSeconds(30);
+    var deadline = DateTime.UtcNow.AddSeconds(30); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     while (await holder.ExecuteScalarAsync<long>(
         WAITING_ADVISORY_LOCKS, transaction: held) != expected) {
-      if (DateTime.UtcNow > deadline) {
+      if (DateTime.UtcNow > deadline) { // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
         throw new TimeoutException($"The schema lock wait never queued: expected {expected} waiting advisory lock request(s).");
       }
-      await Task.Delay(20);
+      await Task.Delay(20); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     }
   }
 
