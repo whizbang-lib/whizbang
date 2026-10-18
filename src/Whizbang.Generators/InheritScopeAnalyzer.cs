@@ -21,12 +21,12 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   private const string PERSPECTIVE_INTERFACE_PREFIX = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   /// <summary>
-  /// WHIZ300: Warning — <c>[InheritScope]</c> applied to a non-perspective type.
+  /// WHIZ170: Warning — <c>[InheritScope]</c> applied to a non-perspective type.
   /// The attribute is read at projection time; on a class that isn't a perspective
   /// participant it has no effect.
   /// </summary>
   public static readonly DiagnosticDescriptor InheritScopeOnNonPerspective = new(
-    id: "WHIZ400",
+    id: "WHIZ170",
     title: "[InheritScope] on a non-perspective type has no effect",
     messageFormat: "Class '{0}' is decorated with [InheritScope] but does not implement IPerspectiveFor<...>. The attribute will be ignored at runtime.",
     category: CATEGORY,
@@ -36,11 +36,11 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ301: Info — <c>[InheritScope(OnCreate = None, Always = None)]</c> is
+  /// WHIZ171: Info — <c>[InheritScope(OnCreate = None, Always = None)]</c> is
   /// equivalent to no inheritance at all and is more confusing than omitting the attribute.
   /// </summary>
   public static readonly DiagnosticDescriptor InheritScopeAllNoneIsRedundant = new(
-    id: "WHIZ401",
+    id: "WHIZ171",
     title: "[InheritScope] with all-None flags is redundant",
     messageFormat: "[InheritScope(OnCreate = None, Always = None)] on '{0}' is equivalent to declaring no inheritance at all. Either omit the attribute or specify at least one inherited field.",
     category: CATEGORY,
