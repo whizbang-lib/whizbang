@@ -160,6 +160,47 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
     await _assertMarkedCopyAsync(row, entry);
   }
 
+  // ── the handler sees the message as it was stored (#1455) ────────────────────────────────────
+
+  /// <summary>
+  /// A sending service's own handler reads the sent time and correlation the stored row carries: the
+  /// message is stamped once, before the handler and the copy both see it (#1455).
+  /// </summary>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("SendManyAsync")]
+  [Arguments("PublishAsync")]
+  [Arguments("PublishManyAsync")]
+  [Arguments("CascadeBoth")]
+  [Arguments("ReceptorResultCascade")]
+  public async Task MessageWithALocalHandler_TheHandlerSeesTheSentTimeAndCorrelationTheStoredRowCarriesAsync(string entry) {
+    await using var provider = _createServices(withMessageSecurity: false).Provider;
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    var command = new DxStampedCommand { Id = id };
+    var evt = new DxStampedEvent { Id = id };
+
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(command); break;
+      case "SendManyAsync": await dispatcher.SendManyAsync(new object[] { command }); break;
+      case "PublishAsync": await dispatcher.PublishAsync(evt); break;
+      case "PublishManyAsync": await dispatcher.PublishManyAsync(new object[] { evt }); break;
+      case "CascadeBoth": await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchModes.Both); break;
+      default: await dispatcher.LocalInvokeAsync<DxStampedEvent>(new DxStampingCommand(id)); break;
+    }
+
+    var row = entry.StartsWith("Send", StringComparison.Ordinal)
+      ? await _singleRowOfAsync<DxStampedCommand>(entry)
+      : await _singleRowOfAsync<DxStampedEvent>(entry);
+    var (storedSentAt, storedCorrelation) = await _storedStampAsync(row.MessageId);
+    var seen = StampProbe.Seen(id);
+    await Assert.That(seen).IsNotNull().Because($"{entry}: the handler ran here");
+    await Assert.That(seen!.Value.SentAt).IsEqualTo(storedSentAt)
+      .Because($"{entry}: the handler reads the sent time the stored row carries, so a key derived from it matches on redelivery");
+    await Assert.That(seen.Value.CorrelationId).IsEqualTo(storedCorrelation)
+      .Because($"{entry}: the handler reads the correlation the stored row carries");
+  }
+
   // ── a returned result cascades: the case #1410 broke ─────────────────────────────────────────
 
   [Test]
@@ -509,6 +550,23 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
     var envelope = (MessageEnvelope<JsonElement>)JsonSerializer.Deserialize(json, typeInfo)!;
     return envelope.DispatchContext;
   }
+
+  /// <summary>The sent time and correlation in the payload stored in the row, as a receiver reads them.</summary>
+  private async Task<(DateTimeOffset SentAt, string? CorrelationId)> _storedStampAsync(Guid messageId) {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using var select = connection.CreateCommand();
+    select.CommandText = "SELECT event_data::text FROM wh_outbox WHERE message_id = @id";
+    select.Parameters.AddWithValue("id", messageId);
+    var json = (string)(await select.ExecuteScalarAsync())!;
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var payload = ((MessageEnvelope<JsonElement>)JsonSerializer.Deserialize(json, typeInfo)!).Payload;
+    return (_payloadProperty(payload, nameof(DxStampedEvent.SentAt)).GetDateTimeOffset(),
+      _payloadProperty(payload, nameof(DxStampedEvent.CorrelationId)).GetString());
+  }
+
+  private static JsonElement _payloadProperty(JsonElement payload, string name) =>
+    payload.EnumerateObject().First(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)).Value;
 
   private async Task<List<OutboxRecord>> _rowsOfAsync<TMessage>() {
     await using var dbContext = CreateDbContext();
