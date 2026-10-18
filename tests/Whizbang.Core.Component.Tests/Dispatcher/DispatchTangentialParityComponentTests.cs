@@ -149,6 +149,38 @@ public class DispatchTangentialParityComponentTests {
       .Because($"{entry} through the security builder runs the receptor in the caller's tenant");
   }
 
+  // ── message security with no caller context ──────────────────────────────────────────────────
+
+  /// <summary>
+  /// With message security registered and no caller context, every entry that runs a handler here runs
+  /// it the same way. The cascade used to hand the handler's scope a placeholder envelope with no
+  /// message, which security refused as a null payload (#1410 follow-up).
+  /// </summary>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("PublishAsync")]
+  [Arguments("CascadeMessageAsync(Local)")]
+  [Arguments("CascadeMessageAsync(Both)")]
+  [Arguments("LocalInvokeAsync")]
+  public async Task EveryEntry_WithMessageSecurityAndNoCallerContext_RunsTheHandlerAsync(string entry) {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), withMessageSecurity: true);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    ScopeContextAccessor.CurrentContext = null;
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(new TgVoidCommand(id)); break;
+      case "PublishAsync": await dispatcher.PublishAsync(new TgVoidEvent(id)); break;
+      case "CascadeMessageAsync(Local)": await dispatcher.CascadeMessageAsync(new TgVoidEvent(id), sourceEnvelope: null, DispatchModes.Local); break;
+      case "CascadeMessageAsync(Both)": await dispatcher.CascadeMessageAsync(new TgVoidEvent(id), sourceEnvelope: null, DispatchModes.Both); break;
+      default: await dispatcher.LocalInvokeAsync((object)new TgVoidCommand(id)); break;
+    }
+
+    await Assert.That(TangentialProbe.Ran("ran", id)).IsTrue()
+      .Because($"{entry} runs the handler here as every other entry does when the caller has no context");
+  }
+
   // ── the envelope a receptor looks up ─────────────────────────────────────────────────────────
 
   /// <summary>Every entry registers the envelope a receptor looks up for the message it handles.</summary>
@@ -197,8 +229,12 @@ public class DispatchTangentialParityComponentTests {
     _ => dispatcher.PublishManyAsync(new[] { message }, options),
   };
 
-  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox) {
+  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox, bool withMessageSecurity = false) {
     var services = new ServiceCollection();
+    if (withMessageSecurity) {
+      services.AddWhizbangMessageSecurity();
+      services.AddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
+    }
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddScoped<IWorkCoordinatorStrategy>(_ => outbox);

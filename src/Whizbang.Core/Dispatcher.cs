@@ -671,14 +671,6 @@ public abstract partial class Dispatcher(
   private const string PATTERN_LOCAL_INVOKE = "local_invoke";
   private const string ROUTED_NONE_ERROR = "Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.";
 
-  // Minimal envelope used by cascade paths to signal IsDefaultDispatch=true when no source envelope exists
-  private static readonly IMessageEnvelope _cascadeDefaultEnvelope = new MessageEnvelope<object> {
-    MessageId = default,
-    Payload = null!,
-    Hops = [],
-    DispatchContext = MessageDispatchContext.CascadeDefault
-  };
-
   private readonly IServiceProvider _internalServiceProvider = ArgumentGuard.NotNull(serviceProvider);
   private Whizbang.Core.Observability.ReEmissionDiagnostic? _reEmissionDiagnostic;
   private bool _reEmissionResolved;
@@ -3268,7 +3260,7 @@ public abstract partial class Dispatcher(
       IMessage message,
       Type messageType,
       Dispatch.DispatchModes mode,
-      Func<IMessageEnvelope>? localEnvelopeFor,
+      Func<IMessageEnvelope?>? localEnvelopeFor,
       IMessageEnvelope? sourceEnvelope,
       Guid? eventId,
       CancellationToken cancellationToken) {
@@ -3891,11 +3883,14 @@ public abstract partial class Dispatcher(
     // hop carrying identity. The wrapper also carries the cascaded message's own id as the anchor for
     // whatever nested receptors emit, so their emissions do not derive this handler's ids and get
     // deduplicated away; a cascaded command takes the next ordinal of this handling as its anchor.
-    // Built only when the message runs here: building it takes an emission ordinal, as it always has
-    IMessageEnvelope cascadeEnvelopeFor() =>
+    // Built only when the message runs here: building it takes an emission ordinal, as it always has.
+    // With neither a source nor an ambient context, the handlers get no envelope and take the ambient
+    // context, as a publish's do: a placeholder envelope carried no message, and message security
+    // refused it as a null payload (#1410 follow-up)
+    IMessageEnvelope? cascadeEnvelopeFor() =>
       (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
         ? new CascadeEnvelopeWrapper(cascadeSource) { EmissionAnchor = eventId ?? _mintEmissionId(sourceEnvelope, messageType) }
-        : _cascadeDefaultEnvelope;
+        : null;
     await _carryOutCascadeAsync(message, messageType, mode, cascadeEnvelopeFor, sourceEnvelope, eventId, cancellationToken).ConfigureAwait(false);
 
     sw.Stop();

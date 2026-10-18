@@ -76,14 +76,4 @@ public sealed record MessageDispatchContext {
   /// </summary>
   public MessageDispatchContext WithDefaultDispatch() =>
     this with { IsDefaultDispatch = true };
-
-  /// <summary>
-  /// Sentinel context used by cascade paths when no source envelope is available.
-  /// Has IsDefaultDispatch = true so that the publisher skips explicit [FireAt] receptors.
-  /// </summary>
-  internal static readonly MessageDispatchContext CascadeDefault = new() {
-    Mode = Dispatch.DispatchModes.Local,
-    Source = MessageSource.Local,
-    IsDefaultDispatch = true
-  };
 }

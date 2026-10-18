@@ -1,0 +1,88 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Collections.Concurrent;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+// Types for DispatchExecutionIntegrationTests (#1410 follow-up). Commands in the Owned namespace belong
+// to the service; everything in Upstream belongs to another. The source generator discovers every
+// receptor here, so the tests run the REAL generated lookup tables and receptor registry.
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution {
+  /// <summary>Invocation counts per (receptor, message id). Each test uses fresh ids.</summary>
+  public static class DispatchExecutionProbe {
+    private static readonly ConcurrentDictionary<(string Receptor, Guid Id), int> _counts = new();
+
+    public static void Record(string receptor, Guid id) => _counts.AddOrUpdate((receptor, id), 1, static (_, n) => n + 1);
+
+    public static int Count(string receptor, Guid id) => _counts.TryGetValue((receptor, id), out var n) ? n : 0;
+  }
+
+  /// <summary>A message the runtime-registered counting handler can key by id.</summary>
+  public interface IDxIdentified {
+    Guid Id { get; }
+  }
+}
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned {
+  public sealed record DxOwnedCommand(Guid Id) : ICommand;
+
+  public sealed class DxOwnedCommandReceptor : IReceptor<DxOwnedCommand> {
+    public ValueTask HandleAsync(DxOwnedCommand message, CancellationToken cancellationToken = default) {
+      DispatchExecutionProbe.Record(nameof(DxOwnedCommandReceptor), message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>An owned command whose receptor returns an event: the shape #1410 stopped running.</summary>
+  public sealed record DxOwnedResultCommand(Guid Id) : ICommand;
+
+  public sealed class DxOwnedResultCommandReceptor : IReceptor<DxOwnedResultCommand, Upstream.DxFollowUpEvent> {
+    public ValueTask<Upstream.DxFollowUpEvent> HandleAsync(DxOwnedResultCommand message, CancellationToken cancellationToken = default) {
+      DispatchExecutionProbe.Record(nameof(DxOwnedResultCommandReceptor), message.Id);
+      return ValueTask.FromResult(new Upstream.DxFollowUpEvent(message.Id));
+    }
+  }
+
+  public sealed record DxOwnedUnhandledCommand(Guid Id) : ICommand;
+
+  /// <summary>
+  /// Handled only by receptors the test registers at runtime, so it can count the PreOutbox stage. In the
+  /// owned namespace: with owned domains configured, PreOutbox runs for the service's own events only.
+  /// </summary>
+  public sealed record DxRuntimeHandledEvent([property: StreamId] Guid Id) : IEvent, IDxIdentified;
+}
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Upstream {
+  public sealed record DxUnownedCommand(Guid Id) : ICommand;
+
+  public sealed class DxUnownedCommandReceptor : IReceptor<DxUnownedCommand> {
+    public ValueTask HandleAsync(DxUnownedCommand message, CancellationToken cancellationToken = default) {
+      DispatchExecutionProbe.Record(nameof(DxUnownedCommandReceptor), message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  public sealed record DxEvent([property: StreamId] Guid Id) : IEvent;
+
+  public sealed class DxEventReceptor : IReceptor<DxEvent> {
+    public ValueTask HandleAsync(DxEvent message, CancellationToken cancellationToken = default) {
+      DispatchExecutionProbe.Record(nameof(DxEventReceptor), message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  public sealed record DxFollowUpEvent([property: StreamId] Guid Id) : IEvent;
+
+  public sealed class DxFollowUpEventReceptor : IReceptor<DxFollowUpEvent> {
+    public ValueTask HandleAsync(DxFollowUpEvent message, CancellationToken cancellationToken = default) {
+      DispatchExecutionProbe.Record(nameof(DxFollowUpEventReceptor), message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Handled only by receptors the test registers at runtime, so it can count the PreOutbox stage.</summary>
+  public sealed record DxRuntimeHandledCommand(Guid Id) : ICommand, IDxIdentified;
+
+}
