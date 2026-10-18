@@ -285,6 +285,58 @@ Describe 'Find-PullRequestFindings' {
   }
 }
 
+Describe 'Find-PullRequestTypeFindings' {
+  BeforeAll {
+    function Find-Type([string]$Title, [string[]]$Paths, [string[]]$Labels = @('bug'), [string]$Body = '', [switch]$Bot, [string]$Base = 'develop', [string]$Head = 'fix/x') {
+      @(Find-PullRequestTypeFindings -Title $Title -Body $Body -ChangedPaths $Paths -ClosingIssueLabels $Labels `
+          -BaseRef $Base -HeadRef $Head -AuthorIsBot:$Bot)
+    }
+  }
+
+  It 'asks a fix to close an issue labeled bug' {
+    $f = Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels @('enhancement')
+    $f.Rule | Should -Be @('pr.fix-bug-issue')
+    $f[0].Severity | Should -Be 'blocking'
+  }
+
+  It 'asks a library fix for a test' {
+    (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'CHANGELOG.md')).Rule | Should -Be @('pr.fix-test')
+  }
+
+  It 'asks a library feature for its docs-site pull request' {
+    (Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels @('feature')).Rule | Should -Be @('pr.feat-docs')
+  }
+
+  It 'accepts a feature that links its docs-site pull request' {
+    $body = 'Docs: https://github.com/whizbang-lib/whizbang-lib.github.io/pull/1206'
+    @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Body $body).Count | Should -Be 0
+  }
+
+  It 'asks a library feat or fix for a CHANGELOG.md entry' -TestCases @(@{ T = 'fix: x' }, @{ T = 'feat(core): x' }) {
+    $body = 'whizbang-lib.github.io/pull/1'
+    (Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs') -Body $body).Rule | Should -Contain 'pr.changelog'
+  }
+
+  It 'is quiet for a complete fix' {
+    @(Find-Type -Title 'fix(core): x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md')).Count | Should -Be 0
+  }
+
+  It 'asks nothing of a change outside the library' {
+    @(Find-Type -Title 'fix(ci): x' -Paths @('.github/workflows/ci.yml') -Labels @()).Rule | Should -Be @('pr.fix-bug-issue')
+    @(Find-Type -Title 'feat(ci): x' -Paths @('.github/workflows/ci.yml') -Labels @()).Count | Should -Be 0
+    @(Find-Type -Title 'docs: x' -Paths @('README.md') -Labels @()).Count | Should -Be 0
+  }
+
+  It 'asks nothing of a title that is not a Conventional Commit, which the gate reports' {
+    @(Find-Type -Title 'Fix it' -Paths @('src/A.cs') -Labels @()).Count | Should -Be 0
+  }
+
+  It 'exempts bots and the release pull request into main' {
+    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs') -Labels @() -Bot).Count | Should -Be 0
+    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs') -Labels @() -Base main -Head 'release/v1.0.0').Count | Should -Be 0
+  }
+}
+
 Describe 'ConvertTo-DcoFindings' {
   It 'turns each DCO problem into a finding for its commit' {
     $verdict = [pscustomobject]@{ Pass = $false; Problems = @('aaaaaaaaaaaa feat: x: no Signed-off-by line', 'bbbbbbbbbbbb fix: y: Signed-off-by a@b does not match the author, c@d') }
