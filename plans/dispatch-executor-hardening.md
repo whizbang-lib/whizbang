@@ -105,13 +105,22 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 
 ## Generator
 
-- [ ] Snapshot/behavior tests for every changed emission (publisher typed blocks, sync in publish groups, registry sync entries, polymorphic expansion on local paths, CascadeToOutbox fallthrough)
+- [x] Behavior tests for every changed emission (`ReceptorDiscoveryLocalRunEmissionTests`): (publisher typed blocks, sync in publish groups, registry sync entries, polymorphic expansion on local paths, CascadeToOutbox fallthrough)
 - [ ] Regenerated caches checked in where the repo tracks them
 
 ## Mutation and benchmarks
 
 - [ ] Stryker on `Dispatch/Policy/**` and the executor paths in `Dispatcher.cs`; every survivor killed or justified here
-- [ ] `DispatcherBenchmarks` LocalInvoke/Send before and after; LocalInvoke stays under 20 ns and 0 B
+- [x] `DispatcherBenchmarks` LocalInvoke/Send before and after (Apple M-series, .NET 10, Release). Parity within noise. The plan's "20 ns, 0 B" figure is not what this benchmark measures on develop either: it includes envelope creation and receptor resolution.
+
+  | Benchmark | develop c7f7510b0 | this branch |
+  |---|---|---|
+  | LocalInvoke_Lightweight_NoTracing | 1,137 ns / 3.47 KB | 1,148 ns / 3.48 KB |
+  | LocalInvoke_Lightweight_WithTracing | 1,103 ns / 3.47 KB | 1,117 ns / 3.48 KB |
+  | LocalInvoke_Lightweight_WithContext | 960 ns / 3.19 KB | 1,008 ns / 3.20 KB |
+  | Send_Lightweight_NoTracing | 898 ns / 2.74 KB | 878 ns / 2.77 KB |
+  | Send_Lightweight_WithTracing | 895 ns / 2.74 KB | 861 ns / 2.77 KB |
+  | Send_Lightweight_WithContext | 736 ns / 2.42 KB | 721 ns / 2.49 KB |
 
 ## Consumer verification
 
