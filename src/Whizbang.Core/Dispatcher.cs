@@ -4991,7 +4991,7 @@ public abstract partial class Dispatcher(
   private async Task<List<IDeliveryReceipt>> _writeBatchWithNoOutboxAsync(
       List<(object message, Type messageType, IMessageContext context, MessageId messageId)> messages,
       List<DispatchDecision> copyDecisions, IReadOnlyList<OutboxMessage>? heldEffects, IServiceScope scope) {
-    if (!messages.TrueForAll(static m => m.message is IEvent) || heldEffects is { Count: > 0 }) {
+    if (!messages.TrueForAll(static m => m.message is IEvent) || heldEffects is not null) {
       throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
     }
     var receipts = new List<IDeliveryReceipt>(messages.Count);
@@ -5130,7 +5130,9 @@ public abstract partial class Dispatcher(
     _warnCopiesSkippedForNoOutbox(decisions);
 
     try {
-      await _flushOutboxBatchAndCollectReceiptsAsync(batch.OutboxMessages, batch.CopyDecisions, batch.Receipts, options, heldEffects?.Collector.Collected);
+      // None held reads as null, so every check below asks one question
+      var held = heldEffects?.Collector.Collected is { Count: > 0 } collected ? collected : null;
+      await _flushOutboxBatchAndCollectReceiptsAsync(batch.OutboxMessages, batch.CopyDecisions, batch.Receipts, options, held);
     } catch (Exception outboxFailure) when (batch.Failures.Count > 0) {
       batch.Failures.Add(outboxFailure);
     }
@@ -5235,7 +5237,7 @@ public abstract partial class Dispatcher(
     IReadOnlyList<OutboxMessage>? heldEffects
   ) {
     // A batch stopped before its first copy still writes what its handlers emitted
-    if (outboxMessages.Count == 0 && heldEffects is not { Count: > 0 }) {
+    if (outboxMessages.Count == 0 && heldEffects is null) {
       return;
     }
 
@@ -5248,7 +5250,7 @@ public abstract partial class Dispatcher(
           receipts.Add(outboxReceipts[i]);
         }
       }
-    } catch (InvalidOperationException) when (copyDecisions.TrueForAll(static d => d.Local == LocalRun.Now) && heldEffects is not { Count: > 0 }) {
+    } catch (InvalidOperationException) when (copyDecisions.TrueForAll(static d => d.Local == LocalRun.Now) && heldEffects is null) {
       // Held effects are messages the handlers wrote, with no other way out: they fail the batch instead
       // of being dropped behind this warning (#1410 follow-up)
       // No outbox strategy — all messages handled locally only.

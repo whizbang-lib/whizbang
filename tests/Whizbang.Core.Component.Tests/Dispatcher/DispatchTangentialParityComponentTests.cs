@@ -249,7 +249,7 @@ public class DispatchTangentialParityComponentTests {
     var id = Guid.CreateVersion7();
 
     await Assert.That(async () => await provider.GetRequiredService<IDispatcher>()
-        .SendManyAsync(new object[] { new TgEmitThenFailCommand(id), new PbUnownedCommand(Guid.CreateVersion7()) }))
+        .SendManyAsync([new TgEmitThenFailCommand(id), new PbUnownedCommand(Guid.CreateVersion7())]))
       .Throws<InvalidOperationException>();
 
     await Assert.That(outbox.QueuedOf(typeof(TgVoidEvent))).Count().IsEqualTo(1)
@@ -265,7 +265,7 @@ public class DispatchTangentialParityComponentTests {
     await using var provider = _buildProvider(outbox);
 
     await Assert.That(async () => await provider.GetRequiredService<IDispatcher>()
-        .SendManyAsync(new object[] { new TgFailCommand(Guid.CreateVersion7()), new PbUnownedCommand(Guid.CreateVersion7()) }))
+        .SendManyAsync([new TgFailCommand(Guid.CreateVersion7()), new PbUnownedCommand(Guid.CreateVersion7())]))
       .Throws<InvalidOperationException>();
 
     await Assert.That(outbox.QueuedOf(typeof(PbUnownedCommand))).IsEmpty();
