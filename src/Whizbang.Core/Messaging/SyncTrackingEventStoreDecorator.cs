@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.ValueObjects;
@@ -63,20 +64,29 @@ public sealed class SyncTrackingEventStoreDecorator(
   }
 
   /// <inheritdoc />
-  public override async Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
-    // Try to get the envelope from the registry to get the actual MessageId
-    var envelope = _envelopeRegistry.TryGetEnvelope(message);
-    var messageId = envelope?.MessageId ?? MessageId.New();
-
-    await Inner.AppendAsync(streamId, message, cancellationToken);
-
-    var eventType = typeof(TMessage);
-
-    // Track the emitted event in scoped tracker (same request scope)
-    _tracker.TrackEmittedEvent(streamId, eventType, messageId.Value);
-
-    // Track in singleton tracker for cross-scope sync (if event type is registered)
-    _trackInSingletonTracker(eventType, messageId.Value, streamId);
+  /// <remarks>
+  /// The message goes down as an envelope (the one registered for it, or a minimal one), so the id this
+  /// tracks is the id the store writes; handing the store the bare message let it mint an id of its own,
+  /// and a sync wait on the tracked id could only time out (#1465). In the decorator stack this is not
+  /// reached: <see cref="SecurityContextEventStoreDecorator"/> sits outside and turns a message into an
+  /// envelope first.
+  /// </remarks>
+  public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+    var envelope = _envelopeRegistry.TryGetEnvelope(message) ?? new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = HopStamping.AmbientTraceParent,
+        }
+      ],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
+    return AppendAsync(streamId, envelope, cancellationToken);
   }
 
   /// <summary>
