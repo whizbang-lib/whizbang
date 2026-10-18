@@ -47,7 +47,7 @@ On GitHub each role is an organization team, and the team grants a role on this 
 | Team | Repository role | What the automation lets it do |
 |---|---|---|
 | `build-admins` | Admin | Approve changes to the pipeline, gates and build inputs, which `.github/CODEOWNERS` assigns to it |
-| `maintainers` | Maintain | Accept or decline issues (`/accept`, `/decline`), allow a late issue or no docs (`/late-issue`, `/docs-not-needed`); their own pull requests need an issue but not its acceptance |
+| `maintainers` | Maintain | Accept or decline issues (`/accept`, `/decline`; their own issues are accepted when opened), allow a late issue or no docs (`/late-issue`, `/docs-not-needed`); their own pull requests need an issue but not its acceptance |
 | `committers` | Write | Re-run checks (`/recheck`); their pull requests are never auto-closed |
 
 The automation reads the role, so adding or removing someone from a team is the whole change; nothing

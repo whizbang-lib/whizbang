@@ -24,6 +24,9 @@
                    from the author or a committer (write or above) re-runs the failed CI jobs. Each
                    re-checks the pull request, since a label the workflow's token adds starts no
                    workflow. Anyone else is told who can.
+      IssueOpened  an issue was opened: when its author is a maintainer, accept it (adds accepted, removes
+                   needs-triage), since a maintainer filing work has agreed to it. Anyone else's issue
+                   waits for a maintainer's /accept.
       Sweep        close each outside pull request still without an accepted issue Days after it was
                    opened, with a comment explaining the process again.
 
@@ -52,7 +55,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Repository,
-  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'Command', 'Sweep')][string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'IssueOpened', 'Command', 'Sweep')][string]$Mode,
   [int]$Number = 0,
   [long]$CommentId = 0,
   [string]$Actor = '',
@@ -277,6 +280,14 @@ function Invoke-IntakeCommand {
   }
 }
 
+function Invoke-IssueOpened {
+  <# .SYNOPSIS Accepts an issue its maintainer author opened; leaves anyone else's for a maintainer. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Issue, [Parameter(Mandatory)][string]$Author)
+  if (-not (Test-MaintainerRole -RoleName (Get-RepositoryRole -Repository $Repository -Login $Author))) { return }
+  [void](Invoke-Gh -Arguments @('issue', 'edit', "$Issue", '-R', $Repository, '--add-label', 'accepted', '--remove-label', 'needs-triage'))
+  Write-Host "Issue #${Issue}: opened by a maintainer, accepted."
+}
+
 function Invoke-IntakeSweep {
   <# .SYNOPSIS Closes the outside pull requests still without an accepted issue after the grace period. #>
   param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Days)
@@ -298,6 +309,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 switch ($Mode) {
   'PullRequest' { Invoke-IntakeSync -Repository $Repository -Number $Number }
   'Issue' { Update-PullRequestsClosing -Repository $Repository -Issue $Number }
+  'IssueOpened' { Invoke-IssueOpened -Repository $Repository -Issue $Number -Author $Actor }
   'Command' {
     $body = (Invoke-Gh -Arguments @('api', "repos/$Repository/issues/comments/$CommentId", '--jq', '.body')) -join "`n"
     Invoke-IntakeCommand -Repository $Repository -Issue $Number -Body $body -Actor $Actor -CommentId $CommentId -IsPullRequest:$IsPullRequest

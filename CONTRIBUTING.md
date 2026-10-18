@@ -22,7 +22,7 @@ flowchart LR
    or comment on an existing one. New features start in
    [Discussions](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas).
 2. **Wait for `accepted`.** A maintainer labels the issue `accepted` once its value and approach are
-   agreed. Issues labeled `accepted` and `help wanted` or `good first issue` are open for anyone to take:
+   agreed. An issue a maintainer opens is accepted when it is opened. Issues labeled `accepted` and `help wanted` or `good first issue` are open for anyone to take:
    say so on the issue first.
 3. **Open the pull request** with `Fixes #N` in the description, as plain text. Its title is a Conventional
    Commit, every commit is signed off, and it meets the [requirements](#pull-request-requirements).
@@ -368,7 +368,7 @@ are turned off.
 
 **Triage.** Every new issue is labeled `needs-triage`. A maintainer responds within 7 days and either
 accepts it, discusses it further, closes it as a duplicate with a link to the original, or closes it with
-the reason (`wontfix`, `invalid`). A maintainer accepts with a `/accept` comment on the issue (or the
+the reason (`wontfix`, `invalid`). An issue a maintainer opens is accepted automatically. A maintainer accepts with a `/accept` comment on the issue (or the
 `accepted` label), and declines with `/decline <reason>`, which labels it `wontfix` and closes it as not
 planned; either removes `needs-triage`. Accepting re-runs the gate on every open pull request that closes
 the issue. Bugs are never closed as stale. The labels,
