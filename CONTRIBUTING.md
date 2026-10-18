@@ -355,8 +355,11 @@ pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <number>          # -WhatIf s
 ```
 
 It starts a pending review (or adds to the one already started), puts each finding on its line, puts
-the rest in the review summary, and never submits. GitHub will not add a summary to a pending review
-started in the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
+the rest in file-level review threads (on the finding's file, or pinned to the first changed file), and
+never submits. Pull requests into develop, main and release branches require every review thread to be
+resolved before merge, so each finding is answered; a review summary can't be resolved, so the script
+uses it only when it can't read the diff. GitHub will not add a summary to a pending review started in
+the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
 personal token: the comments are posted with the workflow's own token, and the draft is written from
 the maintainer's machine.
 

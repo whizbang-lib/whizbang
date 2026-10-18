@@ -57,7 +57,7 @@ Describe 'Get-ReviewDraftPlan' {
     $other = New-ReviewFinding -Id 'x:CHANGELOG.md' -Rule 'x' -Severity blocking -Body 'Add an entry.' -Path 'CHANGELOG.md'
     $plan = Get-ReviewDraftPlan -Comments @(New-BotComment @($other)) -HeadSha $Head -DiffText $Diff
     $plan.Threads[0].Path | Should -Be 'src/A.cs'
-    $plan.Threads[0].Body | Should -BeLike 'About `CHANGELOG.md`, pinned to this file so it can be resolved: Add an entry.*'
+    $plan.Threads[0].Body.StartsWith('About `CHANGELOG.md`, pinned to this file so it can be resolved: Add an entry.') | Should -BeTrue
   }
 
   It 'marks a line comment as a line thread' {

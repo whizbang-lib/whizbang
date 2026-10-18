@@ -575,8 +575,10 @@ function Get-ReviewDraftPlan {
       Reads findings only from comments posted by the workflow's bot account: anyone can post text in
       the same format. Every run keeps its comment, so only each source's latest block counts; when that
       block checked a commit other than the pull request's head, the source is stale and is reported, not
-      drafted. A finding whose path and line are in the diff becomes a line comment;
-      any other finding goes in the summary. Every body is plain text with a hidden marker naming its
+      drafted. A finding whose path and line are in the diff becomes a line comment. Any other finding
+      becomes a file-level thread, which, like a line comment, must be resolved before merge: on its own
+      file when that file is in the diff (naming the line), otherwise on the first file in the diff, saying
+      it is pinned there. Only when the diff could not be read does a finding go in the summary. Every body is plain text with a hidden marker naming its
       finding, so a re-run drafts only what is new.
   #>
   [CmdletBinding()]
@@ -587,6 +589,7 @@ function Get-ReviewDraftPlan {
     [AllowEmptyCollection()][string[]]$DraftedIds = @()
   )
   $commentable = Get-CommentableLines -DiffText $DiffText
+  $files = @(Get-DiffFiles -DiffText $DiffText | ForEach-Object { $_.Path })
   $drafted = [System.Collections.Generic.HashSet[string]]::new([string[]]@($DraftedIds), [StringComparer]::Ordinal)
   $threads = [System.Collections.Generic.List[object]]::new()
   $summary = [System.Collections.Generic.List[object]]::new()
@@ -610,7 +613,18 @@ function Get-ReviewDraftPlan {
       if (-not $drafted.Add($id)) { $already++; continue }
       $text = Protect-ReviewText $f.Body
       if ($f.Path -and $null -ne $f.Line -and $commentable.Contains("$($f.Path):$($f.Line)")) {
-        $threads.Add([pscustomobject]@{ Id = $id; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+        $threads.Add([pscustomobject]@{ Id = $id; SubjectType = 'LINE'; Path = $f.Path; Line = $f.Line; Body = "$text`n`n<!-- wr:$id -->" })
+      } elseif ($files.Count -gt 0) {
+        # A file-level thread is resolvable, where the review summary is not.
+        if ($f.Path -and $files -contains $f.Path) {
+          $path = $f.Path
+          $prefix = if ($null -ne $f.Line) { "Line $($f.Line): " } else { '' }
+        } else {
+          $path = $files[0]
+          $about = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``" } elseif ($f.Path) { "``$($f.Path)``" } else { 'the pull request' }
+          $prefix = "About $about, pinned to this file so it can be resolved: "
+        }
+        $threads.Add([pscustomobject]@{ Id = $id; SubjectType = 'FILE'; Path = $path; Line = $null; Body = "$prefix$text`n`n<!-- wr:$id -->" })
       } else {
         $where = if ($f.Path -and $null -ne $f.Line) { "``$($f.Path):$($f.Line)``: " } elseif ($f.Path) { "``$($f.Path)``: " } else { '' }
         $summary.Add([pscustomobject]@{ Id = $id; Body = "- $where$text <!-- wr:$id -->" })
