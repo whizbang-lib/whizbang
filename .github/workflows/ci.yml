@@ -1080,9 +1080,12 @@ jobs:
 
   linked-issue:
     name: Gate · Linked issue
-    # Every pull request closes an issue in this repository (Fixes #N) that was opened before it, so each
-    # change is tied to a work item and discussed before it is reviewed (CONTRIBUTING.md, "Open an issue
-    # first"). Bots and the release pull request into main are exempt; the rules live in
+    # Every pull request closes an issue in this repository (Fixes #N) that was opened before it and that a
+    # maintainer accepted (the accepted label, by the maintain or admin role; a maintainer's own pull
+    # request needs no acceptance), so each change is tied to a work item, discussed and agreed before it
+    # is reviewed (CONTRIBUTING.md, "How a change gets in"). pr-intake.yml re-runs this job when an issue
+    # is accepted. A maintainer's linked-issue:late label lets the issue be newer than the pull request. Bots
+    # and the release pull request into main are exempt; the rules live in
     # .github/scripts/Test-LinkedIssue.ps1, tested by script-tests. The pull request is read from the API,
     # not the event, so adding the keyword and re-running this job is enough. It runs again in the merge
     # queue, so the link cannot be removed after the pull request run passed. In ci-result's needs.
@@ -1171,12 +1174,15 @@ jobs:
           CLOSING=$(jq 'length' <<< "$CLOSING_JSON")
           TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
           LABELS=$(jq -r '[.[].labels[]] | unique | join(",")' <<< "$CLOSING_JSON")
+          PR_LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | join(",")')
+          # The docs-site pull requests that document this one: found from the one link either side makes
+          DOCS_JSON=$(pwsh -NoProfile -File .github/scripts/Get-DocsPullRequests.ps1 -Repository "${{ github.repository }}" -PullRequest "$PR")
           BOT=()
           if [ "$AUTHOR_TYPE" = "Bot" ]; then BOT=(-AuthorIsBot); fi
           pwsh -NoProfile -File .github/scripts/Get-ReviewChecks.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA" \
             -BaseRef "$BASE_REF" -HeadRef "$HEAD_REF" -PullRequest "$PR" -BodyFile "$RUNNER_TEMP/pr-body.md" \
             -ClosingIssueCount "$CLOSING" -RunUrl "$RUN_URL" -OutFile "$RUNNER_TEMP/review-checks.md" \
-            -Title "$TITLE" -ClosingIssueLabels "$LABELS" "${BOT[@]}"
+            -Title "$TITLE" -ClosingIssueLabels "$LABELS" -Labels "$PR_LABELS" -DocsPullRequestsJson "$DOCS_JSON" "${BOT[@]}"
       # A fork's token cannot comment; the findings are then in this job's log only.
       - name: Post the review-checks comment
         continue-on-error: true

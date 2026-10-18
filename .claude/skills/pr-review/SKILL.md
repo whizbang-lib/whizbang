@@ -51,8 +51,11 @@ pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <n> -WhatIf   # the plan
 pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <n>           # starts or extends the pending review
 ```
 
-It puts each finding on its line, puts the rest in the review summary (or prints them to paste at
-submit, when the pending review has no summary yet), and skips what is already drafted. If it reports a block for another commit, CI has not finished on the head: wait for it rather
+It puts each finding on its line, and the rest in file-level threads: on the finding's own file when
+it is in the diff, otherwise pinned to the first changed file with a note saying so. Both kinds must be
+resolved before merge ("Require conversation resolution" is on for develop, main and release/**); the
+review summary can't be resolved, so it is used only when the diff can't be read. It skips what is
+already drafted. If it reports a block for another commit, CI has not finished on the head: wait for it rather
 than drafting stale findings. Do not re-derive these findings by hand, and do not repeat them in the
 judgment comments.
 
@@ -68,8 +71,10 @@ description gives a reason the maintainer has accepted.
    `ai-docs/aot-requirements.md`.
 2. **The docs repository is updated.** Any new or changed public API, option, diagnostic, behavior a
    consumer can observe, or operational procedure has a companion pull request on the docs site
-   (`whizbang-lib.github.io`, targeting `develop`), linked from this one. "The page should say X" in a
-   description is a finding, not a substitute. Owner: `ai-docs/documentation-maintenance.md`.
+   (`whizbang-lib.github.io`, targeting `develop`) that names this one ("Docs for whizbang-lib/whizbang#N";
+   the review checks find it from that one link, rule `pr.docs-link`). The checks prove the docs pull
+   request exists; the review reads it. "The page should say X" in a description is a finding, not a
+   substitute. Only a maintainer's `/docs-not-needed` waives it. Owner: `ai-docs/documentation-maintenance.md`.
 3. **100% of new lines and 100% of new branches are covered,** and the whole-library hand-written branch
    gate stays at 100%. Every outcome of every new decision is taken by a test, not just every line.
    An exclusion is member-level, rare, and justified in place. Owner: `ai-docs/coverage-exclusions.md`.
@@ -159,7 +164,7 @@ writing a comment that cites it, and cite it in the comment.
 | work-coordination SQL, claiming, the commit-order stamper, schema initialization, serialization | A hot path or a startup path: is there a measurement or a stated reason? Does any statement depend on an earlier statement's committed effect? | `ai-docs/load-under-bulk-import.md`, `ai-docs/schema-initialization-connections.md` |
 | DI registration, `AddWhizbang*`, startup | Does the framework ever silently do less than the consumer asked for? | `ai-docs/startup-registration-invariants.md` |
 | perspective storage, temporal values | One stored unit, one reader. | `ai-docs/perspective-stored-forms.md` |
-| the description | It closes an issue opened before it (`Fixes #N`, not in backticks), and that issue is the discussion this change answers: the change does what the issue asked, no more. The "Gate · Linked issue" check enforces the link; the review checks whether it is the right issue. | CONTRIBUTING.md "Open an issue first" |
+| the description | It closes an issue opened before it (`Fixes #N`, not in backticks) and `accepted` by a maintainer, and that issue is the discussion this change answers: the change does what the issue and its acceptance agreed, no more, and follows the approach settled there. The "Gate · Linked issue" check enforces the link and the acceptance; the review checks whether it is the right issue and whether the change matches what was agreed. | CONTRIBUTING.md "How a change gets in" |
 | anything, including the description and commit messages | No client, consumer, tenant, environment or person named. No secret or connection detail. Untrusted input stays untrusted; SQL takes values as parameters. | CLAUDE.md first section, `docs/security-assurance-case.md` |
 | prose: comments, docs, description | en-US and no em-dashes in places the regex cannot judge (identifiers, quoted text). Conventional Commit titles. A description that says what changed and why. | CLAUDE.md "Language", CONTRIBUTING.md |
 | `.github/**`, `scripts/**` | Script standards; least-privilege workflow permissions; actions pinned to a commit SHA. | `ai-docs/script-standards.md` |
@@ -183,7 +188,11 @@ One comment per finding, on the line it is about, in this shape:
 Write for the author: plain, specific, no sarcasm. Thank an outside contributor once, in the summary.
 Use the same spelling and punctuation rules the code follows.
 
-Add a comment to the pending review (the line must be in the diff; otherwise put it in the summary):
+Add a comment to the pending review. A finding on a line in the diff goes on that line. Anything else
+(a file-wide concern, a missing docs pull request or CHANGELOG entry, a question about the whole
+change) goes in a **file-level thread**, on the file it is about, or on the most relevant changed file
+saying "About the pull request, pinned to this file so it can be resolved:". Never put an actionable
+item in the summary: it can't be resolved, so nothing makes it get answered.
 
 ```bash
 # the reviewer's pending review id (Invoke-PrReviewDraft.ps1 creates it if none exists)
@@ -193,9 +202,13 @@ gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$
 # one thread on the new side of the diff
 gh api graphql -f query='mutation($rv:ID!,$p:String!,$l:Int!,$b:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$rv,path:$p,line:$l,side:RIGHT,body:$b}){thread{id}}}' \
   -f rv=<PRR_id> -f p=<path> -F l=<line> -f b="<body>"
+
+# one file-level thread (resolvable like a line comment)
+gh api graphql -f query='mutation($rv:ID!,$p:String!,$b:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$rv,path:$p,subjectType:FILE,body:$b}){thread{id}}}' \
+  -f rv=<PRR_id> -f p=<path> -f b="<body>"
 ```
 
-To add to the summary, read the current body first and write it back with the addition
+The summary is for the overall verdict and thanks, not for items to fix. To add to it, read the current body first and write it back with the addition
 (`updatePullRequestReview` replaces the whole body; the draft script's summary lines must survive).
 A pending review started in the browser has no body, and GitHub refuses to give it one until it is
 submitted ("Could not edit a review with a missing body"): give the reviewer the summary text to paste

@@ -287,9 +287,12 @@ Describe 'Find-PullRequestFindings' {
 
 Describe 'Find-PullRequestTypeFindings' {
   BeforeAll {
-    function Find-Type([string]$Title, [string[]]$Paths, [string[]]$Labels = @('bug'), [string]$Body = '', [switch]$Bot, [string]$Base = 'develop', [string]$Head = 'fix/x') {
+    # A docs-site pull request that links back, unless a test says otherwise.
+    $script:GoodDocs = @([pscustomobject]@{ Number = 1206; State = 'OPEN'; ReferencesThis = $true })
+    function Find-Type([string]$Title, [string[]]$Paths, [string[]]$Labels = @('bug'), [string]$Body = '', [switch]$Bot, [string]$Base = 'develop',
+      [string]$Head = 'fix/x', [object[]]$Docs = $script:GoodDocs, [string[]]$PrLabels = @()) {
       @(Find-PullRequestTypeFindings -Title $Title -Body $Body -ChangedPaths $Paths -ClosingIssueLabels $Labels `
-          -BaseRef $Base -HeadRef $Head -AuthorIsBot:$Bot)
+          -BaseRef $Base -HeadRef $Head -AuthorIsBot:$Bot -DocsPullRequests $Docs -Labels $PrLabels)
     }
   }
 
@@ -303,13 +306,41 @@ Describe 'Find-PullRequestTypeFindings' {
     (Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'CHANGELOG.md')).Rule | Should -Be @('pr.fix-test')
   }
 
-  It 'asks a library feature for its docs-site pull request' {
-    (Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels @('feature')).Rule | Should -Be @('pr.feat-docs')
+  It 'asks a library feat, fix or perf for its docs-site pull request, saying how to link it' -TestCases @(
+    @{ T = 'feat: x'; L = @('feature') }, @{ T = 'fix: x'; L = @('bug') }, @{ T = 'perf: x'; L = @() }
+  ) {
+    $f = @(Find-Type -Title $T -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Labels $L -Docs @())
+    $f.Rule | Should -Be @('pr.docs-link')
+    $f[0].Severity | Should -Be 'blocking'
+    $f[0].Body | Should -Match 'Docs for whizbang-lib/whizbang#'
+    $f[0].Body | Should -Match '/recheck'
+    $f[0].Body | Should -Match '/docs-not-needed'
   }
 
-  It 'accepts a feature that links its docs-site pull request' {
-    $body = 'Docs: https://github.com/whizbang-lib/whizbang-lib.github.io/pull/1206'
-    @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Body $body).Count | Should -Be 0
+  It 'does not count a docs-site pull request closed without merging' {
+    $closed = @([pscustomobject]@{ Number = 9; State = 'CLOSED'; ReferencesThis = $true })
+    (Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $closed).Rule | Should -Be @('pr.docs-link')
+  }
+
+  It 'counts a merged docs-site pull request' {
+    $merged = @([pscustomobject]@{ Number = 9; State = 'MERGED'; ReferencesThis = $true })
+    @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $merged).Count | Should -Be 0
+  }
+
+  It 'asks a docs-site pull request linked only from here to link back' {
+    $oneWay = @([pscustomobject]@{ Number = 9; State = 'OPEN'; ReferencesThis = $false })
+    $f = @(Find-Type -Title 'feat: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Labels @('feature') -Docs $oneWay)
+    $f.Rule | Should -Be @('pr.docs-backlink')
+    $f[0].Body | Should -Match '#9'
+  }
+
+  It 'asks nothing about docs when a maintainer marked them not needed' {
+    @(Find-Type -Title 'fix: x' -Paths @('src/A.cs', 'tests/ATests.cs', 'CHANGELOG.md') -Docs @() -PrLabels @('docs:not-needed')).Count | Should -Be 0
+  }
+
+  It 'asks no docs of a refactor, a test or a change outside the library' {
+    @(Find-Type -Title 'refactor: x' -Paths @('src/A.cs', 'CHANGELOG.md') -Docs @()).Rule | Should -Not -Contain 'pr.docs-link'
+    @(Find-Type -Title 'fix(ci): x' -Paths @('.github/workflows/ci.yml') -Docs @()).Rule | Should -Not -Contain 'pr.docs-link'
   }
 
   It 'asks a library feat or fix for a CHANGELOG.md entry' -TestCases @(@{ T = 'fix: x' }, @{ T = 'feat(core): x' }) {

@@ -1,20 +1,23 @@
-# CODEOWNERS - Require approval for all changes
-# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# The pipeline, the gates and the build inputs: changing any of these needs a build admin's approval,
+# because the rulesets on develop, main and release/** require a code owner's review (GOVERNANCE.md,
+# "Roles"). Maintainers and committers can propose such a change; a build admin approves it.
+# GitHub reads this file from the base branch, so a pull request cannot loosen it for itself.
+# Every pattern must match a file (.github/scripts/tests/CodeOwners.Tests.ps1).
 
-# Default owner for everything
-* @philcarbone
-
-# Critical files - require explicit approval
-.github/ @philcarbone
-Directory.Build.props @philcarbone
-Directory.Build.targets @philcarbone
-Directory.Packages.props @philcarbone
-*.sln @philcarbone
-
-# Source generators (security sensitive - could inject code)
-src/Whizbang.Generators/ @philcarbone
-src/Whizbang.Generators.Shared/ @philcarbone
-
-# Package configuration
-**/*.csproj @philcarbone
-**/nuget.config @philcarbone
+/.github/                   @whizbang-lib/build-admins
+/scripts/                   @whizbang-lib/build-admins
+/.config/                   @whizbang-lib/build-admins
+/Directory.Build.props      @whizbang-lib/build-admins
+/Directory.Build.targets    @whizbang-lib/build-admins
+/Directory.Packages.props   @whizbang-lib/build-admins
+/global.json                @whizbang-lib/build-admins
+/nuget.config               @whizbang-lib/build-admins
+/dotnet-tools.json          @whizbang-lib/build-admins
+/GitVersion.yml             @whizbang-lib/build-admins
+/codecov.yml                @whizbang-lib/build-admins
+/codecoverage.config        @whizbang-lib/build-admins
+/codecoverage.runsettings   @whizbang-lib/build-admins
+/sonar.config               @whizbang-lib/build-admins
+/BannedSymbols.txt          @whizbang-lib/build-admins
+/BannedSymbols.Generators.txt @whizbang-lib/build-admins
+/whizbang.snk               @whizbang-lib/build-admins

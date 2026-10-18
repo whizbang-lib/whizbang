@@ -2,8 +2,64 @@
 
 Thank you for your interest in contributing to Whizbang! This document provides guidelines and instructions for contributing.
 
+## How a change gets in
+
+**Every pull request implements an accepted issue.** Talk first, code second: the issue is where a
+change's value, design and approach are agreed, and it is far cheaper to change direction there than in
+review.
+
+```mermaid
+flowchart LR
+    A["Idea or bug"] --> B["Issue<br/>(or a Discussion first,<br/>for a new feature)"]
+    B --> C{"Maintainer<br/>agrees?"}
+    C -- "accepted" --> D["Pull request<br/>Fixes #N"]
+    C -- "declined" --> X["Closed, with the reason"]
+    D --> E["Required checks<br/>and review"]
+    E --> F["Merged; the issue closes"]
+```
+
+1. **Open an issue** with one of the [forms](https://github.com/whizbang-lib/whizbang/issues/new/choose),
+   or comment on an existing one. New features start in
+   [Discussions](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas).
+2. **Wait for `accepted`.** A maintainer labels the issue `accepted` once its value and approach are
+   agreed. Issues labeled `accepted` and `help wanted` or `good first issue` are open for anyone to take:
+   say so on the issue first.
+3. **Open the pull request** with `Fixes #N` in the description, as plain text. Its title is a Conventional
+   Commit, every commit is signed off, and it meets the [requirements](#pull-request-requirements).
+
+4. **Document it.** A library `feat`, `fix` or `perf` has a pull request on the
+   [docs site](https://github.com/whizbang-lib/whizbang-lib.github.io); see
+   [Docs for a library change](#docs-for-a-library-change).
+
+The required **Gate · Linked issue** check enforces step 2. A pull request without an accepted issue is
+labeled `issue:none` or `issue:awaiting-acceptance`, gets one comment explaining this, and is closed
+after 14 days if the issue is still not accepted; reopen it once it is. Maintainers' own pull requests
+need the issue but not the acceptance.
+
+### Docs for a library change
+
+Code and docs live in two repositories, so a change and its documentation are two pull requests, and one
+link joins them. Open the code pull request first, then the docs pull request with
+`Docs for whizbang-lib/whizbang#N` in its description (N is the code pull request). GitHub shows that
+link on the code pull request's timeline, and the review checks find it there, so the code pull request
+needs no edit. Comment `/recheck` on the code pull request after opening the docs one. The docs pull
+request is open or merged; one closed without merging does not count.
+
+### Commands
+
+Comment these as the first line of a comment:
+
+| Command | Where | Who | What it does |
+|---|---|---|---|
+| `/accept` | issue | maintainer | Labels it `accepted` (removing `needs-triage`) and re-checks the pull requests that close it |
+| `/decline <reason>` | issue | maintainer | Labels it `wontfix` and closes it as not planned, with the reason |
+| `/late-issue` | pull request | maintainer | Labels it `linked-issue:late`: its issue may be newer than it |
+| `/docs-not-needed` | pull request | maintainer | Labels it `docs:not-needed`: the library change needs no docs pull request |
+| `/recheck` | pull request | its author or a committer | Re-runs its failed checks, after opening the docs pull request or editing the description |
+
 ## Table of Contents
 
+- [How a change gets in](#how-a-change-gets-in)
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Workflow](#development-workflow)
@@ -83,9 +139,9 @@ the pull request must contain:
 
 | Type | Must contain | Checked by |
 |---|---|---|
-| any | A closing keyword for an issue opened first | Gate · Linked issue |
+| any | A closing keyword for an accepted issue opened first | Gate · Linked issue |
 | `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
-| `feat` | A library feature links its docs-site pull request | Review checks |
+| `feat`, `fix`, `perf` in the library | A docs-site pull request, open or merged, that names this one ([Docs](#docs-for-a-library-change)), unless a maintainer comments `/docs-not-needed` | Review checks |
 | `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
 | `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
 
@@ -208,9 +264,16 @@ Fixes #123
 ignores it. A pull request that resolves two issues names both (`Fixes #123`, `Fixes #124`).
 
 This is enforced: the required **Gate · Linked issue** check fails a pull request that closes no issue in
-this repository, or whose issues were all opened after it. It reads the current description, so adding the
+this repository, whose issues were all opened after it, or none of whose issues is `accepted` by a
+maintainer (the maintain or admin role, which the `maintainers` team grants; see
+[How a change gets in](#how-a-change-gets-in)). A maintainer's own pull request needs no acceptance. It reads the current description, so adding the
 keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
 and the release pull request into `main` are exempt.
+
+When the issue can't come first (a pull request opened before this rule existed, or a small fix a
+maintainer agrees to file afterwards), a maintainer adds the `linked-issue:late` label. The pull request
+must still close an issue; the label only lets that issue be newer than the pull request, and the check's
+summary says it was allowed. Re-run the job after adding the label.
 
 ### Issues: types and triage
 
@@ -229,8 +292,11 @@ are turned off.
 | A security vulnerability | The [private advisory form](https://github.com/whizbang-lib/whizbang/security/advisories/new), never a public issue | [SECURITY.md](SECURITY.md) |
 
 **Triage.** Every new issue is labeled `needs-triage`. A maintainer responds within 7 days and either
-confirms it (removing `needs-triage`, keeping its type label), closes it as a duplicate with a link to the
-original, or closes it with the reason (`wontfix`, `invalid`). Bugs are never closed as stale. The labels,
+accepts it, discusses it further, closes it as a duplicate with a link to the original, or closes it with
+the reason (`wontfix`, `invalid`). A maintainer accepts with a `/accept` comment on the issue (or the
+`accepted` label), and declines with `/decline <reason>`, which labels it `wontfix` and closes it as not
+planned; either removes `needs-triage`. Accepting re-runs the gate on every open pull request that closes
+the issue. Bugs are never closed as stale. The labels,
 and what each means, are listed in `.github/labels.txt`; the "Test · Pipeline scripts" check fails if a form
 adds a label that is not there.
 
@@ -350,8 +416,11 @@ pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <number>          # -WhatIf s
 ```
 
 It starts a pending review (or adds to the one already started), puts each finding on its line, puts
-the rest in the review summary, and never submits. GitHub will not add a summary to a pending review
-started in the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
+the rest in file-level review threads (on the finding's file, or pinned to the first changed file), and
+never submits. Pull requests into develop, main and release branches require every review thread to be
+resolved before merge, so each finding is answered; a review summary can't be resolved, so the script
+uses it only when it can't read the diff. GitHub will not add a summary to a pending review started in
+the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
 personal token: the comments are posted with the workflow's own token, and the draft is written from
 the maintainer's machine.
 
