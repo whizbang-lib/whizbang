@@ -12,11 +12,12 @@ BeforeAll {
         [string]$CreatedAt = '2026-10-18T12:00:00Z',
         [string]$BaseRef = 'develop',
         [string]$HeadRef = 'fix/thing',
-        [object[]]$Issues = @([pscustomobject]@{ Number = 12; CreatedAt = [datetimeoffset]'2026-10-18T11:00:00Z' })
+        [object[]]$Issues = @([pscustomobject]@{ Number = 12; CreatedAt = [datetimeoffset]'2026-10-18T11:00:00Z' }),
+        [string[]]$Labels = @()
     )
     [pscustomobject]@{
       Number = $Number; Author = $Author; AuthorIsBot = $AuthorIsBot; CreatedAt = [datetimeoffset]$CreatedAt
-      BaseRef = $BaseRef; HeadRef = $HeadRef; Issues = $Issues
+      BaseRef = $BaseRef; HeadRef = $HeadRef; Issues = $Issues; Labels = $Labels
     }
   }
 }
@@ -43,6 +44,28 @@ Describe 'Get-LinkedIssueVerdict' {
     $v.Pass | Should -BeFalse
     $v.Problems[0] | Should -Match '#13'
     $v.Problems[0] | Should -Match 'opened after'
+  }
+
+  It 'passes an issue opened after the pull request when a maintainer added the linked-issue:late label' {
+    $late = [pscustomobject]@{ Number = 13; CreatedAt = [datetimeoffset]'2026-10-18T13:00:00Z' }
+    $v = Get-LinkedIssueVerdict -PullRequest (New-TestPullRequest -Issues @($late) -Labels @('bug', 'linked-issue:late'))
+    $v.Pass | Should -BeTrue
+    $v.Exempt | Should -BeFalse
+    $v.Reason | Should -Match '#13'
+    $v.Reason | Should -Match 'opened after the pull request'
+    $v.Reason | Should -Match 'linked-issue:late'
+  }
+
+  It 'still fails a pull request that closes no issue when it has the linked-issue:late label' {
+    $v = Get-LinkedIssueVerdict -PullRequest (New-TestPullRequest -Issues @() -Labels @('linked-issue:late'))
+    $v.Pass | Should -BeFalse
+    $v.Problems[0] | Should -Match 'closes no issue'
+  }
+
+  It 'names the linked-issue:late label when every linked issue was opened after the pull request' {
+    $late = [pscustomobject]@{ Number = 13; CreatedAt = [datetimeoffset]'2026-10-18T13:00:00Z' }
+    $v = Get-LinkedIssueVerdict -PullRequest (New-TestPullRequest -Issues @($late))
+    $v.Problems[0] | Should -Match 'linked-issue:late'
   }
 
   It 'passes when one linked issue came first even if another came later' {
@@ -96,8 +119,14 @@ Describe 'ConvertFrom-PullRequestJson' {
     $pr.AuthorIsBot | Should -BeFalse
     $pr.BaseRef | Should -Be 'develop'
     $pr.HeadRef | Should -Be 'fix/thing'
+    @($pr.Labels).Count | Should -Be 0
     @($pr.Issues).Number | Should -Be @(12)
     $pr.Issues[0].CreatedAt | Should -Be ([datetimeoffset]'2026-10-18T11:00:00Z')
+  }
+
+  It 'reads the pull request labels' {
+    $json = '{"data":{"repository":{"pullRequest":{"number":9,"createdAt":"2026-10-18T12:00:00Z","baseRefName":"develop","headRefName":"fix/x","author":{"login":"dana","__typename":"User"},"labels":{"nodes":[{"name":"bug"},{"name":"linked-issue:late"}]},"closingIssuesReferences":{"nodes":[]}}}}}'
+    @((ConvertFrom-PullRequestJson -Json $json -Repository 'o/r').Labels) | Should -Be @('bug', 'linked-issue:late')
   }
 
   It 'marks a bot author' {
