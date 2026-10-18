@@ -67,6 +67,11 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E39 | An envelope registered for an object payload read back as null when looked up by the message's type (every untyped send, invoke and batch); publish and cascade local runs registered none | fixed |
 | E40 | Cascade and receptor-result paths generated a stream id only for IHasStreamId messages, so a plain [StreamId] property stayed empty; local invoke generated none | fixed |
 | E41 | Batch calls ignored the caller's priority and payload limit, and the batch outbox write ignored the token | fixed |
+| E42 | `CascadeMessageAsync` with no source envelope and no ambient context handed the handlers a placeholder envelope with no message; message security refused it as a null payload (found by the real-Postgres tests) | fixed |
+| E43 | Cause before effect: a send, a cascade and every batch wrote the message's copy after its local run, so an event its handler emitted reached the outbox and the event store first; a publish only won the race (found by the real-Postgres tests) | fixed |
+| E44 | With message security and no caller context, a result-returning local invoke refuses after its handler ran (PostLifecycle stage) while every other entry runs | question #1419 |
+| E45 | A publish's copy write, and a cascade's (no token on the generated cascade), never received the caller's cancellation token, so a write blocked in the database could not be canceled | fixed |
+| E46 | A flush its caller canceled left its work queued: the scoped strategy's disposal safety net (and the immediate strategy's next flush) wrote it anyway with no token, so a canceled dispatch still sent its copy and its caller waited for it | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
@@ -85,15 +90,18 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 
 ## Integration (real Postgres, two services)
 
-- [ ] Marked copy not run twice by the sender, run by the receiver; unmarked echo skipped
-- [ ] Owned command never appears in `wh_outbox`, on every entry point and handler shape
-- [ ] System command handled once on every service
-- [ ] Unowned send with a local handler: handled here and by the owner
-- [ ] Scheduled publish and scheduled send each handled exactly once by their own service, single and batch
-- [ ] Event store: store-only row never transported; cause-before-effect ordering for both cascade forms; command routed store-only throws
-- [ ] Rollback leaves no outbox or event-store rows; cancellation during flush leaves no partial rows
-- [ ] Large body still offloads in the publish worker
-- [ ] RabbitMQ and Azure Service Bus smoke: unowned send with local handler, marked copy, scheduled delivery
+`DispatchExecutionIntegrationTests` and `DispatchRoundTripIntegrationTests` (real outbox, real drain and inbox workers, wire envelope serialized between services):
+
+- [x] Marked copy not run twice by the sender (PreOutbox and when it comes back), run once by the receiver; unmarked copy's only handler runs at PreOutbox
+- [x] Owned command never appears in `wh_outbox`, on every entry point (Route.Outbox included); owned command with no handler refused
+- [x] System command handled once on the sender and broadcast (`SystemCommandBroadcastIntegrationTests`)
+- [x] Unowned send with a local handler: handled here, one marked copy, run once by the receiving service
+- [x] Scheduled publish and scheduled send, single and batch: nothing runs now, one copy carrying the schedule and the deferred run, run exactly once when it comes back (fails if the deferred-copy rule is removed)
+- [x] Event store: store-only row never transported; cause before effect for every entry and effect route (E43); command routed store-only refused
+- [x] Copies diverted into a unit of work that never commits leave no rows
+- [x] Cancellation while the copy is being written (provably queued behind a lock): the caller sees the cancellation and no rows are left, single, batch and cascade (E45, E46)
+- [x] Offloaded body: the claim keeps the dispatch mark (existing hook test) and a rehydrated copy comes back with it (unit)
+- [x] RabbitMQ and Azure Service Bus: the dispatch mark (handled here, deferred, plain) survives a real broker round trip; the drain worker, inbox worker and wire serialization of the full trip are covered on Postgres above
 
 ## Generator
 

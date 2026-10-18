@@ -23,7 +23,7 @@ using Whizbang.Transports.RabbitMQ;
 namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 
 /// <summary>
-/// Integration tests verifying that ScopeDelta (security context) survives
+/// Integration tests verifying that ScopeDelta (security context) and the dispatch mark survive
 /// RabbitMQ transport publish → subscribe round-trip.
 /// </summary>
 /// <remarks>
@@ -218,6 +218,47 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNull()
         .Because("Envelope without ScopeDelta should have null scope after round-trip");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  // ========================================
+  // The dispatch mark (#1410 follow-up)
+  // ========================================
+
+  /// <summary>
+  /// The mark the sender's dispatch puts on a copy survives the broker: a copy the sender already handled
+  /// says so (its own inbox does not run it again), and a copy whose local run was deferred to its
+  /// schedule says that (its own inbox runs it when it comes back).
+  /// </summary>
+  /// <remarks>The subscription is consuming once SubscribeAsync returns: it awaits the bind and the consume.</remarks>
+  [Test]
+  [Timeout(90000)]
+  [Arguments(DispatchModes.Both, false)]
+  [Arguments(DispatchModes.Outbox, true)]
+  [Arguments(DispatchModes.Outbox, false)]
+  public async Task Publish_WithADispatchMark_ReceivePreservesTheMark_RabbitMQAsync(
+    DispatchModes mode, bool localDeferred, CancellationToken cancellationToken
+  ) {
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("dispatch-mark"),
+      DispatchContext = new MessageDispatchContext { Mode = mode, Source = MessageSource.Outbox, LocalDeferred = localDeferred },
+      Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var destination = _createUniqueDestination();
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e, filter: e => e.MessageId == envelope.MessageId);
+    var subscription = await _transport!.SubscribeAsync(awaiter.Handler, destination, cancellationToken);
+
+    try {
+      await _transport.PublishAsync(envelope, _toPublishDestination(destination), cancellationToken: cancellationToken);
+
+      var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+      await Assert.That(received.DispatchContext.Mode).IsEqualTo(mode)
+        .Because("whether the sender already handled the copy must survive the broker");
+      await Assert.That(received.DispatchContext.LocalDeferred).IsEqualTo(localDeferred)
+        .Because("whether the sender handles the copy when it comes back must survive the broker");
     } finally {
       subscription.Dispose();
     }
