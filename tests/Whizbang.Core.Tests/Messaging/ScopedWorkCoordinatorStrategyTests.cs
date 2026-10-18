@@ -34,6 +34,56 @@ public class ScopedWorkCoordinatorStrategyTests {
   // Priority 3 Tests: Scoped Strategy
   // ========================================
 
+  /// <summary>
+  /// A flush its caller canceled withdraws the work it was writing: the caller is told the write was
+  /// canceled, so the disposal safety net must not write it after all (#1410 follow-up). It used to,
+  /// with no token, so a canceled dispatch still sent its copy and its caller waited for it.
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_CanceledByItsCaller_DisposalDoesNotWriteTheWithdrawnWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator { HonorsCancellation = true };
+    var sut = new ScopedWorkCoordinatorStrategy(
+      coordinator: fakeCoordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+    _queueTestOutboxMessage(sut);
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, canceled.Token)).Throws<OperationCanceledException>();
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).IsEmpty()
+      .Because("the caller withdrew the work when it canceled; disposal writes only work nobody flushed");
+  }
+
+  /// <summary>
+  /// A flush that fails for any other reason, a cancellation its caller did not ask for included, keeps
+  /// its work for the disposal safety net, as before.
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_CanceledWithoutItsCallerAsking_KeepsTheWorkForDisposalAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator { HonorsCancellation = true, FailNextStoreWith = new OperationCanceledException("a timeout inside the store") };
+    var sut = new ScopedWorkCoordinatorStrategy(
+      coordinator: fakeCoordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+    _queueTestOutboxMessage(sut);
+    using var callers = new CancellationTokenSource();
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, callers.Token)).Throws<OperationCanceledException>();
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1)
+      .Because("the caller did not withdraw the work, so the disposal safety net still writes it");
+  }
+
   [Test]
   public async Task DisposeAsync_FlushesQueuedMessagesAsync() {
     // Arrange
@@ -987,11 +1037,24 @@ public class ScopedWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastOutboxCompletions { get; } = [];
     public MessageFailure[] LastInboxFailures { get; } = [];
 
+    /// <summary>A canceled store writes nothing and throws, as the database rolling the write back does.</summary>
+    public bool HonorsCancellation { get; init; }
+
+    /// <summary>The next store throws this, once.</summary>
+    public Exception? FailNextStoreWith { get; set; }
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
+      if (HonorsCancellation) {
+        cancellationToken.ThrowIfCancellationRequested();
+      }
+      if (FailNextStoreWith is { } failure) {
+        FailNextStoreWith = null;
+        throw failure;
+      }
       LastNewOutboxMessages = messages;
       return Task.CompletedTask;
     }

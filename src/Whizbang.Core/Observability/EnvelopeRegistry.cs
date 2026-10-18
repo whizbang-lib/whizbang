@@ -66,10 +66,15 @@ public sealed class EnvelopeRegistry : IEnvelopeRegistry, IDisposable {
   /// <inheritdoc />
   public MessageEnvelope<T>? TryGetEnvelope<T>(T message) where T : notnull {
     lock (_lock) {
-      if (_entries.TryGetValue(message, out var envelope)) {
-        return envelope as MessageEnvelope<T>;
+      // An envelope the dispatcher built for an object payload (a send or invoke of an object, a batch)
+      // is found by the message's own type too; it used to read back as null (#1410 follow-up)
+      if (!_entries.TryGetValue(message, out var envelope)) {
+        return null;
       }
-      return null;
+      if (envelope is MessageEnvelope<T> typed) {
+        return typed;
+      }
+      return envelope is MessageEnvelope<object> untyped ? MessageEnvelope<T>.RetypedFrom(untyped, message) : null;
     }
   }
 

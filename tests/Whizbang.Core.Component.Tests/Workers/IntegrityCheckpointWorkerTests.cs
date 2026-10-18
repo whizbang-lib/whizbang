@@ -94,6 +94,25 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   [Test]
+  public async Task RunCheckpointOnce_ServiceIdentityNotYetKnown_PublishesNothingAndKeepsTheWindowAsync() {
+    var coordinator = new CheckpointCoordinator {
+      LocalServiceId = Guid.Empty,
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 5, ToCommitSequence = 9 }
+    };
+    var dispatcher = new CaptureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, serviceName: "origin-svc");
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("the checkpoint stream IS the origin's id; with no id there is no stream to publish on, " +
+               "and publishing anyway throws every cycle.");
+    await Assert.That(coordinator.AdvanceCalls).IsEqualTo(0)
+      .Because("advancing the watermark without publishing would lose that window's counts; " +
+               "the next cycle, once the identity is known, checkpoints it instead.");
+  }
+
+  [Test]
   public async Task RunCheckpointOnce_WithTransport_PublishesToOwnEventTopicsAsync() {
     // THE ROUTING FIX: namespace-routing the checkpoint sends it to a control-plane topic no
     // consumer subscribes to (verified live: zero subscriptions — every checkpoint dropped at the
@@ -396,15 +415,20 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   private sealed class CheckpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _advanceCalls;
+
     public IntegrityCheckpointWindow? Window { get; init; }
-    public Guid LocalServiceId { get; } = TrackedGuid.New().Value;
+    public Guid LocalServiceId { get; init; } = TrackedGuid.New().Value;
+    public int AdvanceCalls => Volatile.Read(ref _advanceCalls);
     public List<string> OwnAuditedEventTypes { get; init; } = [];
 
     public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult<IReadOnlyList<string>>([.. OwnAuditedEventTypes]);
 
-    public Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult(Window);
+    public Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _advanceCalls);
+      return Task.FromResult(Window);
+    }
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);

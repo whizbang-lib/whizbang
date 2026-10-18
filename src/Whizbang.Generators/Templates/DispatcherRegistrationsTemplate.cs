@@ -172,7 +172,24 @@ namespace Whizbang.Core.Generated {
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
       services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
-      services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
+      // The invoker cascades what a receptor returns at a lifecycle stage. Without a cascader the
+      // container chose the invoker's constructor that has none, and every result returned at a
+      // worker stage was discarded without a word in any host that did not also add a transport
+      // consumer (#1410 follow-up). TryAdd: a transport consumer's registration is the same type.
+      services.TryAddSingleton<global::Whizbang.Core.Messaging.IEventCascader>(sp =>
+        new global::Whizbang.Core.Messaging.DispatcherEventCascader(sp,
+          sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>>()
+            ?? global::Microsoft.Extensions.Logging.Abstractions.NullLogger<global::Whizbang.Core.Messaging.DispatcherEventCascader>.Instance));
+      // Built explicitly so the cascader above always reaches it. The perspective-sync awaiter waits on
+      // the work coordinator a storage driver registers; a host with no driver has nothing to wait on
+      // and gets none, as it did when the container picked the constructor.
+      services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(
+        sp.GetRequiredService<IReceptorRegistry>(),
+        sp,
+        sp.GetService<global::Whizbang.Core.Messaging.IEventCascader>(),
+        sp.GetService<global::Whizbang.Core.Messaging.IWorkCoordinator>() is null
+          ? null
+          : sp.GetService<global::Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>()));
       // Default dedup store: records receptor invocations on the envelope itself.
       // TryAddSingleton lets a consumer replace this with a DB-backed implementation.
       services.TryAddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();

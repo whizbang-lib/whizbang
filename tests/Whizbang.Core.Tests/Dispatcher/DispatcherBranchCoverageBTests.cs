@@ -114,7 +114,10 @@ public sealed class DispatcherBranchCoverageBTests {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) => null;
+    // As generated code: an untyped publisher exists exactly when the message has a local receptor, which
+    // is how the dispatcher knows a publish has a handler here
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) =>
+      PublisherThrows ? static (_, _, _) => Task.CompletedTask : null;
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) => null;
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;

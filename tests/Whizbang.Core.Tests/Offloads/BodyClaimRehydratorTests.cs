@@ -213,6 +213,28 @@ public class BodyClaimRehydratorTests {
       .Because("the verified bytes travel with the dead letter, so the record holds the original body and not only the claim");
   }
 
+  /// <summary>
+  /// An offloaded copy comes back with the mark its sender's dispatch put on it (#1410 follow-up): a copy
+  /// the sender already handled still says so, and a deferred copy still says it runs when it comes back.
+  /// Without the mark the sender's own inbox would run a handled copy twice, or never run a deferred one.
+  /// </summary>
+  [Test]
+  [Arguments(DispatchModes.Both, false)]
+  [Arguments(DispatchModes.Outbox, true)]
+  public async Task MaybeRehydrateAsync_MarkedCopy_ComesBackWithItsDispatchMarkAsync(DispatchModes mode, bool localDeferred) {
+    var sp = _buildProvider(out var store);
+    var mark = new MessageDispatchContext { Mode = mode, Source = MessageSource.Outbox, LocalDeferred = localDeferred };
+    var (claim, originalTypeName) = await _uploadSerializedEnvelopeAsync(store, _buildJsonOptions(), mark);
+    var claimEnvelope = _wrapInClaimEnvelope(claim, originalTypeName);
+
+    var result = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+
+    await Assert.That(result.WasRehydrated).IsTrue();
+    await Assert.That(result.Envelope!.DispatchContext.Mode).IsEqualTo(mode);
+    await Assert.That(result.Envelope.DispatchContext.LocalDeferred).IsEqualTo(localDeferred);
+  }
+
   // Helpers
   // ============================================================
 
@@ -222,9 +244,9 @@ public class BodyClaimRehydratorTests {
   /// will use to deserialize.
   /// </summary>
   private static async Task<(MessageBodyClaim Claim, string OriginalTypeName)> _uploadSerializedEnvelopeAsync(
-      InMemoryStoreImpl store, JsonSerializerOptions jsonOptions) {
+      InMemoryStoreImpl store, JsonSerializerOptions jsonOptions, MessageDispatchContext? dispatchContext = null) {
     var originalEnvelope = new MessageEnvelope<JsonElement> {
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],

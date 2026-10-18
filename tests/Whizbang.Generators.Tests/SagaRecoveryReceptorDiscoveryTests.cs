@@ -64,7 +64,7 @@ public partial class OrderSaga {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("SagaItemCompletedRecoveryHandler");
   }
@@ -91,7 +91,7 @@ public partial class OrderSaga {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("SagaItemCompletedRecoveryHandler")
       .Because("which attribute overload declared the saga must not change whether its completion "
@@ -130,7 +130,7 @@ public partial class OrderSaga {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("SagaCompletionWatchdogTickHandler")
       .Because("without the tick handler a stranded saga has nothing scheduled to recover it, and "
@@ -154,7 +154,7 @@ public partial class OrderSaga<T> where T : class {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     if (dispatcher is not null) {
       await Assert.That(dispatcher).DoesNotContain("SagaItemCompletedRecoveryHandler");
     }
@@ -176,7 +176,7 @@ internal partial class OrderSaga {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     if (dispatcher is not null) {
       await Assert.That(dispatcher).DoesNotContain("SagaItemCompletedRecoveryHandler");
     }
@@ -199,7 +199,7 @@ internal static partial class Holder {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     if (dispatcher is not null) {
       await Assert.That(dispatcher).DoesNotContain("SagaItemCompletedRecoveryHandler");
     }
@@ -221,7 +221,7 @@ public partial class OrderSaga {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     if (dispatcher is not null) {
       await Assert.That(dispatcher).DoesNotContain("SagaItemCompletedRecoveryHandler");
     }
@@ -241,7 +241,7 @@ public partial class OrderSaga {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("SagaItemCompletedRecoveryHandler");
   }
@@ -263,7 +263,7 @@ public partial class OrderSaga {
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).DoesNotContain("SagaCompletionWatchdogTickHandler");
   }
