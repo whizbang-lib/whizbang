@@ -803,6 +803,9 @@ public abstract partial class Dispatcher(
     LocalDeferred = 2,
   }
 
+  /// <summary>Whether the decision writes the message's copy, to the outbox or only to the event store; writing it stamps the message.</summary>
+  private static bool _writesCopy(in DispatchDecision decision) => decision.WriteOutbox || decision.WriteEventStoreOnly;
+
   private static OutboxCopyMark _markFor(in DispatchDecision decision) {
     if (decision.MarkHandledLocally) {
       return OutboxCopyMark.HandledLocally;
@@ -813,18 +816,19 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Registers an envelope for a message a publish or cascade is about to run locally, so a receptor that
   /// looks up the envelope of the message it handles finds one, as on a send or invoke (#1410 follow-up).
-  /// Returns false when there is no registry, so there is nothing to unregister.
+  /// Returns false when there is no registry, so there is nothing to unregister. <paramref name="stampMessage"/>
+  /// is false when the message's copy already stamped it, so the receptors see what the copy stored (#1455).
   /// </summary>
-  private bool _registerLocalRunEnvelope(object message, IMessageEnvelope? sourceEnvelope) {
+  private bool _registerLocalRunEnvelope(object message, IMessageEnvelope? sourceEnvelope, bool stampMessage) {
     if (_envelopeRegistry is null) {
       return false;
     }
     var cascade = sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope);
-    // The message is handed to the receptors as its copy was stamped and stored, so registering its
-    // envelope does not stamp it again (#1455)
+    // A message whose copy already stamped it is handed to the receptors as the copy was stored, so its
+    // envelope does not stamp it again (#1455); one with no copy is stamped here, once
     _envelopeRegistry.Register(_createEnvelope(message, MessageContext.Create(cascade),
       new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, nameof(_registerLocalRunEnvelope), string.Empty, 0,
-      MessageId.New(), stampMessage: false));
+      MessageId.New(), stampMessage));
     return true;
   }
 
@@ -834,13 +838,13 @@ public abstract partial class Dispatcher(
   /// observes the outbox copy's write, so that task never goes unobserved, then surfaces.
   /// </summary>
   private async Task _runPublishReceptorsAsync<TEvent>(ReceptorPublisher<TEvent> publisher, TEvent eventData, Type eventType,
-      Task outboxTask, CancellationToken cancellationToken) {
+      Task outboxTask, bool copyStamped, CancellationToken cancellationToken) {
     // Both PublishAsync overloads refuse a null event before they get here
     object message = eventData!;
     // What the handlers emit is queued after this event's copy (#1410 follow-up). Scoped to this method's
     // flow: an async method's AsyncLocal writes do not reach its caller
     _causeCopyWrite.Value = outboxTask;
-    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null);
+    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null, stampMessage: !copyStamped);
     try {
       await publisher(eventData);
       await _publishToForeignLookupsAsync(message, eventType, null, cancellationToken).ConfigureAwait(false);
@@ -867,7 +871,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable RCS1229 // The mark must cover only the synchronous start of the write, which captures it; awaiting here would add a state machine to every publish.
   private Task _publishCopyAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope,
       DispatchOptions? options, in DispatchDecision decision) {
-    if (!decision.WriteOutbox && !decision.WriteEventStoreOnly) {
+    if (!_writesCopy(in decision)) {
       return Task.CompletedTask;
     }
     var mark = _markFor(in decision);
@@ -2267,7 +2271,7 @@ public abstract partial class Dispatcher(
     dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
     // Invoke synchronously, with the message's envelope registered for a receptor that looks it up
-    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null);
+    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null, stampMessage: true);
     try {
       invoker(message);
     } finally {
@@ -3357,7 +3361,7 @@ public abstract partial class Dispatcher(
       var outerCause = _causeCopyWrite.Value;
       _causeCopyWrite.Value = copyWrite ?? outerCause;
       try {
-        await _runCascadeHandlersAsync(message, messageType, localEnvelopeFor?.Invoke(), sourceEnvelope, cancellationToken).ConfigureAwait(false);
+        await _runCascadeHandlersAsync(message, messageType, localEnvelopeFor?.Invoke(), sourceEnvelope, _writesCopy(in decision), cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) when (copyWrite is not null) {
         localFailure = ex;
       } finally {
@@ -3380,8 +3384,8 @@ public abstract partial class Dispatcher(
   /// message's envelope registered for them to find, then tags, as on a publish.
   /// </summary>
   private async Task _runCascadeHandlersAsync(IMessage message, Type messageType, IMessageEnvelope? localEnvelope,
-      IMessageEnvelope? sourceEnvelope, CancellationToken cancellationToken) {
-    var registered = _registerLocalRunEnvelope(message, sourceEnvelope);
+      IMessageEnvelope? sourceEnvelope, bool copyStamped, CancellationToken cancellationToken) {
+    var registered = _registerLocalRunEnvelope(message, sourceEnvelope, stampMessage: !copyStamped);
     try {
       if (GetUntypedReceptorPublisher(messageType) is { } publisher) {
         await publisher(message, localEnvelope, cancellationToken);
@@ -3743,7 +3747,7 @@ public abstract partial class Dispatcher(
       if (decision.Local == LocalRun.Now) {
         // CancellationToken.None: this PublishAsync overload takes no token, and the local
         // receptor invocation is likewise uncancellable — explicit opt-out, not an oversight.
-        await _runPublishReceptorsAsync(publisher, eventData, eventType, outboxTask, CancellationToken.None);
+        await _runPublishReceptorsAsync(publisher, eventData, eventType, outboxTask, _writesCopy(in decision), CancellationToken.None);
       }
 
       await outboxTask;
@@ -3854,7 +3858,7 @@ public abstract partial class Dispatcher(
       // watchdog re-arm several ticks within milliseconds. The policy decides it (LocalRun.AtScheduledTime).
       var outboxTask = _publishCopyAsync(eventData, eventType, messageId, establishingEnvelope, options, decision);
       if (decision.Local == LocalRun.Now) {
-        await _runPublishReceptorsAsync(GetReceptorPublisher(eventData, eventType), eventData, eventType, outboxTask, options.CancellationToken);
+        await _runPublishReceptorsAsync(GetReceptorPublisher(eventData, eventType), eventData, eventType, outboxTask, _writesCopy(in decision), options.CancellationToken);
       }
 
       await outboxTask;
@@ -4206,13 +4210,14 @@ public abstract partial class Dispatcher(
   /// Handles the case when no IWorkCoordinatorStrategy is registered.
   /// Falls back to deferred channel or logs a warning.
   /// </summary>
-  private async Task _handleNoStrategyFallbackAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope, bool eventStoreOnly, IServiceScope scope) {
+  private async Task _handleNoStrategyFallbackAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope, bool eventStoreOnly, IServiceScope scope,
+      MessageHop? stampedBy = null) {
     // Try to get deferred channel for resilient event publishing
     var deferredChannel = scope.ServiceProvider.GetService<IDeferredOutboxChannel>();
 
     if (deferredChannel != null) {
       // Queue to deferred channel for next lifecycle loop pickup
-      await _deferEventToChannelAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly, deferredChannel);
+      await _deferEventToChannelAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly, deferredChannel, stampedBy);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Event {EventType} queued to deferred channel (no active strategy)",
@@ -5000,7 +5005,8 @@ public abstract partial class Dispatcher(
     for (var i = 0; i < messages.Count; i++) {
       var (eventData, eventType, eventContext, envelope) = messages[i];
       var messageId = envelope.MessageId;
-      await _handleNoStrategyFallbackAsync(eventData, eventType, messageId, sourceEnvelope: null, eventStoreOnly: !copyDecisions[i].WriteOutbox, scope).ConfigureAwait(false);
+      await _handleNoStrategyFallbackAsync(eventData, eventType, messageId, sourceEnvelope: null, eventStoreOnly: !copyDecisions[i].WriteOutbox, scope,
+        stampedBy: envelope.Hops[^1]).ConfigureAwait(false);
       receipts.Add(DeliveryReceipt.Accepted(messageId, eventType.Name, eventContext.CorrelationId, eventContext.CausationId,
         _streamIdExtractor?.ExtractStreamId(eventData, eventType)));
     }
@@ -5038,9 +5044,10 @@ public abstract partial class Dispatcher(
   /// type, when the message is the batch's declared type and carries no route; otherwise by its own type
   /// and under its route.
   /// </summary>
-  private Task<IDeliveryReceipt> _sendBatchMessageAsync<TMessage>(object message, DispatchModes? route, DispatchPolicy policy, string callerMemberName)
-      where TMessage : notnull {
-    var context = MessageContext.Create(_cascadeContextFactory.NewRoot());
+  private Task<IDeliveryReceipt> _sendBatchMessageAsync<TMessage>(object message, DispatchModes? route, BatchCopy? copy, DispatchPolicy policy,
+      string callerMemberName) where TMessage : notnull {
+    // Under its recorded copy's context, so the message carries the correlation its copy's envelope does (#1455)
+    var context = copy?.Context ?? MessageContext.Create(_cascadeContextFactory.NewRoot());
     return route is null && message is TMessage typed
       ? _sendAsyncInternalAsync(typed, context, policy, ownsOutboxWrite: false, callerMemberName)
       : _sendCoreAsync(message, message.GetType(), context, options: null, route, policy, ownsOutboxWrite: false, callerMemberName, "", 0);
@@ -5095,7 +5102,7 @@ public abstract partial class Dispatcher(
       List<object> messages,
       DispatchPolicy callPolicy,
       DispatchOptions options,
-      Func<Dispatcher, object, DispatchModes?, CancellationToken, Task<IDeliveryReceipt>> runLocally) {
+      Func<Dispatcher, object, DispatchModes?, BatchCopy?, CancellationToken, Task<IDeliveryReceipt>> runLocally) {
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     // The caller's token and timeout cover the whole batch, as they cover a single dispatch
@@ -5196,20 +5203,22 @@ public abstract partial class Dispatcher(
   /// before anything its handlers emit), then the message runs here when decided. A failure is recorded;
   /// under <see cref="BatchFailureMode.Stop"/> the messages after it are neither run nor written.
   /// </summary>
-  private async Task _runBatchAsync(BatchRun batch, Func<Dispatcher, object, DispatchModes?, CancellationToken, Task<IDeliveryReceipt>> runLocally,
+  private async Task _runBatchAsync(BatchRun batch, Func<Dispatcher, object, DispatchModes?, BatchCopy?, CancellationToken, Task<IDeliveryReceipt>> runLocally,
       bool stopAtFirstFailure, CancellationToken cancellationToken) {
     for (var i = 0; i < batch.Messages.Count; i++) {
       cancellationToken.ThrowIfCancellationRequested();
       var decision = batch.Decisions[i];
-      if (decision.WriteOutbox || decision.WriteEventStoreOnly) {
+      BatchCopy? copy = null;
+      if (_writesCopy(in decision)) {
         batch.CopyDecisions.Add(decision);
-        batch.OutboxMessages.Add(_recordBatchCopy(batch.Messages[i], batch.Types[i], in decision));
+        copy = _recordBatchCopy(batch.Messages[i], batch.Types[i], in decision);
+        batch.OutboxMessages.Add(copy.Value);
       }
       if (decision.Local != LocalRun.Now) {
         continue;
       }
       try {
-        batch.Receipts.Add(await runLocally(this, batch.Messages[i], batch.Routes[i], cancellationToken));
+        batch.Receipts.Add(await runLocally(this, batch.Messages[i], batch.Routes[i], copy, cancellationToken));
       } catch (Exception ex) {
         batch.Failures.Add(ex);
         if (stopAtFirstFailure) {
@@ -5232,10 +5241,10 @@ public abstract partial class Dispatcher(
   /// Runs every local receptor for a published event, as <c>PublishAsync</c> does: generated ones in
   /// this assembly and others, and runtime registrations at a local stage.
   /// </summary>
-  private async Task<IDeliveryReceipt> _publishLocallyAsync(object eventData, Type eventType, CancellationToken cancellationToken) {
+  private async Task<IDeliveryReceipt> _publishLocallyAsync(object eventData, Type eventType, bool copyStamped, CancellationToken cancellationToken) {
     _autoGenerateStreamIdIfNeeded(eventData, eventType);
     var publisher = GetReceptorPublisher(eventData, eventType);
-    var registered = _registerLocalRunEnvelope(eventData, sourceEnvelope: null);
+    var registered = _registerLocalRunEnvelope(eventData, sourceEnvelope: null, stampMessage: !copyStamped);
     try {
       await publisher(eventData);
       await _publishToForeignLookupsAsync(eventData, eventType, null, cancellationToken).ConfigureAwait(false);
@@ -5634,7 +5643,7 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       // Each message: the SendMany policy, on the message's own type, run locally through the typed send
       return await _dispatchManyAsync(messageList, DispatchPolicies.SendMany, options,
-        static (self, message, route, _) => self._sendBatchMessageAsync<TMessage>(message, route, DispatchPolicies.SendMany, nameof(SendManyAsync)));
+        static (self, message, route, copy, _) => self._sendBatchMessageAsync<TMessage>(message, route, copy, DispatchPolicies.SendMany, nameof(SendManyAsync)));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5663,7 +5672,7 @@ public abstract partial class Dispatcher(
       var messageList = messages.ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       return await _dispatchManyAsync(messageList, DispatchPolicies.SendMany, options,
-        static (self, message, route, _) => self._sendBatchMessageAsync<object>(message, route, DispatchPolicies.SendMany, nameof(SendManyAsync)));
+        static (self, message, route, copy, _) => self._sendBatchMessageAsync<object>(message, route, copy, DispatchPolicies.SendMany, nameof(SendManyAsync)));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5695,7 +5704,7 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
       // Each event: the PublishMany policy, every local receptor (#1402), like PublishAsync
       return await _dispatchManyAsync(eventList, DispatchPolicies.PublishMany, options,
-        static (self, eventData, _, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), cancellationToken));
+        static (self, eventData, _, copy, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), copyStamped: copy is not null, cancellationToken));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5725,7 +5734,7 @@ public abstract partial class Dispatcher(
       var eventList = events.ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
       return await _dispatchManyAsync(eventList, DispatchPolicies.PublishMany, options,
-        static (self, eventData, _, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), cancellationToken));
+        static (self, eventData, _, copy, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), copyStamped: copy is not null, cancellationToken));
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5753,7 +5762,7 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(messages);
     ArgumentNullException.ThrowIfNull(options);
     return await _dispatchManyAsync([.. messages.Cast<object>()], DispatchPolicies.LocalSendMany, options,
-      static (self, message, route, _) => self._sendBatchMessageAsync<TMessage>(message, route, DispatchPolicies.LocalSendMany, nameof(LocalSendManyAsync)));
+      static (self, message, route, copy, _) => self._sendBatchMessageAsync<TMessage>(message, route, copy, DispatchPolicies.LocalSendMany, nameof(LocalSendManyAsync)));
   }
 
 
@@ -5777,7 +5786,7 @@ public abstract partial class Dispatcher(
     ArgumentNullException.ThrowIfNull(messages);
     ArgumentNullException.ThrowIfNull(options);
     return await _dispatchManyAsync([.. messages], DispatchPolicies.LocalSendMany, options,
-      static (self, message, route, _) => self._sendBatchMessageAsync<object>(message, route, DispatchPolicies.LocalSendMany, nameof(LocalSendManyAsync)));
+      static (self, message, route, copy, _) => self._sendBatchMessageAsync<object>(message, route, copy, DispatchPolicies.LocalSendMany, nameof(LocalSendManyAsync)));
   }
 
 
@@ -5816,7 +5825,8 @@ public abstract partial class Dispatcher(
     MessageId messageId,
     IMessageEnvelope? sourceEnvelope,
     bool eventStoreOnly,
-    IDeferredOutboxChannel deferredChannel) {
+    IDeferredOutboxChannel deferredChannel,
+    MessageHop? stampedBy = null) {
 
     // 1. Resolve destination topic
     string? destination = eventStoreOnly ? null : _resolveDestination(eventData, eventType);
@@ -5830,15 +5840,17 @@ public abstract partial class Dispatcher(
     var finalScope3 = Security.OutboxHopScope.Resolve(sourceEnvelope, typeof(TEvent), _declaredUnscopedTypes);
     var (correlation3, causation3) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
+    // A batch already stamped the event when it recorded the copy, before the local run; the deferred hop
+    // carries that stamp's time and identity, so stamping again writes what the handlers saw (#1455)
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
       Topic = _hopTopic(destination),
-      Timestamp = DateTimeOffset.UtcNow,
+      Timestamp = stampedBy?.Timestamp ?? DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
       Scope = finalScope3,
-      CorrelationId = correlation3,
-      CausationId = causation3,
+      CorrelationId = stampedBy?.CorrelationId ?? correlation3,
+      CausationId = stampedBy?.CausationId ?? causation3,
       TraceParent = HopStamping.AmbientTraceParent
     };
 
