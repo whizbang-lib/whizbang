@@ -108,8 +108,10 @@ description gives a reason the maintainer has accepted.
 10. **Errors and configuration are documented twice.** Each new configuration key, runtime error
     message and diagnostic has its own detail (a dedicated page or section) and an entry on the
     directory page for quick lookup: `operations/configuration/configuration-reference` for keys,
-    `operations/diagnostics/error-reference` for runtime errors, and an `operations/diagnostics/whizNNN`
-    page plus the diagnostics index for analyzer codes. Both link to each other and to the code.
+    `operations/diagnostics/error-reference` for runtime errors, and for an analyzer code its own
+    `operations/diagnostics/whizNNN` page plus a row in the "Build-time diagnostics (WHIZ###)" table of
+    that same `error-reference` page. A new code reuses no existing ID. Both link to each other and to
+    the code.
 11. **Docs meet the docs-site standards.** Required frontmatter (`title`, `category`, `order`,
     `description`, and `pageType` / `verifiedAgainstCommit` where the section uses them), heading
     hierarchy and markdown rules; visuals wherever they explain more than prose (Mermaid diagrams for
