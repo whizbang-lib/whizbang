@@ -210,6 +210,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A publish's or cascade's own handlers saw a different sent time and correlation than the copy it
+  stored and sent (#1455).** Registering the envelope for the local run stamped the message a second time
+  after its copy was serialized, and a batch stamped its copies only after its local runs, so a handler that
+  recognizes redelivery by the sent time handled a genuine redelivery twice. The message is now stamped
+  once, by its copy when there is one and by the local run when there is not, and a batch send runs under
+  its copy's correlation.
 - **A multi-instance Dapper fleet never dropped a retired schema object (#1253).** The Dapper driver ran
   its managed-object cleanup at registration with no instance id, so every running peer looked
   unreported and the fleet gate held every drop; it also ignored `Whizbang:Schema:Reconcile` and logged

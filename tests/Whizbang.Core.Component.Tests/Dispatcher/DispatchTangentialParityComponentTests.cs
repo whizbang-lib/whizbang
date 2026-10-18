@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.PolicyBehavior;
 using Whizbang.Core.Component.Tests.Tangential.Owned;
+using Whizbang.Core.Component.Tests.Tangential.Unowned;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -214,6 +215,92 @@ public class DispatchTangentialParityComponentTests {
       .Because($"{entry} registers the envelope a receptor finds for its message, as an event-store append looks it up");
   }
 
+  /// <summary>
+  /// The local handlers see the message exactly as its copy was stored and sent (#1455): registering the
+  /// envelope they look up does not stamp the message's sent time and correlation a second time.
+  /// </summary>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("SendAsync(options)")]
+  [Arguments("SendManyAsync")]
+  [Arguments("PublishAsync")]
+  [Arguments("PublishAsync(options)")]
+  [Arguments("PublishManyAsync")]
+  [Arguments("CascadeMessageAsync")]
+  [Arguments("ReceptorResultCascade")]
+  [Arguments("PublishAsync(no outbox)")]
+  [Arguments("PublishManyAsync(no outbox)")]
+  public async Task EveryEntryThatRunsHereAndWritesACopy_HandsTheHandlersTheMessageAsStoredAsync(string entry) {
+    var stored = new StampRecordingEnvelopeSerializer();
+    await using var provider = _buildProvider(entry.EndsWith("(no outbox)", StringComparison.Ordinal) ? null : new PolicyRecordingOutbox(), serializer: stored);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    var message = new TgStampedEvent { Id = id };
+
+    var command = new TgStampedCommand { Id = id };
+
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(command); break;
+      case "SendAsync(options)": await dispatcher.SendAsync(command, new DispatchOptions()); break;
+      case "SendManyAsync": await dispatcher.SendManyAsync(new object[] { command }); break;
+      case "PublishAsync" or "PublishAsync(no outbox)": await dispatcher.PublishAsync(message); break;
+      case "PublishAsync(options)": await dispatcher.PublishAsync(message, new DispatchOptions()); break;
+      case "PublishManyAsync" or "PublishManyAsync(no outbox)": await dispatcher.PublishManyAsync(new object[] { message }); break;
+      case "CascadeMessageAsync": await dispatcher.CascadeMessageAsync(message, sourceEnvelope: null, DispatchModes.Both); break;
+      default: await dispatcher.LocalInvokeAsync<TgStampedEvent>(new TgStampingCommand(id)); break;
+    }
+
+    var (sentAt, correlationId, hopCorrelationId) = stored.Copies.Single();
+    await Assert.That(sentAt).IsNotEqualTo(default).Because($"{entry} stamps the copy it stores");
+    await Assert.That(TangentialProbe.Seen("sentAt", id))
+      .IsEqualTo(sentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+      .Because($"{entry}'s handler sees the sent time its stored copy carries");
+    await Assert.That(TangentialProbe.Seen("correlation", id)).IsEqualTo(correlationId)
+      .Because($"{entry}'s handler sees the correlation its stored copy carries");
+    await Assert.That(correlationId).IsEqualTo(hopCorrelationId)
+      .Because($"{entry}'s stored copy carries the correlation of the envelope it travels in");
+  }
+
+  /// <summary>A local run with no copy to stamp the message stamps it itself, once (#1455).</summary>
+  [Test]
+  [Arguments("CascadeMessageAsync(LocalNoPersist)")]
+  public async Task EveryLocalRunWithNoCopy_StampsTheMessageItselfAsync(string entry) {
+    var stored = new StampRecordingEnvelopeSerializer();
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), serializer: stored);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    var message = new TgStampedEvent { Id = id };
+
+    await dispatcher.CascadeMessageAsync(message, sourceEnvelope: null, DispatchModes.LocalNoPersist);
+
+    await Assert.That(stored.Copies).IsEmpty().Because($"{entry} writes no copy");
+    await Assert.That(TangentialProbe.Seen("sentAt", id))
+      .IsNotEqualTo(default(DateTimeOffset).ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+      .Because($"{entry}'s handler sees the message stamped");
+    await Assert.That(TangentialProbe.Seen("correlation", id)).IsNotNull()
+      .Because($"{entry}'s handler sees the message's correlation");
+  }
+
+  /// <summary>Records what each stamped event carried at the moment its copy was serialized for storing.</summary>
+  private sealed class StampRecordingEnvelopeSerializer : IEnvelopeSerializer {
+    private readonly PolicyContextKeepingEnvelopeSerializer _inner = new();
+
+    public System.Collections.Concurrent.ConcurrentQueue<(DateTimeOffset SentAt, string? CorrelationId, string? HopCorrelationId)> Copies { get; } = new();
+
+    public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
+      var hopCorrelation = envelope.Hops[^1].CorrelationId?.Value.ToString();
+      if (envelope.Payload is TgStampedEvent stamped) {
+        Copies.Enqueue((stamped.SentAt, stamped.CorrelationId, hopCorrelation));
+      } else if (envelope.Payload is TgStampedCommand stampedCommand) {
+        Copies.Enqueue((stampedCommand.SentAt, stampedCommand.CorrelationId, hopCorrelation));
+      }
+      return _inner.SerializeEnvelope(envelope);
+    }
+
+    public object DeserializeMessage(MessageEnvelope<System.Text.Json.JsonElement> jsonEnvelope, string messageTypeName) =>
+      _inner.DeserializeMessage(jsonEnvelope, messageTypeName);
+  }
+
   // ── a local invoke under a selected policy that defers the run ───────────────────────────────
 
   /// <summary>
@@ -305,7 +392,8 @@ public class DispatchTangentialParityComponentTests {
     _ => dispatcher.PublishManyAsync([message], options),
   };
 
-  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox, bool withMessageSecurity = false) {
+  private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy? outbox, bool withMessageSecurity = false,
+      IEnvelopeSerializer? serializer = null) {
     var services = new ServiceCollection();
     if (withMessageSecurity) {
       services.AddWhizbangMessageSecurity();
@@ -313,8 +401,10 @@ public class DispatchTangentialParityComponentTests {
     }
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => outbox);
-    services.AddSingleton<IEnvelopeSerializer, PolicyContextKeepingEnvelopeSerializer>();
+    if (outbox is not null) {
+      services.AddScoped<IWorkCoordinatorStrategy>(_ => outbox);
+    }
+    services.AddSingleton(serializer ?? new PolicyContextKeepingEnvelopeSerializer());
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
     services.Configure<RoutingOptions>(options => options.OwnDomains(OWNED_DOMAIN));
     services.AddReceptors();

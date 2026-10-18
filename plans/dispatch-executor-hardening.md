@@ -72,6 +72,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E44 | With message security and no caller context, a result-returning local invoke refuses after its handler ran (PostLifecycle stage) while every other entry runs | question #1419 |
 | E45 | A publish's copy write, and a cascade's (no token on the generated cascade), never received the caller's cancellation token, so a write blocked in the database could not be canceled | fixed |
 | E46 | A flush its caller canceled left its work queued: the scoped strategy's disposal safety net (and the immediate strategy's next flush) wrote it anyway with no token, so a canceled dispatch still sent its copy and its caller waited for it | fixed |
+| E47 | The envelope a publish, cascade or local invoke registers for its local run stamped the message's sent time and correlation again after its copy was stored, so the local handlers saw values the stored copy did not carry; a batch stamped its copies only after its local runs (found by a consumer's redelivery-dedup test, #1455) | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
