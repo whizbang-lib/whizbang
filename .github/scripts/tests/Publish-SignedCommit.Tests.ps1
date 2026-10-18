@@ -175,8 +175,20 @@ Describe 'Publish-SignedCommits' {
     $entry.sha | Should -BeLike 'blob*'
   }
 
-  It 'publishes nothing when every commit is already on the remote' {
+  It 'changes nothing when the branch already points at a head the remote has' {
+    $script:refExists = $true
+    $head = (git rev-parse HEAD).Trim()
+    Mock Invoke-GitHubApi -ParameterFilter { $Method -eq 'GET' } { [pscustomobject]@{ object = [pscustomobject]@{ sha = $head } } }
     Publish-SignedCommits -Repository 'o/r' -Branch 'develop' | Should -BeNullOrEmpty
     @($script:calls | Where-Object { $_.Method -ne 'GET' }).Count | Should -Be 0
+  }
+
+  It 'creates a missing branch at a head the remote already has, publishing no commit' {
+    $head = (git rev-parse HEAD).Trim()
+    Publish-SignedCommits -Repository 'o/r' -Branch 'sync/x' | Should -Be $head
+    @($script:calls | Where-Object { $_.Path -like '*/git/commits' }).Count | Should -Be 0
+    $create = @($script:calls | Where-Object { $_.Method -eq 'POST' -and $_.Path -like '*/git/refs' })
+    $create[0].Body.ref | Should -Be 'refs/heads/sync/x'
+    $create[0].Body.sha | Should -Be $head
   }
 }
