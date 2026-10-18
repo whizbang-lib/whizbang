@@ -19,6 +19,7 @@ BeforeAll {
         [string]$Author = 'dana',
         [bool]$AuthorIsBot = $false,
         [bool]$AuthorIsMaintainer = $false,
+        [string]$AuthorRole = '',
         [string]$CreatedAt = '2026-10-18T12:00:00Z',
         [string]$BaseRef = 'develop',
         [string]$HeadRef = 'fix/thing',
@@ -26,7 +27,7 @@ BeforeAll {
         [string[]]$Labels = @()
     )
     [pscustomobject]@{
-      Number = $Number; Author = $Author; AuthorIsBot = $AuthorIsBot; AuthorIsMaintainer = $AuthorIsMaintainer; CreatedAt = [datetimeoffset]$CreatedAt
+      Number = $Number; Author = $Author; AuthorIsBot = $AuthorIsBot; AuthorIsMaintainer = $AuthorIsMaintainer; AuthorRole = $AuthorRole; CreatedAt = [datetimeoffset]$CreatedAt
       BaseRef = $BaseRef; HeadRef = $HeadRef; Issues = $Issues; Labels = $Labels
     }
   }
@@ -271,21 +272,40 @@ Describe 'Resolve-ClosingIssues' {
 }
 
 Describe 'Set-PullRequestAuthority' {
-  It 'asks once per login whether the author and each accepter have write access' {
+  It 'asks once per login for the role of the author and of each accepter' {
     $script:asked = @()
-    $isMaintainer = { param([string]$Login) $script:asked += $Login; $Login -in @('maint', 'dana') }
+    $roleOf = { param([string]$Login) $script:asked += $Login; @{ maint = 'maintain'; dana = 'write' }[$Login] }
     $pr = New-TestPullRequest -Author 'dana' -Issues @((New-TestIssue -Number 1 -AcceptedBy 'maint'), (New-TestIssue -Number 2 -AcceptedBy 'helper'),
       (New-TestIssue -Number 3 -AcceptedBy 'maint'), (New-TestIssue -Number 4 -Labels @() -AcceptedBy ''))
-    Set-PullRequestAuthority -PullRequest $pr -IsMaintainer $isMaintainer
-    $pr.AuthorIsMaintainer | Should -BeTrue
+    Set-PullRequestAuthority -PullRequest $pr -RoleOf $roleOf
+    $pr.AuthorRole | Should -Be 'write'
+    $pr.AuthorIsMaintainer | Should -BeFalse
     $pr.Issues.AcceptedByMaintainer | Should -Be @($true, $false, $true, $false)
     $script:asked | Should -Be @('dana', 'maint', 'helper')
   }
 
+  It 'marks a maintainer author' {
+    $pr = New-TestPullRequest -Author 'maint'
+    Set-PullRequestAuthority -PullRequest $pr -RoleOf { param([string]$Login) 'admin' }
+    $pr.AuthorIsMaintainer | Should -BeTrue
+  }
+
   It 'counts the workflow bot as an accepter, since it adds the label only for a maintainer''s /accept' {
     $pr = New-TestPullRequest -Issues @(New-TestIssue -AcceptedBy 'github-actions')
-    Set-PullRequestAuthority -PullRequest $pr -IsMaintainer { param([string]$Login) $false }
+    Set-PullRequestAuthority -PullRequest $pr -RoleOf { param([string]$Login) '' }
     $pr.Issues[0].AcceptedByMaintainer | Should -BeTrue
+  }
+}
+
+Describe 'Test-CommitterRole' {
+  It 'counts write and above, which the committers team grants' -TestCases @(
+    @{ Role = 'admin'; Expected = $true }
+    @{ Role = 'maintain'; Expected = $true }
+    @{ Role = 'write'; Expected = $true }
+    @{ Role = 'triage'; Expected = $false }
+    @{ Role = ''; Expected = $false }
+  ) {
+    Test-CommitterRole -RoleName $Role | Should -Be $Expected
   }
 }
 

@@ -33,6 +33,14 @@ Describe 'ConvertFrom-IntakeCommand' {
     (ConvertFrom-IntakeCommand -Body $Body).Command | Should -Be 'accept'
   }
 
+  It 'reads the pull request commands' -TestCases @(
+    @{ Body = '/late-issue'; Expected = 'late-issue' }
+    @{ Body = '/docs-not-needed'; Expected = 'docs-not-needed' }
+    @{ Body = '/recheck'; Expected = 'recheck' }
+  ) {
+    (ConvertFrom-IntakeCommand -Body $Body).Command | Should -Be $Expected
+  }
+
   It 'reads /decline and its reason' {
     $c = ConvertFrom-IntakeCommand -Body "/decline Out of scope for 1.0; a plugin can do this.`nmore"
     $c.Command | Should -Be 'decline'
@@ -82,7 +90,7 @@ Describe 'Format-IntakeCloseComment' {
 }
 
 Describe 'Select-StalePullRequest' {
-  It 'selects outside pull requests still without an accepted issue after the grace period' {
+  It 'selects outside pull requests (not committers) still without an accepted issue after the grace period' {
     $now = [datetimeoffset]'2026-11-01T12:00:00Z'
     $prs = @(
       [pscustomobject]@{ Number = 1; CreatedAt = $now.AddDays(-15); State = 'none'; AuthorIsMaintainer = $false }
@@ -92,6 +100,8 @@ Describe 'Select-StalePullRequest' {
       [pscustomobject]@{ Number = 5; CreatedAt = $now.AddDays(-30); State = 'none'; AuthorIsMaintainer = $true }
       [pscustomobject]@{ Number = 6; CreatedAt = $now.AddDays(-30); State = 'exempt'; AuthorIsMaintainer = $false }
     )
+    $prs | ForEach-Object { $_ | Add-Member -NotePropertyName AuthorRole -NotePropertyValue $(if ($_.AuthorIsMaintainer) { 'maintain' } else { '' }) }
+    $prs += [pscustomobject]@{ Number = 7; CreatedAt = $now.AddDays(-30); State = 'none'; AuthorIsMaintainer = $false; AuthorRole = 'write' }
     @(Select-StalePullRequest -PullRequests $prs -Now $now -Days 14) | Should -Be @(1, 2)
   }
 }
@@ -101,10 +111,11 @@ Describe 'Invoke-IntakeSync' {
     $script:calls = [System.Collections.Generic.List[string]]::new()
     $script:state = 'none'
     $script:writer = $false
+    $script:role = ''
     $script:existing = @()
     Mock Read-LinkedPullRequest {
       [pscustomobject]@{ Number = 7; CreatedAt = [datetimeoffset]'2026-10-18T12:00:00Z'; AuthorIsMaintainer = $script:writer
-        Labels = @('issue:none'); Issues = @() }
+        AuthorRole = $(if ($script:writer) { 'maintain' } else { $script:role }); Labels = @('issue:none'); Issues = @() }
     }
     Mock Get-IssueIntakeState { $script:state }
     Mock Get-IntakeComments { $script:existing }
@@ -131,6 +142,12 @@ Describe 'Invoke-IntakeSync' {
     @($script:calls | Where-Object { $_ -like '*minimizeComment*' -and $_ -like '*id=IC_1*' }).Count | Should -Be 1
   }
 
+  It 'posts no explanation to a committer' {
+    $script:role = 'write'
+    Invoke-IntakeSync -Repository 'o/r' -Number 7
+    @($script:calls | Where-Object { $_ -like 'pr comment*' }).Count | Should -Be 0
+  }
+
   It 'posts no explanation to an author with the maintainer role' {
     $script:writer = $true
     Invoke-IntakeSync -Repository 'o/r' -Number 7
@@ -142,9 +159,12 @@ Describe 'Invoke-IntakeCommand' {
   BeforeEach {
     $script:calls = [System.Collections.Generic.List[string]]::new()
     $script:writer = $true
-    Mock Test-MaintainerAccess { $script:writer }
+    $script:roles = @{}
+    Mock Get-RepositoryRole { if ($script:roles.ContainsKey($Login)) { $script:roles[$Login] } elseif ($script:writer) { 'maintain' } else { '' } }
     Mock Invoke-Gh { $script:calls.Add($Arguments -join ' ') }
     Mock Update-PullRequestsClosing { $script:calls.Add("refresh $Issue") }
+    Mock Update-PullRequest { $script:calls.Add("refresh-pr $Number") }
+    Mock Get-PullRequestAuthor { 'dana' }
   }
 
   It 'accepts the issue for a maintainer, removes needs-triage and refreshes its pull requests' {
@@ -164,6 +184,52 @@ Describe 'Invoke-IntakeCommand' {
     Invoke-IntakeCommand -Repository 'o/r' -Issue 12 -Body '/accept' -Actor 'stranger' -CommentId 99
     @($script:calls | Where-Object { $_ -like 'issue edit*' }).Count | Should -Be 0
     @($script:calls | Where-Object { $_ -like 'issue comment 12*' }).Count | Should -Be 1
+  }
+}
+
+Describe 'Invoke-IntakeCommand on a pull request' {
+  BeforeEach {
+    $script:calls = [System.Collections.Generic.List[string]]::new()
+    $script:roles = @{ maint = 'maintain'; dana = ''; committer = 'write' }
+    Mock Get-RepositoryRole { $script:roles[$Login] }
+    Mock Invoke-Gh { $script:calls.Add($Arguments -join ' ') }
+    Mock Update-PullRequest { $script:calls.Add("refresh-pr $Number") }
+    Mock Get-PullRequestAuthor { 'dana' }
+  }
+
+  It 'adds linked-issue:late for a maintainer and re-checks the pull request' {
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/late-issue' -Actor 'maint'
+    $script:calls | Should -Contain 'pr edit 7 -R o/r --add-label linked-issue:late'
+    $script:calls | Should -Contain 'refresh-pr 7'
+  }
+
+  It 'adds docs:not-needed for a maintainer and re-checks the pull request' {
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/docs-not-needed' -Actor 'maint'
+    $script:calls | Should -Contain 'pr edit 7 -R o/r --add-label docs:not-needed'
+    $script:calls | Should -Contain 'refresh-pr 7'
+  }
+
+  It 'refuses a label command from a committer' {
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/docs-not-needed' -Actor 'committer'
+    @($script:calls | Where-Object { $_ -like 'pr edit*' }).Count | Should -Be 0
+    @($script:calls | Where-Object { $_ -like 'pr comment 7*' }).Count | Should -Be 1
+  }
+
+  It 're-checks for the author or a committer' -TestCases @(@{ Actor = 'dana' }, @{ Actor = 'committer' }) {
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/recheck' -Actor $Actor
+    $script:calls | Should -Contain 'refresh-pr 7'
+  }
+
+  It 'refuses /recheck from anyone else' {
+    $script:roles['stranger'] = ''
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/recheck' -Actor 'stranger'
+    $script:calls | Should -Not -Contain 'refresh-pr 7'
+  }
+
+  It 'ignores an issue command on a pull request, and a pull request command on an issue' {
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -IsPullRequest -Body '/accept' -Actor 'maint'
+    Invoke-IntakeCommand -Repository 'o/r' -Issue 7 -Body '/recheck' -Actor 'maint'
+    $script:calls.Count | Should -Be 0
   }
 }
 
