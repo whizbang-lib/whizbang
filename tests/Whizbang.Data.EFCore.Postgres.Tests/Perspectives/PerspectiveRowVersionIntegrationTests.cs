@@ -130,6 +130,7 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
     var absent = await store.ReadForApplyAsync(id);
     await Assert.That(absent.Version).IsEqualTo(PerspectiveRowVersion.Absent);
     await Assert.That(absent.Metadata).IsNull();
+    await Assert.That(absent.Scope).IsNull();
 
     var eventId = Guid.CreateVersion7().ToString("D");
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member", Value = 1 }, new PerspectiveScope(), false,
@@ -146,6 +147,27 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
     var afterCollective = await store.ReadForApplyAsync(id);
     await Assert.That(afterCollective.Version).IsNotEqualTo(present.Version)
       .Because("the version is the row's own, so a collective that never touches the version column still moves it");
+  }
+
+  [Test]
+  public async Task ReadForApplyAsync_ReturnsTheRowsStoredScope_SoAlwaysFieldsCanBeMergedAsync() {
+    var id = Guid.CreateVersion7();
+    await using var context = CreateDbContext();
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var stored = new PerspectiveScope {
+      TenantId = "tenant-1", UserId = "user-creator", OrganizationId = "org-1", AllowedPrincipals = ["group:owners"],
+    };
+    await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member" }, stored, false,
+      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = DateTime.UtcNow }, PerspectiveRowVersion.Absent);
+
+    var read = await store.ReadForApplyAsync(id);
+
+    await Assert.That(read.Scope).IsNotNull()
+      .Because("the runner merges a model's Always fields into the scope the row already has");
+    await Assert.That(read.Scope!.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(read.Scope.UserId).IsEqualTo("user-creator");
+    await Assert.That(read.Scope.OrganizationId).IsEqualTo("org-1");
+    await Assert.That(read.Scope.AllowedPrincipals).IsEquivalentTo(["group:owners"]);
   }
 
   [Test]
