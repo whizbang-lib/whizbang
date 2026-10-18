@@ -292,9 +292,15 @@ pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <number>          # -WhatIf s
 ```
 
 It starts a pending review (or adds to the one already started), puts each finding on its line, puts
-the rest in the review summary, and never submits. Running it again adds only what is new. CI holds no
+the rest in the review summary, and never submits. GitHub will not add a summary to a pending review
+started in the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
 personal token: the comments are posted with the workflow's own token, and the draft is written from
 the maintainer's machine.
+
+AI sessions review through the `pr-review` skill (`.claude/skills/pr-review/SKILL.md`): it drafts
+these findings, applies the core principles and the checks below with the document that owns each rule, and adds its comments
+to the same pending review without submitting it. A contributor can run it on their own branch before
+opening a pull request.
 
 **What the reviewer checks**
 

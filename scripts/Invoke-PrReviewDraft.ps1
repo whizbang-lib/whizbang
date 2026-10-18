@@ -121,6 +121,7 @@ function Invoke-PrReviewDraft {
   }
 
   $items = ($plan.Summary | ForEach-Object { $_.Body }) -join "`n"
+  $toPaste = $false
   $target = "PR #$PullRequest ($($plan.Threads.Count) line comment(s), $($plan.Summary.Count) summary item(s))"
 
   if ($null -eq $state.PendingReview) {
@@ -140,17 +141,24 @@ function Invoke-PrReviewDraft {
           input = @{ pullRequestReviewId = $reviewId; path = $t.Path; line = $t.Line; side = 'RIGHT'; body = $t.Body }
         })
     }
-    if ($items) {
+    $toPaste = $items -and -not $state.PendingReview.Body
+    if ($toPaste) {
+      # GitHub refuses to edit the body of a pending review that has none, which is how a review started
+      # in the browser begins, so the summary waits for the submit dialog.
+      Write-Host "Your pending review has no summary, and GitHub allows one only when the review is submitted. Paste this into the summary when you submit:`n`n$script:SummaryHeader`n`n$items`n"
+    }
+    elseif ($items) {
       $existing = $state.PendingReview.Body
       $header = if ($existing.Contains($script:SummaryHeader)) { '' } else { "$script:SummaryHeader`n`n" }
-      $body = if ($existing) { "$existing`n`n$header$items" } else { "$header$items" }
+      $body = "$existing`n`n$header$items"
       [void](Invoke-GraphQl -Query 'mutation($input:UpdatePullRequestReviewInput!){updatePullRequestReview(input:$input){pullRequestReview{id}}}' -Variables @{
           input = @{ pullRequestReviewId = $reviewId; body = $body }
         })
     }
   }
 
-  Write-Host "Drafted $($plan.Threads.Count) line comment(s) and $($plan.Summary.Count) summary item(s) on PR #$PullRequest; $($plan.AlreadyDrafted) were already in your draft."
+  $summaryNote = if ($toPaste) { "$($plan.Summary.Count) summary item(s) to paste" } else { "$($plan.Summary.Count) summary item(s)" }
+  Write-Host "Drafted $($plan.Threads.Count) line comment(s) and $summaryNote on PR #$PullRequest; $($plan.AlreadyDrafted) were already in your draft."
   Write-Host "Nothing is submitted. Review and submit: $($state.Url)/files"
 }
 

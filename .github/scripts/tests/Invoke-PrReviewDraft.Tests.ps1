@@ -136,6 +136,19 @@ Describe 'Invoke-PrReviewDraft' {
     $update[0].Variables.input.body | Should -BeLike 'my own notes*<!-- wr:dco:aaaaaaaaaaaa -->*'
   }
 
+  It 'prints the summary to paste at submit when the pending review was started without one' {
+    # GitHub refuses to edit the body of a pending review that has none ("Could not edit a review with
+    # a missing body"), which is how a review started in the browser begins.
+    $script:Pending = [pscustomobject]@{ Id = 'PRR_9'; Body = ''; Texts = @() }
+    $out = (Invoke-PrReviewDraft -Repository 'o/r' -PullRequest 7 6>&1 | Out-String)
+
+    @($Mutations | Where-Object Query -Like '*addPullRequestReviewThread(*').Count | Should -Be 1
+    @($Mutations | Where-Object Query -Like '*updatePullRequestReview(*').Count | Should -Be 0
+    $out | Should -Match 'paste'
+    $out | Should -Match ([regex]::Escape('Commit aaaaaaaaaaaa has no sign-off.'))
+    $out | Should -Match '1 summary item\(s\) to paste'
+  }
+
   It 'changes nothing when every finding is already drafted' {
     $script:Pending = [pscustomobject]@{
       Id = 'PRR_9'; Body = '- x <!-- wr:dco:aaaaaaaaaaaa -->'
