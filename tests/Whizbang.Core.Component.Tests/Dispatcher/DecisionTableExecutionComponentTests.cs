@@ -10,6 +10,7 @@ using Whizbang.Core.Commands.System;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.PolicyBehavior;
 using Whizbang.Core.Component.Tests.PolicyBehavior.Owned;
+using Whizbang.Core.Component.Tests.RuntimeLocalReceptors;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Dispatch.Policy;
 using Whizbang.Core.Messaging;
@@ -17,7 +18,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Tests.Dispatch.Policy;
-using Whizbang.Core.Component.Tests.RuntimeLocalReceptors;
 
 namespace Whizbang.Core.Tests.Dispatcher;
 
