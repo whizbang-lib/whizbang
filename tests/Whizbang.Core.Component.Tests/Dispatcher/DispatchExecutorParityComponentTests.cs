@@ -413,7 +413,7 @@ public class DispatchExecutorParityComponentTests {
 
   private sealed class ClosedSchemaGate : ISchemaReadyGate {
     public bool IsReady => false;
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => Task.Delay(Timeout.Infinite, cancellationToken);
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) => new TaskCompletionSource().Task.WaitAsync(cancellationToken);
     public void MarkReady() => throw new NotSupportedException("this gate stays closed for the test");
   }
 }

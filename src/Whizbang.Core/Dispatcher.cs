@@ -4898,7 +4898,7 @@ public abstract partial class Dispatcher(
       if (collector is not null) {
         collector.Add(newOutboxMessage);
       } else {
-        // Queue message for batched processing — async path routes through the per-stream batcher. The
+        // Queue message for batched processing; the async path routes through the per-stream batcher. The
         // caller's cancellation, when it dispatched with options, reaches the queue and the flush.
         var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
         await strategy!.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
