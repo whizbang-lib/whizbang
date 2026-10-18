@@ -3,8 +3,10 @@
 
 using System.Data.Common;
 using System.Globalization;
+using System.Text.Json;
 using Npgsql;
 using NpgsqlTypes;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -35,13 +37,13 @@ namespace Whizbang.Data.Postgres.Perspectives;
 public static class PerspectiveRowVersionCommands {
   /// <summary>
   /// The read a per-stream apply makes before it loads the model: the row's version together with
-  /// the metadata the runner's idempotency filter reads, in one statement.
+  /// the metadata the runner's idempotency filter reads and the row's scope, in one statement.
   /// </summary>
   /// <param name="qualifiedTable">The quoted, schema-qualified perspective table.</param>
   /// <returns>The statement, taking a single <c>@id</c> parameter.</returns>
   public static string ReadForApplySql(string qualifiedTable) {
     ArgumentException.ThrowIfNullOrWhiteSpace(qualifiedTable);
-    return "SELECT xmin, metadata->>'EventId', metadata->>'EventType', metadata->>'CommitSequence' FROM "
+    return "SELECT xmin, metadata->>'EventId', metadata->>'EventType', metadata->>'CommitSequence', scope::text FROM "
       + qualifiedTable + " WHERE id = @id";
   }
 
@@ -90,7 +92,7 @@ public static class PerspectiveRowVersionCommands {
   /// <param name="cancellationToken">Cancels the read.</param>
   /// <returns>
   /// <see cref="PerspectiveRowVersion.Absent"/> with no metadata when there is no row; otherwise the
-  /// row's version and the metadata the idempotency filter reads.
+  /// row's version, the metadata the idempotency filter reads, and the row's scope (null when it has none).
   /// </returns>
   public static async Task<PerspectiveApplyRead> ReadApplyAsync(
       DbDataReader reader, CancellationToken cancellationToken = default) {
@@ -106,7 +108,9 @@ public static class PerspectiveRowVersionCommands {
         : null,
     };
     var xmin = await reader.GetFieldValueAsync<uint>(0, cancellationToken).ConfigureAwait(false);
-    return new PerspectiveApplyRead(PerspectiveRowVersion.Of(xmin), metadata);
+    // A perspective row's scope column is NOT NULL and always holds an object, in both drivers.
+    var scope = JsonSerializer.Deserialize(reader.GetString(4), InfrastructureJsonContext.Default.PerspectiveScope);
+    return new PerspectiveApplyRead(PerspectiveRowVersion.Of(xmin), metadata, scope);
   }
 
   /// <summary>

@@ -18,7 +18,8 @@ namespace Whizbang.Generators;
 /// <param name="EventStreamIds">Map of event type name to its StreamId property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
 /// <param name="MustExistEventTypes">Array of event type names (fully qualified) whose Apply methods have [MustExist] attribute</param>
-/// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All preserves legacy copy-everything behavior when the attribute is absent.</param>
+/// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All: creation records ownership, with or without the attribute.</param>
+/// <param name="InheritScopeAlways">ScopeFields flag set declared via [InheritScope(Always = ...)] on the perspective model: fields that follow the latest writer. Default 0 = ScopeFields.None, so scope is set once, at creation.</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the runner copies it to strip and load those fields (issue #1002); null for every other model</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
@@ -41,6 +42,7 @@ internal sealed record PerspectiveInfo(
     bool IsModelRecord = false,
     bool HasScopeInterface = false,
     int InheritScopeOnCreate = 63,
+    int InheritScopeAlways = 0,
     bool IsEphemeral = false,
     int TtlRowSeconds = -1,
     bool IsFullHistory = false,

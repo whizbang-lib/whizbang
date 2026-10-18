@@ -48,9 +48,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   public Type PerspectiveType => typeof(__PERSPECTIVE_CLASS_NAME__);
 
   #region INHERIT_SCOPE_ON_CREATE
-  // Generated: per-perspective [InheritScope].OnCreate flags.
-  // Default 63 = ScopeFields.All preserves legacy "copy every scope field" behavior.
+  // Generated: the model's [InheritScope] flags. OnCreate defaults to every field (63), so creation
+  // records ownership; Always defaults to none (0), so scope is set once, at creation.
   private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;
+  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)0;
   #endregion
 
   #region IS_EPHEMERAL
@@ -822,6 +823,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               processedEvents,
               rebuilding);
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
+          // The model's [InheritScope] decides the scope: OnCreate and Always fields on a new row, the Always
+          // fields merged into the row's stored scope on an existing one (#1425).
+          var scopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeChanged);
           // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
           // left untouched is not a changed row (#1342).
           rowChanged = await SaveModelAndCheckpointAsync(
@@ -832,8 +836,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               checkpointCommitSequence,
               lastSuccessfulEventAt ?? DateTime.UtcNow,
               cancellationToken,
-              lastScope?.FilterByFields(_inheritScopeOnCreate),
-              scopeChanged,
+              scopeWrite.Scope,
+              scopeWrite.ForceUpdate,
               rowVersion
           );
           // Forget the purge only once the resurrected row is written.
@@ -985,6 +989,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId.Value, cancellationToken),
                 processedEvents,
                 rebuilding);
+            var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeChanged);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
@@ -993,8 +998,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 partialCheckpointCommitSequence,
                 lastSuccessfulEventAt ?? DateTime.UtcNow,
                 cancellationToken,
-                lastScope?.FilterByFields(_inheritScopeOnCreate),
-                scopeChanged,
+                partialScopeWrite.Scope,
+                partialScopeWrite.ForceUpdate,
                 rowVersion
             );
           }
@@ -1182,6 +1187,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     return physicalStreamId;
     #endregion
   }
+
+  /// <summary>
+  /// The scope this apply writes, decided by the model's [InheritScope] over the row the apply read.
+  /// </summary>
+  private static global::Whizbang.Core.Lenses.ScopeWrite _resolveScopeWrite(
+      PerspectiveScope? lastScope,
+      global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
+      bool rowExists,
+      bool scopeChanged)
+    => global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
+        lastScope, applyRead.Scope, rowExists, _inheritScopeOnCreate, _inheritScopeAlways, scopeChanged);
 
   /// <summary>
   /// Saves the model atomically.
@@ -1659,7 +1675,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
             streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
-            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken, lastScope?.FilterByFields(_inheritScopeOnCreate));
+            replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken,
+            // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
+            // its scope (Always fields catch up on the next live apply).
+            global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
+                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventChanged: false).Scope);
         if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }

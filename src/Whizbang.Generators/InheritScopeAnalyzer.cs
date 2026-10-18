@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Immutable;
-using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Utilities;
@@ -10,49 +9,63 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Roslyn analyzer that catches misuse of <c>[InheritScope]</c>. Without analyzers, the
-/// attribute has silent failure modes — placed on a non-perspective type, the runtime
-/// ignores it; declared with all-None flags, it's a no-op that's more confusing than
-/// omitting the attribute. The analyzer surfaces both at compile time.
+/// Roslyn analyzer that catches misuse of <c>[InheritScope]</c>. The perspective runner reads the
+/// attribute from the perspective's model type, so on a perspective class over another model it is
+/// silently ignored (WHIZ170); declared with all-None flags, it gives rows no scope at all (WHIZ171).
 /// </summary>
+/// <remarks>
+/// The attribute on a class that implements no perspective interface is not reported: that class may be
+/// the model of a perspective in this compilation or in another assembly, and that is where the attribute
+/// belongs.
+/// </remarks>
+/// <docs>operations/diagnostics/whiz170</docs>
+/// <tests>tests/Whizbang.Generators.Tests/InheritScopeAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/InheritScopeAnalyzerCoverageTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class InheritScopeAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Security";
-  private const string PERSPECTIVE_INTERFACE_PREFIX = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVES_NAMESPACE = "Whizbang.Core.Perspectives";
+
+  // The perspective interfaces whose first type argument is the model the runner reads [InheritScope] from.
+  private static readonly ImmutableHashSet<string> _perspectiveInterfaceNames =
+    ["IPerspectiveFor", "IPerspectiveWithActionsFor", "IGlobalPerspectiveFor"];
 
   /// <summary>
-  /// WHIZ170: Warning — <c>[InheritScope]</c> applied to a non-perspective type.
-  /// The attribute is read at projection time; on a class that isn't a perspective
-  /// participant it has no effect.
+  /// WHIZ170: Warning. <c>[InheritScope]</c> on a perspective class whose model is another type. The runner
+  /// reads the attribute from the model, so here it has no effect.
   /// </summary>
-  public static readonly DiagnosticDescriptor InheritScopeOnNonPerspective = new(
+  /// <docs>operations/diagnostics/whiz170</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/InheritScopeAnalyzerTests.cs:Analyzer_InheritScopeOnPerspectiveClass_ReportsWhiz170NamingTheModelAsync</tests>
+  public static readonly DiagnosticDescriptor InheritScopeOnPerspectiveClass = new(
     id: "WHIZ170",
-    title: "[InheritScope] on a non-perspective type has no effect",
-    messageFormat: "Class '{0}' is decorated with [InheritScope] but does not implement IPerspectiveFor<...>. The attribute will be ignored at runtime.",
+    title: "[InheritScope] on a perspective class has no effect",
+    messageFormat: "'{0}' is a perspective over '{1}', and the perspective runner reads [InheritScope] from the model. Move the attribute to '{1}'.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
     isEnabledByDefault: true,
-    description: "[InheritScope] is read by the perspective projection runner. Apply it only to types that participate in projections via IPerspectiveFor<...>."
+    description: "The perspective runner decides a row's scope from the [InheritScope] on the perspective's model type. On the perspective class it is ignored, and rows get the default: every scope field at creation, set once."
   );
 
   /// <summary>
-  /// WHIZ171: Info — <c>[InheritScope(OnCreate = None, Always = None)]</c> is
-  /// equivalent to no inheritance at all and is more confusing than omitting the attribute.
+  /// WHIZ171: Info. <c>[InheritScope(OnCreate = None, Always = None)]</c> gives the model's rows no scope at
+  /// all, not even a tenant, so tenant- or user-filtered lenses do not return them.
   /// </summary>
-  public static readonly DiagnosticDescriptor InheritScopeAllNoneIsRedundant = new(
+  /// <docs>operations/diagnostics/whiz171</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/InheritScopeAnalyzerTests.cs:Analyzer_InheritScopeAllNone_ReportsWhiz171SayingRowsGetNoScopeAsync</tests>
+  public static readonly DiagnosticDescriptor InheritScopeGivesNoScope = new(
     id: "WHIZ171",
-    title: "[InheritScope] with all-None flags is redundant",
-    messageFormat: "[InheritScope(OnCreate = None, Always = None)] on '{0}' is equivalent to declaring no inheritance at all. Either omit the attribute or specify at least one inherited field.",
+    title: "[InheritScope] with all-None flags gives rows no scope",
+    messageFormat: "[InheritScope(OnCreate = None, Always = None)] on '{0}' gives its rows no scope, not even a tenant, so a lens filtered by tenant or user does not return them. Name the fields the rows should carry, or keep this if the rows are meant to be unscoped.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Info,
     isEnabledByDefault: true,
-    description: "When both OnCreate and Always are ScopeFields.None, the attribute conveys 'inherit nothing' — but the framework default already inherits Tenant only. If you intend tenant-only inheritance, omit the attribute. If you intend zero inheritance, add a comment explaining why."
+    description: "With both OnCreate and Always set to ScopeFields.None, rows are written with an empty scope. Without the attribute, rows copy every scope field from the message that creates them."
   );
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [
-    InheritScopeOnNonPerspective,
-    InheritScopeAllNoneIsRedundant,
+    InheritScopeOnPerspectiveClass,
+    InheritScopeGivesNoScope,
   ];
 
   /// <inheritdoc/>
@@ -69,10 +82,8 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var attrs = symbol.GetAttributes();
-
     AttributeData? inheritScopeAttr = null;
-    foreach (var attr in attrs) {
+    foreach (var attr in symbol.GetAttributes()) {
       var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name == "InheritScopeAttribute" || name == "InheritScope") {
         inheritScopeAttr = attr;
@@ -86,32 +97,40 @@ public class InheritScopeAnalyzer : DiagnosticAnalyzer {
 
     var location = LocationUtilities.FirstOrNone(symbol);
 
-    // WB-AUTH-010: applied to non-perspective type?
-    if (!_implementsPerspectiveFor(symbol)) {
+    // WHIZ170: on a perspective class whose model is another type, the runner never reads it.
+    if (_otherModel(symbol) is { } model) {
       context.ReportDiagnostic(Diagnostic.Create(
-        InheritScopeOnNonPerspective,
+        InheritScopeOnPerspectiveClass,
         location,
-        symbol.Name));
+        symbol.Name,
+        model.Name));
     }
 
-    // WB-AUTH-011: both OnCreate and Always set to None?
-    var onCreate = _readEnumProp(inheritScopeAttr, "OnCreate", defaultValue: 1L /* Tenant */);
-    var always = _readEnumProp(inheritScopeAttr, "Always", defaultValue: 0L /* None */);
+    // WHIZ171: both OnCreate and Always set to None. OnCreate defaults to every field (63).
+    var onCreate = _readEnumProp(inheritScopeAttr, "OnCreate", defaultValue: 63L);
+    var always = _readEnumProp(inheritScopeAttr, "Always", defaultValue: 0L);
     if (onCreate == 0 && always == 0) {
       context.ReportDiagnostic(Diagnostic.Create(
-        InheritScopeAllNoneIsRedundant,
+        InheritScopeGivesNoScope,
         location,
         symbol.Name));
     }
   }
 
-  private static bool _implementsPerspectiveFor(INamedTypeSymbol symbol) {
+  /// <summary>
+  /// The model of the first perspective interface the class implements, when that model is not the class
+  /// itself; null when the class is no perspective, or is its own model.
+  /// </summary>
+  private static ITypeSymbol? _otherModel(INamedTypeSymbol symbol) {
     foreach (var iface in symbol.AllInterfaces) {
-      if (TypeNameUtilities.Display(iface).StartsWith(PERSPECTIVE_INTERFACE_PREFIX, System.StringComparison.Ordinal)) {
-        return true;
+      if (!_perspectiveInterfaceNames.Contains(iface.Name)
+          || TypeNameUtilities.Display(iface.ContainingNamespace) != PERSPECTIVES_NAMESPACE) {
+        continue;
       }
+      var model = iface.TypeArguments[0];
+      return SymbolEqualityComparer.Default.Equals(model, symbol) ? null : model;
     }
-    return false;
+    return null;
   }
 
   private static long _readEnumProp(AttributeData attr, string name, long defaultValue) {

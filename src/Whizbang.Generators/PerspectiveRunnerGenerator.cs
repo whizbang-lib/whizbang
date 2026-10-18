@@ -234,7 +234,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract [InheritScope].OnCreate flags from the model. Default 63 = ScopeFields.All
     // when the attribute is absent (preserves legacy copy-everything behavior). Adding
     // [InheritScope] opts the perspective into the safer per-field default.
-    var inheritScopeOnCreate = _extractInheritScopeOnCreate(modelType);
+    var (inheritScopeOnCreate, inheritScopeAlways) = _extractInheritScope(modelType);
 
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
@@ -253,6 +253,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             IsModelRecord: isModelRecord,
             HasScopeInterface: hasScopeInterface,
             InheritScopeOnCreate: inheritScopeOnCreate,
+            InheritScopeAlways: inheritScopeAlways,
             IsEphemeral: isEphemeral,
             TtlRowSeconds: ttlRowSeconds,
             IsFullHistory: isFullHistory
@@ -404,28 +405,33 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Reads <c>[InheritScope].OnCreate</c> from the supplied model type. Returns the
-  /// flag value as an int. Falls back to <c>(int)ScopeFields.All</c> (63) when the
-  /// attribute is absent — that preserves the legacy "copy every scope field on INSERT"
-  /// behavior so existing perspectives keep working without modification.
+  /// Reads <c>[InheritScope]</c>'s <c>OnCreate</c> and <c>Always</c> flags from the supplied model type, as
+  /// ints. With no attribute, and for a property the attribute does not set, the values are the
+  /// attribute's own defaults: <c>OnCreate</c> every field (63), so creation records ownership, and
+  /// <c>Always</c> none (0), so scope is set once.
   /// </summary>
-  private static int _extractInheritScopeOnCreate(ITypeSymbol modelType) {
-    const int defaultAll = 63;
+  private static (int OnCreate, int Always) _extractInheritScope(ITypeSymbol modelType) {
+    const int defaultOnCreate = 63;
+    const int defaultAlways = 0;
     foreach (var attr in modelType.GetAttributes()) {
       var name = TypeNameUtilities.SimpleNameOrNull(attr.AttributeClass);
       if (name != "InheritScopeAttribute" && name != "InheritScope") {
         continue;
       }
+      var onCreate = defaultOnCreate;
+      var always = defaultAlways;
+      // The attribute has two settable properties, OnCreate and Always, both ScopeFields.
       foreach (var named in attr.NamedArguments) {
-        if (named.Key == "OnCreate" && named.Value.Value is { } v) {
-          return System.Convert.ToInt32(v, System.Globalization.CultureInfo.InvariantCulture);
+        var flags = System.Convert.ToInt32(named.Value.Value, System.Globalization.CultureInfo.InvariantCulture);
+        if (named.Key == "OnCreate") {
+          onCreate = flags;
+        } else {
+          always = flags;
         }
       }
-      // Attribute present without OnCreate override → InheritScopeAttribute's own default.
-      // That default is ScopeFields.Tenant (1) per the attribute declaration.
-      return 1;
+      return (onCreate, always);
     }
-    return defaultAll;
+    return (defaultOnCreate, defaultAlways);
   }
 
   /// <summary>
@@ -541,7 +547,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(
         result,
         "INHERIT_SCOPE_ON_CREATE",
-        $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};");
+        $"private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeOnCreate};\n"
+        + $"  private const global::Whizbang.Core.Lenses.ScopeFields _inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields){perspective.InheritScopeAlways};");
 
     result = TemplateUtilities.ReplaceRegion(result, "SNAPSHOT_SETTINGS", perspective.IsEphemeral
         ? "var snapshotThreshold = _snapshotOptions.Value.EphemeralSnapshotEveryNEvents;\nvar snapshotRetention = _snapshotOptions.Value.EphemeralMaxSnapshotsPerStream;"

@@ -45,9 +45,10 @@ public class InheritScopeAttributeTests {
   }
 
   [Test]
-  public async Task InheritScope_Defaults_AreTenantOnCreate_AndNoneAlwaysAsync() {
+  public async Task InheritScope_Defaults_AreEveryFieldOnCreate_AndNoneAlwaysAsync() {
     var attr = new InheritScopeAttribute();
-    await Assert.That(attr.OnCreate).IsEqualTo(ScopeFields.Tenant);
+    // Creation records ownership: the creating message's whole scope, including who created the row.
+    await Assert.That(attr.OnCreate).IsEqualTo(ScopeFields.All);
     await Assert.That(attr.Always).IsEqualTo(ScopeFields.None);
   }
 
@@ -62,7 +63,7 @@ public class InheritScopeAttributeTests {
   public async Task InheritScope_Always_AcceptsCustomFlagsAsync() {
     var attr = new InheritScopeAttribute { Always = ScopeFields.User };
     await Assert.That(attr.Always).IsEqualTo(ScopeFields.User);
-    await Assert.That(attr.OnCreate).IsEqualTo(ScopeFields.Tenant);
+    await Assert.That(attr.OnCreate).IsEqualTo(ScopeFields.All);
   }
 
   [Test]

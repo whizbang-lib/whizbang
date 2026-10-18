@@ -3230,9 +3230,9 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveRunnerGenerator_InheritScopeWithoutOnCreate_DefaultsToTenantAsync() {
+  public async Task PerspectiveRunnerGenerator_InheritScopeWithoutOnCreate_DefaultsToEveryFieldAsync() {
     // Arrange - [InheritScope] with only Always set: OnCreate falls back to the attribute
-    // default (ScopeFields.Tenant == 1)
+    // default, every field (ScopeFields.All == 63), so creation still records ownership
     const string source = """
 
 using Whizbang.Core;
@@ -3262,10 +3262,11 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
-    // Assert - attribute present without OnCreate override -> Tenant (1)
+    // Assert - attribute present without OnCreate override -> every field (63); Always = User (2)
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)1;");
+    await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;");
+    await Assert.That(runnerSource).Contains("_inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)2;");
   }
 
   [Test]
@@ -3303,6 +3304,49 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("_inheritScopeOnCreate = (global::Whizbang.Core.Lenses.ScopeFields)63;");
+    await Assert.That(runnerSource).Contains("_inheritScopeAlways = (global::Whizbang.Core.Lenses.ScopeFields)0;")
+      .Because("with no attribute, scope is set once, at creation");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_InheritScope_ResolvesEveryWriteThroughScopeInheritanceAsync() {
+    // The runner decides each write's scope through ScopeInheritance.Resolve, passing the row's stored
+    // scope from the apply read, so Always fields follow the latest writer on an existing row.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public class OrderCreatedEvent : IEvent {
+    public Guid Id { get; set; }
+  }
+
+  [InheritScope(Always = ScopeFields.User)]
+  public class OrderModel {
+    [StreamId]
+    public Guid Id { get; set; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource).Contains("global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(");
+    await Assert.That(runnerSource).Contains("applyRead.Scope");
+    await Assert.That(runnerSource).DoesNotContain("FilterByFields(_inheritScopeOnCreate)")
+      .Because("no write path filters by OnCreate alone, which would drop the Always fields from a new row");
   }
 
   #endregion
