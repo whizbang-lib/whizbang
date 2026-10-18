@@ -20,17 +20,16 @@ on:
         description: 'The published version, e.g. 0.2450.1'
         required: true
         type: string
-    secrets:
-      RELEASE_APP_ID:
-        required: true
-      RELEASE_APP_PRIVATE_KEY:
-        required: true
+    # No secrets: the release app's are environment secrets, which a caller cannot pass; the sync job
+    # reads them through the release-app environment (#1466).
 
 permissions: {}
 
 jobs:
   sync:
     name: Open develop sync PR
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     runs-on: ubuntu-latest
     permissions:
       contents: write        # push the throwaway sync branch (sync/*, not protected)

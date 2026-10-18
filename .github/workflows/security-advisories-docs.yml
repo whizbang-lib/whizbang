@@ -26,6 +26,8 @@ concurrency:
 jobs:
   refresh:
     name: Refresh the docs security advisories page
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

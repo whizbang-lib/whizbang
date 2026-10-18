@@ -303,9 +303,24 @@ ref is `refs/pull/N/merge`. The push run finds the release PR through the merge 
 
 Every write that must start CI, or that only one identity may make, goes through the
 **`whizbang-release-bot`** GitHub App: each job mints a short-lived installation token
-(`actions/create-github-app-token`, from the org secrets `RELEASE_APP_ID` and
-`RELEASE_APP_PRIVATE_KEY`) scoped to the one repository and the permissions it needs. No personal
-access token is involved, so nothing long-lived belongs to a person.
+(`actions/create-github-app-token`, from `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`) scoped to the
+one repository and the permissions it needs. No personal access token is involved, so nothing
+long-lived belongs to a person.
+
+**The app's secrets are environment secrets, not org secrets.** A workflow file pushed on any branch
+runs, so an org or repository secret is readable by anyone who can push a branch. The two live only in:
+
+| Environment | Branches | Approval | Used by |
+|---|---|---|---|
+| `release-app` | `develop`, `main`, `release/v*` | none | every job in the table below except the cut |
+| `release-cut` | `develop`, `main` | a `build-admins` member | `start-release.yml` (cutting a release) |
+
+A job reads them only by declaring one of those environments (`Test · Pipeline scripts` fails any job
+that reads them without one, `.github/scripts/tests/ReleaseSecrets.Tests.ps1`). A reusable workflow's
+job declares the environment itself: a caller cannot pass an environment secret, so none does.
+`nuget-publish.yml` mints the token in `release-app-ready` before anything is pushed, so a run that
+could not tag fails before the packages are public. Branch creation under `release/` is limited to
+build admins and the release app, so nobody else can make a branch the environment accepts.
 
 | Write | Where | App permissions |
 |---|---|---|
@@ -651,7 +666,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
-| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the org secrets `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing for this repository, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app or the secret (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z` |
+| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z` |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success
