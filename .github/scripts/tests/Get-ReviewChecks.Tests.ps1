@@ -70,4 +70,18 @@ Describe 'Get-ReviewChecks.ps1' {
     @($Block.Findings | Where-Object Path -EQ 'src/Lib/A.cs').Count | Should -BeGreaterThan 0
     @($Block.Findings | Where-Object Path -EQ 'src/Lib/Quoted.cs').Count | Should -Be 0
   }
+
+  It 'does not ask a bot pull request for an issue' {
+    $botOut = Join-Path $TestDrive 'bot-comment.md'
+    Push-Location $Repo
+    try {
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef dependabot/x -PullRequest 8 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 0 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $botOut -AuthorIsBot
+      $LASTEXITCODE | Should -Be 0
+    } finally { Pop-Location }
+    $botBlock = @(ConvertFrom-ReviewBlock -Text (Get-Content $botOut -Raw))[0]
+    @($botBlock.Findings.Id) | Should -Not -Contain 'pr.closing-keyword'
+    @($botBlock.Findings.Id) | Should -Contain 'style.en-us:src/Lib/A.cs:2'
+  }
 }

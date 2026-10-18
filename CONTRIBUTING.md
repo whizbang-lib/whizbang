@@ -185,6 +185,27 @@ See [ai-docs/boy-scout-rule.md](ai-docs/boy-scout-rule.md).
 
 ## Submitting Changes
 
+### Open an issue first
+
+Every change starts as an issue: a bug report, a feature request, or a proposal, opened before the pull
+request. The issue is where a change is discussed (whether it is wanted, what shape it should take, what it
+must not break) before anyone writes or reviews code, and it is how the change is tracked on the roadmap.
+For a bug, the issue says what happened and how to reproduce it; for a feature, the problem it solves.
+
+The pull request then closes that issue with a GitHub closing keyword in its description:
+
+```text
+Fixes #123
+```
+
+`Closes #123` and `Resolves #123` work too. Write the keyword as plain text, not inside backticks, or GitHub
+ignores it. A pull request that resolves two issues names both (`Fixes #123`, `Fixes #124`).
+
+This is enforced: the required **Gate · Linked issue** check fails a pull request that closes no issue in
+this repository, or whose issues were all opened after it. It reads the current description, so adding the
+keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
+and the release pull request into `main` are exempt.
+
 ### Pull Request Process
 
 1. **Create a feature branch**
@@ -231,7 +252,7 @@ git push origin feature/my-feature
 6. **Create Pull Request**
    - Go to GitHub and create a PR from your fork
    - Describe what changed and why
-   - Link related issues
+   - Close the issue it resolves with `Fixes #N` ([Open an issue first](#open-an-issue-first))
    - Wait for CI checks to pass
 
 ### Pull Request Requirements
@@ -244,6 +265,7 @@ git push origin feature/my-feature
 - ✅ No AOT warnings in production code
 - ✅ Commit messages follow Conventional Commits
 - ✅ Every commit is signed off ([DCO](#developer-certificate-of-origin))
+- ✅ Closes an issue opened before it ([Open an issue first](#open-an-issue-first))
 
 ### Code Review
 
@@ -274,7 +296,9 @@ pull request, and every pull request is reviewed against the same standard.
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
-  package versions.
+  package versions;
+- the pull request closes an issue in this repository that was opened before it
+  ([Open an issue first](#open-an-issue-first)).
 
 **Review checks** (reported, not required): the "Report · Review checks" job comments on each pull
 request with the findings a reviewer would otherwise type by hand, each on its file and line where it

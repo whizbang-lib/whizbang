@@ -246,15 +246,30 @@ diff --git a/x.yml b/x.yml
 }
 
 Describe 'Find-PullRequestFindings' {
-  It 'flags a pull request that closes no issue' {
+  It 'blocks a pull request that closes no issue, since the gate requires one' {
     $f = @(Find-PullRequestFindings -Body 'a fix' -ClosingIssueCount 0 -BaseRef develop -HeadRef fix/x)
     $f.Rule | Should -Be @('pr.closing-keyword')
+    $f[0].Severity | Should -Be 'blocking'
+    $f[0].Body | Should -Match 'requires'
     $f[0].Path | Should -BeNullOrEmpty
+  }
+
+  It 'does not ask a bot pull request for an issue' {
+    @(Find-PullRequestFindings -Body '' -ClosingIssueCount 0 -BaseRef develop -HeadRef dependabot/x -AuthorIsBot).Count | Should -Be 0
+  }
+
+  It 'does not ask the release pull request into main for an issue' {
+    @(Find-PullRequestFindings -Body '' -ClosingIssueCount 0 -BaseRef main -HeadRef 'release/v1.0.0').Count | Should -Be 0
+  }
+
+  It 'still asks a hotfix into main for an issue' {
+    (Find-PullRequestFindings -Body '' -ClosingIssueCount 0 -BaseRef main -HeadRef 'hotfix/v1.0.1').Rule | Should -Be @('pr.closing-keyword')
   }
 
   It 'explains a backticked keyword' {
     $f = @(Find-PullRequestFindings -Body 'This `Fixes #12`' -ClosingIssueCount 0 -BaseRef develop -HeadRef fix/x)
     $f[0].Body | Should -BeLike '*backticks*'
+    $f[0].Severity | Should -Be 'blocking'
   }
 
   It 'is quiet when an issue is closed and the base is develop' {

@@ -420,21 +420,26 @@ function Find-PullRequestFindings {
   <#
   .SYNOPSIS
       Checks on the pull request itself: a closing keyword, and the branch it targets.
+  .DESCRIPTION
+      The closing keyword is required ("Gate - Linked issue", .github/scripts/Test-LinkedIssue.ps1), with the
+      same exemptions: a pull request opened by a bot, and the release pull request into main.
   #>
   [CmdletBinding()]
   param(
     [AllowEmptyString()][string]$Body = '',
     [Parameter(Mandatory)][int]$ClosingIssueCount,
     [Parameter(Mandatory)][string]$BaseRef,
-    [Parameter(Mandatory)][string]$HeadRef
+    [Parameter(Mandatory)][string]$HeadRef,
+    [switch]$AuthorIsBot
   )
-  if ($ClosingIssueCount -eq 0) {
+  $exempt = $AuthorIsBot -or ($BaseRef -eq 'main' -and $HeadRef -like 'release/*')
+  if ($ClosingIssueCount -eq 0 -and -not $exempt) {
     $text = if ($Body -match '(?i)`[^`]*\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+[^`]*`') {
-      'The closing keyword is inside backticks, so GitHub ignores it and no issue is linked. Remove the backticks around it while the pull request is still open; the link cannot be added after merge.'
+      'The closing keyword is inside backticks, so GitHub ignores it and no issue is linked; the merge requires one. Remove the backticks around it while the pull request is still open; the link cannot be added after merge.'
     } else {
-      'No issue is linked to close. If this resolves an issue, add "Fixes #N" to the description now: the link cannot be added after merge.'
+      'No issue is linked to close, and the merge requires one. Open an issue first (CONTRIBUTING.md, "Open an issue first"), add "Fixes #N" to the description, and re-run the "Gate · Linked issue" job.'
     }
-    New-ReviewFinding -Id 'pr.closing-keyword' -Rule 'pr.closing-keyword' -Severity warning -Body $text
+    New-ReviewFinding -Id 'pr.closing-keyword' -Rule 'pr.closing-keyword' -Severity blocking -Body $text
   }
   $fromReleaseLine = $HeadRef -match '^(?:release|hotfix)/'
   $allowed = $BaseRef -eq 'develop' -or $BaseRef -like 'release/*' -or ($BaseRef -eq 'main' -and $fromReleaseLine)
