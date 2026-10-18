@@ -47,8 +47,8 @@ pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <n> -WhatIf   # the plan
 pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <n>           # starts or extends the pending review
 ```
 
-It puts each finding on its line, puts the rest in the review summary, and skips what is already
-drafted. If it reports a block for another commit, CI has not finished on the head: wait for it rather
+It puts each finding on its line, puts the rest in the review summary (or prints them to paste at
+submit, when the pending review has no summary yet), and skips what is already drafted. If it reports a block for another commit, CI has not finished on the head: wait for it rather
 than drafting stale findings. Do not re-derive these findings by hand, and do not repeat them in the
 judgment comments.
 
@@ -109,7 +109,10 @@ gh api graphql -f query='mutation($rv:ID!,$p:String!,$l:Int!,$b:String!){addPull
 
 To add to the summary, read the current body first and write it back with the addition
 (`updatePullRequestReview` replaces the whole body; the draft script's summary lines must survive).
-Only the review whose `viewerDidAuthor` is true is yours to edit.
+A pending review started in the browser has no body, and GitHub refuses to give it one until it is
+submitted ("Could not edit a review with a missing body"): give the reviewer the summary text to paste
+into the submit dialog instead, as the draft script does. Only the review whose `viewerDidAuthor` is
+true is yours to edit.
 
 ## Step 5: Report to the reviewer
 
