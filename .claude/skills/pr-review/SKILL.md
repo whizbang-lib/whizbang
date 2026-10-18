@@ -4,9 +4,11 @@ description: >-
   Review a Whizbang pull request against this repository's standards and draft the comments into the
   reviewer's pending GitHub review, never submitting it. Use when asked to review a pull request, to
   draft review comments, to check a branch before opening a pull request, or to say whether a pull
-  request is ready. Covers the mechanical findings CI already reports and the judgment checks a script
-  cannot make: tests that can fail, test placement, coverage, docs and tests links, AOT, SQL and
-  migrations, hot paths, type names, security, public API and writing.
+  request is ready. Covers the mechanical findings CI already reports, the core principles every change
+  carries (no reflection and AOT, the docs repository updated, 100% line and branch coverage, code,
+  docs and tests linked, generators on the template system, reuse and extensibility, deterministic
+  tests on public completion signals), and the area checks for SQL, hot paths, startup, generators,
+  security and writing.
 argument-hint: "<pull request number, or a branch name to review before opening one>"
 ---
 
@@ -52,7 +54,47 @@ submit, when the pending review has no summary yet), and skips what is already d
 than drafting stale findings. Do not re-derive these findings by hand, and do not repeat them in the
 judgment comments.
 
-## Step 3: Judgment checks
+## Step 3: The core principles, on every pull request
+
+These apply to every change that touches `src/**` or `tests/**`, whatever the files are. They are not
+optional and not triggered: walk all seven, and a breach of any is a blocking comment unless the
+description gives a reason the maintainer has accepted.
+
+1. **No reflection; AOT compatible.** No reflection, `Type.GetType`, `Activator`, `dynamic` or
+   reflection-based JSON in any library or sample project; types are discovered by a generator and JSON
+   goes through the generated contexts. Only the generator projects may use reflection. Owner:
+   `ai-docs/aot-requirements.md`.
+2. **The docs repository is updated.** Any new or changed public API, option, diagnostic, behavior a
+   consumer can observe, or operational procedure has a companion pull request on the docs site
+   (`whizbang-lib.github.io`, targeting `develop`), linked from this one. "The page should say X" in a
+   description is a finding, not a substitute. Owner: `ai-docs/documentation-maintenance.md`.
+3. **100% of new lines and 100% of new branches are covered,** and the whole-library hand-written branch
+   gate stays at 100%. Every outcome of every new decision is taken by a test, not just every line.
+   An exclusion is member-level, rare, and justified in place. Owner: `ai-docs/coverage-exclusions.md`.
+4. **Code, docs and tests are linked.** Every public type and member carries `<docs>` (versionless path)
+   and `<tests>` tags that resolve; every SQL function carries the same links; the docs page links back
+   to the code; the code-docs and code-tests maps on the docs site are regenerated
+   (`generate-code-docs-map.mjs`, `generate-code-tests-map.mjs`). Owner: CLAUDE.md "Code-Docs
+   Linking" and "Code-Tests Linking".
+5. **Generators use the template system.** Generated code comes from real C# template files with
+   region replacement and snippets, not `StringBuilder` or string concatenation. A change that adds
+   emitted code to a generator still built by concatenation is the moment to move it, or the
+   description says why not (Boy Scout rule). Owner: `src/Whizbang.Generators/ai-docs/template-system.md`.
+6. **Reuse and extensibility.** The change uses the helper that already exists (type names through
+   `TypeNameUtilities` / `TypeNameFormatter`, identifiers through `TrackedGuid`, the shared SQL
+   constants) rather than a local copy, and does not duplicate logic another type owns. New behavior a
+   consumer might need to vary is an extension point (an option, an interface, a hook) with a sensible
+   default, not a hard-coded branch; nothing is sealed, internal or private in a way that blocks the
+   obvious extension without a reason. Owners: `ai-docs/type-naming.md`, `ai-docs/boy-scout-rule.md`.
+7. **Tests are deterministic and wait on completion signals.** No `Task.Delay`, `Thread.Sleep`,
+   polling loop, real clock, or timeout used as the wait; time is a `FakeTimeProvider`. Each
+   asynchronous assertion waits on the signal for the exact transition it asserts. When the library had
+   no signal for that transition and the change adds one, it is a **public** event, callback or hook
+   with XML docs, `<docs>` and `<tests>`, and docs-site coverage: useful to a consumer for monitoring,
+   never a test-only internal or an `InternalsVisibleTo` back door. Owners: `testing` skill,
+   `ai-docs/flaky-tests.md`.
+
+## Step 4: Area checks
 
 Classify the changed files, then run every check whose trigger matches. A check whose trigger does not
 match stands down silently. Each row names the document that owns the rule: read that section before
@@ -60,18 +102,16 @@ writing a comment that cites it, and cite it in the comment.
 
 | Trigger (changed paths) | Check | Owner |
 |---|---|---|
-| any `src/**` change | Does the change do what the description says, and nothing it does not mention? Are failure paths handled? Does a non-rethrowing `catch` log what failed? | CONTRIBUTING.md "What the reviewer checks" |
+| any `src/**` change | Does the change do what the description says, and nothing it does not mention? Are failure paths handled? Does a non-rethrowing `catch` log what failed? A new type with no caller in the library is not shippable. | CONTRIBUTING.md "What the reviewer checks" |
 | any `src/**` change | Would each new test fail without the change? Does it assert the behavior, not the implementation? Was the type the test names actually exercised (a `StartAsync` that returned proves only scheduling)? | `ai-docs/tdd-strict.md`, `ai-docs/flaky-tests.md` |
-| `tests/**` | Is each test in the project its type requires (Unit, Component, Integration)? Any sleep, real clock, polling, or a timeout used as the wait? Async test names end in `Async`? | `testing` skill, `docs/TEST-PROJECTS.md`, `ai-docs/testing-tunit.md` |
-| uncovered lines in the gate comment | Is the line reachable by a real test? An `[ExcludeFromCodeCoverage]` added: is the member wholly untestable and justified? Suggest the test that reaches the line, not an exclusion. | `ai-docs/coverage-exclusions.md` |
-| new or changed public type or member in `src/**` | XML docs with `<docs>` (versionless path) and `<tests>` tags? A companion docs-site pull request for user-visible behavior? A breaking change without a deprecation? A new type with no caller in the library is not shippable. | `ai-docs/documentation-maintenance.md`, CLAUDE.md "Code-Docs Linking" |
-| `src/Whizbang.Core/**` and other runtime packages | No reflection, no `Type.GetType`, AOT-safe JSON through the generated contexts. | `ai-docs/aot-requirements.md` |
-| `src/*Generators*/**` | Syntactic filtering before semantic work, value-equatable models, no captured symbols. Generated names use the shared type-name helpers. | `src/Whizbang.Generators/ai-docs/performance-principles.md`, `common-pitfalls.md`, `ai-docs/type-naming.md` |
-| `src/**/Migrations/*.sql` | New file follows the numbered rules: idempotent, schema-qualified, header, `COMMENT ON`, docs and tests links, shared literals as constants. | `src/Whizbang.Data.Postgres/Migrations/README.md` |
+| `tests/**` | Is each test in the project its type requires (Unit, Component, Integration)? Async test names end in `Async`? | `testing` skill, `docs/TEST-PROJECTS.md`, `ai-docs/testing-tunit.md` |
+| uncovered lines or branches in the gate comment | Suggest the test that reaches the line or takes the outcome, not an exclusion. | `ai-docs/coverage-exclusions.md` |
+| new or changed public type or member in `src/**` | A breaking change without a deprecation? | `ai-docs/documentation-maintenance.md` |
+| `src/*Generators*/**` | Syntactic filtering before semantic work, value-equatable models (arrays, not lists), no captured symbols. | `src/Whizbang.Generators/ai-docs/performance-principles.md`, `value-type-records.md`, `common-pitfalls.md` |
+| `src/**/Migrations/*.sql` | New file follows the numbered rules: idempotent, schema-qualified, header, `COMMENT ON`, shared literals as constants. | `src/Whizbang.Data.Postgres/Migrations/README.md` |
 | work-coordination SQL, claiming, the commit-order stamper, schema initialization, serialization | A hot path or a startup path: is there a measurement or a stated reason? Does any statement depend on an earlier statement's committed effect? | `ai-docs/load-under-bulk-import.md`, `ai-docs/schema-initialization-connections.md` |
 | DI registration, `AddWhizbang*`, startup | Does the framework ever silently do less than the consumer asked for? | `ai-docs/startup-registration-invariants.md` |
 | perspective storage, temporal values | One stored unit, one reader. | `ai-docs/perspective-stored-forms.md` |
-| identifiers created in `src/**` | `TrackedGuid` (or `Guid.CreateVersion7()`) rather than a random GUID, where the value is persisted or ordered. | `ai-docs/code-standards.md` "UUIDv7 for Identifiers" |
 | anything, including the description and commit messages | No client, consumer, tenant, environment or person named. No secret or connection detail. Untrusted input stays untrusted; SQL takes values as parameters. | CLAUDE.md first section, `docs/security-assurance-case.md` |
 | prose: comments, docs, description | en-US and no em-dashes in places the regex cannot judge (identifiers, quoted text). Conventional Commit titles. A description that says what changed and why. | CLAUDE.md "Language", CONTRIBUTING.md |
 | `.github/**`, `scripts/**` | Script standards; least-privilege workflow permissions; actions pinned to a commit SHA. | `ai-docs/script-standards.md` |
@@ -84,7 +124,7 @@ phrase it as a question to the author.
 **Style nits** (a blank line, a name you would have chosen differently) go in only when the repository
 has a rule for them, and are marked "Nit:" so the author can tell them from what blocks.
 
-## Step 4: Write each comment
+## Step 5: Write each comment
 
 One comment per finding, on the line it is about, in this shape:
 
@@ -114,7 +154,7 @@ submitted ("Could not edit a review with a missing body"): give the reviewer the
 into the submit dialog instead, as the draft script does. Only the review whose `viewerDidAuthor` is
 true is yours to edit.
 
-## Step 5: Report to the reviewer
+## Step 6: Report to the reviewer
 
 In the conversation, not on GitHub:
 
