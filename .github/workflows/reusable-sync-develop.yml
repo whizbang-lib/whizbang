@@ -103,10 +103,14 @@ jobs:
 
           # Build the sync branch from the source, but restore develop's Directory.Build.props so
           # the merge brings the real changes without overwriting develop's local placeholder.
+          # The source may predate the publish script, so run the copy from the checked-out ref.
+          cp .github/scripts/Publish-SignedCommit.ps1 "$RUNNER_TEMP/Publish-SignedCommit.ps1"
           git checkout -B "$SYNC_BRANCH" "$SRC"
           git checkout origin/develop -- Directory.Build.props
           git commit -am "chore: keep develop's local Directory.Build.props during ${SOURCE_LABEL}->develop sync" || true
-          git push origin "$SYNC_BRANCH"
+          # Published through the API, not git push, so GitHub signs the commits: the rulesets require
+          # signed commits (.github/scripts/Publish-SignedCommit.ps1).
+          pwsh -NoProfile -File "$RUNNER_TEMP/Publish-SignedCommit.ps1" -Repository "${{ github.repository }}" -Branch "$SYNC_BRANCH"
 
           gh pr create --base develop --head "$SYNC_BRANCH" \
             --title "chore: sync ${SOURCE_LABEL} into develop after v${RELEASE_VERSION} release" \

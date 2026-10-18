@@ -184,6 +184,81 @@ Merge commits, commits by bots (Dependabot, the release automation) and commits 
 DCO was adopted (2026-10-06) are not checked. Commits written with an AI assistant are signed off by
 the person submitting them, who takes responsibility for the contribution.
 
+### Signing your commits
+
+Every commit that lands on `develop`, `main` or a release branch is cryptographically signed, so each one
+is tied to the account that made it. A sign-off (above) is a statement; a signature is proof. GitHub
+marks a signed commit **Verified** when the key is registered on the author's account and the commit's
+email is a verified email on that account (the `@users.noreply.github.com` address counts).
+
+Set it up once, in about five minutes. SSH signing is the simplest; GPG works too.
+
+**1. Create a signing key** (separate from the key you log in with, so either can be revoked alone):
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com" -f ~/.ssh/id_ed25519_signing
+# macOS: keep it unlocked in the keychain, so commits never prompt
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519_signing
+```
+
+On Windows, use the same commands in Git Bash or PowerShell with the OpenSSH agent service running. A
+hardware key works as well: `ssh-keygen -t ed25519-sk` keeps the key on the device.
+
+**2. Register it on GitHub as a signing key** (Settings, SSH and GPG keys, New SSH key, key type
+**Signing Key**), or with the CLI:
+
+```bash
+gh auth refresh -s admin:ssh_signing_key
+gh ssh-key add ~/.ssh/id_ed25519_signing.pub --type signing --title "laptop signing"
+```
+
+**3. Turn signing on for this project only.** Add this to `~/.gitconfig`, so every clone and worktree of
+a `whizbang-lib` repository signs and nothing else changes:
+
+```ini
+[includeIf "hasconfig:remote.*.url:https://github.com/whizbang-lib/**"]
+    path = ~/.gitconfig-whizbang
+```
+
+and create `~/.gitconfig-whizbang`:
+
+```ini
+[user]
+    signingkey = ~/.ssh/id_ed25519_signing.pub
+[gpg]
+    format = ssh
+[commit]
+    gpgsign = true
+[tag]
+    gpgsign = true
+```
+
+(`hasconfig` needs git 2.36 or later. If you clone over SSH, add a second `includeIf` for
+`git@github.com:whizbang-lib/**`. To sign everywhere instead, put those settings in `~/.gitconfig`.)
+
+**4. Check it.** `git log --show-signature -1` after your next commit, and **Verified** on GitHub once it
+is pushed. If it says **Unverified**, the commit's email is not a verified email on your account: check
+`git config user.email` against Settings, Emails.
+
+**Using GPG instead:** `gpg --full-generate-key` (ECC, ed25519, your verified email), then
+`git config user.signingkey <key id>` and `commit.gpgsign true`, and add the output of
+`gpg --armor --export <key id>` under Settings, SSH and GPG keys, New GPG key.
+
+**A branch with unsigned commits** is re-signed and force-pushed:
+
+```bash
+git rebase --exec 'git commit --amend --no-edit -S --signoff' origin/develop
+git push --force-with-lease
+```
+
+**A new or lost machine** needs nothing from the old one: create and register a new key the same way,
+and delete the lost one from your GitHub settings. Commits already pushed stay **Verified**: GitHub
+records each commit's verification when it is pushed.
+
+Automation signs too: the release, sync and README workflows create their commits through the GitHub
+API (`.github/scripts/Publish-SignedCommit.ps1`), which GitHub signs as the app, and the merge queue's
+merge commits are signed by GitHub.
+
 ## Standards and Guidelines
 
 ### Code Standards

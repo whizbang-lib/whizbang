@@ -136,13 +136,9 @@ function Publish-SignedCommits {
   <# .SYNOPSIS Recreates the unpublished commits through the API and points the branch at them. #>
   param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Branch, [switch]$Force, [string]$Remote = 'origin')
   $pending = @((Invoke-GitText rev-list --reverse --topo-order HEAD --not "--remotes=$Remote") -split "`n" | Where-Object { $_ })
-  if ($pending.Count -eq 0) {
-    Write-Host "Nothing to publish: every commit is already on $Remote."
-    return
-  }
-
   $published = @{}
-  $head = $null
+  # With nothing new, the branch still has to point at HEAD, which the remote already has.
+  $head = (Invoke-GitText rev-parse HEAD).Trim()
   foreach ($commit in $pending) {
     $parents = @(((Invoke-GitText rev-list --parents -n 1 $commit) -split ' ') | Select-Object -Skip 1)
     $first = $parents[0]
@@ -170,6 +166,10 @@ function Publish-SignedCommits {
   }
 
   $existing = Invoke-GitHubApi -Method GET -Path "repos/$Repository/git/ref/heads/$Branch" -AllowNotFound
+  if ($existing -and $existing.object.sha -eq $head) {
+    Write-Host "Nothing to publish: $Branch already points at $head."
+    return
+  }
   if ($existing) {
     [void](Invoke-GitHubApi -Method PATCH -Path "repos/$Repository/git/refs/heads/$Branch" -Body @{ sha = $head; force = [bool]$Force })
   } else {

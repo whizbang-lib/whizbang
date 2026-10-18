@@ -316,6 +316,14 @@ access token is involved, so nothing long-lived belongs to a person.
 | README numbers PR | `readme-refresh.yml` | contents, pull requests |
 | Docs site test status and security advisories, and its release | `ci.yml` → Report · Test status to docs, `security-advisories-docs.yml` | contents, pull requests, actions (docs repository only) |
 
+**Commits are created through the API, not pushed.** The develop, main and release rulesets require
+signed commits, and a `git push` of a workflow's own commit is unsigned. So the release branch (its
+main merge and version bump), the merge-back branch and the README branch are published with
+`.github/scripts/Publish-SignedCommit.ps1`: it recreates each local commit through the REST commits
+API with no author or committer, which GitHub signs as the app, checks each tree matches the one git
+built, then creates or moves the branch. The docs-site branches are squash-merged, so only GitHub's
+signed squash commit lands and they keep `git push`.
+
 A PR or push made with `GITHUB_TOKEN` starts no workflow, which is why these are not `GITHUB_TOKEN`.
 The tag is because the tag ruleset lets only the app create a `v*` tag, and GitHub Actions cannot be
 a ruleset bypass actor. GitHub releases and everything else stay on `GITHUB_TOKEN`.
