@@ -18,6 +18,11 @@
       - the release pull request into main (from a release/ branch), whose changes reached the release
         through pull requests that each closed an issue.
 
+    GitHub links closing keywords only on pull requests into the default branch, so a fix into a release
+    branch (RELEASING.md F4, F7, F8) has no closing references however its description reads (#1449). For
+    a pull request into release/v**, the closing keywords are read from the description instead, and each
+    issue is looked up for its opening date and labels.
+
     The pull request is read from the API at run time, not from the event that started the run, so adding
     the keyword to the description and re-running this job is enough. In the merge queue the pull request
     number is read from the queue branch, so the link cannot be removed after the pull request run passed.
@@ -32,12 +37,17 @@
 
 .PARAMETER HeadRef
     The queue branch (merge queue runs), gh-readonly-queue/<base>/pr-<number>-<sha>.
+
+.PARAMETER EmitClosingIssues
+    Print the issues the pull request closes as JSON ([{number, labels}]) and exit, for the review-checks
+    step, so both gates read the same closing issues.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Repository,
   [int]$PullRequest = 0,
-  [string]$HeadRef = ''
+  [string]$HeadRef = '',
+  [switch]$EmitClosingIssues
 )
 
 Set-StrictMode -Version Latest
@@ -60,7 +70,8 @@ function ConvertFrom-PullRequestJson {
   if (-not $pr) { throw "The pull request could not be read from $Repository." }
   $issues = @($pr.closingIssuesReferences.nodes |
       Where-Object { $_.repository.nameWithOwner -eq $Repository } |
-      ForEach-Object { [pscustomobject]@{ Number = [int]$_.number; CreatedAt = [datetimeoffset]$_.createdAt } })
+      ForEach-Object { [pscustomobject]@{ Number = [int]$_.number; CreatedAt = [datetimeoffset]$_.createdAt
+          Labels = @(if ($_.PSObject.Properties['labels']) { $_.labels.nodes | ForEach-Object { [string]$_.name } }) } })
   [pscustomobject]@{
     Number      = [int]$pr.number
     Author      = [string]$pr.author.login
@@ -68,8 +79,39 @@ function ConvertFrom-PullRequestJson {
     CreatedAt   = [datetimeoffset]$pr.createdAt
     BaseRef     = [string]$pr.baseRefName
     HeadRef     = [string]$pr.headRefName
+    Body        = if ($pr.PSObject.Properties['body']) { [string]$pr.body } else { '' }
     Issues      = $issues
   }
+}
+
+function Get-ClosingKeywordNumbers {
+  <#
+  .SYNOPSIS
+      The issue numbers a description closes with a keyword GitHub honors, in order and once each. Code
+      spans and code blocks are skipped, as GitHub skips them.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Body)
+  $text = [regex]::Replace($Body, '(?s)```.*?```', ' ')
+  $text = [regex]::Replace($text, '`[^`]*`', ' ')
+  $numbers = [regex]::Matches($text, '(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b') |
+    ForEach-Object { [int]$_.Groups[1].Value }
+  @($numbers | Select-Object -Unique)
+}
+
+function Resolve-ClosingIssues {
+  <#
+  .SYNOPSIS
+      The issues the pull request closes: GitHub's own references, or, for a pull request into a release
+      branch (which GitHub never links), the ones its description closes, each read through LookupIssue.
+  #>
+  param(
+    [Parameter(Mandatory)]$PullRequest,
+    [Parameter(Mandatory)][AllowEmptyString()][string]$Body,
+    [Parameter(Mandatory)][scriptblock]$LookupIssue
+  )
+  $linked = @($PullRequest.Issues)
+  if ($linked.Count -gt 0 -or $PullRequest.BaseRef -notlike 'release/v*') { return $linked }
+  @(Get-ClosingKeywordNumbers -Body $Body | ForEach-Object { & $LookupIssue $_ } | Where-Object { $_ })
 }
 
 function Get-LinkedIssueVerdict {
@@ -113,12 +155,32 @@ if ($number -le 0) {
 
 $owner, $name = $Repository -split '/', 2
 $query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){' +
-  'number createdAt baseRefName headRefName author{login __typename} ' +
-  'closingIssuesReferences(first:50){nodes{number createdAt repository{nameWithOwner}}}}}}'
+  'number createdAt baseRefName headRefName body author{login __typename} ' +
+  'closingIssuesReferences(first:50){nodes{number createdAt repository{nameWithOwner} labels(first:20){nodes{name}}}}}}}'
 $json = gh api graphql -f query=$query -f owner=$owner -f name=$name -F number=$number
 if ($LASTEXITCODE -ne 0) { Write-Output "::error::Reading pull request #$number failed (gh exit $LASTEXITCODE)."; exit 1 }
 
-$verdict = Get-LinkedIssueVerdict -PullRequest (ConvertFrom-PullRequestJson -Json ($json -join "`n") -Repository $Repository)
+$pr = ConvertFrom-PullRequestJson -Json ($json -join "`n") -Repository $Repository
+$issueQuery = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){' +
+  'issue(number:$number){number createdAt labels(first:20){nodes{name}}}}}'
+$lookup = {
+  param([int]$IssueNumber)
+  # A number that is a pull request, or no issue at all, reads as nothing
+  $found = gh api graphql -f query=$issueQuery -f owner=$owner -f name=$name -F number=$IssueNumber 2>$null
+  if ($LASTEXITCODE -ne 0) { return $null }
+  $issue = (($found -join "`n") | ConvertFrom-Json).data.repository.issue
+  if (-not $issue) { return $null }
+  [pscustomobject]@{ Number = [int]$issue.number; CreatedAt = [datetimeoffset]$issue.createdAt
+    Labels = @($issue.labels.nodes | ForEach-Object { [string]$_.name }) }
+}
+$pr.Issues = @(Resolve-ClosingIssues -PullRequest $pr -Body $pr.Body -LookupIssue $lookup)
+
+if ($EmitClosingIssues) {
+  ConvertTo-Json -InputObject @($pr.Issues | ForEach-Object { [ordered]@{ number = $_.Number; labels = @($_.Labels) } }) -Compress -Depth 4
+  exit 0
+}
+
+$verdict = Get-LinkedIssueVerdict -PullRequest $pr
 $summary = if ($verdict.Exempt) { "Linked issue: exempt, $($verdict.Reason)." }
   elseif ($verdict.Pass) { "Linked issue: pull request #$number $($verdict.Reason)." }
   else { "Linked issue: failed, $($verdict.Reason)." }
