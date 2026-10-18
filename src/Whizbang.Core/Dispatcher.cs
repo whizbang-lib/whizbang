@@ -604,6 +604,11 @@ public abstract partial class Dispatcher(
         return foreign;
       }
     }
+    // A result-returning sync receptor, which the generated any-invoker leaves out: without it a void
+    // local invoke of a message only a sync receptor handles found nothing (#1410 follow-up)
+    if (_lookupSyncReceptorInvoker<object>(message, messageType) is { } syncInvoker) {
+      return msg => ValueTask.FromResult<object?>(syncInvoker(msg));
+    }
     return _lookupRuntimeLocalInvoker(messageType);
   }
 

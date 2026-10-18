@@ -63,6 +63,7 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E35 | A published event nothing here handles was treated as handled, so its copy claimed it was | fixed |
 | E36 | A typed or void local invoke under a selected policy ignored the policy's outbox write and the message's route | fixed |
 | E37 | A batch publish with no outbox threw for events instead of deferring or logging as a single publish does | fixed |
+| E38 | A void local invoke could not reach a result-returning sync receptor (the any-invoker left sync receptors out) | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
@@ -73,8 +74,8 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 
 ## Component: execution matrix (real generated dispatcher)
 
-- [ ] Every public entry point and overload (inventory section A) × every handler shape × owned/unowned × kind: handler ran exactly the expected number of times, result cascaded with its route, outbox rows and mark, event-store rows, receipt or exception
-- [ ] Consistency property: whenever the decision says run here, a handler ran exactly once; whenever it ran, the decision said so
+- [x] Every public entry point × every handler shape × owned/unowned × kind (324 cells): handler ran exactly once, result cascaded exactly once, copy written exactly when the policy sends on, marked handled here
+- [x] Consistency property: decision-table rows (140) and the shape matrix (324) each assert run iff decided
 - [ ] Internal cascade entry points: receptor-result cascade (single, tuple, array, Routed per mode), RPC extraction, worker cascade via `DispatcherEventCascader`, composite fan-out
 - [ ] Tangential features, at least one execution test per entry point: lifecycle stages (LocalImmediate*, PreOutbox, PostInbox, ImmediateDetached once per service, PostLifecycle), PublishOnceAsync, DispatchOutboxCollector, security context to handler and outbox row, perspective sync tracking and waits, tags, system commands, multi-stream commands, scheduled publishes and saga ticks, ephemeral, NoRebroadcast, envelope registry, trace store, metrics, priority, StreamId generation/guard, Timeout/CancellationToken, BatchFailureMode, copy mark, event-store-only routes
 - [ ] Worker-stage invocation × every handler shape (PostInbox, PreOutbox, perspective stages), including sync receptors
