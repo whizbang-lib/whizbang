@@ -1471,13 +1471,7 @@ public abstract partial class Dispatcher(
             handledLocallyReceipt: delivered, eventStoreOnly: !writeOutbox, copyId: storedId)
         : null;
       Exception? localFailure = null;
-      // A receptor that looks up the envelope of the message it handles finds the stored message's id (#1464)
-      if (storedId is { } id) {
-        _envelopeRegistry?.Register(_createEnvelope(message, context, envelope.DispatchContext,
-          new CallerLocation(callerMemberName, callerFilePath, callerLineNumber), id, stampMessage: false));
-      } else {
-        _envelopeRegistry?.Register(envelope);
-      }
+      _registerSendEnvelope(message, context, envelope, storedId, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
       var outerCause = _causeCopyWrite.Value;
       _causeCopyWrite.Value = copyWrite ?? outerCause;
       try {
@@ -3332,6 +3326,22 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Registers the envelope a send's local receptors look up: one carrying the stored message's id when
+  /// the send stores a copy (#1464), otherwise the local envelope itself.
+  /// </summary>
+  private void _registerSendEnvelope<TMessage>(TMessage message, IMessageContext context, MessageEnvelope<TMessage> envelope,
+      MessageId? storedId, CallerLocation caller) where TMessage : notnull {
+    if (_envelopeRegistry is null) {
+      return;
+    }
+    if (storedId is { } id) {
+      _envelopeRegistry.Register(_createEnvelope(message, context, envelope.DispatchContext, caller, id, stampMessage: false));
+    } else {
+      _envelopeRegistry.Register(envelope);
+    }
+  }
+
+  /// <summary>
   /// Carries out one cascaded message as the Cascade policy decides: the event store first (cause before
   /// effect), then the local receptors (generated, other assemblies, runtime), then the outbox copy,
   /// marked when handled here. The outbox copy is written whatever the local outcome; a local failure
@@ -3347,17 +3357,7 @@ public abstract partial class Dispatcher(
       CancellationToken cancellationToken) {
     var decision = _decide(DispatchPolicies.Cascade, message, messageType,
       _hasLocalPublishReceptors(messageType), options: null, route: mode);
-    if (decision.Reject == DispatchRejection.NoRoute) {
-      // A cascade routed nowhere (Route.None) has nothing to do; it has always been skipped quietly
-      return;
-    }
-    if (decision.Reject == DispatchRejection.NoHandler && message is not ICommand && message is not IEvent) {
-      // A returned value that is neither a command nor an event (a response record that implements
-      // IMessage), owned, with nothing here to handle it: it is a result, not an instruction, so the
-      // call whose receptor returned it does not fail. It goes nowhere, so say so (#1410 follow-up).
-      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        Log.UnhandledResultSkipped(CascadeLogger, messageType.Name);
-      }
+    if (_skipsCascade(in decision, message, messageType)) {
       return;
     }
     _throwIfRejected(in decision, messageType);
@@ -3396,6 +3396,26 @@ public abstract partial class Dispatcher(
       }
     }
     _rethrowIfFailed(localFailure);
+  }
+
+  /// <summary>
+  /// Whether a cascade has nothing to do and is skipped rather than refused.
+  /// </summary>
+  private bool _skipsCascade(in DispatchDecision decision, IMessage message, Type messageType) {
+    if (decision.Reject == DispatchRejection.NoRoute) {
+      // A cascade routed nowhere (Route.None) has nothing to do; it has always been skipped quietly
+      return true;
+    }
+    if (decision.Reject != DispatchRejection.NoHandler || message is ICommand || message is IEvent) {
+      return false;
+    }
+    // A returned value that is neither a command nor an event (a response record that implements
+    // IMessage), owned, with nothing here to handle it: it is a result, not an instruction, so the
+    // call whose receptor returned it does not fail. It goes nowhere, so say so (#1410 follow-up).
+    if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+      Log.UnhandledResultSkipped(CascadeLogger, messageType.Name);
+    }
+    return true;
   }
 
   /// <summary>
@@ -5195,6 +5215,13 @@ public abstract partial class Dispatcher(
   private readonly record struct BatchCopy(object Message, Type MessageType, IMessageContext Context, MessageEnvelope<object> Envelope);
 
   /// <summary>
+  /// A published batch's local run for one event: every local receptor, handed the id its copy is stored
+  /// under when the batch writes one (#1464). Shared by both PublishManyAsync overloads.
+  /// </summary>
+  private static readonly Func<Dispatcher, object, DispatchModes?, BatchCopy?, CancellationToken, Task<IDeliveryReceipt>> _publishManyLocally =
+    static (self, eventData, _, copy, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), copy?.Envelope.MessageId, cancellationToken);
+
+  /// <summary>
   /// Records one batch message's copy, marked as a single dispatch marks it: a copy this service already
   /// handled says so, so the sender's PreOutbox stage does not run that handler again; a copy whose local
   /// handling waits for its schedule says that (#1397, #1401). Its envelope is built now, before the local
@@ -5737,7 +5764,7 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
       // Each event: the PublishMany policy, every local receptor (#1402), like PublishAsync
       return await _dispatchManyAsync(eventList, DispatchPolicies.PublishMany, options,
-        static (self, eventData, _, copy, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), copy?.Envelope.MessageId, cancellationToken));
+        _publishManyLocally);
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
@@ -5767,7 +5794,7 @@ public abstract partial class Dispatcher(
       var eventList = events.ToList();
       _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
       return await _dispatchManyAsync(eventList, DispatchPolicies.PublishMany, options,
-        static (self, eventData, _, copy, cancellationToken) => self._publishLocallyAsync(eventData, eventData.GetType(), copy?.Envelope.MessageId, cancellationToken));
+        _publishManyLocally);
     } finally {
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
