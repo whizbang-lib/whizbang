@@ -261,6 +261,44 @@ public class DispatchTangentialParityComponentTests {
       .Because($"{entry}'s stored copy carries the correlation of the envelope it travels in");
   }
 
+  /// <summary>
+  /// The envelope a local handler looks up carries the id of the copy the dispatch stores, so the handler
+  /// and a receiver agree on which message they handled (#1464).
+  /// </summary>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("SendAsync(options)")]
+  [Arguments("SendManyAsync")]
+  [Arguments("PublishAsync")]
+  [Arguments("PublishAsync(options)")]
+  [Arguments("PublishManyAsync")]
+  [Arguments("CascadeMessageAsync")]
+  [Arguments("ReceptorResultCascade")]
+  [Arguments("PublishAsync(no outbox)")]
+  [Arguments("PublishManyAsync(no outbox)")]
+  public async Task EveryEntryThatRunsHereAndWritesACopy_RegistersTheCopysIdForTheHandlersAsync(string entry) {
+    var stored = new StampRecordingEnvelopeSerializer();
+    await using var provider = _buildProvider(entry.EndsWith("(no outbox)", StringComparison.Ordinal) ? null : new PolicyRecordingOutbox(), serializer: stored);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    var message = new TgStampedEvent { Id = id };
+    var command = new TgStampedCommand { Id = id };
+
+    switch (entry) {
+      case "SendAsync": await dispatcher.SendAsync(command); break;
+      case "SendAsync(options)": await dispatcher.SendAsync(command, new DispatchOptions()); break;
+      case "SendManyAsync": await dispatcher.SendManyAsync(new object[] { command }); break;
+      case "PublishAsync" or "PublishAsync(no outbox)": await dispatcher.PublishAsync(message); break;
+      case "PublishAsync(options)": await dispatcher.PublishAsync(message, new DispatchOptions()); break;
+      case "PublishManyAsync" or "PublishManyAsync(no outbox)": await dispatcher.PublishManyAsync(new object[] { message }); break;
+      case "CascadeMessageAsync": await dispatcher.CascadeMessageAsync(message, sourceEnvelope: null, DispatchModes.Both); break;
+      default: await dispatcher.LocalInvokeAsync<TgStampedEvent>(new TgStampingCommand(id)); break;
+    }
+
+    await Assert.That(TangentialProbe.Seen("envelopeId", id)).IsEqualTo(stored.CopyIds.Single())
+      .Because($"{entry}'s handler looks up an envelope carrying the id of the copy the dispatch stores");
+  }
+
   /// <summary>A local run with no copy to stamp the message stamps it itself, once (#1455).</summary>
   [Test]
   [Arguments("CascadeMessageAsync(LocalNoPersist)")]
@@ -287,12 +325,17 @@ public class DispatchTangentialParityComponentTests {
 
     public System.Collections.Concurrent.ConcurrentQueue<(DateTimeOffset SentAt, string? CorrelationId, string? HopCorrelationId)> Copies { get; } = new();
 
+    /// <summary>The message id of each stamped message's copy, in the order the copies were serialized.</summary>
+    public System.Collections.Concurrent.ConcurrentQueue<string> CopyIds { get; } = new();
+
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       var hopCorrelation = envelope.Hops[^1].CorrelationId?.Value.ToString();
       if (envelope.Payload is TgStampedEvent stamped) {
         Copies.Enqueue((stamped.SentAt, stamped.CorrelationId, hopCorrelation));
+        CopyIds.Enqueue(envelope.MessageId.Value.ToString());
       } else if (envelope.Payload is TgStampedCommand stampedCommand) {
         Copies.Enqueue((stampedCommand.SentAt, stampedCommand.CorrelationId, hopCorrelation));
+        CopyIds.Enqueue(envelope.MessageId.Value.ToString());
       }
       return _inner.SerializeEnvelope(envelope);
     }

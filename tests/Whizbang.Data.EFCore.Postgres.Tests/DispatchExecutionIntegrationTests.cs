@@ -199,6 +199,8 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
       .Because($"{entry}: the handler reads the sent time the stored row carries, so a key derived from it matches on redelivery");
     await Assert.That(seen.Value.CorrelationId).IsEqualTo(storedCorrelation)
       .Because($"{entry}: the handler reads the correlation the stored row carries");
+    await Assert.That(seen.Value.EnvelopeId).IsEqualTo(row.MessageId)
+      .Because($"{entry}: the envelope the handler looks up carries the id of the stored row (#1464)");
   }
 
   // ── a returned result cascades: the case #1410 broke ─────────────────────────────────────────

@@ -29,8 +29,8 @@ namespace Whizbang.Core.Messaging;
 /// <code>
 /// IEventStore
 /// └─ AppendAndWaitEventStoreDecorator (outer)
-///    └─ SyncTrackingEventStoreDecorator
-///       └─ SecurityContextEventStoreDecorator (inner)
+///    └─ SecurityContextEventStoreDecorator
+///       └─ SyncTrackingEventStoreDecorator (tracks the id of the envelope built here, #1465)
 ///          └─ Base IEventStore (e.g., EFCoreEventStore)
 /// </code>
 /// </para>

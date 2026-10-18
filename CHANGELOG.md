@@ -210,6 +210,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
+  message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
+  sync wait on that append could only time out. The tracker now sits inside the security-context decorator
+  and records the id of the envelope the store writes.
+- **The envelope a local handler looks up carried a fresh message id, not the stored copy's (#1464).** A
+  receptor that keyed anything on its envelope's message id pointed at an id no stored row carried. It now
+  carries the id of the copy the dispatch stores, on every entry that runs a message here and writes its
+  copy.
 - **A publish's or cascade's own handlers saw a different sent time and correlation than the copy it
   stored and sent (#1455).** Registering the envelope for the local run stamped the message a second time
   after its copy was serialized, and a batch stamped its copies only after its local runs, so a handler that

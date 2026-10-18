@@ -70,10 +70,11 @@ public sealed class TgStampedEvent : IEvent {
   public string? CorrelationId { get; set; }
 }
 
-public sealed class TgStampedEventReceptor : IReceptor<TgStampedEvent> {
+public sealed class TgStampedEventReceptor(IEnvelopeRegistry registry) : IReceptor<TgStampedEvent> {
   public ValueTask HandleAsync(TgStampedEvent message, CancellationToken cancellationToken = default) {
     TangentialProbe.Saw("sentAt", message.Id, message.SentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
     TangentialProbe.Saw("correlation", message.Id, message.CorrelationId);
+    TangentialProbe.Saw("envelopeId", message.Id, registry.TryGetEnvelope(message)?.MessageId.Value.ToString());
     return ValueTask.CompletedTask;
   }
 }
