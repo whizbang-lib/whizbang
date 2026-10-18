@@ -14,6 +14,7 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
@@ -453,23 +454,28 @@ public class DispatcherCoverageSweepOutboxTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_NoSourceEnvelope_UsesCascadeDefaultEnvelopeAsync() {
-    // Arrange - null source → the shared cascade-default envelope is passed instead
+  public async Task CascadeMessageAsync_NoSourceEnvelopeAndNoAmbientContext_HandsThePublisherNoEnvelopeAsync() {
+    // Arrange - null source and no ambient context: the handlers get no envelope and take the ambient
+    // context, as a publish's do. A placeholder envelope carried no message, and message security
+    // refused it as a null payload (#1410 follow-up)
+    var called = false;
     IMessageEnvelope? received = null;
     var dispatcher = new SweepOutboxDispatcher(
       _buildProvider(),
       untypedPublisher: (message, envelope, ct) => {
+        called = true;
         received = envelope;
         return Task.CompletedTask;
       });
+    ScopeContextAccessor.CurrentContext = null;
+    ScopeContextAccessor.CurrentInitiatingContext = null;
 
     // Act
     await dispatcher.CascadeMessageAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.Local);
 
     // Assert
-    var envelope = received;
-    await Assert.That(envelope).IsNotNull();
-    await Assert.That(envelope!.DispatchContext.IsDefaultDispatch).IsTrue();
+    await Assert.That(called).IsTrue();
+    await Assert.That(received).IsNull();
   }
 
   [Test]

@@ -338,6 +338,38 @@ public class ImmediateWorkCoordinatorStrategyTests {
     await Assert.That(logger.LogCount).IsGreaterThan(0);
   }
 
+  /// <summary>
+  /// A flush its caller canceled withdraws the work it was writing, so the next flush on the same
+  /// strategy writes only what was queued after it (#1410 follow-up).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_CanceledByItsCaller_TheNextFlushDoesNotWriteTheWithdrawnWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator { HonorsCancellation = true };
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      coordinator: fakeCoordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter());
+    var withdrawn = _createOutboxMessage();
+    sut.QueueOutboxMessage(withdrawn);
+    using var canceled = new CancellationTokenSource();
+    await canceled.CancelAsync();
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None, canceled.Token)).Throws<OperationCanceledException>();
+    var later = _createOutboxMessage();
+    sut.QueueOutboxMessage(later);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(new[] { later.MessageId })
+      .Because("the canceled caller withdrew its work; the next flush writes only what came after");
+  }
+
   [Test]
   public async Task QueueInboxMessage_WithLogger_LogsMessageQueuedAsync() {
     // Arrange - logger != null exercises line 105
@@ -757,11 +789,17 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageFailure[] LastInboxFailures { get; } = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
+    /// <summary>A canceled store writes nothing and throws, as the database rolling the write back does.</summary>
+    public bool HonorsCancellation { get; init; }
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
+      if (HonorsCancellation) {
+        cancellationToken.ThrowIfCancellationRequested();
+      }
       LastNewOutboxMessages = messages;
       return Task.CompletedTask;
     }

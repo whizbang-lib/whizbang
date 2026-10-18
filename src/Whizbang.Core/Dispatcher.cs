@@ -776,6 +776,27 @@ public abstract partial class Dispatcher(
   // write (publish, cascade) so the generated cascade code needs no new parameter.
   private static readonly AsyncLocal<OutboxCopyMark> _outboxCopyMark = new();
 
+  // The caller's token for the copy write started on this async flow, set around the start the way the
+  // mark is, so the generated cascade code needs no new parameter (#1410 follow-up).
+  private static readonly AsyncLocal<CopyWriteToken> _copyWriteToken = new();
+
+  /// <summary>Held in a wrapper so only the copy write reads it as a token.</summary>
+  private readonly record struct CopyWriteToken(CancellationToken Token);
+
+  private static CancellationToken _ambientCopyWriteToken() => _copyWriteToken.Value.Token;
+
+  // The copy write of the message whose local run is in progress on this async flow (#1410 follow-up).
+  // A copy written during that run, by a handler, waits for it: a cause reaches the outbox, and an event
+  // the event store, before any effect its handlers emit, while the handlers still run alongside it.
+  private static readonly AsyncLocal<Task?> _causeCopyWrite = new();
+
+  /// <summary>
+  /// Waits for the copy write of the cause this flow's local run is handling, when there is one still
+  /// in flight. Its failure is the cause's caller's to see, so the effect's write goes ahead regardless.
+  /// </summary>
+  private static Task _afterCauseCopyWriteAsync() =>
+    _causeCopyWrite.Value is { IsCompleted: false } cause ? Task.WhenAny(cause) : Task.CompletedTask;
+
   private enum OutboxCopyMark : byte {
     None = 0,
     HandledLocally = 1,
@@ -813,6 +834,9 @@ public abstract partial class Dispatcher(
       Task outboxTask, CancellationToken cancellationToken) {
     // Both PublishAsync overloads refuse a null event before they get here
     object message = eventData!;
+    // What the handlers emit is queued after this event's copy (#1410 follow-up). Scoped to this method's
+    // flow: an async method's AsyncLocal writes do not reach its caller
+    _causeCopyWrite.Value = outboxTask;
     var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null);
     try {
       await publisher(eventData);
@@ -1379,8 +1403,26 @@ public abstract partial class Dispatcher(
       if (options is not null) {
         _stampExplicitPriority(envelope, options.Priority);
       }
+      var delivered = DeliveryReceipt.Delivered(
+        envelope.MessageId,
+        messageType.Name,
+        context.CorrelationId,
+        context.CausationId,
+        _streamIdExtractor?.ExtractStreamId(message, messageType));
+      // Handled here and also sent on (or stored): the copy is marked as handled here so this service does
+      // not run it twice. It is started before the local run, as a publish's is, and the handler's own
+      // writes wait for it, so the message reaches the outbox before its effects (#1410 follow-up). It
+      // does not wait on the local outcome.
+      // A caller that canceled before the dispatch started gets nothing run and nothing written
+      cancellationToken.ThrowIfCancellationRequested();
+      var copyWrite = writeCopy
+        ? _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options,
+            handledLocallyReceipt: delivered, eventStoreOnly: !writeOutbox)
+        : null;
       Exception? localFailure = null;
       _envelopeRegistry?.Register(envelope);
+      var outerCause = _causeCopyWrite.Value;
+      _causeCopyWrite.Value = copyWrite ?? outerCause;
       try {
         if (_traceStore != null) {
           await _traceStore.StoreAsync(envelope, cancellationToken);
@@ -1409,9 +1451,10 @@ public abstract partial class Dispatcher(
         await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
         await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
         await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, cancellationToken);
-      } catch (Exception ex) when (writeCopy) {
+      } catch (Exception ex) when (copyWrite is not null) {
         localFailure = ex;
       } finally {
+        _causeCopyWrite.Value = outerCause;
         _envelopeRegistry?.Unregister(envelope);
       }
 
@@ -1419,22 +1462,13 @@ public abstract partial class Dispatcher(
         new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
         new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
-      var delivered = DeliveryReceipt.Delivered(
-        envelope.MessageId,
-        messageType.Name,
-        context.CorrelationId,
-        context.CausationId,
-        _streamIdExtractor?.ExtractStreamId(message, messageType));
-      if (!writeCopy) {
+      if (copyWrite is null) {
         return delivered;
       }
 
-      // Handled here and also sent on (or stored): the outbox copy is marked as handled here so this
-      // service does not run it twice
       IDeliveryReceipt queuedReceipt;
       try {
-        queuedReceipt = await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber, options,
-          handledLocallyReceipt: delivered, eventStoreOnly: !writeOutbox);
+        queuedReceipt = await copyWrite.ConfigureAwait(false);
       } catch (Exception outboxFailure) when (localFailure is not null) {
         throw new AggregateException(localFailure, outboxFailure);
       }
@@ -2918,9 +2952,11 @@ public abstract partial class Dispatcher(
     MessageDispatchContext dispatchContext,
     string callerMemberName,
     string callerFilePath,
-    int callerLineNumber
+    int callerLineNumber,
+    MessageId? presetMessageId = null
   ) {
-    var messageId = MessageId.New();
+    // A batch mints its copies' ids before their local runs, so they order before their effects
+    var messageId = presetMessageId ?? MessageId.New();
 
     // Auto-generate StreamId for messages with [GenerateStreamId] attribute during envelope creation
     // Must run BEFORE _createHopMetadata so the hop captures the generated StreamId
@@ -3285,10 +3321,17 @@ public abstract partial class Dispatcher(
       await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
     }
 
+    // The copy is started before the local run, as a publish's is, and the handlers' own writes wait for
+    // it: the cause reaches the outbox before its effects (#1410 follow-up). It does not wait on the
+    // local outcome.
+    var copyWrite = decision.WriteOutbox ? _startCascadeCopy(message, messageType, sourceEnvelope, eventId, in decision, cancellationToken) : null;
+
     Exception? localFailure = null;
     if (decision.Local == LocalRun.Now) {
       var localEnvelope = localEnvelopeFor?.Invoke();
       var registered = _registerLocalRunEnvelope(message, sourceEnvelope);
+      var outerCause = _causeCopyWrite.Value;
+      _causeCopyWrite.Value = copyWrite ?? outerCause;
       try {
         if (GetUntypedReceptorPublisher(messageType) is { } publisher) {
           await publisher(message, localEnvelope, cancellationToken);
@@ -3297,28 +3340,45 @@ public abstract partial class Dispatcher(
         await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
         // Tags after the handlers, as on a publish (#1410 follow-up)
         await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
-      } catch (Exception ex) when (decision.WriteOutbox) {
+      } catch (Exception ex) when (copyWrite is not null) {
         localFailure = ex;
       } finally {
+        _causeCopyWrite.Value = outerCause;
         if (registered) {
           _envelopeRegistry!.Unregister(message);
         }
       }
     }
 
-    if (decision.WriteOutbox) {
-      var previous = _outboxCopyMark.Value;
-      _outboxCopyMark.Value = _markFor(in decision);
+    if (copyWrite is not null) {
       try {
-        await CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+        await copyWrite.ConfigureAwait(false);
       } catch (Exception outboxFailure) when (localFailure is not null) {
         throw new AggregateException(localFailure, outboxFailure);
-      } finally {
-        _outboxCopyMark.Value = previous;
       }
     }
     _rethrowIfFailed(localFailure);
   }
+
+  /// <summary>
+  /// Starts writing a cascaded message's outbox copy, marked as the decision says, and returns the write.
+  /// The mark covers only the synchronous start of the write, which captures it.
+  /// </summary>
+#pragma warning disable RCS1229 // Awaiting here would hold the mark across the caller's local run.
+  private Task _startCascadeCopy(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope, Guid? eventId, in DispatchDecision decision,
+      CancellationToken cancellationToken) {
+    var previous = _outboxCopyMark.Value;
+    var previousToken = _copyWriteToken.Value;
+    _outboxCopyMark.Value = _markFor(in decision);
+    _copyWriteToken.Value = new CopyWriteToken(cancellationToken);
+    try {
+      return CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+    } finally {
+      _outboxCopyMark.Value = previous;
+      _copyWriteToken.Value = previousToken;
+    }
+  }
+#pragma warning restore RCS1229
 
   /// <summary>
   /// Dispatches a cascaded message based on routing mode: local, event store, and/or outbox.
@@ -4050,7 +4110,10 @@ public abstract partial class Dispatcher(
       }
 
       // Serialize, queue, and flush
-      await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor);
+      // The caller's token, from its options or the cascade that started this write, reaches the queue and
+      // the flush (#1410 follow-up)
+      await _serializeQueueAndFlushAsync(envelope, eventData!, eventType, destination, messageId, strategy, scheduledFor,
+        options?.CancellationToken ?? _ambientCopyWriteToken());
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
       if (scope is IAsyncDisposable asyncDisposable) {
@@ -4314,7 +4377,8 @@ public abstract partial class Dispatcher(
   /// Serializes the envelope to an outbox message, queues it on the strategy, and flushes.
   /// Guards against ObjectDisposedException during shutdown.
   /// </summary>
-  private async Task _serializeQueueAndFlushAsync<TEvent>(MessageEnvelope<TEvent> envelope, TEvent eventData, Type eventType, string? destination, MessageId messageId, IWorkCoordinatorStrategy strategy, DateTimeOffset? scheduledFor = null) {
+  private async Task _serializeQueueAndFlushAsync<TEvent>(MessageEnvelope<TEvent> envelope, TEvent eventData, Type eventType, string? destination, MessageId messageId, IWorkCoordinatorStrategy strategy, DateTimeOffset? scheduledFor = null,
+      CancellationToken cancellationToken = default) {
     // Serialize envelope to OutboxMessage
     var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination, scheduledFor);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -4325,6 +4389,9 @@ public abstract partial class Dispatcher(
         newMsgId, newMsgType);
     }
 #pragma warning restore CA1848
+
+    // An effect is queued after its cause (#1410 follow-up)
+    await _afterCauseCopyWriteAsync().ConfigureAwait(false);
 
     // Composite pre-fanout hook (plans/composite-events-turnkey.md, Phase B): when a dispatch step has
     // opened an ambient outbox collector, divert this message into it instead of the work-coordinator so
@@ -4339,7 +4406,7 @@ public abstract partial class Dispatcher(
     // Guard against ObjectDisposedException — the singleton IntervalWorkCoordinatorStrategy
     // may be disposed during host shutdown while in-flight receptors are still publishing.
     try {
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
     } catch (ObjectDisposedException ex) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
@@ -4358,7 +4425,7 @@ public abstract partial class Dispatcher(
 
     // Fire-and-forget signal — the strategy decides when to actually flush
     // (Interval=timer, Batch=debounce/size, Immediate/Scoped=now).
-    await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+    await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -4428,13 +4495,17 @@ public abstract partial class Dispatcher(
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
+      // An effect is queued after its cause (#1410 follow-up)
+      await _afterCauseCopyWriteAsync().ConfigureAwait(false);
       // Composite pre-fanout hook (Phase B): divert into the ambient collector when one is open.
       if (DispatchOutboxCollector.Current is { } collector) {
         collector.Add(newOutboxMessage);
         return;
       }
-      await strategy.QueueOutboxMessageAsync(newOutboxMessage).ConfigureAwait(false);
-      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming);
+      // The cascade's token reaches the queue and the flush (#1410 follow-up)
+      var cancellationToken = _ambientCopyWriteToken();
+      await strategy.QueueOutboxMessageAsync(newOutboxMessage, cancellationToken).ConfigureAwait(false);
+      await strategy.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cancellationToken);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
@@ -4791,6 +4862,8 @@ public abstract partial class Dispatcher(
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination, scheduledFor);
 
+      // An effect is queued after its cause (#1410 follow-up)
+      await _afterCauseCopyWriteAsync().ConfigureAwait(false);
       if (collector is not null) {
         collector.Add(newOutboxMessage);
       } else {
@@ -4829,9 +4902,10 @@ public abstract partial class Dispatcher(
   /// Creates ONE scope, queues all messages, and flushes once for optimal performance.
   /// </summary>
   private async Task<List<IDeliveryReceipt>> _sendManyToOutboxAsync(
-    List<(object message, Type messageType, IMessageContext context)> messages,
+    List<(object message, Type messageType, IMessageContext context, MessageId messageId)> messages,
     List<DispatchDecision> copyDecisions,
     DispatchOptions options,
+    IReadOnlyList<OutboxMessage>? heldEffects = null,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
@@ -4847,12 +4921,12 @@ public abstract partial class Dispatcher(
       if (collector is null && strategy is null) {
         // No outbox: events are deferred or dropped with a log, as a single publish handles them; a batch
         // holding a command cannot deliver it (#1410 follow-up)
-        if (!messages.TrueForAll(static m => m.message is IEvent)) {
+        // Held effects are built outbox messages with no other way out
+        if (!messages.TrueForAll(static m => m.message is IEvent) || heldEffects is { Count: > 0 }) {
           throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
         }
         for (var i = 0; i < messages.Count; i++) {
-          var (eventData, eventType, eventContext) = messages[i];
-          var messageId = MessageId.New();
+          var (eventData, eventType, eventContext, messageId) = messages[i];
           await _handleNoStrategyFallbackAsync(eventData, eventType, messageId, sourceEnvelope: null, eventStoreOnly: !copyDecisions[i].WriteOutbox, scope).ConfigureAwait(false);
           receipts.Add(DeliveryReceipt.Accepted(messageId, eventType.Name, eventContext.CorrelationId, eventContext.CausationId,
             _streamIdExtractor?.ExtractStreamId(eventData, eventType)));
@@ -4862,7 +4936,7 @@ public abstract partial class Dispatcher(
 
       // Queue ALL messages to the strategy
       for (var i = 0; i < messages.Count; i++) {
-        var (message, messageType, context) = messages[i];
+        var (message, messageType, context, copyId) = messages[i];
         // None when the event is only stored (a Local or EventStoreOnly route)
         var destination = copyDecisions[i].WriteOutbox ? _resolveDestination(message, messageType) : null;
         // Marked as a single dispatch marks it: a copy this service already handled says so, so the
@@ -4875,7 +4949,7 @@ public abstract partial class Dispatcher(
           Source = MessageSource.Local,
           LocalDeferred = decision.Local == LocalRun.AtScheduledTime
         };
-        var envelope = _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber);
+        var envelope = _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber, copyId);
         // The caller's priority and payload limit, as a single dispatch carries them (#1410 follow-up)
         _stampExplicitPriority(envelope, options.Priority);
         envelope.PayloadLimitOverride = options.MaxPayloadBytes;
@@ -4899,6 +4973,15 @@ public abstract partial class Dispatcher(
           context.CausationId,
           streamId
         ));
+      }
+
+      // What the batch's handlers emitted, after the batch's own copies (#1410 follow-up)
+      foreach (var effect in heldEffects ?? []) {
+        if (collector is not null) {
+          collector.Add(effect);
+        } else {
+          await strategy!.QueueOutboxMessageAsync(effect, options.CancellationToken).ConfigureAwait(false);
+        }
       }
 
       // Flush ONCE for all messages (a collector's step commits them instead)
@@ -4999,35 +5082,47 @@ public abstract partial class Dispatcher(
     var (types, decisions) = _decideBatch(messages, routes, callPolicy, options);
 
     var receipts = new List<IDeliveryReceipt>();
-    var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+    var outboxMessages = new List<(object message, Type messageType, IMessageContext context, MessageId messageId)>();
     var copyDecisions = new List<DispatchDecision>();
     var failures = new List<Exception>();
     var stopAtFirstFailure = options.BatchFailure == BatchFailureMode.Stop;
-    for (var i = 0; i < messages.Count; i++) {
-      cancellationToken.ThrowIfCancellationRequested();
-      var decision = decisions[i];
-      var failed = false;
-      if (decision.Local == LocalRun.Now) {
-        try {
-          receipts.Add(await runLocally(this, messages[i], routes[i], cancellationToken));
-        } catch (Exception ex) {
-          failures.Add(ex);
-          failed = true;
+    // The batch's copies are written in one flush after its local runs, so what the handlers emit is held
+    // back and written after them, in the same flush: a cause reaches the outbox before its effects
+    // (#1410 follow-up). Only where there is an outbox to write to; otherwise each effect takes its own
+    // no-outbox path as before.
+    var heldEffects = _holdsEffectsBehindCopies(decisions) ? DispatchOutboxCollector.BeginCollecting() : (DispatchOutboxCollector.CollectingScope?)null;
+    try {
+      for (var i = 0; i < messages.Count; i++) {
+        cancellationToken.ThrowIfCancellationRequested();
+        var decision = decisions[i];
+        var failed = false;
+        // The copy's id is minted before the local run: the event store numbers a batch's events on a
+        // stream in id order, so the cause takes its place before anything its handlers emit
+        if (decision.WriteOutbox || decision.WriteEventStoreOnly) {
+          copyDecisions.Add(decision);
+          outboxMessages.Add((messages[i], types[i], MessageContext.Create(_cascadeContextFactory.NewRoot()), MessageId.New()));
+        }
+        if (decision.Local == LocalRun.Now) {
+          try {
+            receipts.Add(await runLocally(this, messages[i], routes[i], cancellationToken));
+          } catch (Exception ex) {
+            failures.Add(ex);
+            failed = true;
+          }
+        }
+
+        if (failed && stopAtFirstFailure) {
+          break;
         }
       }
-      if (decision.WriteOutbox || decision.WriteEventStoreOnly) {
-        copyDecisions.Add(decision);
-        outboxMessages.Add((messages[i], types[i], MessageContext.Create(_cascadeContextFactory.NewRoot())));
-      }
-      if (failed && stopAtFirstFailure) {
-        break;
-      }
+    } finally {
+      heldEffects?.Dispose();
     }
 
     _warnCopiesSkippedForNoOutbox(decisions);
 
     try {
-      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, copyDecisions, receipts, options);
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, copyDecisions, receipts, options, heldEffects?.Collector.Collected);
     } catch (Exception outboxFailure) when (failures.Count > 0) {
       failures.Add(outboxFailure);
     }
@@ -5040,6 +5135,15 @@ public abstract partial class Dispatcher(
     }
     return receipts;
   }
+
+  /// <summary>
+  /// Whether a batch holds its handlers' writes back until its own copies are written: when some message
+  /// runs here, some message writes a copy, and there is an outbox (or an open collector) to write to.
+  /// </summary>
+  private bool _holdsEffectsBehindCopies(DispatchDecision[] decisions) =>
+    (_outboxRegistered || DispatchOutboxCollector.Current is not null)
+      && Array.Exists(decisions, static d => d.Local == LocalRun.Now)
+      && Array.Exists(decisions, static d => d.WriteOutbox || d.WriteEventStoreOnly);
 
   /// <summary>
   /// Runs every local receptor for a published event, as <c>PublishAsync</c> does: generated ones in
@@ -5064,17 +5168,19 @@ public abstract partial class Dispatcher(
   }
 
   private async Task _flushOutboxBatchAndCollectReceiptsAsync(
-    List<(object message, Type messageType, IMessageContext context)> outboxMessages,
+    List<(object message, Type messageType, IMessageContext context, MessageId messageId)> outboxMessages,
     List<DispatchDecision> copyDecisions,
     List<IDeliveryReceipt> receipts,
-    DispatchOptions options
+    DispatchOptions options,
+    IReadOnlyList<OutboxMessage>? heldEffects
   ) {
-    if (outboxMessages.Count == 0) {
+    // A batch stopped before its first copy still writes what its handlers emitted
+    if (outboxMessages.Count == 0 && heldEffects is not { Count: > 0 }) {
       return;
     }
 
     try {
-      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages, copyDecisions, options);
+      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages, copyDecisions, options, heldEffects);
       // Only add Accepted receipts for messages not handled here now
       // (locally-handled messages already have Delivered receipts)
       for (var i = 0; i < outboxReceipts.Count; i++) {

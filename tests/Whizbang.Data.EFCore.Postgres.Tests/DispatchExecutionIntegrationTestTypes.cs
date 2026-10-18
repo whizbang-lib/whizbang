@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -66,6 +67,25 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned {
   }
 
   public sealed record DxOwnedUnhandledCommand(Guid Id) : ICommand;
+
+  /// <summary>
+  /// A cause whose handler returns its effect on the same stream, routed as the cause says: the effect
+  /// must be stored after the cause whichever way it is routed.
+  /// </summary>
+  public sealed record DxCauseEvent([property: StreamId] Guid Id, string EffectRoute) : IEvent;
+
+  public sealed record DxEffectEvent([property: StreamId] Guid Id) : IEvent;
+
+  public sealed class DxCauseEventReceptor : IReceptor<DxCauseEvent, Routed<DxEffectEvent>> {
+    public ValueTask<Routed<DxEffectEvent>> HandleAsync(DxCauseEvent message, CancellationToken cancellationToken = default) {
+      var effect = new DxEffectEvent(message.Id);
+      return ValueTask.FromResult(message.EffectRoute switch {
+        "Local" => Route.Local(effect),
+        "EventStoreOnly" => Route.EventStoreOnly(effect),
+        _ => Route.Both(effect),
+      });
+    }
+  }
 
   /// <summary>An event the sender owns and handles, delivered back to itself or on to another service.</summary>
   public sealed record DxRoundTripEvent([property: StreamId] Guid Id) : IEvent;

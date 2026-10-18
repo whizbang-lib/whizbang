@@ -302,6 +302,41 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
     await Assert.That(await _rowsOfAsync<DxUnownedCommand>()).IsEmpty();
   }
 
+  // ── the event store: cause before effect ─────────────────────────────────────────────────────
+
+  [Test]
+  [Arguments("PublishAsync", "Both")]
+  [Arguments("PublishAsync", "Local")]
+  [Arguments("PublishAsync", "EventStoreOnly")]
+  [Arguments("CascadeBoth", "Both")]
+  [Arguments("CascadeBoth", "Local")]
+  [Arguments("CascadeBoth", "EventStoreOnly")]
+  [Arguments("PublishManyAsync", "Both")]
+  [Arguments("PublishManyAsync", "Local")]
+  [Arguments("SendAsync", "Both")]
+  [Arguments("SendAsync", "EventStoreOnly")]
+  [Arguments("SendManyAsync", "Both")]
+  public async Task CauseAndTheEffectItsHandlerReturns_AreStoredCauseFirstOnTheirStreamAsync(string entry, string effectRoute) {
+    await using var provider = _createServices(withMessageSecurity: false).Provider;
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    var cause = new DxCauseEvent(id, effectRoute);
+
+    switch (entry) {
+      case "PublishAsync": await dispatcher.PublishAsync(cause); break;
+      case "PublishManyAsync": await dispatcher.PublishManyAsync(new object[] { cause }); break;
+      case "SendAsync": await dispatcher.SendAsync((object)cause); break;
+      case "SendManyAsync": await dispatcher.SendManyAsync(new object[] { cause }); break;
+      default: await dispatcher.CascadeMessageAsync(cause, sourceEnvelope: null, DispatchModes.Both); break;
+    }
+
+    await using var dbContext = CreateDbContext();
+    var stored = await dbContext.Events.AsNoTracking().Where(e => e.StreamId == id).OrderBy(e => e.Version).ToListAsync();
+    await Assert.That(stored.Select(e => e.EventType.Split(',')[0].Split('.')[^1]).ToList())
+      .IsEquivalentTo(new[] { nameof(DxCauseEvent), nameof(DxEffectEvent) }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because($"{entry}, effect routed {effectRoute}: both are stored on the stream, the cause before the effect it caused");
+  }
+
   // ── a unit of work that never commits ────────────────────────────────────────────────────────
 
   [Test]
@@ -323,6 +358,90 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
     await Assert.That(await _rowsOfAsync<DxUnownedCommand>()).IsEmpty()
       .Because("the unit of work was dropped, so none of its copies may reach wh_outbox");
     await Assert.That(await _rowsOfAsync<DxEvent>()).IsEmpty();
+  }
+
+  // ── cancellation while the copy is being written ─────────────────────────────────────────────
+
+  /// <summary>
+  /// A caller that cancels while its copy is being written gets the cancellation, and the write leaves
+  /// nothing behind: the copy's transaction rolls back whole, for a single dispatch and a batch alike.
+  /// </summary>
+  /// <remarks>
+  /// Another connection holds <c>wh_outbox</c> locked, so the write is provably in flight, queued behind
+  /// the lock, when the token is canceled.
+  /// </remarks>
+  [Test]
+  [Arguments("SendAsync")]
+  [Arguments("SendManyAsync")]
+  [Arguments("PublishAsync")]
+  [Arguments("PublishManyAsync")]
+  [Arguments("CascadeMessageAsync")]
+  public async Task DispatchCanceledWhileItsCopyIsBeingWritten_ThrowsAndLeavesNoRowsAsync(string entry) {
+    await using var provider = _createServices(withMessageSecurity: false).Provider;
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+    await using var locker = new NpgsqlConnection(ConnectionString);
+    await locker.OpenAsync();
+    await using var held = await locker.BeginTransactionAsync();
+    await using (var lockTable = new NpgsqlCommand("LOCK TABLE wh_outbox IN ACCESS EXCLUSIVE MODE", locker, held)) {
+      await lockTable.ExecuteNonQueryAsync();
+    }
+    using var cancel = new CancellationTokenSource();
+    var options = new DispatchOptions { CancellationToken = cancel.Token };
+
+    Task dispatch = entry switch {
+      "SendAsync" => dispatcher.SendAsync(new DxUnownedCommand(id), options),
+      "SendManyAsync" => dispatcher.SendManyAsync(new object[] { new DxUnownedCommand(id), new DxUnownedCommand(Guid.CreateVersion7()) }, options),
+      "PublishAsync" => dispatcher.PublishAsync(new DxEvent(id), options),
+      "PublishManyAsync" => dispatcher.PublishManyAsync(new object[] { new DxEvent(id), new DxEvent(Guid.CreateVersion7()) }, options),
+      _ => dispatcher.CascadeMessageAsync(new DxEvent(id), sourceEnvelope: null, DispatchModes.Both, cancel.Token),
+    };
+    Exception? thrown = null;
+    try {
+      await _waitUntilAnOutboxWriteWaitsAsync(locker, held);
+      await cancel.CancelAsync();
+      // Bounded: a write that ignores the token stays queued behind the lock until it is released
+      thrown = await _failureOfAsync(dispatch.WaitAsync(OutboxDrainHarness.SignalTimeout));
+    } finally {
+      await held.RollbackAsync();
+    }
+
+    await Assert.That(thrown is TimeoutException).IsFalse()
+      .Because($"{entry}: canceling ends the write instead of leaving it queued behind the lock");
+    await Assert.That(thrown is not null && _isCancellation(thrown)).IsTrue()
+      .Because($"{entry}: the caller that canceled sees the cancellation, not {thrown?.GetType().Name ?? "success"}");
+    await Assert.That(await _rowsOfAsync<DxUnownedCommand>()).IsEmpty().Because($"{entry}: a canceled write leaves no partial rows");
+    await Assert.That(await _rowsOfAsync<DxEvent>()).IsEmpty();
+  }
+
+  private static async Task<Exception?> _failureOfAsync(Task task) {
+    try {
+      await task;
+      return null;
+    } catch (Exception ex) {
+      return ex;
+    }
+  }
+
+  private static bool _isCancellation(Exception exception) =>
+    exception is OperationCanceledException
+      || (exception is AggregateException aggregate && aggregate.InnerExceptions.All(static inner => inner is OperationCanceledException));
+
+  /// <summary>
+  /// Waits until a write to <c>wh_outbox</c> is queued behind the held lock. Postgres has no notification
+  /// for a lock wait starting, so this reads the state it waits for, bounded so a write that never queues
+  /// fails here instead of hanging the test.
+  /// </summary>
+  private static async Task _waitUntilAnOutboxWriteWaitsAsync(NpgsqlConnection locker, NpgsqlTransaction held) {
+    var deadline = DateTime.UtcNow.AddSeconds(30);
+    await using var waiting = new NpgsqlCommand(
+      "SELECT count(*) FROM pg_locks WHERE relation = 'wh_outbox'::regclass AND NOT granted", locker, held);
+    while ((long)(await waiting.ExecuteScalarAsync())! == 0) {
+      if (DateTime.UtcNow > deadline) {
+        throw new TimeoutException("The copy write never queued behind the lock on wh_outbox.");
+      }
+      await Task.Delay(20);
+    }
   }
 
   // ── the drainer: a marked copy is not run again by its sender ────────────────────────────────
