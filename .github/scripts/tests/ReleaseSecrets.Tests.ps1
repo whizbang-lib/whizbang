@@ -49,11 +49,11 @@ Describe 'Release app secrets' {
     $passing | Should -BeNullOrEmpty
   }
 
-  It 'are not declared as workflow_call secrets' {
-    $declared = @(Get-ChildItem (Join-Path $Root '.github' 'workflows') -Filter '*.yml' |
-        Where-Object { (Get-Content -Raw $_.FullName) -match '(?ms)^on:.*?workflow_call:.*?secrets:.*?\n\s+RELEASE_APP_(ID|PRIVATE_KEY):\s*\n.*?^jobs:' } |
+  It 'are declared, if at all, only as optional workflow_call secrets, so no caller has to pass them' {
+    $required = @(Get-ChildItem (Join-Path $Root '.github' 'workflows') -Filter '*.yml' |
+        Where-Object { (Get-Content -Raw $_.FullName) -match '(?m)^      RELEASE_APP_(ID|PRIVATE_KEY):\s*\n        required:\s*true' } |
         ForEach-Object { $_.Name })
-    $declared | Should -BeNullOrEmpty
+    $required | Should -BeNullOrEmpty
   }
 
   It 'cut a release only after a build admin approves (release-cut)' {

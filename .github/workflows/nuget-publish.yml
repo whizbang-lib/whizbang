@@ -39,12 +39,12 @@ on:
         type: string
         default: ''
     secrets:
-      # Required, so a caller without them fails at the call, before anything reaches NuGet, rather
-      # than at the tag step after the packages are already public.
+      # Optional and never passed: the jobs that use them read the release-app environment's own
+      # secrets, which override anything a caller could pass (#1466). Declared so the linter knows them.
       RELEASE_APP_ID:
-        required: true
+        required: false
       RELEASE_APP_PRIVATE_KEY:
-        required: true
+        required: false
       PUSHOVER_API_TOKEN:
         required: false
       PUSHOVER_USER_KEY_1:
@@ -140,9 +140,26 @@ jobs:
           name: nuget-packages-publish-${{ github.run_id }}
           path: ./packages/*.nupkg
 
+  # The tag step needs the release app, whose secrets live in the release-app environment (#1466). Minting
+  # its token here, before anything is pushed, fails a run that could not tag BEFORE the packages are
+  # public, not after.
+  release-app-ready:
+    name: Check the release app can tag
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Mint the release app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: read
+
   push:
     name: Push
-    needs: pack
+    needs: [pack, release-app-ready]
     # pack is skipped (not failed) when artifact-name is supplied; run on skip, stop on failure.
     if: ${{ !failure() && !cancelled() }}
     permissions:
@@ -157,6 +174,8 @@ jobs:
 
   release:
     name: Tag and GitHub release
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     needs: [pack, push]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest

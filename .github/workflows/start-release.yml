@@ -32,6 +32,8 @@ permissions:
 jobs:
   create-release-pr:
     name: Cut · Create the release branch and PR
+    # Cutting a release waits for a build admin's approval; the release app's secrets live here (#1466).
+    environment: release-cut
     permissions:
       contents: write        # pushes the release branch
       pull-requests: write   # opens the release PR

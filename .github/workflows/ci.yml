@@ -1380,6 +1380,8 @@ jobs:
 
   release-guard:
     name: Plan · Route the hotfix by line
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     needs: [version]
     # Not on the branch-creation push: that is the base cut with no changes yet, and start-release
     # opens its own PR seconds after pushing — a guard-opened PR could win that race and break it.
@@ -1535,9 +1537,6 @@ jobs:
       source-ref: ${{ github.sha }}
       source-label: hotfix
       version: ${{ needs.version.outputs.semver }}
-    secrets:
-      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
-      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion
@@ -1608,6 +1607,8 @@ jobs:
 
   publish-test-status:
     name: Report · Test status to docs
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     # Ships per-test pass/fail to whizbang-lib.github.io so doc pages render
     # live verification badges. Runs even when suites FAIL (failures are what
     # the badges must show) but not when cancelled. No-ops without the token
