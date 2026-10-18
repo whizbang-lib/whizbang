@@ -225,7 +225,7 @@ public class DispatchTangentialParityComponentTests {
     var outbox = new PolicyRecordingOutbox();
     await using var provider = _buildProvider(outbox);
     var id = Guid.CreateVersion7();
-    var scheduledAt = DateTimeOffset.UtcNow.AddDays(1);
+    var scheduledAt = new DateTimeOffset(2099, 1, 2, 3, 4, 5, TimeSpan.Zero);
 
     await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync((object)new PbUnownedCommand(id),
       new DispatchOptions().WithPolicy(Whizbang.Core.Dispatch.Policy.DispatchPolicies.Send.Id).WithScheduledFor(scheduledAt));

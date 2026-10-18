@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// <docs>fundamentals/dispatcher/dispatch-policy#decision-table</docs>
 public class DispatchBatchParityComponentTests {
   private const string OWNED_DOMAIN = "Whizbang.Core.Component.Tests.PolicyBehavior.Owned";
-  private static readonly DateTimeOffset _future = DateTimeOffset.UtcNow.AddYears(10);
+  private static readonly DateTimeOffset _future = new(2099, 1, 2, 3, 4, 5, TimeSpan.Zero);
 
   [Test]
   public async Task SendMany_ScheduledInTheFuture_IsNotHandledNowAndQueuesAScheduledDeferredCopyAsync() {
