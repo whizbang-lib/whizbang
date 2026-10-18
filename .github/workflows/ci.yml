@@ -1164,10 +1164,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh pr view "$PR" --repo "${{ github.repository }}" --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
-          CLOSING=$(gh pr view "$PR" --repo "${{ github.repository }}" --json closingIssuesReferences --jq '.closingIssuesReferences | length')
+          # The issues it closes, read as the linked-issue gate reads them: GitHub never links a closing
+          # keyword on a pull request into a release branch, so there the description is read (#1449)
+          CLOSING_JSON=$(pwsh -NoProfile -File .github/scripts/Test-LinkedIssue.ps1 -Repository "${{ github.repository }}" \
+            -PullRequest "$PR" -EmitClosingIssues)
+          CLOSING=$(jq 'length' <<< "$CLOSING_JSON")
           TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
-          LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json closingIssuesReferences \
-            --jq '[.closingIssuesReferences[].labels[]?.name] | unique | join(",")')
+          LABELS=$(jq -r '[.[].labels[]] | unique | join(",")' <<< "$CLOSING_JSON")
           BOT=()
           if [ "$AUTHOR_TYPE" = "Bot" ]; then BOT=(-AuthorIsBot); fi
           pwsh -NoProfile -File .github/scripts/Get-ReviewChecks.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA" \
