@@ -3,6 +3,7 @@
 
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Component.Tests.Tangential.Owned;
+using Whizbang.Core.Observability;
 
 // For DispatchTangentialParityComponentTests: a command another service owns, so a send runs it here and
 // also writes its copy.
@@ -20,10 +21,11 @@ public sealed class TgStampedCommand : ICommand {
   public string? CorrelationId { get; set; }
 }
 
-public sealed class TgStampedCommandReceptor : IReceptor<TgStampedCommand> {
+public sealed class TgStampedCommandReceptor(IEnvelopeRegistry registry) : IReceptor<TgStampedCommand> {
   public ValueTask HandleAsync(TgStampedCommand message, CancellationToken cancellationToken = default) {
     TangentialProbe.Saw("sentAt", message.Id, message.SentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
     TangentialProbe.Saw("correlation", message.Id, message.CorrelationId);
+    TangentialProbe.Saw("envelopeId", message.Id, registry.TryGetEnvelope(message)?.MessageId.Value.ToString());
     return ValueTask.CompletedTask;
   }
 }

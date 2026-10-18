@@ -43,11 +43,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution {
 
   /// <summary>The sent time and correlation each stamped message's handler saw, keyed by message id (#1455).</summary>
   public static class StampProbe {
-    private static readonly ConcurrentDictionary<Guid, (DateTimeOffset SentAt, string? CorrelationId)> _seen = new();
+    private static readonly ConcurrentDictionary<Guid, (DateTimeOffset SentAt, string? CorrelationId, Guid? EnvelopeId)> _seen = new();
 
-    public static void Saw(Guid id, DateTimeOffset sentAt, string? correlationId) => _seen[id] = (sentAt, correlationId);
+    public static void Saw(Guid id, DateTimeOffset sentAt, string? correlationId, Guid? envelopeId) => _seen[id] = (sentAt, correlationId, envelopeId);
 
-    public static (DateTimeOffset SentAt, string? CorrelationId)? Seen(Guid id) => _seen.TryGetValue(id, out var seen) ? seen : null;
+    public static (DateTimeOffset SentAt, string? CorrelationId, Guid? EnvelopeId)? Seen(Guid id) => _seen.TryGetValue(id, out var seen) ? seen : null;
   }
 
   /// <summary>A message the runtime-registered counting handler can key by id.</summary>
@@ -156,9 +156,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Upstream {
     public string? CorrelationId { get; set; }
   }
 
-  public sealed class DxStampedEventReceptor : IReceptor<DxStampedEvent> {
+  public sealed class DxStampedEventReceptor(IEnvelopeRegistry registry) : IReceptor<DxStampedEvent> {
     public ValueTask HandleAsync(DxStampedEvent message, CancellationToken cancellationToken = default) {
-      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId);
+      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId, registry.TryGetEnvelope(message)?.MessageId.Value);
       return ValueTask.CompletedTask;
     }
   }
@@ -174,9 +174,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Upstream {
     public string? CorrelationId { get; set; }
   }
 
-  public sealed class DxStampedCommandReceptor : IReceptor<DxStampedCommand> {
+  public sealed class DxStampedCommandReceptor(IEnvelopeRegistry registry) : IReceptor<DxStampedCommand> {
     public ValueTask HandleAsync(DxStampedCommand message, CancellationToken cancellationToken = default) {
-      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId);
+      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId, registry.TryGetEnvelope(message)?.MessageId.Value);
       return ValueTask.CompletedTask;
     }
   }
