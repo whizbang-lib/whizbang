@@ -68,7 +68,9 @@ jobs:
           # -s: the DCO sign-off check requires it on every pull request commit, and this identity
           # is not a GitHub bot account, so it is not exempt.
           git commit -s -m "docs(readme): refresh the published test count and coverage"
-          git push --force origin "$BRANCH"
+          # Published through the API, not git push, so GitHub signs the commits: the rulesets require
+          # signed commits (.github/scripts/Publish-SignedCommit.ps1).
+          pwsh -NoProfile -File .github/scripts/Publish-SignedCommit.ps1 -Repository "$REPO" -Branch "$BRANCH" -Force
           EXISTING=$(gh pr list --repo "$REPO" --head "$BRANCH" --base "$BASE" --state open --json number --jq '.[0].number // ""')
           if [ -z "$EXISTING" ]; then
             gh pr create --repo "$REPO" --head "$BRANCH" --base "$BASE" \

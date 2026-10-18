@@ -254,13 +254,18 @@ jobs:
           grep "<Version>" Directory.Build.props
 
       - name: Commit and Push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           VERSION="${{ steps.version.outputs.semver }}"
           BRANCH="${{ steps.version.outputs.branch }}"
 
           git add Directory.Build.props
           git commit -m "chore(release): bump version to $VERSION"
-          git push origin "$BRANCH"
+          # Published through the API, not git push, so GitHub signs the commits: the rulesets require
+          # signed commits (.github/scripts/Publish-SignedCommit.ps1).
+          # Both the main merge (two parents) and the bump.
+          pwsh -NoProfile -File .github/scripts/Publish-SignedCommit.ps1 -Repository "${{ github.repository }}" -Branch "$BRANCH"
 
       - name: Create Pull Request
         env:
