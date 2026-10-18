@@ -827,8 +827,8 @@ public abstract partial class Dispatcher(
     // A message whose copy already stamped it is handed to the receptors as the copy was stored, so its
     // envelope does not stamp it again (#1455); one with no copy is stamped here, once
     _envelopeRegistry.Register(_createEnvelope(message, MessageContext.Create(cascade),
-      new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, nameof(_registerLocalRunEnvelope), string.Empty, 0,
-      MessageId.New(), stampMessage));
+      new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      new CallerLocation(nameof(_registerLocalRunEnvelope), string.Empty, 0), MessageId.New(), stampMessage));
     return true;
   }
 
@@ -2969,7 +2969,7 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
-  ) => _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber, MessageId.New());
+  ) => _createEnvelope(message, context, dispatchContext, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber), MessageId.New());
 
   /// <summary>
   /// As the overload above, under an id the caller minted: a batch mints its copies' ids before their
@@ -2981,9 +2981,7 @@ public abstract partial class Dispatcher(
     object message,
     IMessageContext context,
     MessageDispatchContext dispatchContext,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber,
+    CallerLocation caller,
     MessageId messageId,
     bool stampMessage = true
   ) {
@@ -3002,9 +3000,9 @@ public abstract partial class Dispatcher(
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
-      CallerMemberName = callerMemberName,
-      CallerFilePath = callerFilePath,
-      CallerLineNumber = callerLineNumber,
+      CallerMemberName = caller.MemberName,
+      CallerFilePath = caller.FilePath,
+      CallerLineNumber = caller.LineNumber,
       Metadata = hopMetadata,
       Scope = _getScopeDeltaForHop(context, messageType),
       TraceParent = HopStamping.AmbientTraceParent
