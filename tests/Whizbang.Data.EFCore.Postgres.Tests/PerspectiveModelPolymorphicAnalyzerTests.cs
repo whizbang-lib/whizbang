@@ -692,7 +692,7 @@ public class PerspectiveModelPolymorphicAnalyzerTests {
   /// <summary>
   /// Documents current behavior: array properties are skipped entirely because arrays
   /// are IArrayTypeSymbol, not INamedTypeSymbol (array coverage is owned by
-  /// PerspectiveModelArrayAnalyzer, WHIZ812).
+  /// PerspectiveModelArrayAnalyzer, WHIZ200).
   /// </summary>
   [Test]
   public async Task PerspectiveModel_WithArrayOfAbstract_NoDiagnosticAsync() {

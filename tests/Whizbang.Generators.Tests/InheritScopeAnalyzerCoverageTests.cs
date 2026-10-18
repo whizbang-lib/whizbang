@@ -32,7 +32,7 @@ public class InheritScopeAnalyzerCoverageTests {
   /// restricts it to Class targets, and every perspective participant is a class. If the
   /// TypeKind guard (InheritScopeAnalyzer.cs:66-68) regressed and let non-class named types
   /// reach the attribute scan, a future relaxation of that AttributeUsage (or an unrelated
-  /// attribute sharing the simple name) could start producing WHIZ400/WHIZ401 noise for a
+  /// attribute sharing the simple name) could start producing WHIZ170/WHIZ171 noise for a
   /// symbol kind that can never actually own scope data.
   /// </summary>
   [Test]
@@ -48,7 +48,7 @@ public class InheritScopeAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var ours = diagnostics.Where(d => d.Id is "WHIZ400" or "WHIZ401").ToArray();
+    var ours = diagnostics.Where(d => d.Id is "WHIZ170" or "WHIZ171").ToArray();
     await Assert.That(ours.Length).IsEqualTo(0)
       .Because("an interface can never carry [InheritScope] (AttributeUsage restricts it to classes), so the TypeKind guard must reject it before any attribute scan runs");
   }
@@ -57,8 +57,8 @@ public class InheritScopeAnalyzerCoverageTests {
   /// A class can carry attributes unrelated to scope inheritance without those attributes ever
   /// being mistaken for [InheritScope]. If the attribute-name scan (InheritScopeAnalyzer.cs:73-79)
   /// stopped short instead of running to the end of a non-matching attribute list, a class whose
-  /// [InheritScope] was declared anywhere but first would silently escape both WHIZ400 and
-  /// WHIZ401 — the false negative this analyzer exists to prevent, letting a misconfigured
+  /// [InheritScope] was declared anywhere but first would silently escape both WHIZ170 and
+  /// WHIZ171 — the false negative this analyzer exists to prevent, letting a misconfigured
   /// perspective read across a scope boundary without ever being flagged at build time.
   /// </summary>
   [Test]
@@ -77,7 +77,7 @@ public class InheritScopeAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var ours = diagnostics.Where(d => d.Id is "WHIZ400" or "WHIZ401").ToArray();
+    var ours = diagnostics.Where(d => d.Id is "WHIZ170" or "WHIZ171").ToArray();
     await Assert.That(ours.Length).IsEqualTo(0)
       .Because("[Obsolete] is not [InheritScope]; the attribute scan must run to completion without a match and leave the class unanalyzed");
   }
@@ -88,7 +88,7 @@ public class InheritScopeAnalyzerCoverageTests {
   /// its interfaces is IPerspectiveFor&lt;...&gt;. If the interface scan
   /// (InheritScopeAnalyzer.cs:107-111) stopped at the first non-matching interface instead of
   /// walking the full list, a perspective class declared with an incidental interface (logging,
-  /// disposal, etc.) would wrongly escape WHIZ400, hiding a misapplied [InheritScope] that a
+  /// disposal, etc.) would wrongly escape WHIZ170, hiding a misapplied [InheritScope] that a
   /// developer could otherwise mistake for working scope inheritance.
   /// </summary>
   [Test]
@@ -108,9 +108,9 @@ public class InheritScopeAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ400").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ170").ToArray();
     await Assert.That(found.Length).IsEqualTo(1)
-      .Because("IDisposable is a real, non-empty interface list that still contains nothing IPerspectiveFor-shaped, so the scan must walk past it and still report WHIZ400");
+      .Because("IDisposable is a real, non-empty interface list that still contains nothing IPerspectiveFor-shaped, so the scan must walk past it and still report WHIZ170");
     await Assert.That(found[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
     await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("DisposablePerspectiveCandidate");
   }

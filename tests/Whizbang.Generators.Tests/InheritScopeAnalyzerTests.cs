@@ -31,7 +31,7 @@ public class InheritScopeAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ400").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ170").ToArray();
     await Assert.That(found.Length).IsEqualTo(1);
     await Assert.That(found[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
     await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("PlainClass");
@@ -57,7 +57,7 @@ public class InheritScopeAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ400").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ170").ToArray();
     await Assert.That(found.Length).IsEqualTo(0);
   }
 
@@ -81,7 +81,7 @@ public class InheritScopeAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ401").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ171").ToArray();
     await Assert.That(found.Length).IsEqualTo(1);
     await Assert.That(found[0].Severity).IsEqualTo(DiagnosticSeverity.Info);
     await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("FooProjection");
@@ -109,7 +109,7 @@ public class InheritScopeAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ401").ToArray();
+    var found = diagnostics.Where(d => d.Id == "WHIZ171").ToArray();
     await Assert.That(found.Length).IsEqualTo(0);
   }
 
@@ -131,7 +131,7 @@ public class InheritScopeAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var ours = diagnostics.Where(d => d.Id is "WHIZ400" or "WHIZ401").ToArray();
+    var ours = diagnostics.Where(d => d.Id is "WHIZ170" or "WHIZ171").ToArray();
     // (no further assertions — already covered above)
     await Assert.That(ours.Length).IsEqualTo(0);
   }

@@ -94,8 +94,8 @@ public class InheritScopeAttributeTests {
   }
 
   // Intentional non-perspective sample for reflection discovery — analyzer suppression.
-#pragma warning disable WHIZ400
+#pragma warning disable WHIZ170
   [InheritScope(OnCreate = ScopeFields.Tenant | ScopeFields.User, Always = ScopeFields.User)]
   private sealed class SampleAnnotated;
-#pragma warning restore WHIZ400
+#pragma warning restore WHIZ170
 }

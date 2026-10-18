@@ -750,18 +750,18 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
-  // Polymorphic Serialization Diagnostics (WHIZ071-079)
+  // Polymorphic Serialization Diagnostics (WHIZ072-079; WHIZ070-071 belong to the EF Core vector checks)
   // ========================================
 
   /// <summary>
-  /// WHIZ071: Info - Polymorphic base type discovered with derived types.
+  /// WHIZ072: Info - Polymorphic base type discovered with derived types.
   /// Reports when a base class or interface is discovered with derived types
   /// that will be registered for polymorphic JSON serialization.
   /// </summary>
   /// <docs>extending/source-generators/polymorphic-serialization</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithPolymorphicBase_ReportsWHIZ071DiagnosticAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithPolymorphicBase_ReportsWHIZ072DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PolymorphicBaseTypeDiscovered = new(
-      id: "WHIZ071",
+      id: "WHIZ072",
       title: "Polymorphic Base Type Discovered",
       messageFormat: "Discovered polymorphic base type '{0}' with {1} derived type(s) for automatic JSON serialization",
       category: CATEGORY,

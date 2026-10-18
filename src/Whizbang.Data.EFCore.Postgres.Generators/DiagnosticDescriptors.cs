@@ -27,7 +27,7 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ811: Warning - a perspective model declares a JSON converter that nothing will consult.
+  /// WHIZ812: Warning - a perspective model declares a JSON converter that nothing will consult.
   /// </summary>
   /// <remarks>
   /// A perspective's document is stored with <c>ComplexProperty().ToJson()</c> and read by Entity
@@ -43,7 +43,7 @@ internal static class DiagnosticDescriptors {
   /// <docs>fundamentals/perspectives/stored-form-migrations#json-converter</docs>
   /// <tests>tests/Whizbang.Generators.Tests/DeclaredJsonConverterIgnoredTests.cs</tests>
   public static readonly DiagnosticDescriptor PerspectiveModelJsonConverterIgnored = new(
-      id: "WHIZ811",
+      id: "WHIZ812",
       title: "Perspective model declares a JSON converter that is never consulted",
       messageFormat: "Property '{0}' on perspective model '{1}' declares [JsonConverter(typeof({2}))], which a stored document never consults: the document is read by Entity Framework's JSON materializer, not by the serializer. If the stored shape changed, declare [StoredForm(Previously = typeof(...))] instead, which rewrites the stored documents in place.",
       category: CATEGORY,
