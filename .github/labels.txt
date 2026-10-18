@@ -16,6 +16,11 @@ invalid | e4e669 | This doesn't seem right
 wontfix | ffffff | This will not be worked on (the closing comment says why)
 good first issue | 7057ff | Small and self-contained, with the steps in the issue
 help wanted | 008672 | Larger work where help is welcome
+# Intake (maintainers set accepted; the PR intake workflow keeps the issue:* labels on pull requests)
+accepted | 0e8a16 | Agreed by a maintainer; a pull request may implement it
+issue:accepted | 0e8a16 | Pull request: closes an accepted issue
+issue:awaiting-acceptance | fbca04 | Pull request: closes an issue not yet accepted
+issue:none | d73a4a | Pull request: closes no issue
 # Gate overrides (maintainers only)
 linked-issue:late | c5def5 | Gate · Linked issue: the closed issue may be newer than the pull request
 # Automation

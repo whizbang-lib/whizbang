@@ -2,8 +2,39 @@
 
 Thank you for your interest in contributing to Whizbang! This document provides guidelines and instructions for contributing.
 
+## How a change gets in
+
+**Every pull request implements an accepted issue.** Talk first, code second: the issue is where a
+change's value, design and approach are agreed, and it is far cheaper to change direction there than in
+review.
+
+```mermaid
+flowchart LR
+    A["Idea or bug"] --> B["Issue<br/>(or a Discussion first,<br/>for a new feature)"]
+    B --> C{"Maintainer<br/>agrees?"}
+    C -- "accepted" --> D["Pull request<br/>Fixes #N"]
+    C -- "declined" --> X["Closed, with the reason"]
+    D --> E["Required checks<br/>and review"]
+    E --> F["Merged; the issue closes"]
+```
+
+1. **Open an issue** with one of the [forms](https://github.com/whizbang-lib/whizbang/issues/new/choose),
+   or comment on an existing one. New features start in
+   [Discussions](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas).
+2. **Wait for `accepted`.** A maintainer labels the issue `accepted` once its value and approach are
+   agreed. Issues labeled `accepted` and `help wanted` or `good first issue` are open for anyone to take:
+   say so on the issue first.
+3. **Open the pull request** with `Fixes #N` in the description, as plain text. Its title is a Conventional
+   Commit, every commit is signed off, and it meets the [requirements](#pull-request-requirements).
+
+The required **Gate · Linked issue** check enforces step 2. A pull request without an accepted issue is
+labeled `issue:none` or `issue:awaiting-acceptance`, gets one comment explaining this, and is closed
+after 14 days if the issue is still not accepted; reopen it once it is. Maintainers' own pull requests
+need the issue but not the acceptance.
+
 ## Table of Contents
 
+- [How a change gets in](#how-a-change-gets-in)
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Workflow](#development-workflow)
@@ -208,7 +239,9 @@ Fixes #123
 ignores it. A pull request that resolves two issues names both (`Fixes #123`, `Fixes #124`).
 
 This is enforced: the required **Gate · Linked issue** check fails a pull request that closes no issue in
-this repository, or whose issues were all opened after it. It reads the current description, so adding the
+this repository, whose issues were all opened after it, or none of whose issues is `accepted` by a
+maintainer (the maintain or admin role, which the `maintainers` team grants; see
+[How a change gets in](#how-a-change-gets-in)). A maintainer's own pull request needs no acceptance. It reads the current description, so adding the
 keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
 and the release pull request into `main` are exempt.
 
@@ -234,8 +267,11 @@ are turned off.
 | A security vulnerability | The [private advisory form](https://github.com/whizbang-lib/whizbang/security/advisories/new), never a public issue | [SECURITY.md](SECURITY.md) |
 
 **Triage.** Every new issue is labeled `needs-triage`. A maintainer responds within 7 days and either
-confirms it (removing `needs-triage`, keeping its type label), closes it as a duplicate with a link to the
-original, or closes it with the reason (`wontfix`, `invalid`). Bugs are never closed as stale. The labels,
+accepts it, discusses it further, closes it as a duplicate with a link to the original, or closes it with
+the reason (`wontfix`, `invalid`). A maintainer accepts with a `/accept` comment on the issue (or the
+`accepted` label), and declines with `/decline <reason>`, which labels it `wontfix` and closes it as not
+planned; either removes `needs-triage`. Accepting re-runs the gate on every open pull request that closes
+the issue. Bugs are never closed as stale. The labels,
 and what each means, are listed in `.github/labels.txt`; the "Test · Pipeline scripts" check fails if a form
 adds a label that is not there.
 

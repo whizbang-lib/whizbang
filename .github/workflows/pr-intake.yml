@@ -1,0 +1,125 @@
+name: PR intake
+
+# A pull request implements an accepted issue (CONTRIBUTING.md, "How a change gets in"); the required
+# "Gate · Linked issue" check in ci.yml enforces it. This workflow is the process around that gate, all in
+# .github/scripts/Invoke-PrIntake.ps1 (tested by script-tests):
+#   - labels each pull request issue:accepted, issue:awaiting-acceptance or issue:none, for filtering, and
+#     explains the process once to an outside contributor whose issue is not accepted;
+#   - when an issue's accepted label changes, refreshes the pull requests that close it and re-runs their
+#     failed CI jobs, so the gate sees the acceptance;
+#   - applies /accept and /decline <reason> from a maintainer (the maintain or admin role) on an issue;
+#   - daily, closes outside pull requests still without an accepted issue 14 days after opening.
+#
+# pull_request_target runs with the base branch's code and a token that can label a fork's pull request.
+# It never checks out or runs the pull request's code: the checkout below is the base branch's .github.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, labeled, unlabeled]
+    branches: [main, develop, 'release/v**']
+  issues:
+    types: [labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: '23 13 * * *'   # daily, 09:23 EDT
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pull-request:
+    name: Label the pull request's issue state
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-intake-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      issues: read          # the issues it closes and their timelines
+      pull-requests: write  # its labels and the explanation comment
+    steps:
+      - name: Checkout the base branch's pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Sync the intake label and explanation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode PullRequest -Number "$PR"
+
+  issue-accepted:
+    name: Refresh pull requests for an accepted issue
+    if: github.event_name == 'issues' && github.event.label.name == 'accepted'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write  # their labels and comments
+      actions: write        # re-run the failed gate
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Refresh the pull requests that close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Issue -Number "$ISSUE"
+
+  command:
+    name: Apply /accept or /decline
+    if: >-
+      github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/accept') || startsWith(github.event.comment.body, '/decline'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write         # label, comment and close the issue
+      pull-requests: write  # refresh the pull requests that close it
+      actions: write        # re-run their failed gate
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Apply the command (maintainers only; the script checks the role)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          COMMENT: ${{ github.event.comment.id }}
+          ACTOR: ${{ github.event.comment.user.login }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Command -Number "$ISSUE" -CommentId "$COMMENT" -Actor "$ACTOR"
+
+  sweep:
+    name: Close pull requests without an accepted issue
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write  # comment and close
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Close the stale ones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Sweep -Days 14

@@ -40,6 +40,12 @@ findings, CodeQL, and a Developer Certificate of Origin sign-off on every commit
 A contributor who consistently does good work may be invited to take on part of the maintainer's
 responsibilities. Doing so means adding them to the table above in a pull request.
 
+On GitHub, the maintainers are the members of the organization's `maintainers` team, which holds the
+Maintain role on this repository. That role is what the automation reads: accepting an issue
+(`/accept`, or the `accepted` label) counts only from a maintainer, and a maintainer's own pull request
+needs an issue but not its acceptance ([How a change gets in](CONTRIBUTING.md#how-a-change-gets-in)).
+Adding or removing someone from the team is the whole change; nothing else needs to be kept in sync.
+
 ## Continuity
 
 The project must be able to keep going, and to accept changes and publish releases within a week, if
