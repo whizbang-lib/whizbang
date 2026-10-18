@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/ServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/SyncTrackingEventStoreDecorator.cs</code-under-test>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
+[Category("Shard5")]
 public class EventStoreSyncTrackingIntegrationTests : EFCoreTestBase {
   [Test]
   [Arguments(false)]
