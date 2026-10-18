@@ -251,3 +251,22 @@ Describe 'Select-FailedCiRun' {
     Select-FailedCiRun -Runs $runs | Should -BeNullOrEmpty
   }
 }
+
+Describe 'Invoke-IssueOpened' {
+  BeforeEach {
+    $script:calls = [System.Collections.Generic.List[string]]::new()
+    $script:roles = @{ maint = 'maintain'; owner = 'admin'; committer = 'write'; stranger = '' }
+    Mock Get-RepositoryRole { $script:roles[$Login] }
+    Mock Invoke-Gh { $script:calls.Add($Arguments -join ' ') }
+  }
+
+  It 'accepts an issue a maintainer opened, removing needs-triage' -TestCases @(@{ Author = 'maint' }, @{ Author = 'owner' }) {
+    Invoke-IssueOpened -Repository 'o/r' -Issue 12 -Author $Author
+    $script:calls | Should -Be @('issue edit 12 -R o/r --add-label accepted --remove-label needs-triage')
+  }
+
+  It 'leaves an issue from anyone else waiting for a maintainer' -TestCases @(@{ Author = 'committer' }, @{ Author = 'stranger' }) {
+    Invoke-IssueOpened -Repository 'o/r' -Issue 12 -Author $Author
+    $script:calls.Count | Should -Be 0
+  }
+}

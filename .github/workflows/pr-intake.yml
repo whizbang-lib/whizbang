@@ -5,6 +5,7 @@ name: PR intake
 # .github/scripts/Invoke-PrIntake.ps1 (tested by script-tests):
 #   - labels each pull request issue:accepted, issue:awaiting-acceptance or issue:none, for filtering, and
 #     explains the process once to an outside contributor whose issue is not accepted;
+#   - accepts an issue a maintainer opened (a maintainer filing work has agreed to it);
 #   - when an issue's accepted label changes, refreshes the pull requests that close it and re-runs their
 #     failed CI jobs, so the gate sees the acceptance;
 #   - applies /accept and /decline <reason> from a maintainer (the maintain or admin role) on an issue, and
@@ -20,7 +21,7 @@ on:
     types: [opened, reopened, edited, synchronize, labeled, unlabeled]
     branches: [main, develop, 'release/v**']
   issues:
-    types: [labeled, unlabeled]
+    types: [opened, labeled, unlabeled]
   issue_comment:
     types: [created]
   schedule:
@@ -54,6 +55,28 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode PullRequest -Number "$PR"
+
+  issue-opened:
+    name: Accept an issue a maintainer opened
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write   # the accepted label
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Accept it when its author is a maintainer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode IssueOpened -Number "$ISSUE" -Actor "$AUTHOR"
 
   issue-accepted:
     name: Refresh pull requests for an accepted issue
