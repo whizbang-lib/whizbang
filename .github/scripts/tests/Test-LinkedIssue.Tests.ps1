@@ -111,3 +111,67 @@ Describe 'ConvertFrom-PullRequestJson' {
     { ConvertFrom-PullRequestJson -Json '{"data":{"repository":{"pullRequest":null}}}' -Repository 'o/r' } | Should -Throw '*could not be read*'
   }
 }
+
+Describe 'Get-ClosingKeywordNumbers' {
+  It 'reads each closing keyword GitHub honors' {
+    @(Get-ClosingKeywordNumbers -Body "Fixes #12`nThis also closes #3 and Resolved #4.") | Should -Be @(12, 3, 4)
+  }
+
+  It 'reads a keyword however it is cased, once per issue' {
+    @(Get-ClosingKeywordNumbers -Body 'FIXES #8, fixed #8, Close #9') | Should -Be @(8, 9)
+  }
+
+  It 'ignores a reference with no closing keyword' {
+    @(Get-ClosingKeywordNumbers -Body 'Refs #5, see #6') | Should -BeNullOrEmpty
+  }
+
+  It 'ignores a keyword inside inline code or a code block, as GitHub does' {
+    $body = "Write ``Fixes #9`` to link.`n``````n Fixes #10`n```````nNothing else."
+    @(Get-ClosingKeywordNumbers -Body $body) | Should -BeNullOrEmpty
+  }
+
+  It 'reads nothing from an empty description' {
+    @(Get-ClosingKeywordNumbers -Body '') | Should -BeNullOrEmpty
+  }
+}
+
+Describe 'Resolve-ClosingIssues' {
+  BeforeAll {
+    $script:lookedUp = @()
+    $script:lookup = {
+      param([int]$Number)
+      $script:lookedUp += $Number
+      if ($Number -eq 404) { return $null }
+      [pscustomobject]@{ Number = $Number; CreatedAt = [datetimeoffset]'2026-10-18T11:00:00Z'; Labels = @('bug') }
+    }
+  }
+
+  BeforeEach { $script:lookedUp = @() }
+
+  It "keeps GitHub's own closing references when there are any" {
+    $pr = New-TestPullRequest
+    $issues = @(Resolve-ClosingIssues -PullRequest $pr -Body 'Fixes #99' -LookupIssue $script:lookup)
+    $issues.Number | Should -Be @(12)
+    $script:lookedUp | Should -BeNullOrEmpty
+  }
+
+  It 'reads the description of a pull request into a release branch, which GitHub never links' {
+    $pr = New-TestPullRequest -BaseRef 'release/v0.2622.0' -Issues @()
+    $issues = @(Resolve-ClosingIssues -PullRequest $pr -Body 'Fixes #31 and closes #404' -LookupIssue $script:lookup)
+    $issues.Number | Should -Be @(31)
+    $issues[0].Labels | Should -Be @('bug')
+    $script:lookedUp | Should -Be @(31, 404)
+  }
+
+  It 'does not read the description of a pull request into the default branch' {
+    $pr = New-TestPullRequest -BaseRef 'develop' -Issues @()
+    @(Resolve-ClosingIssues -PullRequest $pr -Body 'Fixes #31' -LookupIssue $script:lookup) | Should -BeNullOrEmpty
+    $script:lookedUp | Should -BeNullOrEmpty
+  }
+
+  It 'passes the gate for a release-branch fix whose description closes an earlier issue' {
+    $pr = New-TestPullRequest -BaseRef 'release/v0.2622.0' -Issues @()
+    $pr.Issues = @(Resolve-ClosingIssues -PullRequest $pr -Body 'Fixes #31' -LookupIssue $script:lookup)
+    (Get-LinkedIssueVerdict -PullRequest $pr).Pass | Should -BeTrue
+  }
+}
