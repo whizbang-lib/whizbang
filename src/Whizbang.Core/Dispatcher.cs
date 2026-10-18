@@ -820,8 +820,11 @@ public abstract partial class Dispatcher(
       return false;
     }
     var cascade = sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope);
+    // The message is handed to the receptors as its copy was stamped and stored, so registering its
+    // envelope does not stamp it again (#1455)
     _envelopeRegistry.Register(_createEnvelope(message, MessageContext.Create(cascade),
-      new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, nameof(_registerLocalRunEnvelope), string.Empty, 0));
+      new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }, nameof(_registerLocalRunEnvelope), string.Empty, 0,
+      MessageId.New(), stampMessage: false));
     return true;
   }
 
@@ -2966,7 +2969,9 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// As the overload above, under an id the caller minted: a batch mints its copies' ids before their
-  /// local runs, so they order before their effects (#1410 follow-up).
+  /// local runs, so they order before their effects (#1410 follow-up). With <paramref name="stampMessage"/>
+  /// false the message is left as it is: an envelope only registered for a local run must not stamp the
+  /// message again after its copy was stamped and stored (#1455).
   /// </summary>
   private MessageEnvelope<object> _createEnvelope(
     object message,
@@ -2975,7 +2980,8 @@ public abstract partial class Dispatcher(
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber,
-    MessageId messageId
+    MessageId messageId,
+    bool stampMessage = true
   ) {
 
     // Auto-generate StreamId for messages with [GenerateStreamId] attribute during envelope creation
@@ -3001,7 +3007,7 @@ public abstract partial class Dispatcher(
     };
 
     // Populate SentAt-phase properties directly on the message record
-    var populatedMessage = AutoPopulatePopulatorRegistry.PopulateSent(message, hop, messageId);
+    var populatedMessage = stampMessage ? AutoPopulatePopulatorRegistry.PopulateSent(message, hop, messageId) : message;
 
     var envelope = new MessageEnvelope<object> {
       MessageId = messageId,
@@ -4933,13 +4939,10 @@ public abstract partial class Dispatcher(
   /// Creates ONE scope, queues all messages, and flushes once for optimal performance.
   /// </summary>
   private async Task<List<IDeliveryReceipt>> _sendManyToOutboxAsync(
-    List<(object message, Type messageType, IMessageContext context, MessageId messageId)> messages,
+    List<BatchCopy> messages,
     List<DispatchDecision> copyDecisions,
     DispatchOptions options,
-    IReadOnlyList<OutboxMessage>? heldEffects = null,
-    [CallerMemberName] string callerMemberName = "",
-    [CallerFilePath] string callerFilePath = "",
-    [CallerLineNumber] int callerLineNumber = 0
+    IReadOnlyList<OutboxMessage>? heldEffects = null
   ) {
     var receipts = new List<IDeliveryReceipt>();
 
@@ -4954,9 +4957,8 @@ public abstract partial class Dispatcher(
       }
 
       // Queue ALL messages to the strategy
-      var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
       for (var i = 0; i < messages.Count; i++) {
-        var (copy, receipt) = _buildBatchCopy(messages[i], copyDecisions[i], options, caller);
+        var (copy, receipt) = _buildBatchCopy(messages[i], copyDecisions[i], options);
         await _addOrQueueCopyAsync(collector, strategy, copy, options.CancellationToken).ConfigureAwait(false);
         receipts.Add(receipt);
       }
@@ -4989,14 +4991,15 @@ public abstract partial class Dispatcher(
   /// outbox messages with no other way out (#1410 follow-up).
   /// </summary>
   private async Task<List<IDeliveryReceipt>> _writeBatchWithNoOutboxAsync(
-      List<(object message, Type messageType, IMessageContext context, MessageId messageId)> messages,
+      List<BatchCopy> messages,
       List<DispatchDecision> copyDecisions, IReadOnlyList<OutboxMessage>? heldEffects, IServiceScope scope) {
-    if (!messages.TrueForAll(static m => m.message is IEvent) || heldEffects is not null) {
+    if (!messages.TrueForAll(static m => m.Message is IEvent) || heldEffects is not null) {
       throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
     }
     var receipts = new List<IDeliveryReceipt>(messages.Count);
     for (var i = 0; i < messages.Count; i++) {
-      var (eventData, eventType, eventContext, messageId) = messages[i];
+      var (eventData, eventType, eventContext, envelope) = messages[i];
+      var messageId = envelope.MessageId;
       await _handleNoStrategyFallbackAsync(eventData, eventType, messageId, sourceEnvelope: null, eventStoreOnly: !copyDecisions[i].WriteOutbox, scope).ConfigureAwait(false);
       receipts.Add(DeliveryReceipt.Accepted(messageId, eventType.Name, eventContext.CorrelationId, eventContext.CausationId,
         _streamIdExtractor?.ExtractStreamId(eventData, eventType)));
@@ -5005,22 +5008,13 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// One batch message's copy, marked as a single dispatch marks it: a copy this service already handled
-  /// says so, so the sender's PreOutbox stage does not run that handler again; a copy whose local
-  /// handling waits for its schedule says that, and carries the schedule (#1397, #1401). It carries the
-  /// caller's priority and payload limit, and has no destination when the event is only stored.
+  /// One batch message's copy, from the envelope recorded before its local run (see
+  /// <see cref="_recordBatchCopy"/>). It carries the caller's priority and payload limit and the schedule
+  /// of a deferred run, and has no destination when the event is only stored.
   /// </summary>
-  private (OutboxMessage Copy, IDeliveryReceipt Receipt) _buildBatchCopy(
-      (object message, Type messageType, IMessageContext context, MessageId messageId) item, DispatchDecision decision,
-      DispatchOptions options, CallerLocation caller) {
-    var (message, messageType, context, copyId) = item;
+  private (OutboxMessage Copy, IDeliveryReceipt Receipt) _buildBatchCopy(BatchCopy item, DispatchDecision decision, DispatchOptions options) {
+    var (message, messageType, context, envelope) = item;
     var destination = decision.WriteOutbox ? _resolveDestination(message, messageType) : null;
-    var dispatchContext = new MessageDispatchContext {
-      Mode = decision.MarkHandledLocally ? DispatchModes.Both : DispatchModes.Outbox,
-      Source = MessageSource.Local,
-      LocalDeferred = decision.Local == LocalRun.AtScheduledTime
-    };
-    var envelope = _createEnvelope(message, context, dispatchContext, caller.MemberName, caller.FilePath, caller.LineNumber, copyId);
     _stampExplicitPriority(envelope, options.Priority);
     envelope.PayloadLimitOverride = options.MaxPayloadBytes;
     var copy = _serializeToNewOutboxMessage(envelope, message, messageType, destination, decision.DeferUntil);
@@ -5153,9 +5147,36 @@ public abstract partial class Dispatcher(
     public Type[] Types { get; } = types;
     public DispatchDecision[] Decisions { get; } = decisions;
     public List<IDeliveryReceipt> Receipts { get; } = [];
-    public List<(object message, Type messageType, IMessageContext context, MessageId messageId)> OutboxMessages { get; } = [];
+    public List<BatchCopy> OutboxMessages { get; } = [];
     public List<DispatchDecision> CopyDecisions { get; } = [];
     public List<Exception> Failures { get; } = [];
+  }
+
+  /// <summary>
+  /// A batch message's copy as recorded before its local run: the message, its type and context, and the
+  /// envelope that stamped it, whose id is the copy's.
+  /// </summary>
+  private readonly record struct BatchCopy(object Message, Type MessageType, IMessageContext Context, MessageEnvelope<object> Envelope);
+
+  /// <summary>
+  /// Records one batch message's copy, marked as a single dispatch marks it: a copy this service already
+  /// handled says so, so the sender's PreOutbox stage does not run that handler again; a copy whose local
+  /// handling waits for its schedule says that (#1397, #1401). Its envelope is built now, before the local
+  /// run: that stamps the message once, so the handlers see what the stored copy carries (#1455), and
+  /// mints the copy's id first, so the event store orders it before its effects (#1410 follow-up).
+  /// </summary>
+  private BatchCopy _recordBatchCopy(object message, Type messageType, in DispatchDecision decision,
+      [CallerMemberName] string callerMemberName = "",
+      [CallerFilePath] string callerFilePath = "",
+      [CallerLineNumber] int callerLineNumber = 0) {
+    var context = MessageContext.Create(_cascadeContextFactory.NewRoot());
+    var dispatchContext = new MessageDispatchContext {
+      Mode = decision.MarkHandledLocally ? DispatchModes.Both : DispatchModes.Outbox,
+      Source = MessageSource.Local,
+      LocalDeferred = decision.Local == LocalRun.AtScheduledTime
+    };
+    return new BatchCopy(message, messageType, context,
+      _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber));
   }
 
   /// <summary>Unwraps each <c>Routed&lt;T&gt;</c> in a batch in place and returns the routes, null where there is none.</summary>
@@ -5182,7 +5203,7 @@ public abstract partial class Dispatcher(
       var decision = batch.Decisions[i];
       if (decision.WriteOutbox || decision.WriteEventStoreOnly) {
         batch.CopyDecisions.Add(decision);
-        batch.OutboxMessages.Add((batch.Messages[i], batch.Types[i], MessageContext.Create(_cascadeContextFactory.NewRoot()), MessageId.New()));
+        batch.OutboxMessages.Add(_recordBatchCopy(batch.Messages[i], batch.Types[i], in decision));
       }
       if (decision.Local != LocalRun.Now) {
         continue;
@@ -5230,7 +5251,7 @@ public abstract partial class Dispatcher(
   }
 
   private async Task _flushOutboxBatchAndCollectReceiptsAsync(
-    List<(object message, Type messageType, IMessageContext context, MessageId messageId)> outboxMessages,
+    List<BatchCopy> outboxMessages,
     List<DispatchDecision> copyDecisions,
     List<IDeliveryReceipt> receipts,
     DispatchOptions options,
