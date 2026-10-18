@@ -57,11 +57,17 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E29 | The worker-stage invoker had no event cascader unless a transport consumer was added: every result returned at a worker stage was discarded | fixed |
 | E30 | LocalInvoke<TResult> on a tuple-returning receptor ran the receptor twice (failed cast, then re-run through extraction), and swallowed an InvalidCastException the receptor threw itself | fixed |
 | E31 | A receptor's sync context was set inside an async method, so it never reached the receptor; FireAlways receptors could not see their outcome | fixed |
+| E32 | Batch calls ignored a Routed<T> message (route dropped, or the wrapper looked up as the message) | fixed |
+| E33 | PublishAsync ignored a Routed<T> message | fixed |
+| E34 | A sent or batched event routed Local or EventStoreOnly was never stored; send copies always took a command destination | fixed |
+| E35 | A published event nothing here handles was treated as handled, so its copy claimed it was | fixed |
+| E36 | A typed or void local invoke under a selected policy ignored the policy's outbox write and the message's route | fixed |
+| E37 | A batch publish with no outbox threw for events instead of deferring or logging as a single publish does | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
 
-- [ ] Move `DispatchScenarios` where Component and Integration can consume it (shared source or `Whizbang.Testing`); every level draws from one case list
+- [x] `DispatchScenarios` linked into the Component tests; every runnable row executes on the real dispatcher (Integration still to do)
 - [ ] Handler-shape catalog of generated test types: void async, result async (single, tuple, array, Routed), void sync, result sync, object result, polymorphic, local-stage `[FireAt]`, pipeline-stage `[FireAt]`, runtime-registered, foreign-assembly, multiple receptors, `[AwaitPerspectiveSync]`, `[DefaultRouting]`; each × owned/unowned × command/event/system command
 - [ ] Shared probes: per-receptor invocation counts, cascaded-result capture, outbox/event-store recording with mode and schedule
 
