@@ -4858,13 +4858,13 @@ public record ProcessBatchCommand : ICommand {
   }
 
   /// <summary>
-  /// Tests that a diagnostic (WHIZ071) is reported when polymorphic base types
+  /// Tests that a diagnostic (WHIZ072) is reported when polymorphic base types
   /// are discovered with their derived type count.
   /// </summary>
   /// <tests>src/Whizbang.Generators/DiagnosticDescriptors.cs:PolymorphicBaseTypeDiscovered</tests>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_WithPolymorphicBase_ReportsWHIZ071DiagnosticAsync() {
+  public async Task Generator_WithPolymorphicBase_ReportsWHIZ072DiagnosticAsync() {
     // Arrange
     const string source = """
 using Whizbang.Core;
@@ -4887,9 +4887,9 @@ public record TestCommand : ICommand {
     // Act
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
-    // Assert - Should report WHIZ071 diagnostic for the discovered polymorphic base
+    // Assert - Should report WHIZ072 diagnostic for the discovered polymorphic base
     var whiz071Diagnostics = result.Diagnostics
-        .Where(d => d.Id == "WHIZ071")
+        .Where(d => d.Id == "WHIZ072")
         .ToList();
 
     await Assert.That(whiz071Diagnostics.Count).IsGreaterThanOrEqualTo(1);

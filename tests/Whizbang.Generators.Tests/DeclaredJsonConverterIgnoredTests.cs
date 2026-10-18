@@ -73,7 +73,7 @@ public class DeclaredJsonConverterIgnoredTests {
   public async Task ADeclaredConverterIsReportedAsync() {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_source(DECLARING_MODEL));
 
-    var reported = result.Diagnostics.Where(d => d.Id == "WHIZ811").ToList();
+    var reported = result.Diagnostics.Where(d => d.Id == "WHIZ812").ToList();
     await Assert.That(reported).IsNotEmpty()
       .Because("declaring a converter that nothing consults must not be silent");
 
@@ -106,7 +106,7 @@ public class DeclaredJsonConverterIgnoredTests {
       """;
 
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_source(plain));
-    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ811")).IsFalse()
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ812")).IsFalse()
       .Because("nothing was declared, so there is nothing to warn about");
   }
 
@@ -114,7 +114,7 @@ public class DeclaredJsonConverterIgnoredTests {
   [Test]
   public async Task ItIsAWarningNotAnErrorAsync() {
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_source(DECLARING_MODEL));
-    var reported = result.Diagnostics.First(d => d.Id == "WHIZ811");
+    var reported = result.Diagnostics.First(d => d.Id == "WHIZ812");
     await Assert.That(reported.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Warning);
   }
 }
