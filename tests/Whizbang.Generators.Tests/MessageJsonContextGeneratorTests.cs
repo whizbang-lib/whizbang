@@ -4888,14 +4888,14 @@ public record TestCommand : ICommand {
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should report WHIZ072 diagnostic for the discovered polymorphic base
-    var whiz071Diagnostics = result.Diagnostics
+    var whiz072Diagnostics = result.Diagnostics
         .Where(d => d.Id == "WHIZ072")
         .ToList();
 
-    await Assert.That(whiz071Diagnostics.Count).IsGreaterThanOrEqualTo(1);
+    await Assert.That(whiz072Diagnostics.Count).IsGreaterThanOrEqualTo(1);
 
     // The diagnostic should mention DiagnosticTestEvent and count of derived types
-    var diagnostic = whiz071Diagnostics.FirstOrDefault(d =>
+    var diagnostic = whiz072Diagnostics.FirstOrDefault(d =>
         d.GetMessage(CultureInfo.InvariantCulture).Contains("DiagnosticTestEvent"));
     await Assert.That(diagnostic).IsNotNull();
   }
