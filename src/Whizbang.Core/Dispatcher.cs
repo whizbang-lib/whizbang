@@ -5844,11 +5844,11 @@ public abstract partial class Dispatcher(
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
       Topic = _hopTopic(destination),
-      Timestamp = stampedBy?.Timestamp ?? DateTimeOffset.UtcNow,
+      Timestamp = stampedBy is null ? DateTimeOffset.UtcNow : stampedBy.Timestamp,
       Metadata = hopMetadata,
       Scope = finalScope3,
-      CorrelationId = stampedBy?.CorrelationId ?? correlation3,
-      CausationId = stampedBy?.CausationId ?? causation3,
+      CorrelationId = stampedBy is null ? correlation3 : stampedBy.CorrelationId,
+      CausationId = stampedBy is null ? causation3 : stampedBy.CausationId,
       TraceParent = HopStamping.AmbientTraceParent
     };
 

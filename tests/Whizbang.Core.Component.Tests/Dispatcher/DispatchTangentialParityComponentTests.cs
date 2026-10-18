@@ -250,14 +250,14 @@ public class DispatchTangentialParityComponentTests {
       default: await dispatcher.LocalInvokeAsync<TgStampedEvent>(new TgStampingCommand(id)); break;
     }
 
-    var copy = stored.Copies.Single();
-    await Assert.That(copy.SentAt).IsNotEqualTo(default(DateTimeOffset)).Because($"{entry} stamps the copy it stores");
+    var (sentAt, correlationId, hopCorrelationId) = stored.Copies.Single();
+    await Assert.That(sentAt).IsNotEqualTo(default).Because($"{entry} stamps the copy it stores");
     await Assert.That(TangentialProbe.Seen("sentAt", id))
-      .IsEqualTo(copy.SentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+      .IsEqualTo(sentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
       .Because($"{entry}'s handler sees the sent time its stored copy carries");
-    await Assert.That(TangentialProbe.Seen("correlation", id)).IsEqualTo(copy.CorrelationId)
+    await Assert.That(TangentialProbe.Seen("correlation", id)).IsEqualTo(correlationId)
       .Because($"{entry}'s handler sees the correlation its stored copy carries");
-    await Assert.That(copy.CorrelationId).IsEqualTo(copy.HopCorrelationId)
+    await Assert.That(correlationId).IsEqualTo(hopCorrelationId)
       .Because($"{entry}'s stored copy carries the correlation of the envelope it travels in");
   }
 
