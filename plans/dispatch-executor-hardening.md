@@ -64,6 +64,9 @@ Status: `todo` / `red` / `fixed` / `not-a-defect` / `question #N`
 | E36 | A typed or void local invoke under a selected policy ignored the policy's outbox write and the message's route | fixed |
 | E37 | A batch publish with no outbox threw for events instead of deferring or logging as a single publish does | fixed |
 | E38 | A void local invoke could not reach a result-returning sync receptor (the any-invoker left sync receptors out) | fixed |
+| E39 | An envelope registered for an object payload read back as null when looked up by the message's type (every untyped send, invoke and batch); publish and cascade local runs registered none | fixed |
+| E40 | Cascade and receptor-result paths generated a stream id only for IHasStreamId messages, so a plain [StreamId] property stayed empty; local invoke generated none | fixed |
+| E41 | Batch calls ignored the caller's priority and payload limit, and the batch outbox write ignored the token | fixed |
 | E28 | `_sendCoreAsync` does not set `MessageContextAccessor.CurrentContext`; an explicit context reaches the receptor only via the hop | fixed |
 
 ## Test infrastructure
