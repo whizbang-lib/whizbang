@@ -62,6 +62,17 @@ namespace Whizbang.Core.Component.Tests.RuntimeLocalReceptors {
     }
   }
 
+  /// <summary>A note returned beside the result; neither a command nor an event, so it does not cascade.</summary>
+  public record RuntimeNote(Guid Id);
+
+  /// <summary>A runtime-registered receptor that returns its result inside a tuple. Generic for the same reason.</summary>
+  public sealed class TupleAnsweringRuntimeReceptor<TMessage> : IReceptor<TMessage, (RuntimeResult, RuntimeNote)> where TMessage : IRuntimeProbeMessage {
+    public ValueTask<(RuntimeResult, RuntimeNote)> HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
+      RuntimeReceptorProbe.RecordHandled(message.Id);
+      return ValueTask.FromResult((new RuntimeResult(message.Id, "inside a tuple"), new RuntimeNote(message.Id)));
+    }
+  }
+
   /// <summary>
   /// A runtime receptor for a framework system command, keyed by the probe id the test puts in the
   /// cache key. Generic so the generator skips it.

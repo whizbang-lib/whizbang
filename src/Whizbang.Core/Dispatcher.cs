@@ -2952,11 +2952,22 @@ public abstract partial class Dispatcher(
     MessageDispatchContext dispatchContext,
     string callerMemberName,
     string callerFilePath,
+    int callerLineNumber
+  ) => _createEnvelope(message, context, dispatchContext, callerMemberName, callerFilePath, callerLineNumber, MessageId.New());
+
+  /// <summary>
+  /// As the overload above, under an id the caller minted: a batch mints its copies' ids before their
+  /// local runs, so they order before their effects (#1410 follow-up).
+  /// </summary>
+  private MessageEnvelope<object> _createEnvelope(
+    object message,
+    IMessageContext context,
+    MessageDispatchContext dispatchContext,
+    string callerMemberName,
+    string callerFilePath,
     int callerLineNumber,
-    MessageId? presetMessageId = null
+    MessageId messageId
   ) {
-    // A batch mints its copies' ids before their local runs, so they order before their effects
-    var messageId = presetMessageId ?? MessageId.New();
 
     // Auto-generate StreamId for messages with [GenerateStreamId] attribute during envelope creation
     // Must run BEFORE _createHopMetadata so the hop captures the generated StreamId
@@ -3028,13 +3039,13 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType, IMessageEnvelope? sourceEnvelope,
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type originalMessageType, IMessageEnvelope? sourceEnvelope,
       object? excludedResponse = null, CancellationToken cancellationToken = default) {
 #pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var resultTypeName = result?.GetType().Name ?? "null";
-      var origMsgTypeName = originalMessageType?.Name ?? "(unknown)";
+      var origMsgTypeName = originalMessageType.Name;
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
         resultTypeName, origMsgTypeName);
     }
@@ -3047,7 +3058,7 @@ public abstract partial class Dispatcher(
 
     // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     // This is done via the generated GetReceptorDefaultRouting method
-    var receptorDefault = originalMessageType is null ? null : _lookupReceptorDefaultRouting(originalMessageType);
+    var receptorDefault = _lookupReceptorDefaultRouting(originalMessageType);
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
     }
@@ -5188,7 +5199,9 @@ public abstract partial class Dispatcher(
           receipts.Add(outboxReceipts[i]);
         }
       }
-    } catch (InvalidOperationException) when (copyDecisions.TrueForAll(static d => d.Local == LocalRun.Now)) {
+    } catch (InvalidOperationException) when (copyDecisions.TrueForAll(static d => d.Local == LocalRun.Now) && heldEffects is not { Count: > 0 }) {
+      // Held effects are messages the handlers wrote, with no other way out: they fail the batch instead
+      // of being dropped behind this warning (#1410 follow-up)
       // No outbox strategy — all messages handled locally only.
       // Cross-service delivery will not occur without IWorkCoordinatorStrategy.
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {

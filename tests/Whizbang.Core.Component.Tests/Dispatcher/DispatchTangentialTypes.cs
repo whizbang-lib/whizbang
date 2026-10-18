@@ -91,3 +91,29 @@ public sealed class TgVoidEventReceptor : IReceptor<TgVoidEvent> {
     return ValueTask.CompletedTask;
   }
 }
+
+/// <summary>An owned command whose receptor publishes an event and then fails: its batch stops before any copy.</summary>
+public record TgEmitThenFailCommand(Guid Id) : ICommand;
+
+public sealed class TgEmitThenFailCommandReceptor(IDispatcher dispatcher) : IReceptor<TgEmitThenFailCommand> {
+  public async ValueTask HandleAsync(TgEmitThenFailCommand message, CancellationToken cancellationToken = default) {
+    await dispatcher.PublishAsync(new TgVoidEvent(message.Id));
+    throw new InvalidOperationException("failed after emitting");
+  }
+}
+
+/// <summary>An owned command whose receptor fails without emitting anything.</summary>
+public record TgFailCommand(Guid Id) : ICommand;
+
+public sealed class TgFailCommandReceptor : IReceptor<TgFailCommand> {
+  public ValueTask HandleAsync(TgFailCommand message, CancellationToken cancellationToken = default) =>
+    throw new InvalidOperationException("failed");
+}
+
+/// <summary>An event whose receptor publishes a follow-up event: a cause and its effect.</summary>
+public record TgCauseEvent([property: StreamId] Guid Id) : IEvent;
+
+public sealed class TgCauseEventReceptor(IDispatcher dispatcher) : IReceptor<TgCauseEvent> {
+  public async ValueTask HandleAsync(TgCauseEvent message, CancellationToken cancellationToken = default) =>
+    await dispatcher.PublishAsync(new TgVoidEvent(message.Id));
+}

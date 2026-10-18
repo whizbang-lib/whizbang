@@ -70,6 +70,7 @@ public class DispatcherCoverageSweepOutboxTests {
   public record SweepPlainOutboxEvent([property: StreamId] Guid Id) : IEvent;
 
   public record SweepSourceCommand(string Data);
+  public record SweepPolicyCommand(Guid Id) : ICommand;
 
   public record InventorySweepCommand(string Data);
 
@@ -88,7 +89,8 @@ public class DispatcherCoverageSweepOutboxTests {
     ReceptorInvoker<object>? invoker = null,
     Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
     Type? handleMessageType = null,
-    bool publisherThrows = false
+    bool publisherThrows = false,
+    Func<object, Task>? publisherAction = null
     ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
       envelopeSerializer: envelopeSerializer,
       streamIdExtractor: streamIdExtractor) {
@@ -96,12 +98,19 @@ public class DispatcherCoverageSweepOutboxTests {
     private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
     private readonly Type? _handleMessageType = handleMessageType;
     private readonly bool _publisherThrows = publisherThrows;
+    private readonly Func<object, Task>? _publisherAction = publisherAction;
 
     public List<(IMessage Message, Guid? EventId)> OutboxCascades { get; } = [];
     public List<(IMessage Message, Guid? EventId)> EventStoreCascades { get; } = [];
 
     public Task CallPublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) =>
       PublishToOutboxAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly);
+
+    public Task<Whizbang.Core.Perspectives.Sync.SyncContext?> CallAwaitPerspectiveSyncForReceptorAsync(object message, Type messageType, string receptorId) =>
+      AwaitPerspectiveSyncForReceptorAsync(message, messageType, receptorId, CancellationToken.None);
+
+    public Task CallCascadeByRuntimeTypeAsync(IMessage message, Guid? eventId) =>
+      CascadeByRuntimeTypeAsync(message, message.GetType(), sourceEnvelope: null, eventId, eventStoreOnly: false);
 
     public Task CallPublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) =>
       PublishToOutboxDynamicAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly);
@@ -119,13 +128,13 @@ public class DispatcherCoverageSweepOutboxTests {
       if (_publisherThrows) {
         return _ => throw new InvalidOperationException("publisher-failed");
       }
-      return _ => Task.CompletedTask;
+      return evt => _publisherAction?.Invoke(evt!) ?? Task.CompletedTask;
     }
 
     // As generated code: an untyped publisher exists exactly when the message has a local receptor, which
     // is how the dispatcher knows a publish has a handler here
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) =>
-      _untypedPublisher ?? (_publisherThrows || (_invoker is not null && eventType == _handleMessageType) ? static (_, _, _) => Task.CompletedTask : null);
+      _untypedPublisher ?? (_publisherThrows || _publisherAction is not null || (_invoker is not null && eventType == _handleMessageType) ? static (_, _, _) => Task.CompletedTask : null);
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
 
@@ -351,8 +360,12 @@ public class DispatcherCoverageSweepOutboxTests {
     Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
     DispatcherMetrics? metrics = null,
     List<string>? logs = null,
-    List<RecordingScope>? scopes = null) {
+    List<RecordingScope>? scopes = null,
+    IReceptorRegistry? receptorRegistry = null) {
     var services = new ServiceCollection();
+    if (receptorRegistry is not null) {
+      services.AddSingleton(receptorRegistry);
+    }
     var scopeList = scopes ?? [];
     services.AddSingleton<IServiceScopeFactory>(sp => new RecordingScopeFactory(sp, scopeList));
     if (strategy is not null) {
@@ -478,6 +491,65 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(received).IsNull();
   }
 
+  // ── the per-receptor perspective sync the generated publisher awaits ────────────────────────
+
+  [Test]
+  public async Task AwaitPerspectiveSyncForReceptor_ACommand_HasNothingToAwaitAsync() {
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(receptorRegistry: new FixedReceptorRegistry([_syncReceptor("r")])));
+
+    var sync = await dispatcher.CallAwaitPerspectiveSyncForReceptorAsync(new SweepSourceCommand("c"), typeof(SweepSourceCommand), "r");
+
+    await Assert.That(sync).IsNull().Because("only an event is projected, so only an event's handler waits for a perspective");
+  }
+
+  [Test]
+  public async Task AwaitPerspectiveSyncForReceptor_NoReceptorRegistry_HasNothingToAwaitAsync() {
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider());
+
+    var sync = await dispatcher.CallAwaitPerspectiveSyncForReceptorAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), "r");
+
+    await Assert.That(sync).IsNull();
+  }
+
+  /// <summary>
+  /// Only the named receptor's own sync attributes count: another receptor's, none, or an empty list
+  /// leave nothing to await; the named receptor with attributes reaches the wait, which needs a stream id.
+  /// </summary>
+  [Test]
+  [Arguments("another receptor has them")]
+  [Arguments("no attributes")]
+  [Arguments("an empty list")]
+  [Arguments("the receptor has them")]
+  public async Task AwaitPerspectiveSyncForReceptor_ByTheNamedReceptorsAttributes_AwaitsOnlyItsOwnAsync(string registered) {
+    var receptor = registered switch {
+      "another receptor has them" => _syncReceptor("other"),
+      "no attributes" => _syncReceptor("r") with { SyncAttributes = null },
+      "an empty list" => _syncReceptor("r") with { SyncAttributes = [] },
+      _ => _syncReceptor("r"),
+    };
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(receptorRegistry: new FixedReceptorRegistry([receptor])));
+
+    // No stream id extractor: even the receptor that has attributes finds no stream to wait on
+    var sync = await dispatcher.CallAwaitPerspectiveSyncForReceptorAsync(new SweepPlainOutboxEvent(Guid.NewGuid()), typeof(SweepPlainOutboxEvent), "r");
+
+    await Assert.That(sync).IsNull();
+  }
+
+  private static ReceptorInfo _syncReceptor(string receptorId) => new(
+    MessageType: typeof(SweepPlainOutboxEvent),
+    ReceptorId: receptorId,
+    InvokeAsync: static (_, _, _, _, _) => ValueTask.FromResult<object?>(null),
+    SyncAttributes: [new ReceptorSyncAttributeInfo(typeof(object), null, 100, Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess)]);
+
+  /// <summary>A registry that answers the same receptors at every stage.</summary>
+  private sealed class FixedReceptorRegistry(IReadOnlyList<ReceptorInfo> receptors) : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => receptors;
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => throw new NotSupportedException();
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => throw new NotSupportedException();
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
   [Test]
   public async Task CascadeMessageAsync_EventStoreMode_WithDebugLogging_PassesTrackedEventIdAsync() {
     // Arrange - EventStore-only mode routes through CascadeToEventStoreOnlyAsync with the
@@ -597,6 +669,29 @@ public class DispatcherCoverageSweepOutboxTests {
     await Assert.That(syncTracker.Tracked).Count().IsEqualTo(1);
     await Assert.That(syncTracker.Tracked[0].Perspective).IsEqualTo("SweepOutboxPerspective");
     await Assert.That(syncTracker.Tracked[0].StreamId).IsEqualTo(streamId);
+  }
+
+  /// <summary>
+  /// A cascade that generates a stream id for a message the extractor cannot read back tracks the
+  /// id it generated: the minted id stands when the message reports none.
+  /// </summary>
+  [Test]
+  public async Task CascadeMessageAsync_GeneratedStreamIdTheExtractorCannotReadBack_TracksTheGeneratedIdAsync() {
+    var syncTracker = new SweepSyncEventTrackerLite();
+    var registry = new Whizbang.Core.Perspectives.Sync.TrackedEventTypeRegistry(
+      new Dictionary<Type, string> { { typeof(SweepPubEvent), "SweepOutboxPerspective" } });
+    var extractor = new SweepStreamIdExtractor { OnPolicy = static _ => (true, false), OnExtract = static _ => null };
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(syncEventTracker: syncTracker, trackedEventTypeRegistry: registry),
+      streamIdExtractor: extractor);
+    var evt = new SweepPubEvent();
+
+    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, DispatchModes.Outbox);
+
+    await Assert.That(evt.StreamId).IsNotEqualTo(Guid.Empty).Because("the cascade generated the stream id");
+    await Assert.That(syncTracker.Tracked).Count().IsEqualTo(1);
+    await Assert.That(syncTracker.Tracked[0].StreamId).IsEqualTo(evt.StreamId)
+      .Because("the extractor reads nothing back, so the generated id is the one tracked");
   }
 
   // ========================================
@@ -822,6 +917,107 @@ public class DispatcherCoverageSweepOutboxTests {
 
     await Assert.That(strategy.Queued[0].CollectiveLinkType).IsEqualTo(TypeNameFormatter.Format(typeof(DispatcherKeyedCollectiveStreamTests.KeyedFlipCollectiveEvent)));
     await Assert.That(strategy.Queued[1].CollectiveLinkType).IsNull();
+  }
+
+  /// <summary>
+  /// The generated cascade's runtime-type fallthrough writes the copy under the id it was given, or a
+  /// new one when it was given none (a cascaded command carries no tracked event id).
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task CascadeByRuntimeType_WritesTheCopyUnderTheGivenIdOrANewOneAsync(bool withEventId) {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(_buildProvider(strategy: strategy));
+    Guid? eventId = withEventId ? Guid.CreateVersion7() : null;
+
+    await dispatcher.CallCascadeByRuntimeTypeAsync(new SweepDynamicRegisteredEvent(Guid.NewGuid(), "fallthrough"), eventId);
+
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    if (eventId is { } given) {
+      await Assert.That(strategy.Queued[0].MessageId).IsEqualTo(given);
+    } else {
+      await Assert.That(strategy.Queued[0].MessageId).IsNotEqualTo(Guid.Empty);
+    }
+  }
+
+  /// <summary>
+  /// A typed local invoke under a selected policy that sends the message on writes its copy marked as
+  /// handled here, with no stream id extractor registered as well (#1410 follow-up).
+  /// </summary>
+  [Test]
+  public async Task LocalInvokeTypedUnderTheSendPolicy_NoStreamIdExtractor_WritesTheCopyMarkedHandledHereAsync() {
+    var strategy = new SweepWorkStrategy();
+    var dispatcher = new SweepOutboxDispatcher(
+      _buildProvider(strategy: strategy),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      invoker: static _ => ValueTask.FromResult<object>("done"),
+      handleMessageType: typeof(SweepPolicyCommand));
+
+    var result = await dispatcher.LocalInvokeAsync<string>((object)new SweepPolicyCommand(Guid.NewGuid()),
+      new DispatchOptions().WithPolicy(Whizbang.Core.Dispatch.Policy.DispatchPolicies.Send.Id));
+
+    await Assert.That(result).IsEqualTo("done");
+    await Assert.That(strategy.Queued).Count().IsEqualTo(1);
+    await Assert.That(strategy.Queued[0].Envelope.DispatchContext.Mode.HasFlag(DispatchModes.LocalDispatch)).IsTrue();
+  }
+
+  // ── a batch's held effects when the container cannot say whether an outbox is registered ────
+
+  /// <summary>
+  /// A container that cannot answer IsService leaves the dispatcher assuming an outbox, so a batch holds
+  /// its handlers' writes behind its copies. With no strategy after all, a batch of events whose handlers
+  /// wrote nothing still takes the no-outbox path for its events.
+  /// </summary>
+  [Test]
+  public async Task PublishMany_NoOutboxAfterAll_HandlersWroteNothing_TakesTheNoOutboxPathAsync() {
+    var logs = new List<string>();
+    var dispatcher = new SweepOutboxDispatcher(new IsServiceUnknownProvider(_buildProvider(logs: logs)), publisherAction: static _ => Task.CompletedTask);
+
+    var receipts = await dispatcher.PublishManyAsync(new object[] { new SweepPlainOutboxEvent(Guid.NewGuid()) });
+
+    await Assert.That(receipts).IsNotEmpty();
+    await Assert.That(logs.Any(m => m.Contains("IDeferredOutboxChannel not available", StringComparison.Ordinal))).IsTrue()
+      .Because("the event took the no-outbox path: no strategy and no deferred channel, so it is logged");
+  }
+
+  /// <summary>
+  /// The same batch whose handler sent a command: the command was held as a built outbox message with no
+  /// other way out, so the batch fails loudly instead of dropping it behind a warning.
+  /// </summary>
+  [Test]
+  public async Task PublishMany_NoOutboxAfterAll_HandlerSentACommand_FailsInsteadOfDroppingItAsync() {
+    var logs = new List<string>();
+    SweepOutboxDispatcher? dispatcher = null;
+    dispatcher = new SweepOutboxDispatcher(new IsServiceUnknownProvider(_buildProvider(logs: logs)),
+      envelopeSerializer: new SweepEnvelopeSerializer(),
+      publisherAction: _ => dispatcher!.SendAsync(new SweepPolicyCommand(Guid.NewGuid())));
+
+    await Assert.That(async () => await dispatcher.PublishManyAsync(new object[] { new SweepPlainOutboxEvent(Guid.NewGuid()) }))
+      .Throws<InvalidOperationException>();
+  }
+
+  /// <summary>
+  /// A batch of commands all handled here, whose handlers wrote nothing, with no outbox after all: the
+  /// handling here is the delivery, so the batch returns and logs that nothing went out, as before.
+  /// </summary>
+  [Test]
+  public async Task SendMany_NoOutboxAfterAll_AllHandledHere_HandlersWroteNothing_ReturnsAndLogsAsync() {
+    var logs = new List<string>();
+    var dispatcher = new SweepOutboxDispatcher(new IsServiceUnknownProvider(_buildProvider(logs: logs)),
+      invoker: static _ => ValueTask.FromResult<object>("done"),
+      handleMessageType: typeof(SweepPolicyCommand));
+
+    var receipts = await dispatcher.SendManyAsync(new object[] { new SweepPolicyCommand(Guid.NewGuid()) });
+
+    await Assert.That(receipts).Count().IsEqualTo(1);
+    await Assert.That(logs.Any(m => m.Contains("No IWorkCoordinatorStrategy registered", StringComparison.Ordinal))).IsTrue()
+      .Because("the batch reached the no-outbox path and said nothing went out");
+  }
+
+  /// <summary>Answers everything its inner provider does except IsService, as a container without it would.</summary>
+  private sealed class IsServiceUnknownProvider(IServiceProvider inner) : IServiceProvider {
+    public object? GetService(Type serviceType) => serviceType == typeof(IServiceProviderIsService) ? null : inner.GetService(serviceType);
   }
 
   [Test]

@@ -214,6 +214,82 @@ public class DispatchTangentialParityComponentTests {
       .Because($"{entry} registers the envelope a receptor finds for its message, as an event-store append looks it up");
   }
 
+  // ── a local invoke under a selected policy that defers the run ───────────────────────────────
+
+  /// <summary>
+  /// A local invoke whose caller selects a policy that sends the message on and schedules it runs
+  /// nothing now and writes one copy carrying the schedule and the deferred run (#1410 follow-up).
+  /// </summary>
+  [Test]
+  public async Task LocalInvokeUnderTheSendPolicy_Scheduled_RunsNothingNowAndWritesTheDeferredCopyAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var id = Guid.CreateVersion7();
+    var scheduledAt = DateTimeOffset.UtcNow.AddDays(1);
+
+    await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync((object)new PbUnownedCommand(id),
+      new DispatchOptions().WithPolicy(Whizbang.Core.Dispatch.Policy.DispatchPolicies.Send.Id).WithScheduledFor(scheduledAt));
+
+    await Assert.That(PolicyProbe.Count(nameof(PbUnownedCommandReceptor), id)).IsEqualTo(0);
+    var copy = outbox.QueuedOf(typeof(PbUnownedCommand)).Single();
+    await Assert.That(copy.ScheduledFor).IsEqualTo(scheduledAt);
+    await Assert.That(copy.Envelope.DispatchContext.LocalDeferred).IsTrue();
+  }
+
+  // ── what a batch's handlers wrote, when the batch stops or runs in a unit of work ────────────
+
+  /// <summary>
+  /// A batch that stops at its first message, before writing any copy, still writes what that message's
+  /// handler emitted before it failed, and nothing of the messages after it (#1410 follow-up).
+  /// </summary>
+  [Test]
+  public async Task SendMany_StoppedBeforeItsFirstCopy_StillWritesWhatTheFailedHandlerEmittedAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var id = Guid.CreateVersion7();
+
+    await Assert.That(async () => await provider.GetRequiredService<IDispatcher>()
+        .SendManyAsync(new object[] { new TgEmitThenFailCommand(id), new PbUnownedCommand(Guid.CreateVersion7()) }))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(outbox.QueuedOf(typeof(TgVoidEvent))).Count().IsEqualTo(1)
+      .Because("the event the failed handler published is written, after the batch's own copies, of which there are none");
+    await Assert.That(outbox.QueuedOf(typeof(PbUnownedCommand))).IsEmpty()
+      .Because("the batch stopped, so the message after the failure is neither run nor written");
+  }
+
+  /// <summary>The same batch whose failed handler emitted nothing writes nothing at all.</summary>
+  [Test]
+  public async Task SendMany_StoppedBeforeItsFirstCopy_WithNothingEmitted_WritesNothingAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+
+    await Assert.That(async () => await provider.GetRequiredService<IDispatcher>()
+        .SendManyAsync(new object[] { new TgFailCommand(Guid.CreateVersion7()), new PbUnownedCommand(Guid.CreateVersion7()) }))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(outbox.QueuedOf(typeof(PbUnownedCommand))).IsEmpty();
+    await Assert.That(outbox.QueuedOf(typeof(TgVoidEvent))).IsEmpty();
+  }
+
+  /// <summary>
+  /// A batch inside a unit of work hands it the batch's copies first and then what the handlers emitted,
+  /// so the cause precedes its effect in the unit's commit too (#1410 follow-up).
+  /// </summary>
+  [Test]
+  public async Task PublishMany_InsideAUnitOfWork_HandsItTheCauseBeforeItsEffectAsync() {
+    await using var provider = _buildProvider(new PolicyRecordingOutbox());
+    var id = Guid.CreateVersion7();
+
+    using var unitOfWork = DispatchOutboxCollector.BeginCollecting();
+    await provider.GetRequiredService<IDispatcher>().PublishManyAsync(new object[] { new TgCauseEvent(id) });
+
+    var collected = unitOfWork.Collector.Collected.Select(m => m.MessageType).ToList();
+    await Assert.That(collected).Count().IsEqualTo(2);
+    await Assert.That(collected[0]).Contains(nameof(TgCauseEvent));
+    await Assert.That(collected[1]).Contains(nameof(TgVoidEvent));
+  }
+
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
   /// <summary>A message whose dispatch on this entry writes a copy: unowned commands for sends, events for publishes.</summary>
