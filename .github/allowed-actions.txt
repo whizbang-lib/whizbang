@@ -1,0 +1,21 @@
+# The actions, other than GitHub's own (actions/*, github/*), that the workflows may use (#1467).
+#
+# The repository's Actions setting allows only GitHub-owned actions, verified Marketplace creators and the
+# patterns below ("Allow select actions and reusable workflows"). Adding an action means adding it here, in
+# a pull request a build admin approves (CODEOWNERS), and to the setting:
+#
+#   Settings > Actions > General > Actions permissions > "Allow actions and reusable workflows" list,
+#   or: gh api -X PUT repos/whizbang-lib/whizbang/actions/permissions/selected-actions --input <json>
+#
+# .github/scripts/tests/Get-AllowedActions.Tests.ps1 fails when a workflow uses an action this file does not
+# name, or this file names one nothing uses. The weekly settings drift check (#1468) compares the setting's
+# list with the baseline. Every use is also pinned to a full commit SHA, which the setting requires.
+
+codecov/codecov-action@*              # coverage and test-result upload
+docker/login-action@*                 # the CI image mirror's registry login
+gittools/actions/gitversion/setup@*   # version calculation
+nick-fields/retry@*                   # the .NET setup retry
+nuget/login@*                         # trusted publishing to nuget.org (OIDC)
+ossf/scorecard-action@*               # OpenSSF Scorecard
+softprops/action-gh-release@*         # GitHub release creation
+trufflesecurity/trufflehog@*          # secret scanning
