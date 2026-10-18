@@ -42,8 +42,8 @@ Describe 'Get-IssueFormProblem' {
   It 'reports a form with no name or description' {
     $text = ($GoodForm -split "`n" | Where-Object { $_ -notmatch '^(name|description):' }) -join "`n"
     $problems = @(Get-IssueFormProblem -Text $text -Path 'bug.yml' -KnownLabels @('bug', 'needs-triage'))
-    $problems | Should -Match 'name'
-    $problems | Should -Match 'description'
+    ($problems -join "`n") | Should -Match 'no name'
+    ($problems -join "`n") | Should -Match 'no description'
   }
 }
 
@@ -61,8 +61,8 @@ contact_links:
 
   It 'reports blank issues left on and no private vulnerability route' {
     $problems = @(Get-IssueConfigProblem -Text "blank_issues_enabled: true`ncontact_links: []")
-    $problems | Should -Match 'blank'
-    $problems | Should -Match 'vulnerabilit'
+    ($problems -join "`n") | Should -Match 'blank'
+    ($problems -join "`n") | Should -Match 'vulnerabilit'
   }
 }
 

@@ -206,6 +206,28 @@ this repository, or whose issues were all opened after it. It reads the current 
 keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
 and the release pull request into `main` are exempt.
 
+### Issues: types and triage
+
+Open an issue from one of the forms; each asks for what a maintainer needs to act on it, and blank issues
+are turned off.
+
+| You have | Where it goes | Form |
+|---|---|---|
+| A bug: Whizbang does not behave as documented | An issue | **Bug report**: version, environment, minimal reproduction, expected and actual behavior |
+| A better version of existing behavior | An issue | **Enhancement**: current and desired behavior, why, whether it breaks anything |
+| A new capability | [Discussions, Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas) first; an issue once accepted | **Feature**: the discussion, the problem, the proposed API, example usage |
+| A design decision to make | An issue labeled `question` | **Design proposal**: context, options, the decision needed |
+| A docs page that is wrong or missing | An issue | **Documentation problem** |
+| A usage question | [Discussions, Q&A](https://github.com/whizbang-lib/whizbang/discussions/categories/q-a) | not an issue |
+| Anything else | [Discussions, General](https://github.com/whizbang-lib/whizbang/discussions/categories/general) | not an issue |
+| A security vulnerability | The [private advisory form](https://github.com/whizbang-lib/whizbang/security/advisories/new), never a public issue | [SECURITY.md](SECURITY.md) |
+
+**Triage.** Every new issue is labeled `needs-triage`. A maintainer responds within 7 days and either
+confirms it (removing `needs-triage`, keeping its type label), closes it as a duplicate with a link to the
+original, or closes it with the reason (`wontfix`, `invalid`). Bugs are never closed as stale. The labels,
+and what each means, are listed in `.github/labels.txt`; the "Test · Pipeline scripts" check fails if a form
+adds a label that is not there.
+
 ### Pull Request Process
 
 1. **Create a feature branch**
@@ -375,23 +397,14 @@ if anything is unclear.
 
 ### Reporting Bugs
 
-1. Check existing issues first
-2. Open a new issue
-3. Include:
-   - .NET version
-   - Operating system
-   - Minimal reproduction
-   - Expected vs actual behavior
+Use the **Bug report** form ([Issues: types and triage](#issues-types-and-triage)). Search open and closed
+issues first. Security vulnerabilities go to the private advisory form ([SECURITY.md](SECURITY.md)).
 
 ### Suggesting Features
 
-1. Start in [Discussions → Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas)
-   to gauge interest; an accepted idea becomes an issue
-2. Include:
-   - Use case and motivation
-   - Proposed API design
-   - Example usage
-   - Alternatives considered
+Start in [Discussions, Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas) to
+gauge interest; an accepted idea becomes a **Feature** issue with the use case, the proposed API, example
+usage and the alternatives considered.
 
 ### Recognition
 

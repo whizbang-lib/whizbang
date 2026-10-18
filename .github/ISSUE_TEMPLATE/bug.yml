@@ -1,0 +1,56 @@
+name: Bug report
+description: Whizbang does not behave as documented.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Security vulnerabilities go to the private advisory form, never here (SECURITY.md).
+        Search open and closed issues first; a duplicate is closed in favor of the original.
+  - type: input
+    id: version
+    attributes:
+      label: Whizbang version
+      description: The package and version, for example SoftwareExtravaganza.Whizbang.Core 0.964.0-alpha.1.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: .NET version, operating system, database and transport (for example .NET 10.0.1, Linux, PostgreSQL 17, Azure Service Bus).
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code, or a link to a repository, that shows the problem. A failing test is ideal.
+      render: csharp
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead, with the full exception and stack trace.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log output. Remove secrets, connection strings and anything that identifies your systems.
+      render: text
+  - type: input
+    id: regression
+    attributes:
+      label: Last version that worked
+      description: If this is a regression, the last version without the problem.
