@@ -74,14 +74,20 @@ body (optional)
 footer (optional)
 ```
 
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `test`: Test changes
-- `refactor`: Code refactoring
-- `perf`: Performance improvements
-- `chore`: Build/tooling changes
+**Types:** `feat` (new capability), `fix` (bug fix), `docs`, `perf`, `refactor`, `test`, `ci`, `build`,
+`chore` (maintenance) and `revert`. A `!` before the colon marks a breaking change: `feat(scoping)!: ...`.
+
+The pull request title follows the same form, because it becomes the commit when the pull request is
+squashed; the required **Gate · Pull request type** check fails a title that does not. The type decides what
+the pull request must contain:
+
+| Type | Must contain | Checked by |
+|---|---|---|
+| any | A closing keyword for an issue opened first | Gate · Linked issue |
+| `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
+| `feat` | A library feature links its docs-site pull request | Review checks |
+| `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
+| `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
 
 **Examples:**
 ```

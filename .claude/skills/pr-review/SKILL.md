@@ -122,6 +122,25 @@ description gives a reason the maintainer has accepted.
     `ai-docs/standards.md`, `ai-docs/mermaid-diagrams.md`, `ai-docs/alt-text-standards.md`,
     `ai-docs/CODE-TEST-LINKING.md`.
 
+## Step 3b: The pull request's type
+
+The title's Conventional Commit type says what kind of change this is; the gates check its form and the
+review checks what it must contain (CONTRIBUTING.md, "Commit Messages"). Judge what they cannot:
+
+- **The type matches the change.** A behavior change titled `refactor:` or `chore:` hides it from the
+  changelog and the release notes; a `feat:` that only fixes a bug overstates it.
+- **`fix:`** The linked bug report describes this failure. The root cause is stated in the description, and
+  the new or changed test fails without the fix (read it; a test that passes either way proves nothing).
+- **`feat:` / enhancement.** The linked issue (and, for a feature, its accepted discussion) asked for this
+  shape. Public API, AOT, turn-key defaults and configuration hold (Step 3), and the docs-site pull request
+  documents it to the docs standards.
+- **Breaking (`!`).** The CHANGELOG **Upgrade:** note tells a consumer exactly what to change. Consider
+  whether a deprecation period would serve consumers better than a break.
+- **Security fix.** A fix for a reported vulnerability is developed in the advisory's private fork, never in
+  a public pull request before disclosure. If a public pull request looks like one, stop the review and raise
+  it privately with the maintainer; do not comment on the pull request.
+- **Dependencies.** A new dependency is justified, maintained, and under a license the project can ship.
+
 ## Step 4: Area checks
 
 Classify the changed files, then run every check whose trigger matches. A check whose trigger does not
