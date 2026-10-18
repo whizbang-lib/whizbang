@@ -78,13 +78,20 @@ public sealed partial class IntegrityCheckpointWorker(
       return;   // schema-only / diagnostic hosts: nothing to checkpoint with.
     }
 
+    // The checkpoint stream is the origin's id, so with no id yet there is nothing to publish on.
+    // Checked before the advance: advancing without publishing would lose the window's counts.
+    var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
+    if (originServiceId == Guid.Empty) {
+      LogServiceIdentityUnknown(_logger);
+      return;
+    }
+
     var window = await coordinator.AdvanceIntegrityCheckpointAsync(cancellationToken).ConfigureAwait(false);
     if (window is null) {
       // Unsupported engine, or another instance won this window's advance — nothing to publish.
       return;
     }
 
-    var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     var originServiceName = scope.ServiceProvider.GetService<IServiceInstanceProvider>()?.ServiceName ?? string.Empty;
 
     var checkpoint = new IntegrityCheckpoint {
@@ -246,6 +253,10 @@ public sealed partial class IntegrityCheckpointWorker(
   [LoggerMessage(EventId = 63, Level = LogLevel.Error,
     Message = "Integrity checkpoint cycle failed; will retry next interval")]
   static partial void LogError(ILogger logger, Exception exception);
+
+  [LoggerMessage(EventId = 66, Level = LogLevel.Debug,
+    Message = "Integrity checkpoint skipped: this service's identity is not recorded yet; the window is kept for the next cycle")]
+  static partial void LogServiceIdentityUnknown(ILogger logger);
 
   [LoggerMessage(EventId = 65, Level = LogLevel.Debug,
     Message = "Integrity checkpoint published to {TopicCount} own event topic(s) covering {TypeCount} audited type(s)")]

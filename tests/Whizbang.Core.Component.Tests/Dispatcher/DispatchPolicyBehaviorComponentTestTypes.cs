@@ -167,4 +167,49 @@ namespace Whizbang.Core.Component.Tests.PolicyBehavior.Owned {
     public ValueTask<PbOwnedCommand> HandleAsync(PbCascadeTrigger message, CancellationToken cancellationToken = default) =>
       ValueTask.FromResult(new PbOwnedCommand(message.Id));
   }
+
+  /// <summary>An owned command whose handler returns events, as a tuple (#1410).</summary>
+  public record PbOwnedTypedCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public record PbOwnedTypedFirstEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+  public record PbOwnedTypedSecondEvent([property: StreamId] Guid Id) : IEvent, IPolicyProbeMessage;
+
+  public sealed class PbOwnedTypedCommandReceptor : IReceptor<PbOwnedTypedCommand, (PbOwnedTypedFirstEvent, PbOwnedTypedSecondEvent)> {
+    public ValueTask<(PbOwnedTypedFirstEvent, PbOwnedTypedSecondEvent)> HandleAsync(PbOwnedTypedCommand message, CancellationToken cancellationToken = default) {
+      PolicyProbe.Record(nameof(PbOwnedTypedCommandReceptor), message.Id);
+      return ValueTask.FromResult((new PbOwnedTypedFirstEvent(message.Id), new PbOwnedTypedSecondEvent(message.Id)));
+    }
+  }
+
+  /// <summary>An owned command whose synchronous handler returns an event (#1410).</summary>
+  public record PbOwnedSyncTypedCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbOwnedSyncTypedCommandReceptor : ISyncReceptor<PbOwnedSyncTypedCommand, PbOwnedTypedFirstEvent> {
+    public PbOwnedTypedFirstEvent Handle(PbOwnedSyncTypedCommand message) {
+      PolicyProbe.Record(nameof(PbOwnedSyncTypedCommandReceptor), message.Id);
+      return new PbOwnedTypedFirstEvent(message.Id);
+    }
+  }
+
+  /// <summary>
+  /// An owned command whose handler declares <see cref="object"/> as its response: the one response type
+  /// the generated publisher's own lookup resolves, so it must still run once, not twice (#1410).
+  /// </summary>
+  public record PbOwnedObjectResultCommand(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbOwnedObjectResultCommandReceptor : IReceptor<PbOwnedObjectResultCommand, object> {
+    public ValueTask<object> HandleAsync(PbOwnedObjectResultCommand message, CancellationToken cancellationToken = default) {
+      PolicyProbe.Record(nameof(PbOwnedObjectResultCommandReceptor), message.Id);
+      return ValueTask.FromResult<object>(new PbOwnedTypedFirstEvent(message.Id));
+    }
+  }
+
+  /// <summary>Returns an owned command whose handler returns events, so the dispatcher cascades it (#1410).</summary>
+  public record PbTypedCascadeTrigger(Guid Id) : ICommand, IPolicyProbeMessage;
+
+  public sealed class PbTypedCascadeTriggerReceptor : IReceptor<PbTypedCascadeTrigger, PbOwnedTypedCommand> {
+    public ValueTask<PbOwnedTypedCommand> HandleAsync(PbTypedCascadeTrigger message, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(new PbOwnedTypedCommand(message.Id));
+  }
 }

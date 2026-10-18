@@ -205,7 +205,9 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher, gl
     // This region will be replaced with generated cascade code
     #endregion
 
-    return Task.CompletedTask;
+    // No arm names this type (a command or message no receptor here returns): written by its runtime
+    // type, not dropped (#1410 follow-up)
+    return CascadeByRuntimeTypeAsync(message, messageType, sourceEnvelope, eventId, eventStoreOnly: false);
   }
 
   /// <summary>
@@ -226,6 +228,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher, gl
     // This region will be replaced with generated cascade code
     #endregion
 
-    return Task.CompletedTask;
+    // No arm names this type: stored by its runtime type, not dropped (#1410 follow-up)
+    return CascadeByRuntimeTypeAsync(message, messageType, sourceEnvelope, eventId, eventStoreOnly: true);
   }
 }

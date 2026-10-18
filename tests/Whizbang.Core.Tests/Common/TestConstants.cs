@@ -118,7 +118,10 @@ public static class TestConstants {
   /// <para>DispatcherDisposalTests.cs adds 1 (HandledDisposalEventReceptor: the host shutting down while a
   /// published event's handler runs).</para>
   ///
-  /// <para>Total: 127 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>DispatcherLocalDispatchRecordTests.cs adds 1 (LocalDispatchRecordTriggerReceptor: a receptor whose
+  /// returned event the dispatcher cascades and runs locally).</para>
+  ///
+  /// <para>Total: 128 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 127;
+  public const int EXPECTED_RECEPTOR_COUNT = 128;
 }

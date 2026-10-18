@@ -167,6 +167,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var captured = new List<OutboxMessage[]>();
     var flushed = new TaskCompletionSource();
 
+    // Flushed by size, not by time: windows that never elapse and a size of two make the two messages
+    // one batch exactly when they share one buffer. A 30 ms window let a loaded run split them.
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
         captured.Add(msgs);
@@ -175,17 +177,18 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
-        MaxWait = TimeSpan.FromMilliseconds(200),
-        MaxSize = 100,
+        SlidingWindow = TimeSpan.FromHours(1),
+        MaxWait = TimeSpan.FromHours(1),
+        MaxSize = 2,
       });
 
     await sut.AppendAsync(_make(streamId: null));
     await sut.AppendAsync(_make(streamId: null));
 
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-    await Assert.That(captured.Sum(b => b.Length)).IsEqualTo(2);
+    await Assert.That(captured).Count().IsEqualTo(1).Because("both null-stream messages share the one default buffer");
+    await Assert.That(captured[0].Length).IsEqualTo(2);
   }
 
   // ===== Shutdown drains all stream buffers =====

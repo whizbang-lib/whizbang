@@ -65,6 +65,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
   private const string PLACEHOLDER_IS_IDEMPOTENT = "__IS_IDEMPOTENT__";
   private const string PLACEHOLDER_IS_ONCE_ACROSS_SERVICES = "__IS_ONCE_ACROSS_SERVICES__";
+  private const string PLACEHOLDER_DEFAULT_ROUTING = "__DEFAULT_ROUTING__";
   private const string PLACEHOLDER_RECEPTOR_INVOCATIONS = "__RECEPTOR_INVOCATIONS__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
@@ -571,74 +572,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
     _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
   };
-
-  /// <summary>
-  /// Generates C# code for sync await operations to be inserted into invoker delegates.
-  /// Called by SendAsync-generated invokers BEFORE calling the receptor.
-  /// Returns empty string if no sync attributes or message is not an IEvent.
-  /// </summary>
-  /// <param name="syncAttributes">The sync attributes from the receptor.</param>
-  /// <param name="messageType">The fully qualified message type.</param>
-  /// <param name="isMessageAnEvent">True if the message type implements IEvent.</param>
-  /// <returns>Generated sync await code, or empty string.</returns>
-  private static string _generateSyncAwaitCode(SyncAttributeInfo[]? syncAttributes, string messageType, bool isMessageAnEvent) {
-    if (syncAttributes is null || syncAttributes.Length == 0) {
-      return "// No [AwaitPerspectiveSync] attributes - skip sync checking";
-    }
-
-    // Perspectives only process events, not commands or other message types.
-    // Waiting for perspective sync on a non-event would wait forever and timeout.
-    if (!isMessageAnEvent) {
-      return "// [AwaitPerspectiveSync] ignored - message is not an IEvent (perspectives only process events)";
-    }
-
-    var sb = new StringBuilder();
-    sb.AppendLine("var syncAwaiter = scope.ServiceProvider.GetService<global::Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();");
-    sb.AppendLine("          var streamIdExtractor = scope.ServiceProvider.GetService<global::Whizbang.Core.IStreamIdExtractor>();");
-    sb.AppendLine("          if (syncAwaiter != null && streamIdExtractor != null) {");
-    sb.AppendLine($"            var streamId = streamIdExtractor.ExtractStreamId(msg, typeof({messageType}));");
-    sb.AppendLine("            if (streamId.HasValue) {");
-
-    // Generate await call for each sync attribute
-    foreach (var attr in syncAttributes) {
-      // Determine timeout - use default if -1
-      var timeoutMs = attr.TimeoutMs == -1 ? 5000 : attr.TimeoutMs;
-
-      // Generate event types array
-      string eventTypesCode;
-      if (attr.EventTypes is { Length: > 0 }) {
-        var eventTypesList = string.Join(", ", attr.EventTypes.Select(et => $"typeof({et})"));
-        eventTypesCode = $"new global::System.Type[] {{ {eventTypesList} }}";
-      } else {
-        eventTypesCode = "null";
-      }
-
-      // Capture the sync result
-      sb.AppendLine("              var syncResult = await syncAwaiter.WaitForStreamAsync(");
-      sb.AppendLine($"                typeof({attr.PerspectiveType}),");
-      sb.AppendLine("                streamId.Value,");
-      sb.AppendLine($"                {eventTypesCode},");
-      sb.AppendLine($"                global::System.TimeSpan.FromMilliseconds({timeoutMs}));");
-
-      // Check the result based on FireBehavior
-      // 0 = FireOnSuccess (throw on timeout - default)
-      // 1 = FireAlways (don't throw, let handler check SyncContext)
-      // 2 = FireOnEachEvent (future streaming mode)
-      if (attr.FireBehavior == 0) {
-        sb.AppendLine("              if (syncResult.Outcome == global::Whizbang.Core.Perspectives.Sync.SyncOutcome.TimedOut) {");
-        sb.AppendLine("                throw new global::Whizbang.Core.Perspectives.Sync.PerspectiveSyncTimeoutException(");
-        sb.AppendLine($"                  typeof({attr.PerspectiveType}),");
-        sb.AppendLine($"                  global::System.TimeSpan.FromMilliseconds({timeoutMs}),");
-        sb.AppendLine($"                  $\"Perspective sync timed out waiting for {{typeof({attr.PerspectiveType}).Name}} to process stream {{streamId.Value}} within {timeoutMs}ms.\");");
-        sb.AppendLine("              }");
-      }
-    }
-
-    sb.AppendLine("            }");
-    sb.AppendLine("          }");
-
-    return sb.ToString();
-  }
 
   /// <summary>
   /// Extracts the [DefaultRouting] attribute value from a receptor class.
@@ -1393,6 +1326,19 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var sendRegularSyncReceptorsByMessage = _localDispatchHandlersOnly(regularSyncReceptorsByMessage);
     var sendVoidSyncReceptorsByMessage = _localDispatchHandlersOnly(voidSyncReceptorsByMessage);
 
+    // A receptor declared on an interface or base type handles every concrete message that implements
+    // it. The send lookups match the runtime type exactly, so each such entry is widened to the concrete
+    // types, and emitted after the exact entries so a concrete message's own receptor still wins.
+    var concreteTypesByPolymorphicMessage = receptors
+        .Where(r => r.IsPolymorphicMessageType)
+        .Select(r => r.MessageType)
+        .Distinct()
+        .ToDictionary(t => t, t => _findConcreteSubtypes(compilation, t).ToList());
+    IEnumerable<string> routingOrder(IEnumerable<string> messageTypes) =>
+      messageTypes.OrderBy(t => concreteTypesByPolymorphicMessage.ContainsKey(t) ? 1 : 0);
+    string widened(string generatedCode, string messageType) =>
+      _widenToConcreteSubtypes(generatedCode, messageType, concreteTypesByPolymorphicMessage);
+
     // Read template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(
         typeof(ReceptorDiscoveryGenerator).Assembly,
@@ -1408,12 +1354,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Send routing code for regular receptors using snippet template
     var sendRouting = new StringBuilder();
-    foreach (var messageType in sendRegularReceptorsByMessage.Keys) {
+    foreach (var messageType in routingOrder(sendRegularReceptorsByMessage.Keys)) {
       var receptorList = sendRegularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
@@ -1423,7 +1371,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+      sendRouting.AppendLine(TemplateUtilities.IndentCode(widened(generatedCode, messageType), INDENT_6));
     }
 
     // Load void Send routing snippet from template
@@ -1435,12 +1383,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate void Send routing code for void receptors using snippet template
     var voidSendRouting = new StringBuilder();
-    foreach (var messageType in sendVoidReceptorsByMessage.Keys) {
+    foreach (var messageType in routingOrder(sendVoidReceptorsByMessage.Keys)) {
       var receptorList = sendVoidReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
@@ -1449,7 +1399,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+      voidSendRouting.AppendLine(TemplateUtilities.IndentCode(widened(generatedCode, messageType), INDENT_6));
     }
 
     // Load Publish routing snippet from template
@@ -1459,22 +1409,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "PUBLISH_ROUTING_SNIPPET"
     );
 
-    // Generate Publish routing code using snippet template
-    // Combine all message types from both regular and void receptors
-    var allMessageTypes = regularReceptorsByMessage.Keys
-        .Union(voidReceptorsByMessage.Keys)
-        .Distinct()
-        .ToList();
-
-    // Group all async receptors by message type for per-receptor invocation generation in PublishAsync
-    var allReceptorsByMessageTypeForPublish = asyncReceptors
-        .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+    // The publish and cascade paths run every receptor that fires when this service handles a message
+    // in-process: void or result-returning, async or sync, including a receptor declared on an interface
+    // the message implements. A receptor declared only at a pipeline stage fires there through the
+    // receptor invoker instead. A message type with none gets no publisher, so "has a local handler" is
+    // exactly "a publisher exists" (#1410 follow-up).
+    var localRunReceptorsByMessage = _localRunReceptorsByMessage(compilation, receptors);
 
     var publishRouting = new StringBuilder();
-    foreach (var messageType in allMessageTypes) {
-      // Build per-receptor invocations for this message type (no stage filtering for PublishAsync)
-      var invocations = _buildPublishReceptorInvocations(messageType, allReceptorsByMessageTypeForPublish, StandardInterfaceNames.I_RECEPTOR);
+    foreach (var messageType in localRunReceptorsByMessage.Keys) {
+      var invocations = _buildLocalRunInvocations(messageType, localRunReceptorsByMessage[messageType], withEnvelopeAndToken: false);
 
       // Replace placeholders with actual types and per-receptor invocations
       var generatedCode = publishSnippet
@@ -1492,26 +1436,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "UNTYPED_PUBLISH_ROUTING_SNIPPET"
     );
 
-    // Extract unique event types from receptor response types
-    // These are the types that will be cascaded (returned from receptors)
-    var eventTypes = _extractUniqueEventTypes(receptors);
-
-    // Combine message types (handled by receptors) + event types (returned by receptors and cascaded)
-    // This ensures cascaded events get proper security context establishment even if no receptor handles them
-    var allTypesForUntypedPublish = allMessageTypes.Union(eventTypes).Distinct().ToList();
-
-    // Group all async receptors by message type for per-receptor invocation generation
-    // This enables stage-aware filtering: explicit [FireAt] receptors are skipped when IsDefaultDispatch=true
-    var allReceptorsByMessageType = asyncReceptors
-        .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
-
-    // Generate Untyped Publish routing code using snippet template
-    // This enables auto-cascade: events extracted from receptor return values are published
+    // The untyped publisher behind every cascade: the same receptors, keyed the same way
     var untypedPublishRouting = new StringBuilder();
-    foreach (var messageType in allTypesForUntypedPublish) {
-      // Build per-receptor invocations for this message type
-      var invocations = _buildReceptorInvocations(messageType, allReceptorsByMessageType, StandardInterfaceNames.I_RECEPTOR);
+    foreach (var messageType in localRunReceptorsByMessage.Keys) {
+      var invocations = _buildLocalRunInvocations(messageType, localRunReceptorsByMessage[messageType], withEnvelopeAndToken: true);
 
       // Replace placeholders with actual types and per-receptor invocations
       var generatedCode = untypedPublishSnippet
@@ -1531,7 +1459,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Sync Send routing code for sync receptors using snippet template
     var syncSendRouting = new StringBuilder();
-    foreach (var messageType in sendRegularSyncReceptorsByMessage.Keys) {
+    foreach (var messageType in routingOrder(sendRegularSyncReceptorsByMessage.Keys)) {
       var receptorList = sendRegularSyncReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
@@ -1542,7 +1470,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
-      syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+      syncSendRouting.AppendLine(TemplateUtilities.IndentCode(widened(generatedCode, messageType), INDENT_6));
     }
 
     // Load Void Sync Send routing snippet from template (for void sync receptors)
@@ -1554,7 +1482,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Generate Void Sync Send routing code for void sync receptors using snippet template
     var voidSyncSendRouting = new StringBuilder();
-    foreach (var messageType in sendVoidSyncReceptorsByMessage.Keys) {
+    foreach (var messageType in routingOrder(sendVoidSyncReceptorsByMessage.Keys)) {
       var receptorList = sendVoidSyncReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
@@ -1564,7 +1492,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
-      voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+      voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(widened(generatedCode, messageType), INDENT_6));
     }
 
     // Load Any Send routing snippets for cascade support
@@ -1577,12 +1505,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate Any Send routing code - prioritizes non-void async receptors (for cascading)
     // This enables void LocalInvokeAsync paths to find non-void receptors and cascade their results
     var anySendRouting = new StringBuilder();
-    foreach (var messageType in sendRegularReceptorsByMessage.Keys) {
+    foreach (var messageType in routingOrder(sendRegularReceptorsByMessage.Keys)) {
       var receptorList = sendRegularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
+      // The dispatcher awaits [AwaitPerspectiveSync] before it runs a send or invoke handler, once, and
+      // hands the receptor its sync context; waiting here as well waited twice (#1410 follow-up)
+      const string syncAwaitCode = "// [AwaitPerspectiveSync] is awaited by the dispatcher before this invoker runs";
 
       // Replace placeholders with actual types
       var generatedCode = anySendNonVoidSnippet
@@ -1592,7 +1522,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+      anySendRouting.AppendLine(TemplateUtilities.IndentCode(widened(generatedCode, messageType), INDENT_6));
     }
 
     // Generate receptor default routing lookup (for [DefaultRouting] attribute support)
@@ -1613,6 +1543,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         receptorDefaultRouting.AppendLine();
       }
     }
+
+    // The types receptors return, which a cascade may write to the outbox or the event store
+    var eventTypes = _extractUniqueEventTypes(receptors);
 
     // Separate concrete types from interface types
     // Concrete types use exact typeof() matching; interface types use 'is' pattern matching
@@ -1771,122 +1704,74 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Builds per-receptor keyed invocations for the GetUntypedReceptorPublisher (cascade path).
-  /// Default-stage receptors always fire. Explicit [FireAt] receptors are guarded by IsDefaultDispatch.
-  /// Uses cancellationToken in HandleAsync calls.
+  /// Every receptor that runs when this service handles a message in-process, keyed by each concrete
+  /// message type it handles: its own, plus every concrete subtype when it is declared on an interface
+  /// or base type. Receptors declared only at a pipeline stage are left out; they fire at that stage.
   /// </summary>
-  private static string _buildReceptorInvocations(
-      string messageType,
-      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
-      string receptorInterface) {
-    return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
-      useCancellationToken: true);
-  }
-
-  /// <summary>
-  /// Builds per-receptor keyed invocations for the typed GetReceptorPublisher (PublishAsync path).
-  /// Default-stage receptors fire immediately. Explicit [FireAt] receptors are gated by
-  /// isDefaultDispatch=true (declared in the PUBLISH_ROUTING_SNIPPET), so they are deferred
-  /// to their declared lifecycle stage — fired by ReceptorInvoker against the registry.
-  /// No cancellationToken parameter (PublishAsync signature doesn't thread one through).
-  /// </summary>
-  private static string _buildPublishReceptorInvocations(
-      string messageType,
-      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
-      string receptorInterface) {
-    return _buildReceptorInvocationsCore(messageType, receptorsByMessageType, receptorInterface,
-      useCancellationToken: false);
-  }
-
-  /// <summary>
-  /// Shared body behind both routing paths. Both stage-filter their void receptors — the cascade path
-  /// and the publish path alike — so there is no unfiltered variant to select between. What actually
-  /// differs between them is whether a cancellation token is in scope to thread into <c>HandleAsync</c>.
-  /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
-    Justification = "Explanatory prose comment (mentioning 'sourceEnvelope' / cascade-path semantics) is misidentified as commented-out code; it documents the surrounding routing logic and is not executable C#.")]
-  private static string _buildReceptorInvocationsCore(
-      string messageType,
-      Dictionary<string, List<ReceptorInfo>> receptorsByMessageType,
-      string receptorInterface,
-      bool useCancellationToken) {
-    if (!receptorsByMessageType.TryGetValue(messageType, out var receptorsForType)) {
-      return string.Empty;
+  private static Dictionary<string, List<ReceptorInfo>> _localRunReceptorsByMessage(
+      Compilation compilation,
+      ImmutableArray<ReceptorInfo> receptors) {
+    var byMessage = new Dictionary<string, List<ReceptorInfo>>();
+    void add(string messageType, ReceptorInfo receptor) {
+      if (!byMessage.TryGetValue(messageType, out var list)) {
+        list = [];
+        byMessage[messageType] = list;
+      }
+      if (!list.Contains(receptor)) {
+        list.Add(receptor);
+      }
     }
+    foreach (var receptor in receptors) {
+      if (!receptor.FiresOnLocalDispatch) {
+        continue;
+      }
+      add(receptor.MessageType, receptor);
+      if (receptor.IsPolymorphicMessageType) {
+        foreach (var concreteType in _findConcreteSubtypes(compilation, receptor.MessageType)) {
+          add(concreteType, receptor);
+        }
+      }
+    }
+    return byMessage;
+  }
 
+  /// <summary>
+  /// Emits one invocation per receptor for a publisher: resolves the receptor under the interface it is
+  /// registered as (async or sync, with its declared response type), runs it, and hands a result to the
+  /// dispatcher to cascade, as a local invoke does. <paramref name="withEnvelopeAndToken"/> is the
+  /// untyped (cascade) publisher, which has a source envelope and a cancellation token in scope.
+  /// </summary>
+  private static string _buildLocalRunInvocations(string messageType, List<ReceptorInfo> receptors, bool withEnvelopeAndToken) {
     var sb = new StringBuilder();
-    var handleArgs = useCancellationToken ? "typedEvt, cancellationToken" : "typedEvt";
-    // Publish path (no cancellation token) has no outer isDefaultDispatch declaration;
-    // the cascade path's snippet declares it from sourceEnvelope. When emitting the
-    // [FireAt] guard from the publish path we must declare the local ourselves, and
-    // only when there are explicit receptors to gate (otherwise CS0219 fires).
-    var publishPathDeclaresIsDefaultDispatch = !useCancellationToken;
-
-    var typedReceptors = receptorsForType.Where(r => !r.IsVoid).ToList();
-    var voidReceptors = receptorsForType.Where(r => r.IsVoid).ToList();
-
-    // Typed receptors (IReceptor<T, TResponse>) — always fire (they produce cascade results).
-    foreach (var receptor in typedReceptors) {
-      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: true, indent: "          ");
+    foreach (var receptor in receptors) {
+      _appendLocalRunInvocation(sb, messageType, receptor, withEnvelopeAndToken);
     }
-
-    _appendStageFilteredVoidReceptors(sb, messageType, receptorInterface, voidReceptors, handleArgs, publishPathDeclaresIsDefaultDispatch);
-
     return sb.ToString().TrimEnd();
   }
 
-  /// <summary>
-  /// Emits the stage-aware void receptor section. Default-stage void receptors fire
-  /// unconditionally, and so do receptors declared at a local stage (#1400); receptors declared at a
-  /// pipeline stage fire gated by <c>if (!isDefaultDispatch)</c> on the cascade path and are skipped
-  /// entirely on the publish path (they fire later via ReceptorInvoker at their declared lifecycle
-  /// stage — emitting them here would double-fire).
-  /// </summary>
-  private static void _appendStageFilteredVoidReceptors(
-      StringBuilder sb,
-      string messageType,
-      string receptorInterface,
-      List<ReceptorInfo> voidReceptors,
-      string handleArgs,
-      bool publishPathDeclaresIsDefaultDispatch) {
-    // A receptor declared at a local stage runs whenever this service handles the message in-process,
-    // exactly like a default one: nothing fires the local stages through the receptor invoker (#1400).
-    var defaultVoidReceptors = voidReceptors.Where(r => r.FiresOnLocalDispatch).ToList();
-    var explicitVoidReceptors = voidReceptors.Where(r => !r.FiresOnLocalDispatch).ToList();
-
-    foreach (var receptor in defaultVoidReceptors) {
-      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "          ");
+  /// <summary>One receptor's block in a publisher: its perspective wait when it has one, then the invocation.</summary>
+  private static void _appendLocalRunInvocation(StringBuilder sb, string messageType, ReceptorInfo receptor, bool withEnvelopeAndToken) {
+    var handleArgs = withEnvelopeAndToken ? "typedEvt, cancellationToken" : "typedEvt";
+    var cascadeArgs = withEnvelopeAndToken ? "sourceEnvelope, cancellationToken" : "null, default";
+    var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
+    var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
+    var call = receptor.IsSync ? "r.Handle(typedEvt)" : $"await r.HandleAsync({handleArgs})";
+    sb.AppendLine("          {");
+    if (receptor.IsMessageAnEvent && receptor.SyncAttributes is { Length: > 0 }) {
+      // This receptor waits for its perspectives first; the outcome reaches it through its sync context
+      var waitToken = withEnvelopeAndToken ? "cancellationToken" : "default";
+      sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedEvt, typeof({messageType}), \"{receptor.ClassName}\", {waitToken}));");
     }
-
-    if (explicitVoidReceptors.Count == 0 || publishPathDeclaresIsDefaultDispatch) {
-      return;
+    sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
+    sb.AppendLine("            if (r is not null) {");
+    if (receptor.IsVoid) {
+      sb.AppendLine($"              {call};");
+    } else {
+      sb.AppendLine($"              var result = {call};");
+      sb.AppendLine($"              await CascadeLocalResultAsync(result, typedEvt, typeof({messageType}), {cascadeArgs});");
     }
-
-    sb.AppendLine("          if (!isDefaultDispatch) {");
-    foreach (var receptor in explicitVoidReceptors) {
-      _appendReceptorInvocationBlock(sb, messageType, receptorInterface, receptor.ClassName, handleArgs, typedResponse: false, indent: "            ");
-    }
+    sb.AppendLine("            }");
     sb.AppendLine("          }");
-  }
-
-  /// <summary>
-  /// Emits a single receptor invocation block — resolves the keyed service, null-guards it,
-  /// awaits HandleAsync. <paramref name="typedResponse"/> picks the 2-arg IReceptor generic form
-  /// (with <c>object</c> response type) versus the void 1-arg form.
-  /// </summary>
-  private static void _appendReceptorInvocationBlock(
-      StringBuilder sb,
-      string messageType,
-      string receptorInterface,
-      string receptorClassName,
-      string handleArgs,
-      bool typedResponse,
-      string indent) {
-    var typeArgs = typedResponse ? $"{messageType}, object" : messageType;
-    sb.AppendLine($"{indent}{{");
-    sb.AppendLine($"{indent}  var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptorClassName}\");");
-    sb.AppendLine($"{indent}  if (r is not null) await r.HandleAsync({handleArgs});");
-    sb.AppendLine($"{indent}}}");
   }
 
   /// <summary>
@@ -2041,14 +1926,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ReceptorInfo receptor,
       string syncAttributesCode,
       int handlerCount) {
-    var result = entryTemplate
+    var result = receptor.IsSync ? _asSyncReceptorEntry(entryTemplate, receptor) : entryTemplate;
+    result = result
         .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
         .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
         .Replace(PLACEHOLDER_IS_IDEMPOTENT, receptor.IsIdempotent ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
-        .Replace(PLACEHOLDER_IS_ONCE_ACROSS_SERVICES, receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL);
+        .Replace(PLACEHOLDER_IS_ONCE_ACROSS_SERVICES, receptor.IsOnceAcrossServices ? BOOL_TRUE_LITERAL : BOOL_FALSE_LITERAL)
+        // The receptor's [DefaultRouting], so a cascade from a worker stage routes its result as a local call does
+        .Replace(PLACEHOLDER_DEFAULT_ROUTING, receptor.HasDefaultRouting ? $"({receptor.DefaultRouting})" : "null");
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -2061,6 +1949,35 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return result;
+  }
+
+  /// <summary>
+  /// Widens a send-table entry for a receptor declared on an interface or base type so it also matches
+  /// every concrete type implementing it; the entry's casts and service lookups keep the declared type.
+  /// </summary>
+  private static string _widenToConcreteSubtypes(string generatedCode, string messageType,
+      Dictionary<string, List<string>> concreteTypesByPolymorphicMessage) {
+    if (!concreteTypesByPolymorphicMessage.TryGetValue(messageType, out var concreteTypes) || concreteTypes.Count == 0) {
+      return generatedCode;
+    }
+    var exactCondition = $"if (messageType == typeof({messageType}))";
+    var widenedCondition = "if (messageType == typeof(" + messageType + ")"
+      + string.Concat(concreteTypes.Select(t => $" || messageType == typeof({t})")) + ")";
+    return generatedCode.Replace(exactCondition, widenedCondition);
+  }
+
+  /// <summary>
+  /// Rewrites a registry entry for a sync receptor: it is registered as <c>ISyncReceptor</c> and handles
+  /// a message with <c>Handle</c>, so resolving the async interface found nothing and the worker stage
+  /// threw (#1410 follow-up). The entry's delegate stays async because the registry's shape is.
+  /// </summary>
+  private static string _asSyncReceptorEntry(string entryTemplate, ReceptorInfo receptor) {
+    const string asyncCall = "await receptor.HandleAsync((" + PLACEHOLDER_MESSAGE_TYPE + ")msg, ct)";
+    const string syncCall = "receptor.Handle((" + PLACEHOLDER_MESSAGE_TYPE + ")msg)";
+    var rewritten = entryTemplate.Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR);
+    return receptor.IsVoid
+      ? rewritten.Replace(asyncCall + ";", syncCall + "; await global::System.Threading.Tasks.Task.CompletedTask;")
+      : rewritten.Replace(asyncCall, "await global::System.Threading.Tasks.ValueTask.FromResult(" + syncCall + ")");
   }
 
   /// <summary>

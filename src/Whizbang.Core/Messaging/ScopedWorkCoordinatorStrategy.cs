@@ -162,15 +162,24 @@ public partial class ScopedWorkCoordinatorStrategy(
       ? _queues.PendingAuditMessages.ToArray()
       : null;
 
-    var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      new FlushContext(
-        _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options,
-        outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
-        outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
-        _logger, _dependencies.TracingOptions, _lifecycleMetrics,
-        WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
-      ct
-    );
+    WorkBatch workBatch;
+    try {
+      workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+        new FlushContext(
+          _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options,
+          outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
+          outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
+          _logger, _dependencies.TracingOptions, _lifecycleMetrics,
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
+        ct
+      );
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      // The caller withdrew this work: the write rolled back and the caller is told it was canceled,
+      // so nothing may write it after all, neither a later flush nor the disposal safety net (#1410
+      // follow-up). A cancellation the caller did not ask for keeps the work, as any other failure does.
+      _queues.Clear();
+      throw;
+    }
 
     // Clear queues after successful flush
     _queues.Clear();

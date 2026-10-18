@@ -32,7 +32,7 @@ public class InheritScopeAnalyzerCoverageTests {
   /// restricts it to Class targets, and every perspective participant is a class. If the
   /// TypeKind guard (InheritScopeAnalyzer.cs:66-68) regressed and let non-class named types
   /// reach the attribute scan, a future relaxation of that AttributeUsage (or an unrelated
-  /// attribute sharing the simple name) could start producing WHIZ400/WHIZ401 noise for a
+  /// attribute sharing the simple name) could start producing WHIZ170/WHIZ171 noise for a
   /// symbol kind that can never actually own scope data.
   /// </summary>
   [Test]
@@ -48,7 +48,7 @@ public class InheritScopeAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var ours = diagnostics.Where(d => d.Id is "WHIZ400" or "WHIZ401").ToArray();
+    var ours = diagnostics.Where(d => d.Id is "WHIZ170" or "WHIZ171").ToArray();
     await Assert.That(ours.Length).IsEqualTo(0)
       .Because("an interface can never carry [InheritScope] (AttributeUsage restricts it to classes), so the TypeKind guard must reject it before any attribute scan runs");
   }
@@ -57,8 +57,8 @@ public class InheritScopeAnalyzerCoverageTests {
   /// A class can carry attributes unrelated to scope inheritance without those attributes ever
   /// being mistaken for [InheritScope]. If the attribute-name scan (InheritScopeAnalyzer.cs:73-79)
   /// stopped short instead of running to the end of a non-matching attribute list, a class whose
-  /// [InheritScope] was declared anywhere but first would silently escape both WHIZ400 and
-  /// WHIZ401 — the false negative this analyzer exists to prevent, letting a misconfigured
+  /// [InheritScope] was declared anywhere but first would silently escape both WHIZ170 and
+  /// WHIZ171 — the false negative this analyzer exists to prevent, letting a misconfigured
   /// perspective read across a scope boundary without ever being flagged at build time.
   /// </summary>
   [Test]
@@ -77,23 +77,52 @@ public class InheritScopeAnalyzerCoverageTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var ours = diagnostics.Where(d => d.Id is "WHIZ400" or "WHIZ401").ToArray();
+    var ours = diagnostics.Where(d => d.Id is "WHIZ170" or "WHIZ171").ToArray();
     await Assert.That(ours.Length).IsEqualTo(0)
       .Because("[Obsolete] is not [InheritScope]; the attribute scan must run to completion without a match and leave the class unanalyzed");
   }
 
   /// <summary>
-  /// Scope inheritance decides which tenant or principal a nested read runs under — a class that
-  /// implements some unrelated interface must still be flagged as non-perspective when none of
-  /// its interfaces is IPerspectiveFor&lt;...&gt;. If the interface scan
-  /// (InheritScopeAnalyzer.cs:107-111) stopped at the first non-matching interface instead of
-  /// walking the full list, a perspective class declared with an incidental interface (logging,
-  /// disposal, etc.) would wrongly escape WHIZ400, hiding a misapplied [InheritScope] that a
-  /// developer could otherwise mistake for working scope inheritance.
+  /// A perspective class may list an unrelated interface before its perspective interface. If the
+  /// interface scan stopped at the first non-matching interface instead of walking the full list,
+  /// [InheritScope] on such a perspective class would escape WHIZ170, and the developer would believe
+  /// an attribute the runner never reads was in effect.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task NonPerspectiveInterfacePresent_StillReportsAuth010Async() {
+  public async Task PerspectiveClassWithAnIncidentalInterfaceFirst_StillReportsWhiz170Async() {
+    const string source = """
+        using System;
+        using Whizbang.Core.Lenses;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public class FooModel { public System.Guid Id { get; set; } }
+        public class FooEvent { public System.Guid StreamId { get; set; } }
+
+        [InheritScope(OnCreate = ScopeFields.Tenant | ScopeFields.User)]
+        public class DisposableProjection : IDisposable, IPerspectiveFor<FooModel, FooEvent> {
+          public void Dispose() { }
+          public FooModel Apply(FooModel current, FooEvent e) => new();
+        }
+        """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
+
+    var found = diagnostics.Where(d => d.Id == "WHIZ170").ToArray();
+    await Assert.That(found.Length).IsEqualTo(1)
+      .Because("IDisposable comes first, so the scan must walk past it to the perspective interface");
+    await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("DisposableProjection");
+  }
+
+  /// <summary>
+  /// A class that implements only unrelated interfaces is not a perspective, and may be the model of
+  /// a perspective in another assembly, so the attribute on it is not reported.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ClassWithOnlyUnrelatedInterfaces_IsNotReportedAsync() {
     const string source = """
         using System;
         using Whizbang.Core.Lenses;
@@ -101,17 +130,39 @@ public class InheritScopeAnalyzerCoverageTests {
         namespace TestApp;
 
         [InheritScope(OnCreate = ScopeFields.Tenant | ScopeFields.User)]
-        public class DisposablePerspectiveCandidate : IDisposable {
+        public class DisposableModel : IDisposable {
           public void Dispose() { }
         }
         """;
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
 
-    var found = diagnostics.Where(d => d.Id == "WHIZ400").ToArray();
-    await Assert.That(found.Length).IsEqualTo(1)
-      .Because("IDisposable is a real, non-empty interface list that still contains nothing IPerspectiveFor-shaped, so the scan must walk past it and still report WHIZ400");
-    await Assert.That(found[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
-    await Assert.That(found[0].GetMessage(CultureInfo.InvariantCulture)).Contains("DisposablePerspectiveCandidate");
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ170")).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// An interface named like a perspective interface but declared outside Whizbang.Core.Perspectives is
+  /// not a perspective, so a class implementing it is not treated as a perspective class.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task LookalikePerspectiveInterfaceInAnotherNamespace_IsNotReportedAsync() {
+    const string source = """
+        using Whizbang.Core.Lenses;
+
+        namespace TestApp;
+
+        public interface IPerspectiveFor<TModel, TEvent> { }
+        public class FooModel { }
+        public class FooEvent { }
+
+        [InheritScope(OnCreate = ScopeFields.Tenant)]
+        public class LookalikeProjection : IPerspectiveFor<FooModel, FooEvent> { }
+        """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<InheritScopeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ170")).IsEqualTo(0)
+      .Because("only Whizbang's perspective interfaces mean the runner reads the attribute from another type");
   }
 }

@@ -1,0 +1,35 @@
+name: Enhancement
+description: A better version of something Whizbang already does.
+title: "[Enhancement]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior
+      description: What Whizbang does today, with a link to the docs page or code if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired behavior
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The problem the current behavior causes, and who it affects.
+    validations:
+      required: true
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Would this change behavior an application relies on?
+      options:
+        - "No"
+        - "Yes, it is a breaking change"
+        - "Not sure"
+    validations:
+      required: true

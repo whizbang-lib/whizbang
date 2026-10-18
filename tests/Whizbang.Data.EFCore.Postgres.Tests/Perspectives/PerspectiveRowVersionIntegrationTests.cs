@@ -45,6 +45,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   private const string TABLE = "wh_per_action_test";
 
+  // A fixed event time: these tests read versions and metadata back, so nothing depends on the clock, and a
+  // real-clock read would make the stored metadata differ from run to run.
+  private static readonly DateTime _eventAt = new(2026, 10, 18, 12, 0, 0, DateTimeKind.Utc);
+
   // ── The race, end to end through the generated runner ──────────────────────────────────────────
 
   [Test]
@@ -130,10 +134,11 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
     var absent = await store.ReadForApplyAsync(id);
     await Assert.That(absent.Version).IsEqualTo(PerspectiveRowVersion.Absent);
     await Assert.That(absent.Metadata).IsNull();
+    await Assert.That(absent.Scope).IsNull();
 
     var eventId = Guid.CreateVersion7().ToString("D");
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member", Value = 1 }, new PerspectiveScope(), false,
-      new PerspectiveMetadata { EventId = eventId, EventType = "Created", CommitSequence = 42, Timestamp = DateTime.UtcNow },
+      new PerspectiveMetadata { EventId = eventId, EventType = "Created", CommitSequence = 42, Timestamp = _eventAt },
       PerspectiveRowVersion.Absent);
 
     var present = await store.ReadForApplyAsync(id);
@@ -149,12 +154,36 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ReadForApplyAsync_ReturnsTheRowsStoredScope_SoAlwaysFieldsCanBeMergedAsync() {
+    var id = Guid.CreateVersion7();
+    await using var context = CreateDbContext();
+    var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
+    var stored = new PerspectiveScope {
+      TenantId = "tenant-1",
+      UserId = "user-creator",
+      OrganizationId = "org-1",
+      AllowedPrincipals = ["group:owners"],
+    };
+    await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member" }, stored, false,
+      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = _eventAt }, PerspectiveRowVersion.Absent);
+
+    var read = await store.ReadForApplyAsync(id);
+
+    await Assert.That(read.Scope).IsNotNull()
+      .Because("the runner merges a model's Always fields into the scope the row already has");
+    await Assert.That(read.Scope!.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(read.Scope.UserId).IsEqualTo("user-creator");
+    await Assert.That(read.Scope.OrganizationId).IsEqualTo("org-1");
+    await Assert.That(read.Scope.AllowedPrincipals).IsEquivalentTo(["group:owners"]);
+  }
+
+  [Test]
   public async Task ReadForApplyAsync_OnARowWithoutCommitSequence_LeavesItNullAsync() {
     var id = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     var store = new EFCorePostgresPerspectiveStore<ActionTestModel>(context, TABLE);
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "member" }, new PerspectiveScope(), false,
-      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = DateTime.UtcNow }, PerspectiveRowVersion.Unchecked);
+      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = _eventAt }, PerspectiveRowVersion.Unchecked);
 
     var read = await store.ReadForApplyAsync(id);
 
@@ -169,7 +198,7 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
 
     await using var transaction = await context.Database.BeginTransactionAsync();
     await store.UpsertAsync(id, new ActionTestModel { Id = id, Name = "uncommitted" }, new PerspectiveScope(), false,
-      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = DateTime.UtcNow }, PerspectiveRowVersion.Absent);
+      new PerspectiveMetadata { EventId = "e", EventType = "t", Timestamp = _eventAt }, PerspectiveRowVersion.Absent);
     var read = await store.ReadForApplyAsync(id);
     await transaction.RollbackAsync();
 
@@ -389,7 +418,7 @@ public class PerspectiveRowVersionIntegrationTests : EFCoreTestBase {
   private static PerspectiveMetadata _meta(long? commitSequence = null, string? eventId = null) => new() {
     EventType = "ActionTestUpdatedEvent",
     EventId = eventId ?? Guid.CreateVersion7().ToString("D"),
-    Timestamp = DateTime.UtcNow,
+    Timestamp = _eventAt,
     CommitSequence = commitSequence,
   };
 

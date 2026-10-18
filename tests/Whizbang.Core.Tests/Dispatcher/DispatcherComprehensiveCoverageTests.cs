@@ -1557,56 +1557,6 @@ public class DispatcherComprehensiveCoverageTests {
   // Guards on paths whose callers already filtered
   // ========================================
 
-  // Cascade-excluding-response walks a receptor's full result and dispatches everything except the
-  // value the RPC caller got back. Given nothing to walk it must dispatch nothing: a null result
-  // means the receptor produced no messages, and treating that as anything else would publish
-  // whatever the extractor's default happened to be.
-  [Test]
-  public async Task CascadeEventsExcludingResponse_NullResult_DispatchesNothingAsync() {
-    var services = new ServiceCollection();
-    var cascaded = new List<object>();
-    var dispatcher = new TestDispatcher(
-      services.BuildServiceProvider(),
-      untypedPublisher: (msg, _, _) => {
-        lock (cascaded) { cascaded.Add(msg); }
-        return Task.CompletedTask;
-      });
-
-    await dispatcher.CascadeEventsExcludingResponseAsync<TestResult>(
-      result: null,
-      extractedResponse: null,
-      originalMessageType: typeof(TestCommand));
-
-    await Assert.That(cascaded).IsEmpty()
-      .Because("a receptor that returned nothing has nothing to cascade; anything published here "
-        + "would be a message the receptor never produced");
-  }
-
-  // The same call with a real result is the control: the early return above is about the null, not
-  // about this dispatcher being unable to cascade at all.
-  [Test]
-  public async Task CascadeEventsExcludingResponse_ResultCarryingAnEvent_CascadesItAsync() {
-    var services = new ServiceCollection();
-    var cascaded = new List<object>();
-    var dispatcher = new TestDispatcher(
-      services.BuildServiceProvider(),
-      untypedPublisher: (msg, _, _) => {
-        lock (cascaded) { cascaded.Add(msg); }
-        return Task.CompletedTask;
-      });
-
-    var emitted = new TestEvent(Guid.CreateVersion7());
-
-    await dispatcher.CascadeEventsExcludingResponseAsync<TestResult>(
-      result: emitted,
-      extractedResponse: null,
-      originalMessageType: typeof(TestCommand));
-
-    await Assert.That(cascaded).Contains(emitted)
-      .Because("an event the receptor returned alongside its response must still be dispatched, or "
-        + "the RPC caller's reply silently swallows the receptor's side effects");
-  }
-
   // Publish-time fan-out expands a composite into its inner events. Handed something that is not a
   // composite it must do nothing at all: there are no inner events to read, and the alternative to
   // returning is reading a member the object does not have.

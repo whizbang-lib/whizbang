@@ -1,0 +1,48 @@
+name: Feature
+description: A new capability that was discussed and accepted in Discussions, Ideas.
+title: "[Feature]: "
+labels: ["feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        New capabilities start in [Discussions, Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas).
+        Open this once the idea is accepted there, and link the discussion.
+  - type: input
+    id: discussion
+    attributes:
+      label: Discussion
+      description: Link to the accepted idea in Discussions.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What an application cannot do today, or does with difficulty.
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API
+      description: The public types and members, and how they are configured.
+      render: csharp
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: Example usage
+      render: csharp
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: impact
+    attributes:
+      label: Docs, AOT and compatibility impact
+      description: Pages to add or change, anything that would need reflection, and anything existing applications would notice.

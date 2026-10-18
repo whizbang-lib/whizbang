@@ -192,6 +192,9 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 **Invoke the `testing` skill** (`.claude/skills/testing/SKILL.md`) before writing, moving or fixing a
 test: it decides whether the test is Unit, Component or Integration, and how to make it deterministic.
 
+**Invoke the `pr-review` skill** (`.claude/skills/pr-review/SKILL.md`) to review a pull request or to
+check a branch before opening one: it drafts comments into the reviewer's pending review and never submits.
+
 ### 📖 **[testing-tunit.md](ai-docs/testing-tunit.md)** - CRITICAL
 **Read when**:
 - Writing or debugging tests

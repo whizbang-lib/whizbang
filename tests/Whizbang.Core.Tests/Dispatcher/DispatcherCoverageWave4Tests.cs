@@ -124,7 +124,10 @@ public class DispatcherCoverageWave4Tests {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) => _untypedPublisher;
+    // As generated code: an untyped publisher exists exactly when the message has a local receptor, which
+    // is how the dispatcher knows a publish has a handler here
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) =>
+      _untypedPublisher ?? (_publisherThrows || (_invoker is not null && eventType == _handleMessageType) ? static (_, _, _) => Task.CompletedTask : null);
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
 

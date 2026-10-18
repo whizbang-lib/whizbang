@@ -747,7 +747,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
 
     if (result is not null && _eventCascader is not null) {
-      await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+      // The receptor's [DefaultRouting] applies here as it does on a local call (#1410 follow-up)
+      await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: receptor.DefaultRouting, cancellationToken).ConfigureAwait(false);
     }
 
     // Record the invocation on success. RecordInvocationAsync is the only mutation of the

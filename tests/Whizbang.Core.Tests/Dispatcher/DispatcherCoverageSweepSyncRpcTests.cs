@@ -84,7 +84,12 @@ public class DispatcherCoverageSweepSyncRpcTests {
         return null;
       }
       // Cast mirrors production generated code: mismatched TResult surfaces as InvalidCastException.
-      return async msg => (TResult)await _invoker(msg);
+      // As the generated invoker does: a result that is not the requested type goes back whole
+      return async msg => await _invoker(msg) switch {
+        null => default!,
+        TResult typed => typed,
+        var other => throw new ReceptorResultMismatchException(other, typeof(TResult))
+      };
     }
 
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) =>
@@ -420,40 +425,47 @@ public class DispatcherCoverageSweepSyncRpcTests {
   // ========================================
 
   [Test]
-  public async Task LocalInvokeAsync_TypedInvokerCastFails_FallsBackToRpcExtractionAsync() {
-    // Arrange - typed invoker returns a tuple; requesting SweepRpcResponse forces an
-    // InvalidCastException, then the anyInvoker RPC-extraction fallback extracts the response
-    // and cascades the remaining event. Debug logging exercises the diagnostic branches.
+  public async Task LocalInvokeAsync_TypedResultIsATuple_ExtractsTheResponseWithoutRunningTheReceptorAgainAsync() {
+    // Arrange - the typed invoker's receptor returns a tuple holding the requested response. The
+    // response is extracted from that one result and the rest cascades; the receptor is not run again
+    // through the any-invoker, which used to happen after a failed cast (#1410 follow-up).
     var logs = new List<string>();
     var response = new SweepRpcResponse(Guid.NewGuid());
     var cascadeEvent = new SweepRpcCascadeEvent(Guid.NewGuid());
+    var typedRuns = 0;
+    var anyRuns = 0;
     var dispatcher = new SweepDispatcher(
       _buildProvider(logs: logs),
-      invoker: _ => new ValueTask<object>((response, cascadeEvent)),
-      anyInvoker: _ => new ValueTask<object?>((response, cascadeEvent)));
+      invoker: _ => { Interlocked.Increment(ref typedRuns); return new ValueTask<object>((response, cascadeEvent)); },
+      anyInvoker: _ => { Interlocked.Increment(ref anyRuns); return new ValueTask<object?>((response, cascadeEvent)); });
 
     // Act
-    var result = await dispatcher.LocalInvokeAsync<SweepRpcResponse>(new SweepRpcCommand("cast-fallback"), MessageContext.New());
+    var result = await dispatcher.LocalInvokeAsync<SweepRpcResponse>(new SweepRpcCommand("tuple-result"), MessageContext.New());
 
-    // Assert - the exact response instance came back; the event cascaded to outbox; the
-    // response itself was excluded from the cascade (ReferenceEquals skip branch)
+    // Assert - the exact response instance came back, the event cascaded, the response did not
     await Assert.That(ReferenceEquals(result, response)).IsTrue();
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(1);
     await Assert.That(ReferenceEquals(dispatcher.OutboxCascades[0], cascadeEvent)).IsTrue();
+    await Assert.That(typedRuns).IsEqualTo(1).Because("the receptor runs exactly once");
+    await Assert.That(anyRuns).IsEqualTo(0).Because("nothing runs it a second time");
   }
 
   [Test]
-  public async Task LocalInvokeAsync_TypedInvokerCastFails_NoAnyInvoker_RethrowsInvalidCastAsync() {
-    // Arrange - InvalidCastException with no anyInvoker fallback must rethrow the original
+  public async Task LocalInvokeAsync_ReceptorThrowsItsOwnInvalidCast_SurfacesItWithoutRunningAgainAsync() {
+    // Arrange - an InvalidCastException the receptor itself throws is a failure, not a response shape:
+    // it used to be caught as a failed cast and the receptor run again through the any-invoker
     var logs = new List<string>();
+    var anyRuns = 0;
     var dispatcher = new SweepDispatcher(
       _buildProvider(logs: logs),
-      invoker: _ => new ValueTask<object>((new SweepRpcResponse(Guid.NewGuid()), new SweepRpcCascadeEvent(Guid.NewGuid()))));
+      invoker: _ => throw new InvalidCastException("receptor-own-cast"),
+      anyInvoker: _ => { Interlocked.Increment(ref anyRuns); return new ValueTask<object?>(new SweepRpcResponse(Guid.NewGuid())); });
 
     // Act & Assert
     await Assert.That(async () =>
-        await dispatcher.LocalInvokeAsync<SweepRpcResponse>(new SweepRpcCommand("no-fallback"), MessageContext.New()))
-      .ThrowsExactly<InvalidCastException>();
+        await dispatcher.LocalInvokeAsync<SweepRpcResponse>(new SweepRpcCommand("own-cast"), MessageContext.New()))
+      .ThrowsExactly<InvalidCastException>().WithMessageContaining("receptor-own-cast");
+    await Assert.That(anyRuns).IsEqualTo(0);
   }
 
   [Test]
@@ -472,7 +484,7 @@ public class DispatcherCoverageSweepSyncRpcTests {
     // Assert
     await Assert.That(ReferenceEquals(result, response)).IsTrue();
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(1);
-    await Assert.That(logs.Any(m => m.Contains("RpcExtraction", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(logs.Any(m => m.Contains("extracting the requested SweepRpcResponse", StringComparison.Ordinal))).IsTrue();
   }
 
   [Test]

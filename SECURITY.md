@@ -25,11 +25,25 @@ Instead, please use GitHub Security Advisories:
 2. Click "Report a vulnerability"
 3. Provide detailed information about the vulnerability
 
-**Expected response time:** Within 48 hours
+Please include the affected versions, the impact, and the steps or code that reproduce it.
 
-We will send you a response indicating the next steps in handling your report.
-After the initial reply, we will keep you informed of the progress towards a
-fix and full announcement.
+## How a Report Is Handled
+
+| Step | Target |
+|---|---|
+| Acknowledge the report | Within 48 hours |
+| Confirm it and rate its severity (CVSS 4.0) | Within 7 days |
+| Fix released, critical | Within 7 days of confirmation |
+| Fix released, high | Within 30 days |
+| Fix released, medium | Within 90 days |
+| Fix released, low | In the next scheduled release |
+| Public disclosure | When the fix is released, and no later than 90 days after the report |
+
+- The work happens in a private fork attached to the advisory, so nothing is discussed in public before the fix ships.
+- A CVE is requested through the GitHub advisory (GitHub is a CVE Numbering Authority) for every confirmed vulnerability in a released version.
+- The advisory names the affected and patched versions, and credits the reporter unless they ask not to be credited.
+- We keep you informed at each step. If a target cannot be met, we tell you why and agree on a new date with you before the original one passes.
+- A report we decide is not a vulnerability is closed with the reason, and you are free to discuss it publicly.
 
 ## Verifying a Release
 

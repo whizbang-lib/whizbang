@@ -1078,6 +1078,124 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: pwsh -NoProfile -File .github/scripts/Test-DcoSignoff.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA"
 
+  linked-issue:
+    name: Gate · Linked issue
+    # Every pull request closes an issue in this repository (Fixes #N) that was opened before it, so each
+    # change is tied to a work item and discussed before it is reviewed (CONTRIBUTING.md, "Open an issue
+    # first"). Bots and the release pull request into main are exempt; the rules live in
+    # .github/scripts/Test-LinkedIssue.ps1, tested by script-tests. The pull request is read from the API,
+    # not the event, so adding the keyword and re-running this job is enough. It runs again in the merge
+    # queue, so the link cannot be removed after the pull request run passed. In ci-result's needs.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # the pull request and the issues it closes
+      issues: read
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      - name: The pull request closes an issue opened before it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || 0 }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
+        run: pwsh -NoProfile -File .github/scripts/Test-LinkedIssue.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+
+  pr-type:
+    name: Gate · Pull request type
+    # The title is a Conventional Commit (it becomes the squash commit), and a breaking change (! in the
+    # title) adds a CHANGELOG.md entry with an Upgrade note (CONTRIBUTING.md, "Commit Messages"). Bots and
+    # the release pull request into main are exempt; the rules live in .github/scripts/Test-PullRequestType.ps1,
+    # tested by script-tests. Read from the API, so retitling and re-running this job is enough; it runs
+    # again in the merge queue. In ci-result's needs.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # the title and the changed files
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      - name: The title is a Conventional Commit, and a breaking change has an upgrade note
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || 0 }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
+        run: pwsh -NoProfile -File .github/scripts/Test-PullRequestType.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+
+  review-checks:
+    name: Gate · Review checks
+    # Deterministic review findings on the pull request's added lines, description, target branch and
+    # sign-offs, posted as one comment: a table for people, and a hidden block a maintainer turns into a
+    # draft review with scripts/Invoke-PrReviewDraft.ps1 (their own gh login; CI holds no personal token).
+    # In ci-result's needs: an open finding blocks the merge (#1443). The rules live in
+    # scripts/lib/ReviewFindings.psm1, tested by script-tests.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write   # the comment
+    steps:
+      # The full history: the DCO check reads base..head with git log.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Run the review checks
+        id: checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr view "$PR" --repo "${{ github.repository }}" --json body --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+          CLOSING=$(gh pr view "$PR" --repo "${{ github.repository }}" --json closingIssuesReferences --jq '.closingIssuesReferences | length')
+          TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
+          LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json closingIssuesReferences \
+            --jq '[.closingIssuesReferences[].labels[]?.name] | unique | join(",")')
+          BOT=()
+          if [ "$AUTHOR_TYPE" = "Bot" ]; then BOT=(-AuthorIsBot); fi
+          pwsh -NoProfile -File .github/scripts/Get-ReviewChecks.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA" \
+            -BaseRef "$BASE_REF" -HeadRef "$HEAD_REF" -PullRequest "$PR" -BodyFile "$RUNNER_TEMP/pr-body.md" \
+            -ClosingIssueCount "$CLOSING" -RunUrl "$RUN_URL" -OutFile "$RUNNER_TEMP/review-checks.md" \
+            -Title "$TITLE" -ClosingIssueLabels "$LABELS" "${BOT[@]}"
+      # A fork's token cannot comment; the findings are then in this job's log only.
+      - name: Post the review-checks comment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # Every run keeps its comment, so the history of what was found and fixed stays on the pull
+          # request; the earlier ones are minimized as outdated (never deleted) and the latest is current.
+          gh api --method POST "repos/${{ github.repository }}/issues/${PR}/comments" -F body=@"$RUNNER_TEMP/review-checks.md" >/dev/null
+          pwsh -NoProfile -File .github/scripts/Hide-OutdatedComments.ps1 -Repository "${{ github.repository }}" -PullRequest "$PR" -Marker "<!-- pr-review-checks -->"
+      # The gate: after the comment is posted, so the findings are always visible. The job's own result,
+      # not the comment, is what ci-result reads, so it holds for fork pull requests too.
+      - name: No finding is open
+        env:
+          FINDINGS: ${{ steps.checks.outputs.findings }}
+        run: |
+          if [ "$FINDINGS" != "0" ]; then
+            echo "::error::${FINDINGS:-?} review-check finding(s) are open (see the Review checks comment). Fix each, or mark a false positive with review-checks:allow on the line."
+            exit 1
+          fi
+
   ci-result:
     name: Gate · CI result
     # The one required check on develop AND main. It passes only when every suite ran green in this
@@ -1087,7 +1205,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco]
+    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pr-type, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has

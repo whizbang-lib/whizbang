@@ -74,14 +74,20 @@ body (optional)
 footer (optional)
 ```
 
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `test`: Test changes
-- `refactor`: Code refactoring
-- `perf`: Performance improvements
-- `chore`: Build/tooling changes
+**Types:** `feat` (new capability), `fix` (bug fix), `docs`, `perf`, `refactor`, `test`, `ci`, `build`,
+`chore` (maintenance) and `revert`. A `!` before the colon marks a breaking change: `feat(scoping)!: ...`.
+
+The pull request title follows the same form, because it becomes the commit when the pull request is
+squashed; the required **Gate · Pull request type** check fails a title that does not. The type decides what
+the pull request must contain:
+
+| Type | Must contain | Checked by |
+|---|---|---|
+| any | A closing keyword for an issue opened first | Gate · Linked issue |
+| `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
+| `feat` | A library feature links its docs-site pull request | Review checks |
+| `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
+| `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
 
 **Examples:**
 ```
@@ -185,6 +191,49 @@ See [ai-docs/boy-scout-rule.md](ai-docs/boy-scout-rule.md).
 
 ## Submitting Changes
 
+### Open an issue first
+
+Every change starts as an issue: a bug report, a feature request, or a proposal, opened before the pull
+request. The issue is where a change is discussed (whether it is wanted, what shape it should take, what it
+must not break) before anyone writes or reviews code, and it is how the change is tracked on the roadmap.
+For a bug, the issue says what happened and how to reproduce it; for a feature, the problem it solves.
+
+The pull request then closes that issue with a GitHub closing keyword in its description:
+
+```text
+Fixes #123
+```
+
+`Closes #123` and `Resolves #123` work too. Write the keyword as plain text, not inside backticks, or GitHub
+ignores it. A pull request that resolves two issues names both (`Fixes #123`, `Fixes #124`).
+
+This is enforced: the required **Gate · Linked issue** check fails a pull request that closes no issue in
+this repository, or whose issues were all opened after it. It reads the current description, so adding the
+keyword and re-running the job is enough. Pull requests opened by bots (Dependabot, the release automation)
+and the release pull request into `main` are exempt.
+
+### Issues: types and triage
+
+Open an issue from one of the forms; each asks for what a maintainer needs to act on it, and blank issues
+are turned off.
+
+| You have | Where it goes | Form |
+|---|---|---|
+| A bug: Whizbang does not behave as documented | An issue | **Bug report**: version, environment, minimal reproduction, expected and actual behavior |
+| A better version of existing behavior | An issue | **Enhancement**: current and desired behavior, why, whether it breaks anything |
+| A new capability | [Discussions, Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas) first; an issue once accepted | **Feature**: the discussion, the problem, the proposed API, example usage |
+| A design decision to make | An issue labeled `question` | **Design proposal**: context, options, the decision needed |
+| A docs page that is wrong or missing | An issue | **Documentation problem** |
+| A usage question | [Discussions, Q&A](https://github.com/whizbang-lib/whizbang/discussions/categories/q-a) | not an issue |
+| Anything else | [Discussions, General](https://github.com/whizbang-lib/whizbang/discussions/categories/general) | not an issue |
+| A security vulnerability | The [private advisory form](https://github.com/whizbang-lib/whizbang/security/advisories/new), never a public issue | [SECURITY.md](SECURITY.md) |
+
+**Triage.** Every new issue is labeled `needs-triage`. A maintainer responds within 7 days and either
+confirms it (removing `needs-triage`, keeping its type label), closes it as a duplicate with a link to the
+original, or closes it with the reason (`wontfix`, `invalid`). Bugs are never closed as stale. The labels,
+and what each means, are listed in `.github/labels.txt`; the "Test · Pipeline scripts" check fails if a form
+adds a label that is not there.
+
 ### Pull Request Process
 
 1. **Create a feature branch**
@@ -231,7 +280,7 @@ git push origin feature/my-feature
 6. **Create Pull Request**
    - Go to GitHub and create a PR from your fork
    - Describe what changed and why
-   - Link related issues
+   - Close the issue it resolves with `Fixes #N` ([Open an issue first](#open-an-issue-first))
    - Wait for CI checks to pass
 
 ### Pull Request Requirements
@@ -244,6 +293,7 @@ git push origin feature/my-feature
 - ✅ No AOT warnings in production code
 - ✅ Commit messages follow Conventional Commits
 - ✅ Every commit is signed off ([DCO](#developer-certificate-of-origin))
+- ✅ Closes an issue opened before it ([Open an issue first](#open-an-issue-first))
 
 ### Code Review
 
@@ -274,7 +324,41 @@ pull request, and every pull request is reviewed against the same standard.
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
-  package versions.
+  package versions;
+- the pull request closes an issue in this repository that was opened before it
+  ([Open an issue first](#open-an-issue-first)).
+
+**Review checks** (required): the **Gate · Review checks** job comments on each pull request with the
+findings a reviewer would otherwise type by hand, each on its file and line where it has one: a commit
+that is not signed off, no closing keyword (or one inside backticks), a target branch other than
+`develop`, an existing migration edited, en-GB spelling, em-dashes, real time in test code,
+`Guid.NewGuid()` in library code, and what the pull request's type requires (a fix's bug report and test,
+a feature's docs pull request, a changelog entry). The job fails while any finding is open, warnings
+included, so each one is fixed or explicitly allowed: a line containing `review-checks:allow` is skipped,
+and `.github/review-checks-ignore.txt` lists paths the checks skip. The PR quality gate comment lists
+uncovered new lines and branches and Sonar findings the same way, and its job fails on them too.
+
+Every run posts its own comment and keeps the earlier ones, minimized as outdated, so the pull request
+shows what was found on each commit and when it was fixed; the latest comment is the one the gate
+matches.
+
+Both comments carry the findings in a hidden block as well. A maintainer turns them into a draft review
+with their own `gh` login:
+
+```bash
+pwsh scripts/Invoke-PrReviewDraft.ps1 -PullRequest <number>          # -WhatIf shows the plan only
+```
+
+It starts a pending review (or adds to the one already started), puts each finding on its line, puts
+the rest in the review summary, and never submits. GitHub will not add a summary to a pending review
+started in the browser until it is submitted, so in that case the script prints the summary to paste. Running it again adds only what is new. CI holds no
+personal token: the comments are posted with the workflow's own token, and the draft is written from
+the maintainer's machine.
+
+AI sessions review through the `pr-review` skill (`.claude/skills/pr-review/SKILL.md`): it drafts
+these findings, applies the core principles and the checks below with the document that owns each rule, and adds its comments
+to the same pending review without submitting it. A contributor can run it on their own branch before
+opening a pull request.
 
 **What the reviewer checks**
 
@@ -325,23 +409,14 @@ if anything is unclear.
 
 ### Reporting Bugs
 
-1. Check existing issues first
-2. Open a new issue
-3. Include:
-   - .NET version
-   - Operating system
-   - Minimal reproduction
-   - Expected vs actual behavior
+Use the **Bug report** form ([Issues: types and triage](#issues-types-and-triage)). Search open and closed
+issues first. Security vulnerabilities go to the private advisory form ([SECURITY.md](SECURITY.md)).
 
 ### Suggesting Features
 
-1. Start in [Discussions → Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas)
-   to gauge interest; an accepted idea becomes an issue
-2. Include:
-   - Use case and motivation
-   - Proposed API design
-   - Example usage
-   - Alternatives considered
+Start in [Discussions, Ideas](https://github.com/whizbang-lib/whizbang/discussions/categories/ideas) to
+gauge interest; an accepted idea becomes a **Feature** issue with the use case, the proposed API, example
+usage and the alternatives considered.
 
 ### Recognition
 

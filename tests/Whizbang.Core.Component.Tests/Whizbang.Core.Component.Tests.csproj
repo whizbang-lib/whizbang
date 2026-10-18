@@ -55,5 +55,8 @@
     <Compile Include="../Whizbang.Core.Tests/Observability/ProbeMeterReader.cs" Link="Shared/Observability/ProbeMeterReader.cs" />
     <Compile Include="../Whizbang.Core.Tests/Lifecycle/LifecycleTrackingTestExtensions.cs" Link="Shared/Lifecycle/LifecycleTrackingTestExtensions.cs" />
     <Compile Include="../Whizbang.Core.Tests/Tags/CoalesceTestTags.cs" Link="Shared/Tags/CoalesceTestTags.cs" />
+    <!-- The dispatch decision table: the Unit tests check each row's decision, the Component tests run
+         each row on the real dispatcher and check what happened. -->
+    <Compile Include="../Whizbang.Core.Tests/Dispatch/Policy/DispatchScenarios.cs" Link="Shared/Dispatch/Policy/DispatchScenarios.cs" />
   </ItemGroup>
 </Project>

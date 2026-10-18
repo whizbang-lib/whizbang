@@ -20,7 +20,7 @@ using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Integration tests verifying that ScopeDelta (security context) survives
+/// Integration tests verifying that ScopeDelta (security context) and the dispatch mark survive
 /// Azure Service Bus transport publish → subscribe round-trip.
 /// </summary>
 /// <remarks>
@@ -231,8 +231,71 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
   }
 
   // ========================================
+  // The dispatch mark (#1410 follow-up)
+  // ========================================
+
+  /// <summary>
+  /// The mark the sender's dispatch puts on a copy survives the broker: a copy the sender already handled
+  /// says so (its own inbox does not run it again), and a copy whose local run was deferred to its
+  /// schedule says that (its own inbox runs it when it comes back).
+  /// </summary>
+  [Test]
+  [Arguments(DispatchModes.Both, false)]
+  [Arguments(DispatchModes.Outbox, true)]
+  [Arguments(DispatchModes.Outbox, false)]
+  public async Task Publish_WithADispatchMark_ReceivePreservesTheMark_ServiceBusAsync(
+    DispatchModes mode, bool localDeferred, CancellationToken cancellationToken
+  ) {
+    var envelope = _createTestEnvelopeWithContent("dispatch-mark");
+    envelope = new MessageEnvelope<TestMessage> {
+      MessageId = envelope.MessageId,
+      Payload = envelope.Payload,
+      Hops = envelope.Hops,
+      DispatchContext = new MessageDispatchContext { Mode = mode, Source = MessageSource.Outbox, LocalDeferred = localDeferred }
+    };
+
+    var received = await _roundTripAsync(envelope, cancellationToken);
+
+    await Assert.That(received.DispatchContext.Mode).IsEqualTo(mode)
+      .Because("whether the sender already handled the copy must survive the broker");
+    await Assert.That(received.DispatchContext.LocalDeferred).IsEqualTo(localDeferred)
+      .Because("whether the sender handles the copy when it comes back must survive the broker");
+  }
+
+  // ========================================
   // Helpers
   // ========================================
+
+  /// <summary>Publishes one envelope through a warmed-up subscription and returns what the subscriber received.</summary>
+  private async Task<IMessageEnvelope> _roundTripAsync(MessageEnvelope<TestMessage> envelope, CancellationToken cancellationToken) {
+    await _drainMessagesAsync("topic-00", "sub-00-a");
+    var transport = await _createTransportAsync();
+    // Only the envelope this test published: the topic is shared by other test classes
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e, filter: e => e.MessageId == envelope.MessageId);
+    var warmupSignal = new SignalAwaiter();
+    var warmupId = SubscriptionWarmup.GenerateWarmupId();
+    var subscription = await transport.SubscribeAsync(
+      async (env, envType, ct) => {
+        if (env is MessageEnvelope<TestMessage> testEnv && testEnv.Payload.Content.Contains(warmupId)) {
+          warmupSignal.Signal();
+        } else {
+          await awaiter.Handler(env, envType, ct);
+        }
+      },
+      new TransportDestination("topic-00", "sub-00-a"),
+      cancellationToken
+    );
+    try {
+      var publishDest = new TransportDestination("topic-00");
+      await SubscriptionWarmup.WarmupAsync(transport, publishDest, () => _createTestEnvelopeWithContent(warmupId), warmupSignal,
+        cancellationToken: cancellationToken);
+      await transport.PublishAsync(envelope, publishDest, cancellationToken: cancellationToken);
+      return await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+    } finally {
+      subscription.Dispose();
+      await transport.DisposeAsync();
+    }
+  }
 
   private async Task<AzureServiceBusTransport> _createTransportAsync() {
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();

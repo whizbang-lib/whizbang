@@ -236,6 +236,35 @@ public class RuntimeReceptorLocalDispatchComponentTests {
       .Because("only the receptor that never ran locally runs at PreOutbox");
   }
 
+  /// <summary>A runtime receptor that returns nothing answers a typed local invoke with the default, having run once.</summary>
+  [Test]
+  public async Task LocalInvokeTyped_RuntimeReceptorWithNoResult_AnswersTheDefaultAsync() {
+    await using var provider = _buildProvider(new RecordingOutbox());
+    _registry(provider).Register(new RecordingRuntimeReceptor<UnownedRuntimeCommand>(), LifecycleStage.LocalImmediateInline);
+    var command = new UnownedRuntimeCommand(Guid.CreateVersion7());
+
+    var result = await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync<RuntimeResult>((object)command, new DispatchOptions());
+
+    await Assert.That(result).IsNull();
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A runtime receptor whose result holds the requested type answers with it, run once: the result is
+  /// not the requested type whole, and the response is extracted instead of running the receptor again.
+  /// </summary>
+  [Test]
+  public async Task LocalInvokeTyped_RuntimeReceptorReturningATuple_AnswersWithTheRequestedPartOnceAsync() {
+    await using var provider = _buildProvider(new RecordingOutbox());
+    _registry(provider).Register(new TupleAnsweringRuntimeReceptor<RuntimeResultCommand>(), LifecycleStage.LocalImmediateInline);
+    var command = new RuntimeResultCommand(Guid.CreateVersion7());
+
+    var result = await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync<RuntimeResult>((object)command, new DispatchOptions());
+
+    await Assert.That(result).IsEqualTo(new RuntimeResult(command.Id, "inside a tuple"));
+    await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
+  }
+
   [Test]
   public async Task LocalInvokeTypedWithOptions_RuntimeReceptorWithAResult_AnswersAsync() {
     await using var provider = _buildProvider(new RecordingOutbox());

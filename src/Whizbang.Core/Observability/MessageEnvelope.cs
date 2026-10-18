@@ -218,6 +218,32 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   }
 
   /// <summary>
+  /// A view of an envelope built for an <see cref="object"/> payload, typed as the message's own type, for
+  /// code that looks the envelope up by the message's type (an event-store append inside a receptor). It
+  /// shares the hop and receptor-invocation lists, so a hop or record added through either is seen by both
+  /// (#1410 follow-up).
+  /// </summary>
+  internal static MessageEnvelope<TMessage> RetypedFrom(MessageEnvelope<object> source, TMessage payload) => new() {
+    Version = source.Version,
+    DispatchContext = source.DispatchContext,
+    MessageId = source.MessageId,
+    Payload = payload,
+    Hops = source.Hops,
+    ReceptorInvocations = source.GetOrCreateReceptorInvocations(),
+    SourceServiceId = source.SourceServiceId,
+    SourceCommitSequence = source.SourceCommitSequence,
+    CausedByServiceId = source.CausedByServiceId,
+    CausedByCommitSequence = source.CausedByCommitSequence,
+    LocalCommitSequence = source.LocalCommitSequence,
+    LocalStreamVersion = source.LocalStreamVersion,
+    Flags = source.Flags,
+    Target = source.Target,
+    StateOnly = source.StateOnly,
+    Priority = source.Priority,
+    PayloadLimitOverride = source.PayloadLimitOverride,
+  };
+
+  /// <summary>
   /// Adds a hop to the message's journey.
   /// Called automatically during message processing to track where the message has been.
   /// </summary>

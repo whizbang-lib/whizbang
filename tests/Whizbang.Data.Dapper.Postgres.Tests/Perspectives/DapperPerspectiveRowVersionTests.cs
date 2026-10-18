@@ -113,6 +113,32 @@ public class DapperPerspectiveRowVersionTests : PostgresTestBase {
       .Because("the runner's idempotency filter reads this in the same statement as the version");
   }
 
+  /// <summary>
+  /// The apply read returns the row's stored scope, so the runner can merge a model's Always fields into
+  /// it rather than replace it.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ReadForApply_ReturnsTheRowsStoredScopeAsync(CancellationToken cancellationToken) {
+    var store = _store();
+    var id = Guid.NewGuid();
+    var stored = new PerspectiveScope {
+      TenantId = "tenant-1",
+      UserId = "user-creator",
+      OrganizationId = "org-1",
+      AllowedPrincipals = ["group:owners"],
+    };
+    await store.UpsertAsync(id, _model("first"), stored, false, _metadata(7), cancellationToken);
+
+    var read = await store.ReadForApplyAsync(id, cancellationToken);
+
+    await Assert.That(read.Scope).IsNotNull();
+    await Assert.That(read.Scope!.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(read.Scope.UserId).IsEqualTo("user-creator");
+    await Assert.That(read.Scope.OrganizationId).IsEqualTo("org-1");
+    await Assert.That(read.Scope.AllowedPrincipals).IsEquivalentTo(["group:owners"]);
+  }
+
   /// <summary>A write on the version the apply read lands.</summary>
   [Test]
   [Timeout(120000)]

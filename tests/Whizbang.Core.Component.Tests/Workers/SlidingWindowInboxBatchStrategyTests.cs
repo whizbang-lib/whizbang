@@ -189,32 +189,29 @@ public class SlidingWindowInboxBatchStrategyTests {
     // Slice 23 invariant: each stream gets its own per-stream buffer + drain task.
     // Messages for stream A and stream B MUST NOT be mixed into one flush — that would
     // re-introduce the cross-batch ordering race the slice fixed.
+    // Flushed by size and by shutdown, never by time: windows that do not elapse, a size of two that
+    // flushes stream A's pair, and disposal that drains stream B's single message. A 30 ms window let
+    // a loaded run split stream A across two flushes.
     var captured = new System.Collections.Concurrent.ConcurrentBag<InboxMessage[]>();
     var streamA = _idProvider.NewGuid();
     var streamB = _idProvider.NewGuid();
-    var flushedCount = 0;
-    var done = new TaskCompletionSource();
 
-    await using var sut = new SlidingWindowInboxBatchStrategy(
+    var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
         captured.Add(msgs);
-        if (Interlocked.Increment(ref flushedCount) == 2) {
-          done.TrySetResult();
-        }
         return Task.CompletedTask;
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
-        MaxWait = TimeSpan.FromMilliseconds(300),
-        MaxSize = 100,
+        SlidingWindow = TimeSpan.FromHours(1),
+        MaxWait = TimeSpan.FromHours(1),
+        MaxSize = 2,
       });
 
     await sut.AppendAsync(_makeMessage(streamA));
     await sut.AppendAsync(_makeMessage(streamA));
     await sut.AppendAsync(_makeMessage(streamB));
-
-    await done.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.DisposeAsync();
 
     var batches = captured.ToArray();
     await Assert.That(batches.Length).IsEqualTo(2);
@@ -281,6 +278,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var captured = new List<InboxMessage[]>();
     var flushedSignal = new TaskCompletionSource();
 
+    // Flushed by size, not by time, so the two messages are one batch exactly when they share a buffer
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
         captured.Add(msgs);
@@ -289,15 +287,15 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
-        MaxWait = TimeSpan.FromMilliseconds(200),
-        MaxSize = 100,
+        SlidingWindow = TimeSpan.FromHours(1),
+        MaxWait = TimeSpan.FromHours(1),
+        MaxSize = 2,
       });
 
     await sut.AppendAsync(_makeMessage(streamId: null));
     await sut.AppendAsync(_makeMessage(streamId: null));
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(2);

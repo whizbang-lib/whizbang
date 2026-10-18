@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/whizbang-lib/whizbang/security/advisories/new
+    about: Privately, never in a public issue. See SECURITY.md for what happens next.
+  - name: Ask a question
+    url: https://github.com/whizbang-lib/whizbang/discussions/categories/q-a
+    about: How do I...? Usage questions are answered in Discussions, Q&A.
+  - name: Suggest a feature
+    url: https://github.com/whizbang-lib/whizbang/discussions/categories/ideas
+    about: Start new capabilities in Discussions, Ideas. An accepted idea becomes a feature issue.
+  - name: General discussion
+    url: https://github.com/whizbang-lib/whizbang/discussions/categories/general
+    about: Anything else about Whizbang.
