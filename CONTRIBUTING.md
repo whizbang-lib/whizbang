@@ -328,13 +328,19 @@ pull request, and every pull request is reviewed against the same standard.
 - the pull request closes an issue in this repository that was opened before it
   ([Open an issue first](#open-an-issue-first)).
 
-**Review checks** (reported, not required): the "Report · Review checks" job comments on each pull
-request with the findings a reviewer would otherwise type by hand, each on its file and line where it
-has one: a commit that is not signed off, no closing keyword (or one inside backticks), a target branch
-other than `develop`, an existing migration edited, en-GB spelling, em-dashes, real time in test code,
-and `Guid.NewGuid()` in library code. The PR quality gate comment lists uncovered new lines and branches
-and Sonar findings the same way. A line containing `review-checks:allow` is skipped, and
-`.github/review-checks-ignore.txt` lists paths the checks skip.
+**Review checks** (required): the **Gate · Review checks** job comments on each pull request with the
+findings a reviewer would otherwise type by hand, each on its file and line where it has one: a commit
+that is not signed off, no closing keyword (or one inside backticks), a target branch other than
+`develop`, an existing migration edited, en-GB spelling, em-dashes, real time in test code,
+`Guid.NewGuid()` in library code, and what the pull request's type requires (a fix's bug report and test,
+a feature's docs pull request, a changelog entry). The job fails while any finding is open, warnings
+included, so each one is fixed or explicitly allowed: a line containing `review-checks:allow` is skipped,
+and `.github/review-checks-ignore.txt` lists paths the checks skip. The PR quality gate comment lists
+uncovered new lines and branches and Sonar findings the same way, and its job fails on them too.
+
+Every run posts its own comment and keeps the earlier ones, minimized as outdated, so the pull request
+shows what was found on each commit and when it was fixed; the latest comment is the one the gate
+matches.
 
 Both comments carry the findings in a hidden block as well. A maintainer turns them into a draft review
 with their own `gh` login:
