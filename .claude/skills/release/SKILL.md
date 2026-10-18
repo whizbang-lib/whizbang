@@ -105,4 +105,8 @@ publishes with `.github/scripts/Publish-SignedCommit.ps1`, never `git push`: tho
 signed commits, and only a commit created through the API is signed (docs/RELEASING.md, "Which
 identity writes"). A new workflow step that pushes, opens a PR or tags mints the app token the same way the existing ones
 do (`actions/create-github-app-token`, only the permissions it needs) and gets a row in *Which identity
-writes*; a reusable workflow declares `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` as secrets.
+writes*. Its job declares `environment: release-app` (`release-cut` for cutting a release): the app's
+secrets are environment secrets, so a job without the environment reads nothing, and a caller never
+passes them to a reusable workflow, whose own job declares the environment (#1466,
+`.github/scripts/tests/ReleaseSecrets.Tests.ps1`). A cut now waits for a `build-admins` approval in
+Actions before it runs.

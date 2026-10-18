@@ -107,7 +107,12 @@ The following secrets must be configured in GitHub repository settings:
 
 - `SONAR_TOKEN` - SonarCloud authentication token
 - `CODECOV_TOKEN` - Codecov upload token
-- `NUGET_API_KEY` - NuGet.org API key for package publishing
+- `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY` - the release GitHub App, as **environment** secrets in
+  `release-app` and `release-cut` only, never repository or org secrets (docs/RELEASING.md, "Which
+  identity writes")
+
+NuGet publishing needs no API key secret: it uses NuGet trusted publishing (OIDC) from
+`nuget-push.yml` behind the `nuget-publish` environment.
 
 ## Service Status
 
