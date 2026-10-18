@@ -104,6 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (build diagnostics): four diagnostic IDs that meant two things each now mean one.** The
+  diagnostics without docs pages moved: `WHIZ071` "Polymorphic Base Type Discovered" is now `WHIZ072`,
+  `WHIZ400` "[InheritScope] on a non-perspective type" is now `WHIZ170`, `WHIZ401` "[InheritScope] with
+  all-None flags" is now `WHIZ171`, and `WHIZ811` "declared JSON converter never consulted" is now
+  `WHIZ812`. `WHIZ071`, `WHIZ400`, `WHIZ401` and `WHIZ811` keep their other meanings (missing Pgvector
+  package, the two multi-model `ILensQuery` checks, polymorphic property). **Upgrade:** a `#pragma` or
+  `.editorconfig` entry that suppressed one of the moved diagnostics names the new ID. A build guard now
+  fails when two diagnostics share an ID.
 - **Breaking (Dapper driver): the schema is initialized at host start, not inside `AddWhizbangPostgres`.**
   Registration no longer connects to the database. With `initializeSchema: true` the shared schema
   initializer (`WhizbangDatabaseInitializerService`, now in `Whizbang.Data.Postgres` and used by both
