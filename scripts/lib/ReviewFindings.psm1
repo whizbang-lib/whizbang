@@ -454,8 +454,10 @@ function Find-PullRequestTypeFindings {
   .SYNOPSIS
       What a pull request's type requires of it, from its Conventional Commit title.
   .DESCRIPTION
-      A fix closes an issue labeled bug and, when it changes the library, changes a test. A feature that
-      changes the library links its docs-site pull request. A library feat or fix adds a CHANGELOG.md entry.
+      A fix closes an issue labeled bug and, when it changes the library, changes a test. A library feat, fix
+      or perf has a docs-site pull request that is open or merged and links back to this one
+      (.github/scripts/Get-DocsPullRequests.ps1 finds it), unless a maintainer added docs:not-needed. A
+      library feat or fix adds a CHANGELOG.md entry.
       The title itself, and a breaking change's upgrade note, are the "Gate - Pull request type" check's
       (.github/scripts/Test-PullRequestType.ps1); a title that is not a Conventional Commit asks nothing here.
       Bots and the release pull request into main are exempt, as the gates exempt them.
@@ -466,12 +468,16 @@ function Find-PullRequestTypeFindings {
     [AllowEmptyString()][string]$Body = '',
     [AllowEmptyCollection()][string[]]$ChangedPaths = @(),
     [AllowEmptyCollection()][string[]]$ClosingIssueLabels = @(),
+    # The pull request's own labels (docs:not-needed).
+    [AllowEmptyCollection()][string[]]$Labels = @(),
+    # The docs-site pull requests found for this one: Number, State (OPEN, MERGED, CLOSED), ReferencesThis.
+    [AllowEmptyCollection()][object[]]$DocsPullRequests = @(),
     [Parameter(Mandatory)][string]$BaseRef,
     [Parameter(Mandatory)][string]$HeadRef,
     [switch]$AuthorIsBot
   )
   if ($AuthorIsBot -or ($BaseRef -eq 'main' -and $HeadRef -like 'release/*')) { return }
-  if ($Title -notmatch '^(?<type>feat|fix)(?:\([^)]*\))?!?: ') { return }
+  if ($Title -notmatch '^(?<type>feat|fix|perf)(?:\([^)]*\))?!?: ') { return }
   $type = $Matches['type']
   $library = @($ChangedPaths | Where-Object { $_ -like 'src/*' }).Count -gt 0
 
@@ -483,11 +489,20 @@ function Find-PullRequestTypeFindings {
     New-ReviewFinding -Id 'pr.fix-test' -Rule 'pr.fix-test' -Severity blocking `
       -Body 'A fix to the library adds or changes a test that fails without it (CONTRIBUTING.md, "Testing Standards"). This pull request changes no test.'
   }
-  if ($type -eq 'feat' -and $library -and $Body -notmatch 'whizbang-lib\.github\.io/pull/\d+') {
-    New-ReviewFinding -Id 'pr.feat-docs' -Rule 'pr.feat-docs' -Severity blocking `
-      -Body 'A library feature links its companion docs-site pull request (whizbang-lib/whizbang-lib.github.io) in the description, so the change and its documentation are reviewed together.'
+  if ($library -and $Labels -notcontains 'docs:not-needed') {
+    $live = @($DocsPullRequests | Where-Object { $_.State -in @('OPEN', 'MERGED') })
+    if ($live.Count -eq 0) {
+      New-ReviewFinding -Id 'pr.docs-link' -Rule 'pr.docs-link' -Severity blocking `
+        -Body ('A library change is documented in a docs-site pull request (whizbang-lib/whizbang-lib.github.io), so the change and its documentation are reviewed together. ' +
+          'Open it with "Docs for whizbang-lib/whizbang#<this pull request>" in its description: that one link is all it takes, GitHub shows it on this pull request and this check finds it. ' +
+          'Then comment /recheck here. If no documentation changes, a maintainer comments /docs-not-needed.')
+    } elseif (-not ($live | Where-Object { $_.ReferencesThis })) {
+      $numbers = ($live | ForEach-Object { "#$($_.Number)" }) -join ', '
+      New-ReviewFinding -Id 'pr.docs-backlink' -Rule 'pr.docs-backlink' -Severity blocking `
+        -Body "The docs-site pull request ($numbers) doesn't name this one. Add ""Docs for whizbang-lib/whizbang#<this pull request>"" to its description, then comment /recheck here."
+    }
   }
-  if ($library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
+  if ($type -ne 'perf' -and $library -and $ChangedPaths -notcontains 'CHANGELOG.md') {
     New-ReviewFinding -Id 'pr.changelog' -Rule 'pr.changelog' -Severity blocking `
       -Body 'A library feat or fix adds an entry under Unreleased in CHANGELOG.md, saying what changed for a consumer.'
   }

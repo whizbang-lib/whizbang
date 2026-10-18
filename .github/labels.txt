@@ -23,6 +23,7 @@ issue:awaiting-acceptance | fbca04 | Pull request: closes an issue not yet accep
 issue:none | d73a4a | Pull request: closes no issue
 # Gate overrides (maintainers only)
 linked-issue:late | c5def5 | Gate · Linked issue: the closed issue may be newer than the pull request
+docs:not-needed | c5def5 | Review checks: this library change needs no docs-site pull request
 # Automation
 dependencies | 0366d6 | Pull requests that update a dependency file
 automated | ededed | Opened by automation

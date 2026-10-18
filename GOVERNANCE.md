@@ -35,16 +35,24 @@ findings, CodeQL, and a Developer Certificate of Origin sign-off on every commit
 | **Release manager** | Cuts and ships releases by the documented flow ([docs/RELEASING.md](docs/RELEASING.md)); makes sure each stable release carries its signed provenance. | The maintainer |
 | **Security contact** | Receives private vulnerability reports, responds within 48 hours, coordinates the fix and the advisory, and credits the reporter unless they ask not to be named. | The maintainer |
 | **Code of Conduct enforcement** | Reviews reports, decides on action using the Covenant's enforcement guidelines, and keeps reporters' details private. | The maintainer |
+| **Build admin** | Owns the CI pipeline, the gates and the build inputs (`.github/CODEOWNERS`): a change to them merges only with a build admin's approval. Holds the Admin role. | [@philcarbone](https://github.com/philcarbone) |
+| **Committer** | A trusted contributor with write access: pushes branches here, reviews, and re-runs checks. Their pull requests implement accepted issues like anyone's. Earned through consistently excellent pull requests, design and architecture decisions, documentation and communication, on the way to maintainer. | [@kdeenanauth](https://github.com/kdeenanauth), [@bijancamp](https://github.com/bijancamp) |
 | **Contributor** | Anyone who opens an issue, takes part in a discussion or sends a pull request. Follows [CONTRIBUTING.md](CONTRIBUTING.md) and the Code of Conduct, and signs off every commit. | Anyone |
 
 A contributor who consistently does good work may be invited to take on part of the maintainer's
 responsibilities. Doing so means adding them to the table above in a pull request.
 
-On GitHub, the maintainers are the members of the organization's `maintainers` team, which holds the
-Maintain role on this repository. That role is what the automation reads: accepting an issue
-(`/accept`, or the `accepted` label) counts only from a maintainer, and a maintainer's own pull request
-needs an issue but not its acceptance ([How a change gets in](CONTRIBUTING.md#how-a-change-gets-in)).
-Adding or removing someone from the team is the whole change; nothing else needs to be kept in sync.
+On GitHub each role is an organization team, and the team grants a role on this repository:
+
+| Team | Repository role | What the automation lets it do |
+|---|---|---|
+| `build-admins` | Admin | Approve changes to the pipeline, gates and build inputs, which `.github/CODEOWNERS` assigns to it |
+| `maintainers` | Maintain | Accept or decline issues (`/accept`, `/decline`), allow a late issue or no docs (`/late-issue`, `/docs-not-needed`); their own pull requests need an issue but not its acceptance |
+| `committers` | Write | Re-run checks (`/recheck`); their pull requests are never auto-closed |
+
+The automation reads the role, so adding or removing someone from a team is the whole change; nothing
+else needs to be kept in sync. Pipeline files are protected from everyone but build admins, maintainers
+included: changing how the project is built and gated is a separate trust from changing what it does.
 
 ## Continuity
 

@@ -71,6 +71,12 @@ function Test-MaintainerRole {
   return $RoleName -in @('maintain', 'admin')
 }
 
+function Test-CommitterRole {
+  <# .SYNOPSIS Whether a repository role is a committer's or above: write, maintain or admin. #>
+  param([AllowEmptyString()][string]$RoleName = '')
+  return $RoleName -in @('write', 'maintain', 'admin')
+}
+
 function ConvertFrom-IssueNode {
   <#
   .SYNOPSIS
@@ -91,17 +97,18 @@ function ConvertFrom-IssueNode {
 function Set-PullRequestAuthority {
   <#
   .SYNOPSIS
-      Fills in whether the author is a maintainer and whether each issue's accepter was, asking IsMaintainer
-      once per login.
+      Fills in the author's repository role, whether the author is a maintainer, and whether each issue's
+      accepter was, asking RoleOf once per login ('' for no role).
   #>
-  param([Parameter(Mandatory)]$PullRequest, [Parameter(Mandatory)][scriptblock]$IsMaintainer)
+  param([Parameter(Mandatory)]$PullRequest, [Parameter(Mandatory)][scriptblock]$RoleOf)
   $known = @{}
-  $ask = { param([string]$Login) if (-not $known.ContainsKey($Login)) { $known[$Login] = [bool](& $IsMaintainer $Login) }; $known[$Login] }
-  $PullRequest.AuthorIsMaintainer = & $ask $PullRequest.Author
+  $ask = { param([string]$Login) if (-not $known.ContainsKey($Login)) { $known[$Login] = [string](& $RoleOf $Login) }; $known[$Login] }
+  $PullRequest.AuthorRole = & $ask $PullRequest.Author
+  $PullRequest.AuthorIsMaintainer = Test-MaintainerRole -RoleName $PullRequest.AuthorRole
   foreach ($issue in @($PullRequest.Issues)) {
     $issue.AcceptedByMaintainer = if (-not $issue.AcceptedBy) { $false }
       elseif ($issue.AcceptedBy -in $script:WorkflowBots) { $true }
-      else { & $ask $issue.AcceptedBy }
+      else { Test-MaintainerRole -RoleName (& $ask $issue.AcceptedBy) }
   }
 }
 
@@ -151,6 +158,7 @@ function ConvertFrom-PullRequestJson {
     Author      = [string]$pr.author.login
     AuthorIsBot = $pr.author.__typename -eq 'Bot'
     AuthorIsMaintainer = $false
+    AuthorRole  = ''
     CreatedAt   = [datetimeoffset]$pr.createdAt
     BaseRef     = [string]$pr.baseRefName
     HeadRef     = [string]$pr.headRefName
@@ -239,13 +247,18 @@ function Get-LinkedIssueVerdict {
   return [pscustomobject]@{ Pass = $true; Exempt = $false; Reason = "closes $numbers$detail"; Problems = @() }
 }
 
-function Test-MaintainerAccess {
-  <# .SYNOPSIS Whether a user has the maintain or admin role on the repository; false for anyone else. #>
+function Get-RepositoryRole {
+  <#
+  .SYNOPSIS
+      A user's role on the repository (read, triage, write, maintain, admin), or '' for someone who is not
+      a collaborator. Team membership grants the role: committers write, maintainers maintain,
+      build-admins admin (GOVERNANCE.md).
+  #>
   param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][string]$Login)
-  # A user who is not a collaborator reads as 404: not a maintainer.
+  # A user who is not a collaborator reads as 404.
   $role = gh api "repos/$Repository/collaborators/$Login/permission" --jq '.role_name' 2>$null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  return Test-MaintainerRole -RoleName (($role -join '').Trim())
+  if ($LASTEXITCODE -ne 0) { return '' }
+  return ($role -join '').Trim()
 }
 
 function Read-LinkedPullRequest {
@@ -277,7 +290,7 @@ function Read-LinkedPullRequest {
     ConvertFrom-IssueNode -Node $issue
   }
   $pr.Issues = @(Resolve-ClosingIssues -PullRequest $pr -Body $pr.Body -LookupIssue $lookup)
-  Set-PullRequestAuthority -PullRequest $pr -IsMaintainer { param([string]$Login) Test-MaintainerAccess -Repository $Repository -Login $Login }
+  Set-PullRequestAuthority -PullRequest $pr -RoleOf { param([string]$Login) Get-RepositoryRole -Repository $Repository -Login $Login }
   return $pr
 }
 

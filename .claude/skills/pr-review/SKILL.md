@@ -71,8 +71,10 @@ description gives a reason the maintainer has accepted.
    `ai-docs/aot-requirements.md`.
 2. **The docs repository is updated.** Any new or changed public API, option, diagnostic, behavior a
    consumer can observe, or operational procedure has a companion pull request on the docs site
-   (`whizbang-lib.github.io`, targeting `develop`), linked from this one. "The page should say X" in a
-   description is a finding, not a substitute. Owner: `ai-docs/documentation-maintenance.md`.
+   (`whizbang-lib.github.io`, targeting `develop`) that names this one ("Docs for whizbang-lib/whizbang#N";
+   the review checks find it from that one link, rule `pr.docs-link`). The checks prove the docs pull
+   request exists; the review reads it. "The page should say X" in a description is a finding, not a
+   substitute. Only a maintainer's `/docs-not-needed` waives it. Owner: `ai-docs/documentation-maintenance.md`.
 3. **100% of new lines and 100% of new branches are covered,** and the whole-library hand-written branch
    gate stays at 100%. Every outcome of every new decision is taken by a test, not just every line.
    An exclusion is member-level, rare, and justified in place. Owner: `ai-docs/coverage-exclusions.md`.

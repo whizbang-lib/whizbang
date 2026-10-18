@@ -1174,12 +1174,15 @@ jobs:
           CLOSING=$(jq 'length' <<< "$CLOSING_JSON")
           TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
           LABELS=$(jq -r '[.[].labels[]] | unique | join(",")' <<< "$CLOSING_JSON")
+          PR_LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | join(",")')
+          # The docs-site pull requests that document this one: found from the one link either side makes
+          DOCS_JSON=$(pwsh -NoProfile -File .github/scripts/Get-DocsPullRequests.ps1 -Repository "${{ github.repository }}" -PullRequest "$PR")
           BOT=()
           if [ "$AUTHOR_TYPE" = "Bot" ]; then BOT=(-AuthorIsBot); fi
           pwsh -NoProfile -File .github/scripts/Get-ReviewChecks.ps1 -Base "$BASE_SHA" -Head "$HEAD_SHA" \
             -BaseRef "$BASE_REF" -HeadRef "$HEAD_REF" -PullRequest "$PR" -BodyFile "$RUNNER_TEMP/pr-body.md" \
             -ClosingIssueCount "$CLOSING" -RunUrl "$RUN_URL" -OutFile "$RUNNER_TEMP/review-checks.md" \
-            -Title "$TITLE" -ClosingIssueLabels "$LABELS" "${BOT[@]}"
+            -Title "$TITLE" -ClosingIssueLabels "$LABELS" -Labels "$PR_LABELS" -DocsPullRequestsJson "$DOCS_JSON" "${BOT[@]}"
       # A fork's token cannot comment; the findings are then in this job's log only.
       - name: Post the review-checks comment
         continue-on-error: true

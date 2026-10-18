@@ -7,7 +7,9 @@ name: PR intake
 #     explains the process once to an outside contributor whose issue is not accepted;
 #   - when an issue's accepted label changes, refreshes the pull requests that close it and re-runs their
 #     failed CI jobs, so the gate sees the acceptance;
-#   - applies /accept and /decline <reason> from a maintainer (the maintain or admin role) on an issue;
+#   - applies /accept and /decline <reason> from a maintainer (the maintain or admin role) on an issue, and
+#     on a pull request /late-issue and /docs-not-needed from a maintainer, /recheck from its author or a
+#     committer (write or above), re-running its failed CI jobs;
 #   - daily, closes outside pull requests still without an accepted issue 14 days after opening.
 #
 # pull_request_target runs with the base branch's code and a token that can label a fork's pull request.
@@ -77,10 +79,12 @@ jobs:
         run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Issue -Number "$ISSUE"
 
   command:
-    name: Apply /accept or /decline
+    name: Apply an intake command
     if: >-
-      github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/accept') || startsWith(github.event.comment.body, '/decline'))
+      github.event_name == 'issue_comment' &&
+      (startsWith(github.event.comment.body, '/accept') || startsWith(github.event.comment.body, '/decline') ||
+       startsWith(github.event.comment.body, '/late-issue') || startsWith(github.event.comment.body, '/docs-not-needed') ||
+       startsWith(github.event.comment.body, '/recheck'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -94,14 +98,18 @@ jobs:
         with:
           sparse-checkout: .github
           persist-credentials: false
-      - name: Apply the command (maintainers only; the script checks the role)
+      - name: Apply the command (the script checks who may give it)
         env:
+          IS_PR: ${{ github.event.issue.pull_request && 'true' || 'false' }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
           COMMENT: ${{ github.event.comment.id }}
           ACTOR: ${{ github.event.comment.user.login }}
-        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Command -Number "$ISSUE" -CommentId "$COMMENT" -Actor "$ACTOR"
+        run: |
+          PR_SWITCH=()
+          if [ "$IS_PR" = "true" ]; then PR_SWITCH=(-IsPullRequest); fi
+          pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Command -Number "$ISSUE" -CommentId "$COMMENT" -Actor "$ACTOR" "${PR_SWITCH[@]}"
 
   sweep:
     name: Close pull requests without an accepted issue

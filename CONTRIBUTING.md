@@ -27,10 +27,35 @@ flowchart LR
 3. **Open the pull request** with `Fixes #N` in the description, as plain text. Its title is a Conventional
    Commit, every commit is signed off, and it meets the [requirements](#pull-request-requirements).
 
+4. **Document it.** A library `feat`, `fix` or `perf` has a pull request on the
+   [docs site](https://github.com/whizbang-lib/whizbang-lib.github.io); see
+   [Docs for a library change](#docs-for-a-library-change).
+
 The required **Gate · Linked issue** check enforces step 2. A pull request without an accepted issue is
 labeled `issue:none` or `issue:awaiting-acceptance`, gets one comment explaining this, and is closed
 after 14 days if the issue is still not accepted; reopen it once it is. Maintainers' own pull requests
 need the issue but not the acceptance.
+
+### Docs for a library change
+
+Code and docs live in two repositories, so a change and its documentation are two pull requests, and one
+link joins them. Open the code pull request first, then the docs pull request with
+`Docs for whizbang-lib/whizbang#N` in its description (N is the code pull request). GitHub shows that
+link on the code pull request's timeline, and the review checks find it there, so the code pull request
+needs no edit. Comment `/recheck` on the code pull request after opening the docs one. The docs pull
+request is open or merged; one closed without merging does not count.
+
+### Commands
+
+Comment these as the first line of a comment:
+
+| Command | Where | Who | What it does |
+|---|---|---|---|
+| `/accept` | issue | maintainer | Labels it `accepted` (removing `needs-triage`) and re-checks the pull requests that close it |
+| `/decline <reason>` | issue | maintainer | Labels it `wontfix` and closes it as not planned, with the reason |
+| `/late-issue` | pull request | maintainer | Labels it `linked-issue:late`: its issue may be newer than it |
+| `/docs-not-needed` | pull request | maintainer | Labels it `docs:not-needed`: the library change needs no docs pull request |
+| `/recheck` | pull request | its author or a committer | Re-runs its failed checks, after opening the docs pull request or editing the description |
 
 ## Table of Contents
 
@@ -114,9 +139,9 @@ the pull request must contain:
 
 | Type | Must contain | Checked by |
 |---|---|---|
-| any | A closing keyword for an issue opened first | Gate · Linked issue |
+| any | A closing keyword for an accepted issue opened first | Gate · Linked issue |
 | `fix` | It closes an issue labeled `bug`, and a library fix adds or changes a test that fails without it | Review checks |
-| `feat` | A library feature links its docs-site pull request | Review checks |
+| `feat`, `fix`, `perf` in the library | A docs-site pull request, open or merged, that names this one ([Docs](#docs-for-a-library-change)), unless a maintainer comments `/docs-not-needed` | Review checks |
 | `feat`, `fix` in the library | A `CHANGELOG.md` entry under Unreleased | Review checks |
 | `!` (breaking) | A `CHANGELOG.md` entry with an **Upgrade:** note | Gate · Pull request type |
 

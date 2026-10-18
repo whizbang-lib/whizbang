@@ -17,14 +17,19 @@
                    not accepted, giving the date it will be closed; collapse it once the issue is accepted.
       Issue        an issue's accepted label changed: refresh every open pull request that closes it, and
                    re-run the failed jobs of its CI run so the gate sees the acceptance.
-      Command      a comment on an issue starting /accept or /decline <reason>, from a maintainer (the
-                   maintain or admin role): accept it (removing needs-triage), or decline it (wontfix,
-                   closed as not planned, with the reason). Anyone else is told only maintainers can.
+      Command      a comment whose first line is a command. On an issue, from a maintainer (the maintain or
+                   admin role): /accept (adds accepted, removes needs-triage) or /decline <reason> (wontfix,
+                   closed as not planned, with the reason). On a pull request: /late-issue and
+                   /docs-not-needed from a maintainer add linked-issue:late or docs:not-needed; /recheck
+                   from the author or a committer (write or above) re-runs the failed CI jobs. Each
+                   re-checks the pull request, since a label the workflow's token adds starts no
+                   workflow. Anyone else is told who can.
       Sweep        close each outside pull request still without an accepted issue Days after it was
                    opened, with a comment explaining the process again.
 
     The gate stays the authority; the labels describe the linked issue so a maintainer can filter. A
-    maintainer's own pull request is never explained to or closed.
+    committer's (write or above) pull request is never explained to or closed; it still needs an
+    accepted issue unless its author is a maintainer.
 
 .PARAMETER Repository
     owner/name.
@@ -51,6 +56,7 @@ param(
   [int]$Number = 0,
   [long]$CommentId = 0,
   [string]$Actor = '',
+  [switch]$IsPullRequest,
   [int]$Days = 14
 )
 
@@ -68,6 +74,14 @@ $script:IntakeLabels = [ordered]@{
 $script:IntakeMarker = '<!-- pr-intake -->'
 $script:ClosedMarker = '<!-- pr-intake-closed -->'
 $script:IntakeDays = $Days
+# Commands, where they apply, and who may give them.
+$script:Commands = @{
+  'accept'          = @{ OnPullRequest = $false; Who = 'maintainer' }
+  'decline'         = @{ OnPullRequest = $false; Who = 'maintainer' }
+  'late-issue'      = @{ OnPullRequest = $true; Who = 'maintainer'; Label = 'linked-issue:late' }
+  'docs-not-needed' = @{ OnPullRequest = $true; Who = 'maintainer'; Label = 'docs:not-needed' }
+  'recheck'         = @{ OnPullRequest = $true; Who = 'author or committer' }
+}
 
 function Get-IntakeLabelChange {
   <# .SYNOPSIS The intake labels to add and remove so the pull request carries exactly the one for State. #>
@@ -80,10 +94,10 @@ function Get-IntakeLabelChange {
 }
 
 function ConvertFrom-IntakeCommand {
-  <# .SYNOPSIS The /accept or /decline command on a comment's first line, or nothing. #>
+  <# .SYNOPSIS The intake command on a comment's first line, with any reason after it, or nothing. #>
   param([AllowEmptyString()][string]$Body = '')
   $first = (($Body -split "`n", 2)[0]).Trim()
-  if ($first -match '^/(?<cmd>accept|decline)(?:\s+(?<reason>.*))?$') {
+  if ($first -match '^/(?<cmd>accept|decline|late-issue|docs-not-needed|recheck)(?:\s+(?<reason>.*))?$') {
     return [pscustomobject]@{ Command = $Matches['cmd'].ToLowerInvariant(); Reason = [string]$Matches['reason'] }
   }
 }
@@ -127,7 +141,7 @@ function Select-StalePullRequest {
   <# .SYNOPSIS The outside pull requests still without an accepted issue Days after they were opened. #>
   param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PullRequests, [Parameter(Mandatory)][datetimeoffset]$Now, [Parameter(Mandatory)][int]$Days)
   $PullRequests | Where-Object {
-    $_.State -in @('none', 'awaiting-acceptance') -and -not $_.AuthorIsMaintainer -and ($Now - $_.CreatedAt).TotalDays -ge $Days
+    $_.State -in @('none', 'awaiting-acceptance') -and -not (Test-CommitterRole -RoleName ([string]$_.AuthorRole)) -and ($Now - $_.CreatedAt).TotalDays -ge $Days
   } | ForEach-Object { $_.Number }
 }
 
@@ -174,7 +188,7 @@ function Invoke-IntakeSync {
   }
 
   $existing = @(Get-IntakeComments -Repository $Repository -Number $Number)
-  if ($state -in @('none', 'awaiting-acceptance') -and -not $pr.AuthorIsMaintainer -and $existing.Count -eq 0) {
+  if ($state -in @('none', 'awaiting-acceptance') -and -not (Test-CommitterRole -RoleName ([string]$pr.AuthorRole)) -and $existing.Count -eq 0) {
     $closeOn = $pr.CreatedAt.AddDays($script:IntakeDays).ToString('yyyy-MM-dd')
     $body = Format-IntakeComment -State $state -IssueNumbers @($pr.Issues | ForEach-Object { $_.Number }) -CloseOn $closeOn
     [void](Invoke-Gh -Arguments @('pr', 'comment', "$Number", '-R', $Repository, '--body', $body))
@@ -188,45 +202,75 @@ function Invoke-IntakeSync {
   Write-Host "Pull request #${Number}: $state."
 }
 
-function Update-PullRequestsClosing {
-  <# .SYNOPSIS Refreshes every open pull request that closes the issue, re-running its failed CI jobs. #>
-  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Issue)
-  $owner, $name = $Repository -split '/', 2
-  $query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){' +
-    'closedByPullRequestsReferences(first:20,includeClosedPrs:false){nodes{number headRefOid}}}}}'
-  $json = (Invoke-Gh -Arguments @('api', 'graphql', '-f', "query=$query", '-f', "owner=$owner", '-f', "name=$name", '-F', "number=$Issue")) -join "`n"
-  foreach ($pr in ($json | ConvertFrom-Json).data.repository.issue.closedByPullRequestsReferences.nodes) {
-    Invoke-IntakeSync -Repository $Repository -Number ([int]$pr.number)
-    $runs = (Invoke-Gh -Arguments @('run', 'list', '-R', $Repository, '--workflow', 'ci.yml', '--commit', [string]$pr.headRefOid,
-        '--json', 'databaseId,conclusion,event,createdAt')) -join "`n" | ConvertFrom-Json
-    $failed = Select-FailedCiRun -Runs @($runs)
-    if ($failed) {
-      [void](Invoke-Gh -Arguments @('run', 'rerun', "$failed", '--failed', '-R', $Repository))
-      Write-Host "Re-ran the failed jobs of CI run $failed for pull request #$($pr.number)."
-    }
+function Update-PullRequest {
+  <# .SYNOPSIS Re-syncs one pull request's intake state and re-runs its failed CI jobs, so the gates re-read it. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number)
+  Invoke-IntakeSync -Repository $Repository -Number $Number
+  $head = ((Invoke-Gh -Arguments @('pr', 'view', "$Number", '-R', $Repository, '--json', 'headRefOid', '--jq', '.headRefOid')) -join '').Trim()
+  $runs = (Invoke-Gh -Arguments @('run', 'list', '-R', $Repository, '--workflow', 'ci.yml', '--commit', $head,
+      '--json', 'databaseId,conclusion,event,createdAt')) -join "`n" | ConvertFrom-Json
+  $failed = Select-FailedCiRun -Runs @($runs)
+  if ($failed) {
+    [void](Invoke-Gh -Arguments @('run', 'rerun', "$failed", '--failed', '-R', $Repository))
+    Write-Host "Re-ran the failed jobs of CI run $failed for pull request #$Number."
   }
 }
 
+function Update-PullRequestsClosing {
+  <# .SYNOPSIS Refreshes every open pull request that closes the issue. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Issue)
+  $owner, $name = $Repository -split '/', 2
+  $query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){' +
+    'closedByPullRequestsReferences(first:20,includeClosedPrs:false){nodes{number}}}}}'
+  $json = (Invoke-Gh -Arguments @('api', 'graphql', '-f', "query=$query", '-f', "owner=$owner", '-f', "name=$name", '-F', "number=$Issue")) -join "`n"
+  foreach ($pr in ($json | ConvertFrom-Json).data.repository.issue.closedByPullRequestsReferences.nodes) {
+    Update-PullRequest -Repository $Repository -Number ([int]$pr.number)
+  }
+}
+
+function Get-PullRequestAuthor {
+  <# .SYNOPSIS The login that opened the pull request. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number)
+  ((Invoke-Gh -Arguments @('pr', 'view', "$Number", '-R', $Repository, '--json', 'author', '--jq', '.author.login')) -join '').Trim()
+}
+
 function Invoke-IntakeCommand {
-  <# .SYNOPSIS Applies /accept or /decline from a maintainer to an issue. #>
+  <# .SYNOPSIS Applies an intake command on an issue or a pull request, from someone allowed to give it. #>
   param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Issue, [AllowEmptyString()][string]$Body = '',
-    [Parameter(Mandatory)][string]$Actor, [long]$CommentId = 0)
+    [Parameter(Mandatory)][string]$Actor, [long]$CommentId = 0, [switch]$IsPullRequest)
   $command = ConvertFrom-IntakeCommand -Body $Body
   if (-not $command) { return }
-  if (-not (Test-MaintainerAccess -Repository $Repository -Login $Actor)) {
-    $text = "Only a maintainer can /$($command.Command) an issue. A maintainer will review it here; thanks for your patience."
-    [void](Invoke-Gh -Arguments @('issue', 'comment', "$Issue", '-R', $Repository, '--body', $text))
+  $rule = $script:Commands[$command.Command]
+  # An issue command on a pull request, or the other way round, is not a command here.
+  if ($rule.OnPullRequest -ne [bool]$IsPullRequest) { return }
+  $kind = if ($IsPullRequest) { 'pr' } else { 'issue' }
+
+  $role = Get-RepositoryRole -Repository $Repository -Login $Actor
+  $allowed = if ($rule.Who -eq 'maintainer') { Test-MaintainerRole -RoleName $role }
+    else { (Test-CommitterRole -RoleName $role) -or $Actor -eq (Get-PullRequestAuthor -Repository $Repository -Number $Issue) }
+  if (-not $allowed) {
+    $text = "Only a $($rule.Who) can use /$($command.Command) here. A maintainer will take a look; thanks for your patience."
+    [void](Invoke-Gh -Arguments @($kind, 'comment', "$Issue", '-R', $Repository, '--body', $text))
     return
   }
-  if ($command.Command -eq 'accept') {
-    [void](Invoke-Gh -Arguments @('issue', 'edit', "$Issue", '-R', $Repository, '--add-label', 'accepted', '--remove-label', 'needs-triage'))
-    # A label the workflow's own token adds starts no other workflow, so the pull requests are refreshed here.
-    Update-PullRequestsClosing -Repository $Repository -Issue $Issue
-  } else {
-    [void](Invoke-Gh -Arguments @('issue', 'edit', "$Issue", '-R', $Repository, '--add-label', 'wontfix', '--remove-label', 'needs-triage', '--remove-label', 'accepted'))
-    $why = if ($command.Reason) { " $($command.Reason)" } else { '' }
-    $text = "Declined by a maintainer.$why Thanks for raising it; this issue is closed as not planned."
-    [void](Invoke-Gh -Arguments @('issue', 'close', "$Issue", '-R', $Repository, '--reason', 'not planned', '--comment', $text))
+
+  switch ($command.Command) {
+    'accept' {
+      [void](Invoke-Gh -Arguments @('issue', 'edit', "$Issue", '-R', $Repository, '--add-label', 'accepted', '--remove-label', 'needs-triage'))
+      # A label the workflow's own token adds starts no other workflow, so the pull requests are refreshed here.
+      Update-PullRequestsClosing -Repository $Repository -Issue $Issue
+    }
+    'decline' {
+      [void](Invoke-Gh -Arguments @('issue', 'edit', "$Issue", '-R', $Repository, '--add-label', 'wontfix', '--remove-label', 'needs-triage', '--remove-label', 'accepted'))
+      $why = if ($command.Reason) { " $($command.Reason)" } else { '' }
+      $text = "Declined by a maintainer.$why Thanks for raising it; this issue is closed as not planned."
+      [void](Invoke-Gh -Arguments @('issue', 'close', "$Issue", '-R', $Repository, '--reason', 'not planned', '--comment', $text))
+    }
+    'recheck' { Update-PullRequest -Repository $Repository -Number $Issue }
+    default {
+      [void](Invoke-Gh -Arguments @('pr', 'edit', "$Issue", '-R', $Repository, '--add-label', $rule.Label))
+      Update-PullRequest -Repository $Repository -Number $Issue
+    }
   }
   if ($CommentId -gt 0) {
     [void](Invoke-Gh -Arguments @('api', '-X', 'POST', "repos/$Repository/issues/comments/$CommentId/reactions", '-f', 'content=+1'))
@@ -240,7 +284,7 @@ function Invoke-IntakeSweep {
   $candidates = @($open | Where-Object { @($_.labels.name) -contains 'issue:none' -or @($_.labels.name) -contains 'issue:awaiting-acceptance' })
   $read = foreach ($c in $candidates) {
     $pr = Read-LinkedPullRequest -Repository $Repository -Number ([int]$c.number)
-    if ($pr) { [pscustomobject]@{ Number = $pr.Number; CreatedAt = $pr.CreatedAt; State = (Get-IssueIntakeState -PullRequest $pr); AuthorIsMaintainer = $pr.AuthorIsMaintainer } }
+    if ($pr) { [pscustomobject]@{ Number = $pr.Number; CreatedAt = $pr.CreatedAt; State = (Get-IssueIntakeState -PullRequest $pr); AuthorRole = $pr.AuthorRole } }
   }
   foreach ($n in Select-StalePullRequest -PullRequests @($read) -Now ([datetimeoffset]::UtcNow) -Days $Days) {
     [void](Invoke-Gh -Arguments @('pr', 'close', "$n", '-R', $Repository, '--comment', (Format-IntakeCloseComment -Days $Days)))
@@ -256,7 +300,7 @@ switch ($Mode) {
   'Issue' { Update-PullRequestsClosing -Repository $Repository -Issue $Number }
   'Command' {
     $body = (Invoke-Gh -Arguments @('api', "repos/$Repository/issues/comments/$CommentId", '--jq', '.body')) -join "`n"
-    Invoke-IntakeCommand -Repository $Repository -Issue $Number -Body $body -Actor $Actor -CommentId $CommentId
+    Invoke-IntakeCommand -Repository $Repository -Issue $Number -Body $body -Actor $Actor -CommentId $CommentId -IsPullRequest:$IsPullRequest
   }
   'Sweep' { Invoke-IntakeSweep -Repository $Repository -Days $Days }
 }
