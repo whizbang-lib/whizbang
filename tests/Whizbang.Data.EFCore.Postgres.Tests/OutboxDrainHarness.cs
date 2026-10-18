@@ -56,10 +56,31 @@ internal static class OutboxDrainHarness {
   }
 
   /// <summary>
+  /// The scheduled time arrives: the row becomes due on the database's clock, which is the clock the
+  /// drain query compares against. Stands in for waiting until then.
+  /// </summary>
+  public static async Task MakeDueAsync(string connectionString, Guid messageId) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync();
+    await using var due = connection.CreateCommand();
+    due.CommandText = "UPDATE wh_outbox SET scheduled_for = NOW() - INTERVAL '1 second' WHERE message_id = @msg";
+    due.Parameters.AddWithValue("msg", messageId);
+    await due.ExecuteNonQueryAsync();
+  }
+
+  /// <summary>
   /// Drains the leased row's stream with the real worker and waits for the row's completion: its inline
   /// PreOutbox stage has run and it was published. Returns the ids the fake transport published.
   /// </summary>
   public static async Task<IReadOnlyCollection<Guid>> DrainAsync(
+      IServiceProvider serviceProvider, JsonSerializerOptions jsonOptions, bool bulkPublish, Guid messageId, Guid streamId) =>
+    [.. (await DrainAndCaptureAsync(serviceProvider, jsonOptions, bulkPublish, messageId, streamId)).Select(work => work.MessageId)];
+
+  /// <summary>
+  /// As <see cref="DrainAsync"/>, returning what the fake transport was handed to publish: the wire
+  /// envelope the drain worker built, which is what a receiving service's inbox gets.
+  /// </summary>
+  public static async Task<IReadOnlyList<OutboxWork>> DrainAndCaptureAsync(
       IServiceProvider serviceProvider, JsonSerializerOptions jsonOptions, bool bulkPublish, Guid messageId, Guid streamId) {
     var drainChannel = new FakeOutboxDrainChannel();
     var completion = new SignalingCompletionChannel();
@@ -95,7 +116,7 @@ internal static class OutboxDrainHarness {
       await completion.WaitForAsync(messageId).WaitAsync(SignalTimeout);
       await Assert.That(failure.All).IsEmpty()
         .Because("the row must reach its stages; a failure here (a missing security context, say) means nothing was tested");
-      return [.. publish.PublishedIds];
+      return [.. publish.Published];
     } finally {
       await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
@@ -134,7 +155,7 @@ internal static class OutboxDrainHarness {
   }
 
   private sealed class SucceedingPublishStrategy(bool supportsBulkPublish) : IMessagePublishStrategy {
-    public ConcurrentBag<Guid> PublishedIds { get; } = [];
+    public ConcurrentQueue<OutboxWork> Published { get; } = new();
     public bool SupportsBulkPublish => supportsBulkPublish;
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
 
@@ -145,7 +166,7 @@ internal static class OutboxDrainHarness {
       Task.FromResult<IReadOnlyList<MessagePublishResult>>([.. workItems.Select(_succeed)]);
 
     private MessagePublishResult _succeed(OutboxWork work) {
-      PublishedIds.Add(work.MessageId);
+      Published.Enqueue(work);
       return new MessagePublishResult {
         MessageId = work.MessageId,
         Success = true,

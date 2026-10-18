@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 // Types for DispatchExecutionIntegrationTests (#1410 follow-up). Commands in the Owned namespace belong
 // to the service; everything in Upstream belongs to another. The source generator discovers every
@@ -17,6 +18,25 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution {
     public static void Record(string receptor, Guid id) => _counts.AddOrUpdate((receptor, id), 1, static (_, n) => n + 1);
 
     public static int Count(string receptor, Guid id) => _counts.TryGetValue((receptor, id), out var n) ? n : 0;
+  }
+
+  /// <summary>
+  /// Runs per (service, message id) for the round-trip receptors, with a signal per pair, so a test can
+  /// tell the sender's run from a receiver's and wait for the one it expects.
+  /// </summary>
+  public static class RoundTripProbe {
+    private static readonly ConcurrentDictionary<(string Service, Guid Id), int> _counts = new();
+    private static readonly ConcurrentDictionary<(string Service, Guid Id), TaskCompletionSource> _ran = new();
+
+    public static void Record(string service, Guid id) {
+      _counts.AddOrUpdate((service, id), 1, static (_, n) => n + 1);
+      Ran(service, id).TrySetResult();
+    }
+
+    public static int Count(string service, Guid id) => _counts.TryGetValue((service, id), out var n) ? n : 0;
+
+    public static TaskCompletionSource Ran(string service, Guid id) =>
+      _ran.GetOrAdd((service, id), static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
   }
 
   /// <summary>A message the runtime-registered counting handler can key by id.</summary>
@@ -47,6 +67,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned {
 
   public sealed record DxOwnedUnhandledCommand(Guid Id) : ICommand;
 
+  /// <summary>An event the sender owns and handles, delivered back to itself or on to another service.</summary>
+  public sealed record DxRoundTripEvent([property: StreamId] Guid Id) : IEvent;
+
+  public sealed class DxRoundTripEventReceptor(IServiceInstanceProvider instance) : IReceptor<DxRoundTripEvent> {
+    public ValueTask HandleAsync(DxRoundTripEvent message, CancellationToken cancellationToken = default) {
+      RoundTripProbe.Record(instance.ServiceName, message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   /// <summary>
   /// Handled only by receptors the test registers at runtime, so it can count the PreOutbox stage. In the
   /// owned namespace: with owned domains configured, PreOutbox runs for the service's own events only.
@@ -56,6 +86,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned {
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Upstream {
   public sealed record DxUnownedCommand(Guid Id) : ICommand;
+
+  /// <summary>A command another service owns that the sender also handles, delivered back or on.</summary>
+  public sealed record DxRoundTripCommand(Guid Id) : ICommand;
+
+  public sealed class DxRoundTripCommandReceptor(IServiceInstanceProvider instance) : IReceptor<DxRoundTripCommand> {
+    public ValueTask HandleAsync(DxRoundTripCommand message, CancellationToken cancellationToken = default) {
+      RoundTripProbe.Record(instance.ServiceName, message.Id);
+      return ValueTask.CompletedTask;
+    }
+  }
 
   public sealed class DxUnownedCommandReceptor : IReceptor<DxUnownedCommand> {
     public ValueTask HandleAsync(DxUnownedCommand message, CancellationToken cancellationToken = default) {
