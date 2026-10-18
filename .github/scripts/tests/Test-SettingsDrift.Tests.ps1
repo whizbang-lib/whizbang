@@ -56,9 +56,11 @@ Describe 'Get-SecuritySettings' {
   It 'reads no selected-actions list when the setting is not selected' {
     $Api['repos/o/r/actions/permissions'] = ConvertTo-Live '{"enabled":true,"allowed_actions":"all","sha_pinning_required":true}'
     try {
+      $script:paths = [System.Collections.Generic.List[string]]::new()
+      Mock Invoke-GhJson { $script:paths.Add($Path); $Api[$Path] }
       $s2 = Get-SecuritySettings -Repository 'o/r'
       $s2.actions.selected | Should -BeNullOrEmpty
-      Should -Invoke Invoke-GhJson -Times 0 -ParameterFilter { $Path -like '*selected-actions' } -Scope It
+      @($paths | Where-Object { $_ -like '*selected-actions' }) | Should -BeNullOrEmpty
     } finally {
       $Api['repos/o/r/actions/permissions'] = ConvertTo-Live '{"enabled":true,"allowed_actions":"selected","sha_pinning_required":true,"selected_actions_url":"u"}'
     }

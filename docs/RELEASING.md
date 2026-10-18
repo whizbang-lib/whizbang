@@ -339,6 +339,19 @@ API with no author or committer, which GitHub signs as the app, checks each tree
 built, then creates or moves the branch. The docs-site branches are squash-merged, so only GitHub's
 signed squash commit lands and they keep `git push`.
 
+**One job only reads with the app.** The weekly settings drift check (`settings-drift.yml`, #1468)
+mints a token with read-only permissions (administration, environments, members and organization
+administration), because `GITHUB_TOKEN` cannot read rulesets' bypass actors, the Actions settings, the
+teams or the organization's settings. It compares them with `.github/settings-baseline.json` and opens
+or updates one issue labeled `security` (with `GITHUB_TOKEN`) for each run that finds a difference. The
+app holds those four read permissions for this job alone; the release jobs never request them. After
+changing a setting on purpose, refresh the baseline in a pull request:
+`pwsh .github/scripts/Test-SettingsDrift.ps1 -Mode Capture -Repository whizbang-lib/whizbang -OutFile .github/settings-baseline.json`.
+
+**Only allowed actions run** (#1467): GitHub's own, verified Marketplace creators and the patterns in
+`.github/allowed-actions.txt`, all pinned to a full commit SHA. A new action goes into that file and the
+repository's Actions setting together; the drift check reports the setting if the two disagree.
+
 A PR or push made with `GITHUB_TOKEN` starts no workflow, which is why these are not `GITHUB_TOKEN`.
 The tag is because the tag ruleset lets only the app create a `v*` tag, and GitHub Actions cannot be
 a ruleset bypass actor. GitHub releases and everything else stay on `GITHUB_TOKEN`.

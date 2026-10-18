@@ -54,6 +54,13 @@ The automation reads the role, so adding or removing someone from a team is the 
 else needs to be kept in sync. Pipeline files are protected from everyone but build admins, maintainers
 included: changing how the project is built and gated is a separate trust from changing what it does.
 
+The settings that enforce all this (the rulesets, the Actions settings, the environments, who has which
+role, and the organization's two-factor and repository-creation settings) are recorded in
+`.github/settings-baseline.json`. A weekly check (`settings-drift.yml`) compares the live settings with
+it and opens an issue labeled `security` for any difference, so a setting loosened by mistake, or by a
+compromised admin account, is reported rather than unnoticed. Changing a setting on purpose means
+updating the baseline in a pull request, which a build admin approves.
+
 ## Continuity
 
 The project must be able to keep going, and to accept changes and publish releases within a week, if

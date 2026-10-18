@@ -574,7 +574,11 @@ Contributors are recognized through:
 
 ### CI/CD
 
-- **GitHub Actions** for build/test automation
+- **GitHub Actions** for build/test automation. Only allowed actions run: GitHub's own, verified
+  Marketplace creators, and those listed in `.github/allowed-actions.txt`, each pinned to a full commit
+  SHA. Using a new action means adding it to that list in the same pull request (a build admin approves
+  it, and adds it to the repository setting); `Test · Pipeline scripts` fails a workflow that uses an
+  action the list does not name.
 - **SonarCloud** for code quality analysis
 - **Codecov** for test coverage tracking
 - **Dependabot** for dependency updates
