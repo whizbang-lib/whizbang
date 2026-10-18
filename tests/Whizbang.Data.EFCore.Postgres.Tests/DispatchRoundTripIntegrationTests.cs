@@ -107,14 +107,14 @@ public class DispatchRoundTripIntegrationTests : EFCoreTestBase {
   [Arguments("CascadeBoth", false)]
   public async Task HandledCopy_ReachesAnotherService_AndRunsOnceThereAsync(string entry, bool bulkPublish) {
     var sender = _createService(SENDER, SENDER_DOMAIN);
-    var receiver = _createService(RECEIVER, RECEIVER_DOMAIN);
+    var (receiverProvider, receiverJsonOptions) = _createService(RECEIVER, RECEIVER_DOMAIN);
     await using var _ = sender.Provider;
-    await using var __ = receiver.Provider;
+    await using var __ = receiverProvider;
     var id = Guid.CreateVersion7();
 
     await _dispatchAsync(sender.Provider, entry, id, options: null);
     var published = await _drainTheOnlyCopyAsync(sender, entry, bulkPublish);
-    await InboxDeliveryHarness.DeliverAsync(receiver.Provider, receiver.JsonOptions, published, RoundTripProbe.Ran(RECEIVER, id).Task);
+    await InboxDeliveryHarness.DeliverAsync(receiverProvider, receiverJsonOptions, published, RoundTripProbe.Ran(RECEIVER, id).Task);
 
     await Assert.That(RoundTripProbe.Count(SENDER, id)).IsEqualTo(1).Because($"{entry}: the sender handled it once");
     await Assert.That(RoundTripProbe.Count(RECEIVER, id)).IsEqualTo(1)
@@ -136,9 +136,9 @@ public class DispatchRoundTripIntegrationTests : EFCoreTestBase {
     return dispatcher.AsSystem().ForTenant(TENANT).RunAsync(async ct => {
       switch (entry) {
         case "PublishAsync": await dispatcher.PublishAsync(message, options); break;
-        case "PublishManyAsync": await dispatcher.PublishManyAsync(new[] { message }, options); break;
+        case "PublishManyAsync": await dispatcher.PublishManyAsync([message], options); break;
         case "SendAsync": await dispatcher.SendAsync(message, options); break;
-        case "SendManyAsync": await dispatcher.SendManyAsync(new[] { message }, options); break;
+        case "SendManyAsync": await dispatcher.SendManyAsync([message], options); break;
         default: await dispatcher.CascadeMessageAsync((IMessage)message, sourceEnvelope: null, DispatchModes.Both, ct); break;
       }
       return true;

@@ -340,7 +340,7 @@ public class DispatchExecutorParityComponentTests {
       case "LocalInvokeAsync(void, options)": await dispatcher.LocalInvokeAsync(message, new DispatchOptions()); break;
       case "LocalInvokeAsync<TResult>": await dispatcher.LocalInvokeAsync<ExRpcResponse>(message); break;
       case "PublishAsync": await dispatcher.PublishAsync((ExVoidEvent)message); break;
-      case "PublishManyAsync": await dispatcher.PublishManyAsync(new[] { message }); break;
+      case "PublishManyAsync": await dispatcher.PublishManyAsync([message]); break;
       default: await dispatcher.CascadeMessageAsync((IMessage)message, sourceEnvelope: null, DispatchModes.Both); break;
     }
 

@@ -1438,10 +1438,10 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(registry).IsNotNull();
 
-    await Assert.That(dispatcher!).DoesNotContain("PublishToReceptorsUntyped")
+    await Assert.That(dispatcher).DoesNotContain("PublishToReceptorsUntyped")
       .Because("a receptor declared only at a pipeline stage does not run on a local publish or cascade, so " +
                "the message has no publisher and the policy sees no local handler (#1410 follow-up)");
-    await Assert.That(registry!).Contains("global::MyApp.Receptors.FireAtReceptor")
+    await Assert.That(registry).Contains("global::MyApp.Receptors.FireAtReceptor")
       .Because("it fires at its declared stage through the registry");
   }
 

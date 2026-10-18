@@ -185,7 +185,7 @@ public class ReceptorDiscoveryLocalRunEmissionTests {
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
 
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry!).Contains("ReceptorId: \"global::MyApp.PingedReceptor\"")
+    await Assert.That(registry).Contains("ReceptorId: \"global::MyApp.PingedReceptor\"")
       .Because("a sync receptor has registry entries, so the worker stages reach it");
     await Assert.That(registry).Contains("return await global::System.Threading.Tasks.ValueTask.FromResult(receptor.Handle((global::MyApp.Pinged)msg));")
       .Because("the entry invokes Handle and returns the result as it is, so a Routed<T> result keeps its route");

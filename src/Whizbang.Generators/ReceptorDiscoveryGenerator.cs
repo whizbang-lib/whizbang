@@ -1743,30 +1743,35 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _buildLocalRunInvocations(string messageType, List<ReceptorInfo> receptors, bool withEnvelopeAndToken) {
     var sb = new StringBuilder();
-    var handleArgs = withEnvelopeAndToken ? "typedEvt, cancellationToken" : "typedEvt";
-    var cascadeArgs = withEnvelopeAndToken ? "sourceEnvelope, cancellationToken" : "null, default";
     foreach (var receptor in receptors) {
-      var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
-      var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
-      var call = receptor.IsSync ? "r.Handle(typedEvt)" : $"await r.HandleAsync({handleArgs})";
-      sb.AppendLine("          {");
-      if (receptor.IsMessageAnEvent && receptor.SyncAttributes is { Length: > 0 }) {
-        // This receptor waits for its perspectives first; the outcome reaches it through its sync context
-        var waitToken = withEnvelopeAndToken ? "cancellationToken" : "default";
-        sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedEvt, typeof({messageType}), \"{receptor.ClassName}\", {waitToken}));");
-      }
-      sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
-      sb.AppendLine("            if (r is not null) {");
-      if (receptor.IsVoid) {
-        sb.AppendLine($"              {call};");
-      } else {
-        sb.AppendLine($"              var result = {call};");
-        sb.AppendLine($"              await CascadeLocalResultAsync(result, typedEvt, typeof({messageType}), {cascadeArgs});");
-      }
-      sb.AppendLine("            }");
-      sb.AppendLine("          }");
+      _appendLocalRunInvocation(sb, messageType, receptor, withEnvelopeAndToken);
     }
     return sb.ToString().TrimEnd();
+  }
+
+  /// <summary>One receptor's block in a publisher: its perspective wait when it has one, then the invocation.</summary>
+  private static void _appendLocalRunInvocation(StringBuilder sb, string messageType, ReceptorInfo receptor, bool withEnvelopeAndToken) {
+    var handleArgs = withEnvelopeAndToken ? "typedEvt, cancellationToken" : "typedEvt";
+    var cascadeArgs = withEnvelopeAndToken ? "sourceEnvelope, cancellationToken" : "null, default";
+    var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
+    var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
+    var call = receptor.IsSync ? "r.Handle(typedEvt)" : $"await r.HandleAsync({handleArgs})";
+    sb.AppendLine("          {");
+    if (receptor.IsMessageAnEvent && receptor.SyncAttributes is { Length: > 0 }) {
+      // This receptor waits for its perspectives first; the outcome reaches it through its sync context
+      var waitToken = withEnvelopeAndToken ? "cancellationToken" : "default";
+      sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedEvt, typeof({messageType}), \"{receptor.ClassName}\", {waitToken}));");
+    }
+    sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
+    sb.AppendLine("            if (r is not null) {");
+    if (receptor.IsVoid) {
+      sb.AppendLine($"              {call};");
+    } else {
+      sb.AppendLine($"              var result = {call};");
+      sb.AppendLine($"              await CascadeLocalResultAsync(result, typedEvt, typeof({messageType}), {cascadeArgs});");
+    }
+    sb.AppendLine("            }");
+    sb.AppendLine("          }");
   }
 
   /// <summary>
@@ -1968,7 +1973,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _asSyncReceptorEntry(string entryTemplate, ReceptorInfo receptor) {
     const string asyncCall = "await receptor.HandleAsync((" + PLACEHOLDER_MESSAGE_TYPE + ")msg, ct)";
-    var syncCall = "receptor.Handle((" + PLACEHOLDER_MESSAGE_TYPE + ")msg)";
+    const string syncCall = "receptor.Handle((" + PLACEHOLDER_MESSAGE_TYPE + ")msg)";
     var rewritten = entryTemplate.Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR);
     return receptor.IsVoid
       ? rewritten.Replace(asyncCall + ";", syncCall + "; await global::System.Threading.Tasks.Task.CompletedTask;")

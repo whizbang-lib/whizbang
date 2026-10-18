@@ -150,11 +150,11 @@ public class DecisionTableExecutionComponentTests {
 
     switch (row.Policy.Name) {
       case "Send": await dispatcher.SendAsync(payload, options); break;
-      case "SendMany": await dispatcher.SendManyAsync(new[] { payload }, options); break;
+      case "SendMany": await dispatcher.SendManyAsync([payload], options); break;
       case "LocalInvoke": await dispatcher.LocalInvokeAsync(payload, options); break;
-      case "LocalSendMany": await dispatcher.LocalSendManyAsync(new[] { payload }, options); break;
+      case "LocalSendMany": await dispatcher.LocalSendManyAsync([payload], options); break;
       case "Publish": await dispatcher.PublishAsync(payload, options); break;
-      case "PublishMany": await dispatcher.PublishManyAsync(new[] { payload }, options); break;
+      case "PublishMany": await dispatcher.PublishManyAsync([payload], options); break;
       case "Cascade": await dispatcher.CascadeMessageAsync((IMessage)cell.Message, sourceEnvelope: null, row.Route ?? DispatchModes.Both); break;
       default: throw new InvalidOperationException($"No public call for policy {row.Policy.Name}");
     }

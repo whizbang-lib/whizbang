@@ -366,7 +366,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(later);
     await sut.FlushAsync(WorkBatchOptions.None);
 
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(new[] { later.MessageId })
+    Guid[] onlyTheLaterWork = [later.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(onlyTheLaterWork)
       .Because("the canceled caller withdrew its work; the next flush writes only what came after");
   }
 

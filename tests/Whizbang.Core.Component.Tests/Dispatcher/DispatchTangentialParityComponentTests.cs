@@ -300,9 +300,9 @@ public class DispatchTangentialParityComponentTests {
 
   private static Task _dispatchWithOptionsAsync(IDispatcher dispatcher, string entry, object message, DispatchOptions options) => entry switch {
     "SendAsync" => dispatcher.SendAsync(message, options),
-    "SendManyAsync" => dispatcher.SendManyAsync(new[] { message }, options),
+    "SendManyAsync" => dispatcher.SendManyAsync([message], options),
     "PublishAsync" => dispatcher.PublishAsync(message, options),
-    _ => dispatcher.PublishManyAsync(new[] { message }, options),
+    _ => dispatcher.PublishManyAsync([message], options),
   };
 
   private static ServiceProvider _buildProvider(IWorkCoordinatorStrategy outbox, bool withMessageSecurity = false) {

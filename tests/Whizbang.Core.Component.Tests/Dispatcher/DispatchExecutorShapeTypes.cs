@@ -149,7 +149,7 @@ public record ExRuntimeCommand(Guid Id) : ICommand, IPolicyProbeMessage;
 /// <summary>Generic, so the generator skips it: it exists only when a test registers it at runtime.</summary>
 public sealed class ExRuntimeResultReceptor<TMessage> : IReceptor<TMessage, ExFollowUpEvent> where TMessage : IPolicyProbeMessage {
   public ValueTask<ExFollowUpEvent> HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
-    PolicyProbe.Record(nameof(ExRuntimeResultReceptor<TMessage>), message.Id);
+    PolicyProbe.Record(nameof(ExRuntimeResultReceptor<>), message.Id);
     return ValueTask.FromResult(new ExFollowUpEvent(message.Id));
   }
 }

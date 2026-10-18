@@ -236,9 +236,9 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
     object message = entry.StartsWith("Send", StringComparison.Ordinal) ? new DxUnownedCommand(id) : new DxEvent(id);
     switch (entry) {
       case "SendAsync": await dispatcher.SendAsync(message, options); break;
-      case "SendManyAsync": await dispatcher.SendManyAsync(new[] { message }, options); break;
+      case "SendManyAsync": await dispatcher.SendManyAsync([message], options); break;
       case "PublishAsync": await dispatcher.PublishAsync(message, options); break;
-      default: await dispatcher.PublishManyAsync(new[] { message }, options); break;
+      default: await dispatcher.PublishManyAsync([message], options); break;
     }
 
     await Assert.That(DispatchExecutionProbe.Count(receptor, id)).IsEqualTo(0)
@@ -332,8 +332,9 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
 
     await using var dbContext = CreateDbContext();
     var stored = await dbContext.Events.AsNoTracking().Where(e => e.StreamId == id).OrderBy(e => e.Version).ToListAsync();
-    await Assert.That(stored.Select(e => e.EventType.Split(',')[0].Split('.')[^1]).ToList())
-      .IsEquivalentTo(new[] { nameof(DxCauseEvent), nameof(DxEffectEvent) }, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    string[] causeThenEffect = [nameof(DxCauseEvent), nameof(DxEffectEvent)];
+    await Assert.That(stored.ConvertAll(e => e.EventType.Split(',')[0].Split('.')[^1]))
+      .IsEquivalentTo(causeThenEffect, TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because($"{entry}, effect routed {effectRoute}: both are stored on the stream, the cause before the effect it caused");
   }
 

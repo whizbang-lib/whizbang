@@ -450,7 +450,7 @@ public class DispatchExecutorShapeComponentTests {
 
     await _dispatcher(provider).PublishAsync(evt);
 
-    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<ExRuntimeEvent>), evt.Id);
+    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<>), evt.Id);
   }
 
   [Test]
@@ -461,7 +461,7 @@ public class DispatchExecutorShapeComponentTests {
 
     await _dispatcher(provider).CascadeMessageAsync(evt, sourceEnvelope: null, DispatchModes.Both);
 
-    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<ExRuntimeEvent>), evt.Id);
+    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<>), evt.Id);
   }
 
   [Test]
@@ -472,7 +472,7 @@ public class DispatchExecutorShapeComponentTests {
 
     await _dispatcher(provider).SendAsync(command);
 
-    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<ExRuntimeCommand>), command.Id);
+    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<>), command.Id);
   }
 
   [Test]
@@ -483,7 +483,7 @@ public class DispatchExecutorShapeComponentTests {
 
     await _dispatcher(provider).PublishAsync(command);
 
-    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<ExRuntimeCommand>), command.Id);
+    await _assertRanOnceAndCascadedAsync(nameof(ExRuntimeResultReceptor<>), command.Id);
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────────────────────
