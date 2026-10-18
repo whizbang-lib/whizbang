@@ -72,3 +72,14 @@ Describe 'Get-PatchAddedLines' {
     @(Get-PatchAddedLines -Patch '').Count | Should -Be 0
   }
 }
+
+Describe 'Test-PullRequestType.ps1 parameters' {
+  It 'keeps the pull request and queue branch it was given after loading the shared helpers' {
+    # Dot-sourcing Test-LinkedIssue.ps1 runs its param() block in this script's scope; its defaults
+    # (PullRequest 0, HeadRef '') must not replace the values this script was called with.
+    $script = Join-Path $PSScriptRoot '..' 'Test-PullRequestType.ps1'
+    $seen = & { . $script -Repository o/r -PullRequest 1445 -HeadRef 'refs/heads/x'; "$PullRequest|$HeadRef" }
+    $seen | Should -Be '1445|refs/heads/x'
+  }
+}
+

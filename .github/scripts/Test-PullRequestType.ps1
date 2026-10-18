@@ -39,7 +39,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # The queue-branch reading lives with the linked-issue gate; dot-sourcing loads it without running that gate.
-. (Join-Path $PSScriptRoot 'Test-LinkedIssue.ps1') -Repository $Repository
+# Dot-sourcing also runs its param() block in this scope, so pass this script's own values through, or its
+# defaults (PullRequest 0, HeadRef '') replace them.
+. (Join-Path $PSScriptRoot 'Test-LinkedIssue.ps1') -Repository $Repository -PullRequest $PullRequest -HeadRef $HeadRef
 
 $script:ConventionalTypes = @('feat', 'fix', 'docs', 'perf', 'refactor', 'test', 'ci', 'build', 'chore', 'revert')
 $script:TitlePattern = '^(?<type>[a-z]+)(?:\((?<scope>[a-z0-9][a-z0-9._/-]*)\))?(?<breaking>!)?: \S'
