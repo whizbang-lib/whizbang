@@ -168,6 +168,38 @@ public class ServiceRegistrationGeneratorTests {
   }
 
   [Test]
+  public async Task Generator_ConcreteBaseLensWithChild_KeepsTheInterfaceOnTheBaseAsync() {
+    // A concrete base is registered on its own, so its interface stays with it: the child does not take the
+    // registration over (#1431). Only an abstract base's interfaces pass to the child.
+    const string source = """
+            using System;
+            using System.Linq;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Whizbang.Core.Lenses;
+
+            namespace TestApp;
+
+            public record Order(Guid Id, string Status);
+            public interface IOrderLens : ILensQuery<Order> { }
+
+            public class OrderLens : IOrderLens {
+              public virtual IQueryable<PerspectiveRow<Order>> Query => throw new NotImplementedException();
+              public virtual Task<Order?> GetByIdAsync(Guid id, CancellationToken ct = default) => Task.FromResult<Order?>(null);
+            }
+
+            public class AuditedOrderLens : OrderLens { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRegistrationGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
+    await Assert.That(code).DoesNotContain("global::TestApp.AuditedOrderLens>");
+  }
+
+  [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_DirectWhizbangImplementation_RegistersAgainstWhizbangInterfaceAsync() {
     // Arrange - Class directly implementing ILensQuery<T> (not through user interface)
