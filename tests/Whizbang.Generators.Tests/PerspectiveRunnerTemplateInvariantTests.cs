@@ -183,7 +183,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(template).Contains("HasStreamEventsBeforeAsync")
       .Because("the row-null branch probes the event store for pre-batch history");
     await Assert.That(template).Contains("!_isEphemeralPerspective")
-      .Because("resurrection is Sourced-only — ephemeral streams keep snapshot-floor semantics");
+      .Because("an ephemeral perspective rebuilds only from a snapshot floor; its history before the floor is reaped");
+    await Assert.That(template).Contains("PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))")
+      .Because("the probe runs for every perspective whose rows can be evicted (TTL, cap, stream group), and only those (#1483)");
     await Assert.That(template).Contains("_rewindAndRunCoreAsync")
       .Because("resurrection delegates to the lock-free rewind core");
 

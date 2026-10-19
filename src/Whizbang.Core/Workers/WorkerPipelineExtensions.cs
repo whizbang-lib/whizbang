@@ -37,6 +37,7 @@ public static class WorkerPipelineExtensions {
   /// <docs>operations/workers/housekeeping-arbitration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
       new Whizbang.Core.Observability.HousekeepingMetrics(
@@ -46,7 +47,10 @@ public static class WorkerPipelineExtensions {
     // options: the section reaches the mechanism with no host code, hosts without
     // IConfiguration keep code defaults, and the binder source generator keeps it
     // reflection-free).
-    services.AddOptions<HousekeepingCoordinator.Settings>();
+    // #1491: a zero or negative MaxDeferral would force every deferred pass through, so the
+    // section is validated at host start rather than discovered as a gate that defers nothing.
+    services.AddOptions<HousekeepingCoordinator.Settings>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<HousekeepingCoordinator.Settings>, HousekeepingSettingsValidator>());
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<HousekeepingCoordinator.Settings>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<HousekeepingCoordinator.Settings>(options => {
@@ -61,7 +65,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp =>
       new HousekeepingCoordinator(
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<HousekeepingCoordinator.Settings>>().Value,
-        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>(),
+        sp.GetService<TimeProvider>()));
   }
 
   /// <summary>
@@ -353,7 +358,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
     // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
-    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>().ValidateOnStart();
+    // #1487: the ephemeral retention settings publish to wh_settings; a negative one is rejected at host start.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IValidateOptions<Whizbang.Core.Configuration.EphemeralOptions>, Whizbang.Core.Configuration.EphemeralOptionsValidator>());
     // Perspective row retention (operator rung of the override ladder): the options are applied
     // to the TTL registry at startup so a TTL can be retuned — or retention switched off — per
     // environment without a redeploy. Registered as a hosted configurator; inert on defaults.
@@ -953,7 +961,10 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
-    services.AddOptions<MaintenanceWorkerOptions>();
+    // #1487: a negative retention window would make every row of its table eligible at once, so the
+    // Retention section is validated at host start rather than discovered in SQL.
+    services.AddOptions<MaintenanceWorkerOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<MaintenanceWorkerOptions>, MaintenanceWorkerOptionsValidator>());
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
     services.AddOptions<RecentlyProcessedEventCacheOptions>();

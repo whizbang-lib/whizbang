@@ -42,5 +42,9 @@ public class TableStatisticsContractTests {
 
     await Assert.That(await provider.GetTableBloatRatiosAsync()).IsEmpty()
       .Because("a provider that cannot estimate bloat keeps working, and the gauge reports nothing");
+
+    await Assert.That(await provider.GetTableStorageAsync()).IsEmpty()
+      .Because("an empty storage reading tells the collector to ask for the sizes and bloat ratios "
+             + "separately, so a provider that predates the reading reports what it always did");
   }
 }

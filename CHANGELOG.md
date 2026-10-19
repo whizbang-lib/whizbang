@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   will be retried), on both Postgres drivers.
 - **`ISchemaInitializationRunner` and `AddWhizbangSchemaInitialization()`** — one schema initializer runs every
   driver's registered runner in order, then opens the schema-ready gate.
+- **Capabilities: one pattern for external dependencies** (#1511, #1513, #1498): every external dependency the
+  library can use is a capability, identified by provider and name (`postgres/pg_squeeze`), described once
+  (purpose, features, whether the library may provision it, prerequisites, the fix per state) and probed per
+  scope with one generic state: Ready, Provisionable, NotPermitted, NeedsServerChange, NoPrivilege, Missing or
+  Unknown, with the provider's own detail kept beside it. `ICapabilityProvider` is the extension point for
+  any package; `ICapabilityRegistry` aggregates every provider. After the migration step, and without
+  blocking readiness, the library probes every provider and writes one verdict per provider and scope:
+  the usable capabilities with their purpose at Information, the rest at Debug with the fix. A provider
+  that cannot probe a scope reads Unknown with a warning and never stops startup. Gauge
+  `whizbang.capability.state` (tags provider, capability, scope, state) on the new `Whizbang.Capabilities`
+  meter, in `WhizbangMeters.All`. `Whizbang:Capabilities:ProbeOnStartup` (default `true`) turns the probe off.
+  Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
+  scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
+  `pg_cron`.
 
 #### Messaging & delivery
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
@@ -64,6 +78,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-rewind are not skipped.
 - **Throughput** — drain mode (per-perspective event filtering with full lifecycle), a bulk-import
   throughput path, and throughput instrumentation (gate hold-duration histograms, WorkCoordinator metrics).
+- **Retention windows from configuration** (#1487): every retention window the maintenance sweep reads from
+  `wh_settings` is now an option, set like any other: `Whizbang:Workers:Maintenance:Retention` (deduplication,
+  stuck inbox, recovered dead letters, abandoned streams, instance-eviction tombstones, orphaned perspective
+  events, collective-ordering heads) and `Whizbang:Ephemeral` (`RewindGraceSeconds`, `PointerPrune`). Each
+  maintenance cycle publishes the options you set before the sweep runs; an option left unset leaves the stored
+  value alone, a negative value fails startup naming the key, and a failed write is logged without failing the
+  cycle. The Dapper engine now also publishes `debug_mode`, which it never did.
+- **Maintenance deferral ceiling is a time** (#1491): `Whizbang:Housekeeping:MaxDeferral` (default one hour)
+  bounds how long the idle gate can hold back maintenance or dead-letter recovery, measured from the first
+  deferral, so changing a tick interval no longer moves the ceiling. The forced pass still reports as
+  `ProceedDeferralLimit`. `MaxConsecutiveDeferrals` remains as a legacy fallback, used only when it is set and
+  `MaxDeferral` is not; with neither set the one-hour time applies. A zero or negative `MaxDeferral` fails
+  startup naming the key. The turnkey coordinator now measures its dwell and ceiling on the registered
+  `TimeProvider`.
 
 #### Context, identity & serialization
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
@@ -102,6 +130,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`whizbang migrate` CLI** — Marten/Wolverine migration analyzers + transformers (JSONB LINQ,
   global-using rewrites, package-ref upgrades); PgBouncer-compatible schema initialization; the
   `ExtractMessageRegistry` MSBuild target shipped via NuGet.
+- **Table statistics cover every framework and perspective table, on both Postgres drivers (#1488).** The
+  `Whizbang.TableStatistics` meter reported sizes and bloat for a fixed list of seven tables, so the event body
+  store, deduplication, dead letters and every perspective table were invisible, and a Dapper host reported nothing
+  at all. Every `wh_` table in the service's schema is now found in the catalog on each refresh (partitioned tables
+  once, with their partitions summed), and two gauges are added: `whizbang.table.component_bytes` (tags
+  `table_name`, `component` = `heap`, `toast`, `indexes`, adding up to `whizbang.table.estimated_bytes`) and
+  `whizbang.table.live_rows`. All of it comes from one catalog statement per refresh. Cardinality is capped by
+  `Whizbang:TableStatistics:MaxTrackedTables` (default 500); past it the smallest tables are summed under
+  `table_name="other"`. A table missing from a refresh stops reporting instead of keeping its last value, and
+  `TableStatisticsCollector.CycleCompleted` is public. **Upgrade:** `PostgresTableStatisticsProvider` moved from
+  `Whizbang.Data.EFCore.Postgres` to `Whizbang.Data.Postgres.Observability`; a host that constructs it directly
+  changes the namespace. Dashboards that sum `estimated_bytes` across tables will see the new tables' bytes.
 - **API hygiene** — a `SyncMode` enum + `LocalInvokeAndSyncAsync(msg, SyncMode, ct)` overload; the old
   timeout-based overloads are now `[Obsolete]`.
 
@@ -265,6 +305,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run before the ephemeral reap removes a message, and `PostDestruction*` after, with the envelopes loaded
   before the reap. A throwing inline pre-destruction receptor holds the batch for a retry, as a throwing destruction hook
   does.
+- **Evicting a perspective row left its cursor and every snapshot behind, and a row evicted by a cap or a
+  stream-group cascade came back holding only the newest event (#1483).** An eviction now reclaims storage
+  only: for each perspective of the evicted model, the row's cursor and every snapshot but the latest are
+  removed with it, on every eviction path (row TTL, row cap, stream-group cascade, stamped expiry) and both
+  drivers (migration 211). The next event on the stream rebuilds the whole row from that snapshot plus the
+  later history, for any perspective whose rows can be evicted (`PerspectiveRowEviction.CanEvict`), not only
+  row-TTL ones. An ephemeral perspective rebuilds from a surviving snapshot; with none it starts the row
+  fresh and logs a warning. Perspectives on the same stream that fold another model are untouched. The EF
+  Core registry payload now names each model's perspectives (`wh_perspective_registry.perspective_names`),
+  recorded at the next startup; until then an eviction removes the row alone.
 - **A scope event's scope could be overwritten or narrowed before the row was written (#1432).** A later message in
   the same batch replaced it, the model's `[InheritScope(OnCreate)]` filtered it (dropping the principals the event
   shared the row with), and `IPerspectiveScopeFor.ApplyScope` was given the last message's scope as the current one.

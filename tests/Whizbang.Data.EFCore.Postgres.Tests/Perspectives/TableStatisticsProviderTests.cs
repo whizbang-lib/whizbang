@@ -8,7 +8,8 @@ using TUnit.Core;
 using TUnit.Core.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Data.EFCore.Postgres;
-using Whizbang.Data.EFCore.Postgres.Observability;
+using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Observability;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
