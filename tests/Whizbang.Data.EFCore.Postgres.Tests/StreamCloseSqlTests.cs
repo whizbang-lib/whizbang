@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -454,5 +455,289 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await Assert.That(await _bodyCountAsync(connection, closing)).IsEqualTo(1L)
       .Because("The carry-forward closing event's body survives — it is the new origin.");
     await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L);
+  }
+  // ── #1486: a close re-anchors the cursors and removes the snapshots the truncate strands ──────────────
+
+  private static async Task _cursorAsync(NpgsqlConnection connection, Guid streamId, string perspectiveName, Guid? lastEventId) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = "INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, processed_at) "
+      + "VALUES (@sid, @p, @e, 0, NOW())";
+    c.Parameters.AddWithValue("sid", streamId);
+    c.Parameters.AddWithValue("p", perspectiveName);
+    c.Parameters.AddWithValue("e", (object?)lastEventId ?? DBNull.Value);
+    await c.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<Guid?> _cursorEventAsync(NpgsqlConnection connection, Guid streamId, string perspectiveName) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @sid AND perspective_name = @p";
+    c.Parameters.AddWithValue("sid", streamId);
+    c.Parameters.AddWithValue("p", perspectiveName);
+    var raw = await c.ExecuteScalarAsync();
+    return raw is Guid g ? g : null;
+  }
+
+  private static async Task _snapshotAsync(NpgsqlConnection connection, Guid streamId, string perspectiveName, Guid eventId, int? version) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = "INSERT INTO wh_perspective_snapshots "
+      + "(stream_id, perspective_name, snapshot_event_id, snapshot_data, sequence_number, snapshot_version) "
+      + "VALUES (@sid, @p, @e, '{}'::jsonb, 1, @v)";
+    c.Parameters.AddWithValue("sid", streamId);
+    c.Parameters.AddWithValue("p", perspectiveName);
+    c.Parameters.AddWithValue("e", eventId);
+    c.Parameters.AddWithValue("v", (object?)version ?? DBNull.Value);
+    await c.ExecuteNonQueryAsync();
+  }
+
+  // The snapshot event ids that survive for one perspective, in event-id order.
+  private static async Task<List<Guid>> _snapshotEventsAsync(NpgsqlConnection connection, Guid streamId, string perspectiveName) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = "SELECT snapshot_event_id FROM wh_perspective_snapshots WHERE stream_id = @sid AND perspective_name = @p ORDER BY snapshot_event_id";
+    c.Parameters.AddWithValue("sid", streamId);
+    c.Parameters.AddWithValue("p", perspectiveName);
+    var ids = new List<Guid>();
+    await using var reader = await c.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      ids.Add(reader.GetGuid(0));
+    }
+    return ids;
+  }
+
+  private static async Task<long> _countAsync(NpgsqlConnection connection, string sql, Guid id) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = sql;
+    c.Parameters.AddWithValue("id", id);
+    return (long)(await c.ExecuteScalarAsync())!;
+  }
+
+  private static async Task _executeAsync(NpgsqlConnection connection, string sql, Guid id) {
+    await using var c = connection.CreateCommand();
+    c.CommandText = sql;
+    c.Parameters.AddWithValue("id", id);
+    await c.ExecuteNonQueryAsync();
+  }
+
+  // Sequential v7 ids, so event-id order is stream order and the snapshot-order assertions mean something.
+  private static Guid[] _orderedIds(int count) {
+    var ids = new Guid[count];
+    for (var i = 0; i < count; i++) {
+      ids[i] = Guid.CreateVersion7();
+    }
+    Array.Sort(ids);
+    return ids;
+  }
+
+  [Test]
+  public async Task CloseStream_CursorOfAPerspectiveWithNothingLeftToConsume_IsReanchoredOntoTheBoundaryEventAsync() {
+    // fk_perspective_cursors_event is ON DELETE RESTRICT. A perspective that does not subscribe to the closing
+    // event keeps its cursor on the last detail event it applied, inside the truncated range, so the close used
+    // to fail with a foreign-key violation. Nothing below the boundary is unread (the consumption gate proved
+    // it) and the perspective owes nothing on the boundary event, so the cursor moves onto the boundary: the
+    // next read (event_id > cursor) still returns every event the perspective has not seen.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string detailType = "Whizbang.Tests.LedgerEntry";
+    const string detailOnly = "Tests.DetailOnlyPerspective";
+    const string caughtUp = "Tests.CaughtUpPerspective";
+    const string neverRan = "Tests.NeverRanPerspective";
+    await _seedPerspectiveAssociationAsync(connection, detailType, detailOnly);
+
+    var ids = _orderedIds(4);
+    await _commitAsync(connection, ids[0], streamId, detailType);                   // v1
+    await _commitAsync(connection, ids[1], streamId, detailType);                   // v2
+    await _commitAsync(connection, ids[2], streamId, detailType);                   // v3
+    await _commitAsync(connection, ids[3], streamId, "Whizbang.Tests.MonthClosed"); // v4, nothing subscribes
+    await _processWorkItemsAsync(connection, streamId);
+
+    await _cursorAsync(connection, streamId, detailOnly, ids[2]);   // inside the range
+    await _cursorAsync(connection, streamId, caughtUp, ids[3]);     // already on the boundary
+    await _cursorAsync(connection, streamId, neverRan, null);       // has applied nothing
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+
+    await Assert.That(closed.Status).IsEqualTo("closed")
+      .Because("a cursor inside the range is re-anchored, not a reason for the truncate to fail");
+    await Assert.That(closed.EventsTruncated).IsEqualTo(3L);
+    await Assert.That(await _cursorEventAsync(connection, streamId, detailOnly)).IsEqualTo(ids[3])
+      .Because("the cursor moves onto the first surviving event, which the perspective does not consume");
+    await Assert.That(await _cursorEventAsync(connection, streamId, caughtUp)).IsEqualTo(ids[3])
+      .Because("a cursor at or past the boundary is not touched");
+    await Assert.That(await _cursorEventAsync(connection, streamId, neverRan)).IsNull()
+      .Because("a cursor that has applied nothing points at nothing the truncate removes");
+  }
+
+  [Test]
+  public async Task CloseStream_CursorBehindABoundaryEventItsPerspectiveStillOwes_IsRefusedAsync() {
+    // The cursor is the read position: the next apply reads events with an id above it. Moving it onto a
+    // boundary event the perspective has not applied yet would skip that event forever, so the close is
+    // refused until the perspective consumes it, the same way the consumption gate refuses unread detail.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string detailType = "Whizbang.Tests.LedgerEntry";
+    const string closingType = "Whizbang.Tests.MonthClosed";
+    const string ledger = "Tests.LedgerPerspective";
+    await _seedPerspectiveAssociationAsync(connection, detailType, ledger);
+    await _seedPerspectiveAssociationAsync(connection, closingType, ledger);
+
+    var ids = _orderedIds(4);
+    await _commitAsync(connection, ids[0], streamId, detailType);
+    await _commitAsync(connection, ids[1], streamId, detailType);
+    await _commitAsync(connection, ids[2], streamId, detailType);
+    await _processWorkItemsAsync(connection, streamId);
+    await _cursorAsync(connection, streamId, ledger, ids[2]);
+    await _commitAsync(connection, ids[3], streamId, closingType);  // v4: work the perspective still owes
+
+    var refused = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+
+    await Assert.That(refused.Status).IsEqualTo("cursor_behind")
+      .Because("re-anchoring onto an event the perspective has not applied would skip it");
+    await Assert.That(refused.EventsTruncated).IsEqualTo(0L);
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(4L)
+      .Because("a refused close truncates nothing");
+    await Assert.That(await _cursorEventAsync(connection, streamId, ledger)).IsEqualTo(ids[2])
+      .Because("a refused close moves no cursor");
+
+    // Once the boundary event's work is done, nothing is owed and the close goes through.
+    await _processWorkItemsAsync(connection, streamId);
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+    await Assert.That(await _cursorEventAsync(connection, streamId, ledger)).IsEqualTo(ids[3]);
+  }
+
+  [Test]
+  public async Task CloseStream_RemovesEverySnapshotThatNeedsATruncatedEvent_KeepsTheExactFloorsAsync() {
+    // A rewind restores a snapshot and replays the events after it. After a close, a snapshot replays
+    // correctly only if the perspective applied nothing between it and the close point: everything there is
+    // gone. Two snapshots qualify: one at the close point itself, and one at the event a perspective's cursor
+    // still sits on inside the range (that perspective applied nothing after it). Every other snapshot at or
+    // below the close point is removed, and a versionless one on a truncated event (which a rewind can never
+    // place again) goes with them.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string parked = "Tests.ParkedPerspective";     // cursor inside the range, at v2
+    const string current = "Tests.CurrentPerspective";   // no cursor in range
+
+    var ids = _orderedIds(5);
+    await _commitAsync(connection, ids[0], streamId, "Whizbang.Tests.LedgerEntry");  // v1
+    await _commitAsync(connection, ids[1], streamId, "Whizbang.Tests.LedgerEntry");  // v2
+    await _commitAsync(connection, ids[2], streamId, "Whizbang.Tests.LedgerEntry");  // v3 (close point)
+    await _commitAsync(connection, ids[3], streamId, "Whizbang.Tests.MonthClosed");  // v4
+    await _commitAsync(connection, ids[4], streamId, "Whizbang.Tests.LedgerEntry");  // v5
+
+    await _cursorAsync(connection, streamId, parked, ids[1]);
+    await _snapshotAsync(connection, streamId, parked, ids[0], version: 1);   // needs v2: removed
+    await _snapshotAsync(connection, streamId, parked, ids[1], version: 2);   // the parked state: kept
+
+    await _snapshotAsync(connection, streamId, current, ids[0], version: 1);  // needs v2..v3: removed
+    await _snapshotAsync(connection, streamId, current, ids[1], version: null); // unplaceable, truncated: removed
+    await _snapshotAsync(connection, streamId, current, ids[2], version: 3);  // at the close point: kept
+    await _snapshotAsync(connection, streamId, current, ids[3], version: 4);  // above the range: kept
+    await _snapshotAsync(connection, streamId, current, ids[4], version: null); // unplaceable, not truncated: kept
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+
+    var parkedLeft = await _snapshotEventsAsync(connection, streamId, parked);
+    await Assert.That(parkedLeft.Count).IsEqualTo(1);
+    await Assert.That(parkedLeft[0]).IsEqualTo(ids[1])
+      .Because("the snapshot at the parked cursor is the perspective's current state; replaying from it needs no truncated event");
+
+    var currentLeft = await _snapshotEventsAsync(connection, streamId, current);
+    await Assert.That(currentLeft.Count).IsEqualTo(3)
+      .Because("only the snapshots at and above the close point survive for a perspective with no cursor in the range");
+    await Assert.That(currentLeft[0]).IsEqualTo(ids[2]);
+    await Assert.That(currentLeft[1]).IsEqualTo(ids[3]);
+    await Assert.That(currentLeft[2]).IsEqualTo(ids[4])
+      .Because("a versionless snapshot on a surviving event is not the close's to judge");
+
+    // What a later rewind selects: never a snapshot whose replay needs a truncated event.
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    Whizbang.Core.Perspectives.IPerspectiveSnapshotStore store = new EFCorePerspectiveSnapshotStore(dataSource);
+    var parkedFloor = await store.GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, parked, ids[4], CancellationToken.None);
+    await Assert.That(parkedFloor.HasValue).IsTrue();
+    await Assert.That(parkedFloor!.Value.SnapshotEventId).IsEqualTo(ids[1]);
+    var currentFloor = await store.GetLatestSnapshotBeforeEventInStreamOrderAsync(streamId, current, ids[3], CancellationToken.None);
+    await Assert.That(currentFloor.HasValue).IsTrue();
+    await Assert.That(currentFloor!.Value.SnapshotEventId).IsEqualTo(ids[2])
+      .Because("a rewind to the boundary event restores the close-point snapshot, not the removed v1 one");
+  }
+
+  [Test]
+  public async Task CloseStream_ActiveDestructionHoldInsideTheRange_IsRefused_ALapsedOneIsRemovedAsync() {
+    // A destruction hold records a PreDestruction hook's decision to keep an event's data (Cancel) or keep it
+    // until a time (Defer). A close would destroy that event, so an active hold refuses it. A lapsed hold is
+    // only a record about an event that is about to go, and goes with it.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var ids = _orderedIds(3);
+    await _commitAsync(connection, ids[0], streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, ids[1], streamId, "Whizbang.Tests.LedgerEntry");
+    await _commitAsync(connection, ids[2], streamId, "Whizbang.Tests.MonthClosed");
+    await _executeAsync(connection,
+      "INSERT INTO wh_event_destruction_hold (event_id, hold_until) VALUES (@id, NOW() + INTERVAL '1 day')", ids[0]);
+
+    var refused = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    await Assert.That(refused.Status).IsEqualTo("held")
+      .Because("an active hold is a recorded decision to keep that event");
+    await Assert.That(refused.EventsTruncated).IsEqualTo(0L);
+    await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(3L);
+
+    // On the database clock, so the hold has lapsed by construction rather than by waiting.
+    await _executeAsync(connection,
+      "UPDATE wh_event_destruction_hold SET hold_until = NOW() - INTERVAL '1 second' WHERE event_id = @id", ids[0]);
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+    await Assert.That(await _countAsync(connection,
+        "SELECT count(*) FROM wh_event_destruction_hold WHERE event_id = @id", ids[0])).IsEqualTo(0L)
+      .Because("a lapsed hold on a truncated event is removed with the event");
+  }
+
+  [Test]
+  public async Task CloseStream_RemovesProcessedWorkRowsOfTruncatedEvents_KeepsTheirDeduplicationEntriesAsync() {
+    // Processed perspective work rows for the truncated events describe work that is finished on events that
+    // no longer exist; they go. Deduplication entries are kept: they are what turns a redelivered copy of a
+    // truncated event away instead of storing it again below the close point, and they age out under their
+    // own retention.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    const string detailType = "Whizbang.Tests.LedgerEntry";
+    await _seedPerspectiveAssociationAsync(connection, detailType, "Tests.WorkRowPerspective");
+
+    var ids = _orderedIds(3);
+    await _commitAsync(connection, ids[0], streamId, detailType);
+    await _commitAsync(connection, ids[1], streamId, detailType);
+    await _commitAsync(connection, ids[2], streamId, "Whizbang.Tests.MonthClosed");
+    await _processWorkItemsAsync(connection, streamId);
+    await _executeAsync(connection,
+      "INSERT INTO wh_message_deduplication (message_id) VALUES (@id) ON CONFLICT DO NOTHING", ids[0]);
+    await Assert.That(await _countAsync(connection,
+      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id", streamId)).IsEqualTo(2L)
+      .Because("precondition: both detail events left a processed work row");
+
+    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    await Assert.That(closed.Status).IsEqualTo("closed");
+
+    await Assert.That(await _countAsync(connection,
+      "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id", streamId)).IsEqualTo(0L)
+      .Because("processed work rows of truncated events are removed with the events");
+    await Assert.That(await _countAsync(connection,
+      "SELECT count(*) FROM wh_message_deduplication WHERE message_id = @id", ids[0])).IsEqualTo(1L)
+      .Because("the deduplication entry still turns a redelivered copy of the truncated event away");
   }
 }
