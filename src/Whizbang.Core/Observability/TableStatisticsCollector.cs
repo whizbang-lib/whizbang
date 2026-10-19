@@ -11,7 +11,9 @@ namespace Whizbang.Core.Observability;
 /// <summary>
 /// Background service that periodically queries <see cref="ITableStatisticsProvider"/>
 /// and updates <see cref="TableStatisticsMetrics"/> caches.
-/// Runs every 30 seconds. Waits for database readiness before starting.
+/// Runs every 30 seconds. Waits for database readiness before starting. Registered by
+/// <see cref="TableStatisticsServiceCollectionExtensions.AddWhizbangTableStatistics"/>, which both
+/// PostgreSQL drivers call.
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
@@ -73,8 +75,11 @@ public sealed partial class TableStatisticsCollector(
           return;
         }
 
-        var sizes = await provider.GetEstimatedTableSizesAsync(stoppingToken);
+        // One reading for the tables: sizes, their split, rows and bloat together, so a cycle reads the
+        // catalog once for every table rather than once per kind of figure.
+        var (storage, sizes, bloat) = await _readTablesAsync(provider, stoppingToken);
         metrics.UpdateTableSizes(sizes);
+        metrics.UpdateTableStorage(storage);
 
         // The sizes are already in hand, and they are the half WHIZ306 could not know at build time:
         // an exposed perspective of a few hundred rows is fine, and the same exposure over several
@@ -111,7 +116,6 @@ public sealed partial class TableStatisticsCollector(
         // awaiting vacuum, or a dropped column whose bytes Postgres keeps in every pre-existing
         // row until the table is rewritten. Publishing the ratio means an operator is told
         // rather than having to go looking.
-        var bloat = await provider.GetTableBloatRatiosAsync(stoppingToken);
         metrics.UpdateTableBloat(bloat);
 
         CycleCompleted?.Invoke();
@@ -127,6 +131,30 @@ public sealed partial class TableStatisticsCollector(
         break;
       }
     }
+  }
+
+  /// <summary>
+  /// Reads the tables: the storage reading, with the sizes and bloat ratios taken from it, or, from a
+  /// provider that offers no storage reading, the sizes and bloat ratios asked for separately.
+  /// </summary>
+  private static async Task<(
+      IReadOnlyDictionary<string, TableStorageStatistics> Storage,
+      IReadOnlyDictionary<string, long> Sizes,
+      IReadOnlyDictionary<string, double> Bloat)> _readTablesAsync(
+      ITableStatisticsProvider provider, CancellationToken cancellationToken) {
+    var storage = await provider.GetTableStorageAsync(cancellationToken);
+    if (storage.Count == 0) {
+      // A provider written before the storage reading existed reports what it always reported.
+      return (storage,
+        await provider.GetEstimatedTableSizesAsync(cancellationToken),
+        await provider.GetTableBloatRatiosAsync(cancellationToken));
+    }
+
+    return (storage,
+      storage.ToDictionary(table => table.Key, table => table.Value.TotalBytes, StringComparer.Ordinal),
+      storage
+        .Where(table => table.Value.BloatRatio.HasValue)
+        .ToDictionary(table => table.Key, table => table.Value.BloatRatio.GetValueOrDefault(), StringComparer.Ordinal));
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug, Message = "ITableStatisticsProvider not registered — table statistics collection disabled")]

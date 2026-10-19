@@ -16,9 +16,6 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs</tests>
 public sealed class TableStatisticsOptions {
 #pragma warning disable CA1707
-  /// <summary>The configuration section these settings are bound from.</summary>
-  public const string SECTION = "Whizbang:TableStatistics";
-
   /// <summary>
   /// The <c>table_name</c> the tables past <see cref="MaxTrackedTables"/> are summed under. No table
   /// the framework reports can have this name, because every reported table's name starts with

@@ -300,15 +300,11 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<IWhizbangLifecycleState>(),
             "event-store database unreachable"));
 
-        // TURNKEY: Register table statistics provider + collector for OTel metrics.
-        // The provider schema-qualifies its queries — pass the model's default schema so
+        // TURNKEY: table statistics for OTel metrics, the same provider and collector the Dapper driver
+        // registers. The provider schema-qualifies its queries: pass the model's default schema so
         // multi-schema services report THEIR tables instead of probing a bare public schema.
-        selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
-          var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          var schema = defaultSchema(sp);
-          return new PostgresTableStatisticsProvider(ds, schema);
-        });
-        selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+        selector.Services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
+          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables));
 
         // Durable suppression for the findings that cycle raises. Without it the advisory remembers
         // in process memory, so every replica reports the same table independently and every
@@ -336,7 +332,6 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton(
           new Whizbang.Core.Messaging.IntegrityRepairPolicy(
             new Whizbang.Core.Messaging.IntegrityRepairPolicy.Settings()));
-        selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // TURNKEY: adaptive notify-debounce (137) observability — the provider reads the regime and
         // fired/suppressed volumes from wh_notify_state, the collector refreshes the gauges. Schema-
