@@ -207,7 +207,7 @@ public class DispatcherDefaultInterfaceMethodTests {
     yield return () => ("Timeout", new DispatchOptions { Timeout = TimeSpan.FromSeconds(5) });
     yield return () => ("WaitForPerspectives", new DispatchOptions { WaitForPerspectives = true });
     yield return () => ("PerspectiveWaitTimeout", new DispatchOptions { PerspectiveWaitTimeout = TimeSpan.FromSeconds(5) });
-    yield return () => ("ScheduledFor", new DispatchOptions { ScheduledFor = DateTimeOffset.UtcNow.AddMinutes(5) });
+    yield return () => ("ScheduledFor", new DispatchOptions { ScheduledFor = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero) });
     yield return () => ("Priority", new DispatchOptions { Priority = 7 });
     yield return () => ("MaxPayloadBytes", new DispatchOptions { MaxPayloadBytes = 1024 });
     yield return () => ("Policy", new DispatchOptions { Policy = new Whizbang.Core.Dispatch.Policy.DispatchPolicyId(1) });
