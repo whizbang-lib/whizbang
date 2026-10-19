@@ -108,6 +108,47 @@ public class MultiStreamCommandRegistrationTests {
     await Assert.That(handler.Calls[0].Command.Label).IsEqualTo("label-2");
   }
 
+  /// <summary>
+  /// The streams of one run share its payload, so it is read back once, not once per stream: every stream of the run is
+  /// handed the same command. A payload read per stream was what made a large run's cost grow with its stream count.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_TheStreamsOfOneRun_ReadItsPayloadOnceAsync() {
+    var handler = new ProbeMultiStreamHandler();
+    await using var provider = _provider(s => s.AddSingleton(handler));
+    var binding = provider.GetServices<IMultiStreamCommandBinding>().Single();
+    var payload = _payload(new ProbeMultiStreamCommand(_runId, [], "label-3"));
+    var otherStream = Guid.Parse("0199c000-0000-7000-8000-0000000000c2");
+
+    await using var scope = provider.CreateAsyncScope();
+    await binding.InvokeAsync(scope.ServiceProvider, payload, _stream, CancellationToken.None);
+    await binding.InvokeAsync(scope.ServiceProvider, payload, otherStream, CancellationToken.None);
+
+    await Assert.That(handler.Calls.Select(c => c.StreamId).ToList()).IsEquivalentTo([_stream, otherStream]);
+    await Assert.That(ReferenceEquals(handler.Calls[0].Command, handler.Calls[1].Command)).IsTrue()
+      .Because("the run's payload was read back once and its command handed to each of its streams");
+  }
+
+  /// <summary>
+  /// A run recorded by an earlier release stored its stream ids in the payload. It still works each of its streams: the
+  /// handler gets the stream it is called for.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_APayloadThatStillListsItsStreams_WorksEachOfThemAsync() {
+    var handler = new ProbeMultiStreamHandler();
+    await using var provider = _provider(s => s.AddSingleton(handler));
+    var binding = provider.GetServices<IMultiStreamCommandBinding>().Single();
+    var otherStream = Guid.Parse("0199c000-0000-7000-8000-0000000000c2");
+    var legacy = _payload(new ProbeMultiStreamCommand(_runId, [_stream, otherStream], "label-4"));
+
+    await using var scope = provider.CreateAsyncScope();
+    await binding.InvokeAsync(scope.ServiceProvider, legacy, _stream, CancellationToken.None);
+    await binding.InvokeAsync(scope.ServiceProvider, legacy, otherStream, CancellationToken.None);
+
+    await Assert.That(handler.Calls.Select(c => c.StreamId).ToList()).IsEquivalentTo([_stream, otherStream]);
+    await Assert.That(handler.Calls[0].Command.Label).IsEqualTo("label-4");
+  }
+
   [Test]
   public async Task InvokeAsync_APayloadThatReadsAsNull_ThrowsAsync() {
     await using var provider = _provider();

@@ -140,6 +140,27 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     await Assert.That(byB.Select(i => i.StreamId).ToHashSet().SetEquals(streams.Except(expectedA))).IsTrue();
   }
 
+  /// <summary>
+  /// The rows a claim returns for one run carry that run's payload once: every one of them shares the same string. The
+  /// claim returns the payload on each row, and a payload materialized per row held one copy per stream of the batch,
+  /// which for a run recorded with its stream ids (about 5 MB at 127,288 streams) was hundreds of megabytes a batch.
+  /// </summary>
+  [Test]
+  public async Task ClaimAsync_TheRowsOfOneRun_ShareItsPayloadOnceAsync() {
+    var (a, _) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, a);
+    var streams = Enumerable.Range(0, 20).Select(_ => Guid.CreateVersion7()).ToArray();
+    var store = _store();
+    _ = await store.RecordRunAsync(_run(streams), CancellationToken.None);
+
+    var claimed = await store.ClaimAsync(new MultiStreamClaim(a, 50, _lease, null), CancellationToken.None);
+
+    await Assert.That(claimed.Count).IsEqualTo(streams.Length);
+    await Assert.That(claimed.Select(i => i.Payload).Distinct(ReferenceEqualityComparer.Instance).Count()).IsEqualTo(1)
+      .Because("a run's payload is held once for the whole batch, not once per claimed stream");
+  }
+
   [Test]
   public async Task ClaimAsync_WithNoAssignment_RanksTheLiveInstancesAsync() {
     var (a, b) = _twoInstancesInIdOrder();
