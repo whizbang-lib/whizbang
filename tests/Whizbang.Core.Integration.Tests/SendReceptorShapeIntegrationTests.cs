@@ -163,6 +163,8 @@ public class SendReceptorShapeIntegrationTests {
 
     try {
       await _sendAsync(dispatcher, command, overload);
+      // ImmediateDetached is detached: the send does not wait for it, so wait for its signal (#1393)
+      await stageTracker.Fired.Task.WaitAsync(TimeSpan.FromSeconds(30));
     } finally {
       registry.Unregister<OwnedVoidCommand>(stageTracker, LifecycleStage.ImmediateDetached);
     }
@@ -380,10 +382,14 @@ public class SendReceptorShapeIntegrationTests {
       }
     }
 
+    /// <summary>Completes on the first firing: a detached stage runs after the dispatch returns (#1393).</summary>
+    public TaskCompletionSource Fired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
       lock (_firedFor) {
         _firedFor.Add(idOf(message));
       }
+      Fired.TrySetResult();
       return ValueTask.CompletedTask;
     }
   }
