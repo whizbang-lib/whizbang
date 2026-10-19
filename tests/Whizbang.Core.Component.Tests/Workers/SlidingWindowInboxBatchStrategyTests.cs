@@ -66,9 +66,11 @@ public class SlidingWindowInboxBatchStrategyTests {
         return Task.CompletedTask;
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
+      // Windows that never elapse during the test, so only the size can flush: a 50ms sliding window elapsed
+      // between appends on a loaded machine and flushed fewer than five
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
-        MaxWait = TimeSpan.FromSeconds(10),  // generous so MaxSize is what flushes
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 5,
       });
 
@@ -76,7 +78,7 @@ public class SlidingWindowInboxBatchStrategyTests {
       await sut.AppendAsync(_makeMessage());
     }
 
-    // MaxSize=5 should trigger flush regardless of timing
+    // The fifth message reaches MaxSize, which flushes
     await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
     await Assert.That(captured.Count).IsEqualTo(1);
