@@ -78,6 +78,30 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   }
 
   /// <summary>
+  /// An owned event this service scheduled comes back to be handled here at its time: its copy is marked
+  /// <see cref="MessageDispatchContext.LocalDeferred"/>, because the publish deferred its local run to the delivery.
+  /// Discarding it as an echo meant the publisher never handled its own scheduled event (or expanded its own
+  /// scheduled composite).
+  /// </summary>
+  [Test]
+  public async Task OwnedEvent_ThisServiceDeferredToItsDelivery_IsNotDiscardedAsync() {
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    await worker.StartAsync();
+
+    var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE, localDeferred: true);
+
+    try {
+      await worker.SimulateMessageAsync(envelope, _ownedEventType);
+    } catch {
+      // Processing may throw after the discard check; only the inbox write is asserted
+    }
+
+    await worker.StopAsync();
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
+      .Because("a copy whose local handling was deferred to its delivery is handled here when it arrives");
+  }
+
+  /// <summary>
   /// Owned event from ANOTHER service → still discard.
   /// Even if the hop says "GatewayService", an event in OrderService's owned namespace can only
   /// have been published by OrderService. The hop's service name is irrelevant for events.
@@ -289,7 +313,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// The echo check uses <c>_isKnownEventType(envelopeType)</c> against the <see cref="IEventTypeProvider"/>
   /// registry (not <c>payload is IEvent</c>, since transport payloads are <c>JsonElement</c>).
   /// </summary>
-  private static MessageEnvelope<FakeOwnedEvent> _createEventEnvelope(string sourceServiceName) {
+  private static MessageEnvelope<FakeOwnedEvent> _createEventEnvelope(string sourceServiceName, bool localDeferred = false) {
     return new MessageEnvelope<FakeOwnedEvent> {
       MessageId = MessageId.From(TrackedGuid.New()),
       Payload = new FakeOwnedEvent(),
@@ -307,7 +331,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       ],
       DispatchContext = new MessageDispatchContext {
         Mode = DispatchModes.Outbox,
-        Source = MessageSource.Outbox
+        Source = MessageSource.Outbox,
+        LocalDeferred = localDeferred
       }
     };
   }
