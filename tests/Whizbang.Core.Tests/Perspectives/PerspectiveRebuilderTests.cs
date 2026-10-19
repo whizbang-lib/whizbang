@@ -504,6 +504,7 @@ public class PerspectiveRebuilderTests {
   private sealed class ReconcileCoordinator : IWorkCoordinator {
     public List<PerspectiveTableName> Tables { get; init; } = [];
     public List<(string Follower, IReadOnlyCollection<string> Announcers)> Reconciled { get; } = [];
+    public List<IReadOnlyCollection<Guid>?> ReconciledScopes { get; } = [];
 
     public Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
         IReadOnlyCollection<string> clrTypeNames, CancellationToken cancellationToken = default)
@@ -513,6 +514,13 @@ public class PerspectiveRebuilderTests {
         string followerTable, IReadOnlyCollection<string> announcerTables, CancellationToken cancellationToken = default) {
       lock (Reconciled) { Reconciled.Add((followerTable, announcerTables)); }
       return Task.FromResult(0);
+    }
+
+    public Task<int> ReconcileFollowerPresenceAsync(
+        string followerTable, IReadOnlyCollection<string> announcerTables, IReadOnlyCollection<Guid>? streamIds,
+        CancellationToken cancellationToken = default) {
+      lock (Reconciled) { ReconciledScopes.Add(streamIds); }
+      return ReconcileFollowerPresenceAsync(followerTable, announcerTables, cancellationToken);
     }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -571,6 +579,39 @@ public class PerspectiveRebuilderTests {
       await rebuilder.RebuildInPlaceAsync(typeof(GroupAnnouncerModel).FullName!);
 
       await Assert.That(coord.Reconciled).IsEmpty();
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
+
+  /// <summary>
+  /// A rebuild of named streams reconciles only those streams' rows: only they were replayed. A multi-stream run rebuilds
+  /// one stream per call, and each reconciling the whole follower table cost streams times rows.
+  /// </summary>
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task RebuildStreams_ForAFollower_ReconcilesOnlyThoseStreamsAsync() {
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupAnnouncerModel), "g", announce: true, follow: false, bridge: false);
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupFollowerModel), "g", announce: false, follow: true, bridge: false);
+      var coordinator = new ReconcileCoordinator {
+        Tables = {
+          new(typeof(GroupFollowerModel).FullName!, "wh_per_follower"),
+          new(typeof(GroupAnnouncerModel).FullName!, "wh_per_announcer"),
+        },
+      };
+      var rebuilder = _rebuilderWith(coordinator, out var coord);
+      var stream = Guid.CreateVersion7();
+
+      await rebuilder.RebuildStreamsAsync(typeof(GroupFollowerModel).FullName!, [stream]);
+
+      await Assert.That(coord.ReconciledScopes).Count().IsEqualTo(1);
+      await Assert.That(coord.ReconciledScopes[0]).IsNotNull()
+        .Because("a rebuild of named streams scopes its reconcile to them");
+      await Assert.That(coord.ReconciledScopes[0]!).IsEquivalentTo([stream]);
     } finally {
       PerspectiveStreamGroupRegistry.Clear();
     }

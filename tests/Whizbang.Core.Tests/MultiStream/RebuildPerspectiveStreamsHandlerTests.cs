@@ -27,8 +27,10 @@ public class RebuildPerspectiveStreamsHandlerTests {
 
     await handler.HandleStreamAsync(new RebuildPerspectiveStreamsCommand(_run, [_stream, Guid.CreateVersion7()], "Test.Perspective", _origin), _stream, CancellationToken.None);
 
-    await Assert.That(rebuilder.Calls.Single()).IsEqualTo(("Test.Perspective", _stream, _origin))
+    await Assert.That(rebuilder.RunCalls.Single()).IsEqualTo(("Test.Perspective", _stream, _origin))
       .Because("each stream is rebuilt on its own owner, so one call rebuilds one stream, never the whole list");
+    await Assert.That(rebuilder.Calls).IsEmpty()
+      .Because("a stream of a run is rebuilt as part of the run, which reports once, not as a rebuild of its own with its own events and digests");
   }
 
   [Test]
@@ -58,7 +60,16 @@ public class RebuildPerspectiveStreamsHandlerTests {
   private sealed class StreamRecordingRebuilder : IPerspectiveRebuilder {
     public List<(string Perspective, Guid Stream, RebuildOrigin Origin)> Calls { get; } = [];
 
+    public List<(string Perspective, Guid Stream, RebuildOrigin Origin)> RunCalls { get; } = [];
+
     public string? FailWith { get; init; }
+
+    public Task<RebuildResult> RebuildStreamOfRunAsync(string perspectiveName, Guid streamId, RebuildOrigin origin, CancellationToken ct = default) {
+      RunCalls.Add((perspectiveName, streamId, origin));
+      return Task.FromResult(FailWith is null
+        ? new RebuildResult(perspectiveName, 1, 1, TimeSpan.Zero, Success: true, Error: null)
+        : new RebuildResult(perspectiveName, 0, 0, TimeSpan.Zero, Success: false, Error: FailWith));
+    }
 
     public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, RebuildOrigin origin, CancellationToken ct = default) {
       foreach (var stream in streamIds) {

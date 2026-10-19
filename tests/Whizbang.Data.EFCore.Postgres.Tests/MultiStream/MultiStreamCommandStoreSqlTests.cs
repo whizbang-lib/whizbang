@@ -161,6 +161,27 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
       .Because("a run's payload is held once for the whole batch, not once per claimed stream");
   }
 
+  /// <summary>
+  /// The claim sends a run's payload on one of its rows, not on every row. Sent per row, a run recorded with its stream
+  /// ids (about 5 MB at 127,288 streams) crossed the wire 50 times a batch, about 630 GB over one run, even when the
+  /// client kept a single copy.
+  /// </summary>
+  [Test]
+  public async Task TheClaimFunction_SendsEachRunsPayloadOnceAsync() {
+    var (a, _) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, a);
+    var store = _store();
+    _ = await store.RecordRunAsync(_run([.. Enumerable.Range(0, 20).Select(_ => Guid.CreateVersion7())]), CancellationToken.None);
+    _ = await store.RecordRunAsync(_run([.. Enumerable.Range(0, 5).Select(_ => Guid.CreateVersion7())]), CancellationToken.None);
+
+    var payloadRows = await _scalarAsync<long>(conn,
+      $"SELECT count(*) FILTER (WHERE payload IS NOT NULL) FROM wh_claim_multi_stream_work('{a}'::uuid, 50, 300)");
+
+    await Assert.That(payloadRows).IsEqualTo(2L)
+      .Because("each run's payload is sent once per claim, on one of its rows");
+  }
+
   [Test]
   public async Task ClaimAsync_WithNoAssignment_RanksTheLiveInstancesAsync() {
     var (a, b) = _twoInstancesInIdOrder();
