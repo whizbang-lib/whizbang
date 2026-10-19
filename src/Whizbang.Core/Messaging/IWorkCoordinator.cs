@@ -1928,7 +1928,7 @@ public interface IWorkCoordinator {
   /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
   /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
   Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamCloseResult("unsupported", 0));
@@ -2656,7 +2656,7 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 /// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
 /// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
 public sealed record StreamCloseResult(string Status, long EventsTruncated);
 
 /// <summary>
