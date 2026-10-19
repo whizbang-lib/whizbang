@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
