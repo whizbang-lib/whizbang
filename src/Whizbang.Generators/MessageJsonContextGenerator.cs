@@ -570,7 +570,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // JsonTypeInfo object factory would fail to compile (CS0144). Only concrete wire types are
     // serialized; e.g. an abstract CompositeEventBase is never on the wire — only its concrete
     // subclasses are (discovered separately and registered as IMessage derived types).
-    if (typeSymbol.IsAbstract) {
+    // A generic declaration is likewise an open type: it has no closed form to name a JsonTypeInfo for
+    // (#1481). A closed form a receptor or perspective names is discovered from that reference instead.
+    if (typeSymbol.IsAbstract || typeSymbol.IsGenericType) {
       return null;
     }
 
