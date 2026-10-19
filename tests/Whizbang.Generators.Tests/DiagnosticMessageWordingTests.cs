@@ -205,4 +205,52 @@ public class DiagnosticMessageWordingTests {
 
     await Assert.That(diagnostics.Where(d => d.Id is "WHIZ102" or "WHIZ103").Select(d => d.Id)).IsEquivalentTo(["WHIZ103"]);
   }
+
+  private const string POLYMORPHIC_PREFIX = """
+      using System.Text.Json.Serialization;
+      using Whizbang.Core.Perspectives;
+      namespace Shop;
+      [JsonPolymorphic]
+      [JsonDerivedType(typeof(CardPayment), "card")]
+      public class Payment { public decimal Amount { get; init; } }
+      public class CardPayment : Payment { }
+      public record OrderPlaced;
+      """;
+
+  /// <summary>WHIZ811 calls a [JsonPolymorphic] concrete class polymorphic, not abstract.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Whiz811_AJsonPolymorphicConcreteClass_IsNotCalledAbstractAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(POLYMORPHIC_PREFIX + """
+      public record Order { public Payment? Payment { get; init; } }
+      public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {
+        public Order Apply(Order current, OrderPlaced @event) => current;
+      }
+      """);
+
+    var message = _message(diagnostics.Single(d => d.Id == "WHIZ811"));
+    await Assert.That(message).DoesNotContain("abstract");
+    await Assert.That(message).Contains("polymorphic type 'Payment'");
+  }
+
+  /// <summary>Adding the [PolymorphicDiscriminator] WHIZ811 suggests silences it.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Whiz811_AModelWithADiscriminator_IsNotReportedAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(POLYMORPHIC_PREFIX + """
+      public record Order {
+        public Payment? Payment { get; init; }
+        [PolymorphicDiscriminator]
+        public string PaymentType { get; init; } = "";
+      }
+      public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {
+        public Order Apply(Order current, OrderPlaced @event) => current;
+      }
+      """);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ811")).IsEmpty();
+    await Assert.That(AnalyzerTestHelper.CreateCompilationWithFrameworkReferences(POLYMORPHIC_PREFIX).GetDiagnostics()
+        .Where(static d => d.Severity == DiagnosticSeverity.Error)).IsEmpty()
+      .Because("the polymorphic attributes must bind, or the analyzer sees nothing to report");
+  }
 }
