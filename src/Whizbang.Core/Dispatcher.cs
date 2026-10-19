@@ -1491,7 +1491,7 @@ public abstract partial class Dispatcher(
     await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
     await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, messageType, envelope, sourceEnvelope: null, storedId, cancellationToken);
-    await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, cancellationToken);
+    await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
   }
 
   /// <summary>
@@ -2715,7 +2715,7 @@ public abstract partial class Dispatcher(
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
       // This enables receptors to return Route.Local(event) for cascade control
@@ -2766,7 +2766,7 @@ public abstract partial class Dispatcher(
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -2991,7 +2991,7 @@ public abstract partial class Dispatcher(
       await _invokePostLifecycleReceptorsAsync(envelope, message, messageType, options.CancellationToken);
 
       // Invoke ImmediateDetached lifecycle receptors after business receptor completes
-      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, options.CancellationToken);
+      await _invokeImmediateDetachedReceptorsAsync(envelope, messageType);
 
       // Unwrap Routed<T> from result
       TResult unwrapped;
@@ -3649,47 +3649,47 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Invokes ImmediateDetached lifecycle receptors for the dispatched message.
-  /// Called after the business receptor completes, cascade, and tag processing.
-  /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
+  /// Starts the ImmediateDetached lifecycle receptors for the dispatched message, after the business receptor,
+  /// cascade and tag processing, and returns without waiting for them (#1393): a detached stage runs in its
+  /// own scope, nobody waits for it, and its exception is logged, never returned to the caller.
   /// </summary>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithImmediateDetachedReceptors_InvokesScopedInvokerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithReceptorRegistry_NoImmediateDetachedReceptors_SkipsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherUncoveredPathsTests.cs:LocalInvokeAsync_Void_WithTraceStore_NoReceptorRegistry_SkipsImmediateDetachedAsync</tests>
-  private async ValueTask _invokeImmediateDetachedReceptorsAsync(
-      IMessageEnvelope envelope,
-      Type messageType,
-      CancellationToken ct = default) {
-    // Short-circuit if no receptor registry available
-    if (_receptorRegistry is null) {
-      return;
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:ALocalDispatch_ReturnsWithoutWaitingForImmediateDetachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:AnImmediateDetachedFailure_NeverReachesTheCallerAsync</tests>
+  private ValueTask _invokeImmediateDetachedReceptorsAsync(IMessageEnvelope envelope, Type messageType) {
+    // Nothing to start without a registry or an ImmediateDetached receptor for this message type
+    if (_receptorRegistry is null || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached).Count == 0) {
+      return ValueTask.CompletedTask;
     }
 
-    // Check if there are any ImmediateDetached receptors registered for this message type
-    var receptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached);
-    if (receptors.Count == 0) {
-      return;
-    }
-
-    // This message was admitted at its entry; its stages do not refuse it again (#1419)
+    // This message was admitted at its entry; its stages do not refuse it again (#1419). The mark, like the
+    // caller's security context, flows into the background task with the execution context.
     LocalDispatchAdmission.Mark();
-    // Create a scope to resolve scoped IReceptorInvoker
-    // Dispatcher is a singleton — cannot inject scoped services directly
-    await using var scope = _scopeFactory.CreateAsyncScope();
-    var scopedInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-    if (scopedInvoker is null) {
-      return;
-    }
-
-    // Invoke ImmediateDetached receptors for the dispatched message
-    var context = new LifecycleExecutionContext {
-      CurrentStage = LifecycleStage.ImmediateDetached,
-      MessageSource = MessageSource.Local
-    };
-
-    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached, context, ct).ConfigureAwait(false);
+    // Not the caller's token: that call has returned by the time the stage runs, and a detached stage outlives it
+    _ = _runImmediateDetachedAsync(envelope);
+    return ValueTask.CompletedTask;
   }
+
+  private Task _runImmediateDetachedAsync(IMessageEnvelope envelope) =>
+    Task.Run(async () => {
+      try {
+        // Dispatcher is a singleton: the scoped IReceptorInvoker comes from a scope of the stage's own
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        if (scope.ServiceProvider.GetService<IReceptorInvoker>() is not { } scopedInvoker) {
+          return;
+        }
+        var context = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateDetached,
+          MessageSource = MessageSource.Local
+        };
+        await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached, context, CancellationToken.None).ConfigureAwait(false);
+      } catch (Exception ex) {
+        Log.ImmediateDetachedFailed(DispatcherLogger, ex, envelope.MessageId.Value);
+      }
+    }, CancellationToken.None);
 
   /// <summary>
   /// Invokes PostLifecycle lifecycle receptors for the dispatched message.
@@ -6496,5 +6496,11 @@ public abstract partial class Dispatcher(
       Message = "[CASCADE] A receptor returned {MessageType}, which is neither a command nor an event; nothing in this service " +
                 "handles it and it belongs to this service, so it is not sent anywhere. It was skipped.")]
     public static partial void UnhandledResultSkipped(ILogger logger, string messageType);
+
+    [LoggerMessage(
+      EventId = 8,
+      Level = LogLevel.Error,
+      Message = "An ImmediateDetached receptor failed for message {MessageId}. The stage is detached, so the dispatch was not failed.")]
+    public static partial void ImmediateDetachedFailed(ILogger logger, Exception exception, Guid messageId);
   }
 }
