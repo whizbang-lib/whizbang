@@ -610,6 +610,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     await Assert.That(whiz821.GetMessage(CultureInfo.InvariantCulture)).Contains("column name");
     await Assert.That(whiz821.GetMessage(CultureInfo.InvariantCulture)).Contains("exceeds");
     await Assert.That(whiz821.GetMessage(CultureInfo.InvariantCulture)).Contains("PostgreSQL");
+    await Assert.That(DiagnosticSourceText.Of(whiz821)).IsEqualTo("ProductDto")
+      .Because("it is reported at the model's declaration, so it can be suppressed there (#1429)");
   }
 
   /// <summary>
@@ -665,6 +667,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     await Assert.That(whiz822.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
     await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains($"ix_wh_per_order_{column}");
     await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains("(64 bytes)");
+    await Assert.That(DiagnosticSourceText.Of(whiz822)).IsEqualTo("order")
+      .Because("it is reported at the model's declaration, so it can be suppressed there (#1429)");
   }
 
   /// <summary>An index name of exactly 63 bytes is within the limit: no WHIZ822.</summary>
@@ -738,6 +742,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
     await Assert.That(_limitIds(result)).IsEquivalentTo(["WHIZ820"]);
     await Assert.That(result.Diagnostics.Single(d => d.Id == "WHIZ820").GetMessage(CultureInfo.InvariantCulture)).Contains("(64 bytes)");
+    await Assert.That(DiagnosticSourceText.Of(result.Diagnostics.Single(d => d.Id == "WHIZ820"))).IsEqualTo(model);
   }
 
   /// <summary>
