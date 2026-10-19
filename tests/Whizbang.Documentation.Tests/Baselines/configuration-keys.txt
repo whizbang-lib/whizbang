@@ -121,6 +121,7 @@ Whizbang:Health:Components:*
 Whizbang:Health:Default
 Whizbang:Health:SourceTimeout
 Whizbang:Housekeeping:MaxConsecutiveDeferrals
+Whizbang:Housekeeping:MaxDeferral
 Whizbang:Housekeeping:SettledCooldown
 Whizbang:Lifecycle:FaultRecordWindow
 Whizbang:Lifecycle:TransitionAckTimeout

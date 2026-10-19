@@ -37,6 +37,7 @@ public static class WorkerPipelineExtensions {
   /// <docs>operations/workers/housekeeping-arbitration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
       new Whizbang.Core.Observability.HousekeepingMetrics(
@@ -46,7 +47,10 @@ public static class WorkerPipelineExtensions {
     // options: the section reaches the mechanism with no host code, hosts without
     // IConfiguration keep code defaults, and the binder source generator keeps it
     // reflection-free).
-    services.AddOptions<HousekeepingCoordinator.Settings>();
+    // #1491: a zero or negative MaxDeferral would force every deferred pass through, so the
+    // section is validated at host start rather than discovered as a gate that defers nothing.
+    services.AddOptions<HousekeepingCoordinator.Settings>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<HousekeepingCoordinator.Settings>, HousekeepingSettingsValidator>());
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<HousekeepingCoordinator.Settings>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<HousekeepingCoordinator.Settings>(options => {
@@ -61,7 +65,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp =>
       new HousekeepingCoordinator(
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<HousekeepingCoordinator.Settings>>().Value,
-        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>(),
+        sp.GetService<TimeProvider>()));
   }
 
   /// <summary>
