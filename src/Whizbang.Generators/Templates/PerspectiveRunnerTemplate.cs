@@ -381,7 +381,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         if (!_isEphemeralPerspective
             || await _hasSnapshotFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken)) {
           _logger.LogInformation(
-              "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
+              "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history: resurrecting via re-fold",
               streamId,
               perspectiveName
           );

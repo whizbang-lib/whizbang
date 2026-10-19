@@ -86,8 +86,8 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
     await _arrangeAsync(conn, ttlSeconds: 3600, cap: null, acknowledged: false);
     var evicted = Guid.CreateVersion7();
     var survivor = Guid.CreateVersion7();
-    await _seedRowAsync(conn, evicted, updatedDaysAgo: 1, expiresAt: DateTime.UtcNow.AddHours(-1));
-    await _seedRowAsync(conn, survivor, updatedDaysAgo: 1, expiresAt: DateTime.UtcNow.AddHours(1));
+    await _seedRowAsync(conn, evicted, updatedDaysAgo: 1, expiresInHours: -1);
+    await _seedRowAsync(conn, survivor, updatedDaysAgo: 1, expiresInHours: 1);
     await _seedCompanionsAsync(conn, evicted);
     await _seedCompanionsAsync(conn, survivor);
 
@@ -106,7 +106,7 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     await _arrangeAsync(conn, ttlSeconds: null, cap: null);
     var stream = Guid.CreateVersion7();
-    await _seedRowAsync(conn, stream, updatedDaysAgo: 1, expiresAt: null);
+    await _seedRowAsync(conn, stream, updatedDaysAgo: 1, expiresInHours: null);
     var older = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 1, version: 3);
     var placed = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 2, version: 7);
     var versionless = await _seedSnapshotAsync(conn, stream, PERSPECTIVE_A, sequence: 3, version: null);
@@ -127,7 +127,7 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
     await using var conn = await _openAsync();
     await _arrangeAsync(conn, ttlSeconds: null, cap: null, withPerspectiveNames: false);
     var stream = Guid.CreateVersion7();
-    await _seedRowAsync(conn, stream, updatedDaysAgo: 1, expiresAt: null);
+    await _seedRowAsync(conn, stream, updatedDaysAgo: 1, expiresInHours: null);
     await _seedCompanionsAsync(conn, stream);
 
     await _cascadeAsync(conn, stream);
@@ -161,7 +161,8 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
 
     var names = await _perspectiveNamesAsync(conn);
 
-    await Assert.That(names).IsEquivalentTo(new[] { PERSPECTIVE_A, PERSPECTIVE_B })
+    string[] expected = [PERSPECTIVE_A, PERSPECTIVE_B];
+    await Assert.That(names).IsEquivalentTo(expected)
       .Because("two perspectives fold the same model; an eviction of its row must reach both");
   }
 
@@ -172,7 +173,8 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
 
     await _reconcileAsync(conn, withPerspectiveNames: false);
 
-    await Assert.That(await _perspectiveNamesAsync(conn)).IsEquivalentTo(new[] { PERSPECTIVE_A, PERSPECTIVE_B })
+    string[] expected = [PERSPECTIVE_A, PERSPECTIVE_B];
+    await Assert.That(await _perspectiveNamesAsync(conn)).IsEquivalentTo(expected)
       .Because("a payload that says nothing about perspectives is not evidence that there are none");
   }
 
@@ -183,7 +185,8 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
 
     await _reconcileAsync(conn, withPerspectiveNames: true, names: [PERSPECTIVE_B]);
 
-    await Assert.That(await _perspectiveNamesAsync(conn)).IsEquivalentTo(new[] { PERSPECTIVE_B })
+    string[] expected = [PERSPECTIVE_B];
+    await Assert.That(await _perspectiveNamesAsync(conn)).IsEquivalentTo(expected)
       .Because("the payload is the whole truth for the model: a removed perspective stops being cleaned for");
   }
 
@@ -265,22 +268,27 @@ public class EvictionCompanionCleanupSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, int evictedUpdatedDaysAgo, int survivorUpdatedDaysAgo) {
     var evicted = Guid.CreateVersion7();
     var survivor = Guid.CreateVersion7();
-    await _seedRowAsync(conn, evicted, evictedUpdatedDaysAgo, expiresAt: null);
-    await _seedRowAsync(conn, survivor, survivorUpdatedDaysAgo, expiresAt: null);
+    await _seedRowAsync(conn, evicted, evictedUpdatedDaysAgo, expiresInHours: null);
+    await _seedRowAsync(conn, survivor, survivorUpdatedDaysAgo, expiresInHours: null);
     await _seedCompanionsAsync(conn, evicted);
     await _seedCompanionsAsync(conn, survivor);
     return (evicted, survivor);
   }
 
-  private static async Task _seedRowAsync(NpgsqlConnection conn, Guid id, int updatedDaysAgo, DateTime? expiresAt) {
+  /// <summary>
+  /// Seeds a row whose business times and stamped expiry are all relative to the DATABASE clock, the same
+  /// NOW() the sweeps compare against, so host and server clock skew cannot move a row across a boundary.
+  /// </summary>
+  private static async Task _seedRowAsync(NpgsqlConnection conn, Guid id, int updatedDaysAgo, int? expiresInHours) {
     await using var cmd = new NpgsqlCommand($@"
       INSERT INTO {TABLE} (id, data, metadata, scope, created_at, updated_at, version, expires_at)
       VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb,
-              NOW() - make_interval(days => @d), NOW() - make_interval(days => @d), 1, @e)", conn);
+              NOW() - make_interval(days => @d), NOW() - make_interval(days => @d), 1,
+              NOW() + make_interval(hours => @h))", conn);
     cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue("d", updatedDaysAgo);
-    cmd.Parameters.Add(new NpgsqlParameter("e", NpgsqlTypes.NpgsqlDbType.TimestampTz) {
-      Value = (object?)expiresAt ?? DBNull.Value
+    cmd.Parameters.Add(new NpgsqlParameter("h", NpgsqlTypes.NpgsqlDbType.Integer) {
+      Value = (object?)expiresInHours ?? DBNull.Value
     });
     await cmd.ExecuteNonQueryAsync();
   }

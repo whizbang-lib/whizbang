@@ -149,7 +149,8 @@ public class EvictedRowRebuildTests {
     var b3 = _envelope(new EvictionCappedAdded { StreamId = streamId, Delta = 3 });
     store.Stream.AddRange([b1, b2, b3]);
     var rows = new InMemoryRows<EvictionCappedModel>();
-    var runner = _runner<EvictionCappedPerspective, EvictionCappedModel>(store, rows, snapshots: null, logs: null);
+    var logs = new List<(LogLevel Level, string Message)>();
+    var runner = _runner<EvictionCappedPerspective, EvictionCappedModel>(store, rows, snapshots: null, logs);
 
     await runner.RunWithEventsAsync(streamId, _name<EvictionCappedPerspective>(), null, [b3], CancellationToken.None);
 
@@ -157,6 +158,9 @@ public class EvictedRowRebuildTests {
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Total).IsEqualTo(6)
       .Because("a capped row that was evicted is rebuilt from its history, not started over from the incoming event");
+    await Assert.That(logs.Any(l => l.Level == LogLevel.Information
+        && l.Message.EndsWith("is missing but the stream has history: resurrecting via re-fold", StringComparison.Ordinal))).IsTrue()
+      .Because("the rebuild announces itself once, at Information, in plain en-US punctuation");
   }
 
   [Test]
@@ -271,6 +275,9 @@ public class EvictedRowRebuildTests {
 
   // -------------------------------------------------------------------------------------------
 
+  // A fixed instant: nothing here depends on the wall clock, and the hop time is never compared.
+  private static readonly DateTimeOffset _hopTime = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private static string _name<TPerspective>() => TypeNameFormatter.FormatClrTypeName(typeof(TPerspective));
 
   private static JsonDocument _snapshotOf<TModel>(TModel model) {
@@ -314,7 +321,7 @@ public class EvictedRowRebuildTests {
       new MessageHop {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-        Timestamp = DateTimeOffset.UtcNow,
+        Timestamp = _hopTime,
       }
     ],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },

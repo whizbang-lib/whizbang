@@ -89,12 +89,10 @@ END $do$;
 -- Part 2: perform_maintenance — Task 8's snapshot-coverage gate (rule 5: whole function, verbatim + delta)
 -- ============================================================================
 -- perform_maintenance: last word 190_CollectiveOrderingHeads.sql, with Task 8's snapshot-coverage gate
--- comparing the stream's own version instead of commit sequence. Task 9 also removes the expired rows'
--- cursors and older snapshots (issue #1483, the helper is in 112); nothing else in the function changes.
+-- comparing the stream's own version instead of commit sequence. Nothing else in the function changes.
 
 -- <docs>operations/infrastructure/maintenance</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/TtlReapDrivesFromRegistryTests.cs:TheRowExpiryReap_SelectsItsTablesFromTheRegistry_NotTheCatalogAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:StampedExpiryReap_RemovesTheEvictedRowsCursors_KeepsItsLatestSnapshot_LeavesTheRestAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/CollectiveOrderingHeadSqlTests.cs:Maintenance_PrunesOnlyHeadsIdlePastTheRetentionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PurgesStuckInboxMessages_OlderThanRetentionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesRecentStuckInboxMessages_WithinRetentionAsync</tests>
@@ -119,7 +117,6 @@ DECLARE
   v_ephemeral_grace_seconds INTEGER;
   v_per_table TEXT;
   v_per_deleted BIGINT;
-  v_per_victims UUID[];
   v_instance_eviction_retention_hours INTEGER;
   v_dead_letter_retention_days INTEGER;
   v_orphan_grace_hours INTEGER;
@@ -487,17 +484,10 @@ BEGIN
             AND t.table_name = r.table_name)
     LOOP
       EXECUTE format(
-        'WITH del AS (
-           DELETE FROM %I.%I WHERE expires_at IS NOT NULL AND expires_at < NOW()
-           RETURNING id)
-         SELECT ARRAY(SELECT id FROM del)',
-        current_schema(), v_per_table)
-        INTO v_per_victims;
-      v_per_deleted := cardinality(v_per_victims);
+        'DELETE FROM %I.%I WHERE expires_at IS NOT NULL AND expires_at < NOW()',
+        current_schema(), v_per_table);
+      GET DIAGNOSTICS v_per_deleted = ROW_COUNT;
       v_rows := v_rows + v_per_deleted;
-      -- Issue #1483: an eviction reclaims storage only. The expired rows' cursors and all but their
-      -- latest snapshots go with them (112), so the next event on the stream rebuilds the row.
-      PERFORM __SCHEMA__._wh_evict_perspective_row_companions(v_per_table, v_per_victims);
     END LOOP;
   END IF;
   RETURN QUERY SELECT

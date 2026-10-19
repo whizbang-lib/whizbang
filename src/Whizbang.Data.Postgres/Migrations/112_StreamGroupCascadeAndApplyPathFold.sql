@@ -10,13 +10,6 @@
 --               into the counts BEFORE the stream's pointers are destroyed. The stream dies; its
 --               shape survives.
 --
---           (3) EVICTION COMPANIONS (issue #1483): an eviction reclaims storage only; the read model
---               stays a function of the events. Every path that evicts a perspective row (both sweeps
---               here and in 113, the cascade, and the stamped-expiry reap in perform_maintenance)
---               also removes, for each perspective that folds the evicted model, its cursor for the
---               stream and every snapshot but the latest, in the same statement chain. The next event
---               then rebuilds the row from that snapshot plus the history after it.
---
 -- Dependencies: 111 (hold table + sweeps), 101-104 (registry/enrolment)
 
 -- ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -35,83 +28,7 @@ COMMENT ON TABLE __SCHEMA__.wh_row_eviction_journal IS
   'Origin evictions awaiting group-cascade processing: the row sweeps write what they destroyed; '
   'the maintenance cascade drains atomically and expands through the stream-group closure.';
 
--- (3a) The model -> perspective mapping. Cursors and snapshots are keyed by the PERSPECTIVE's CLR type
--- name, the registry by the MODEL's; reconcile_perspective_registry (142) records here every perspective
--- the generator found folding the model. NULL until a startup reconcile has recorded them, and an
--- eviction from such a row then removes the row alone, never a guessed companion.
-ALTER TABLE __SCHEMA__.wh_perspective_registry
-  ADD COLUMN IF NOT EXISTS perspective_names TEXT[];
-
-COMMENT ON COLUMN __SCHEMA__.wh_perspective_registry.perspective_names IS
-  'CLR type names of the perspectives that fold this model (the form wh_perspective_cursors and '
-  'wh_perspective_snapshots key on). Written by reconcile_perspective_registry; read by the row-eviction '
-  'companion cleanup (issue #1483).';
-
--- (3b) The companion cleanup every eviction path calls with the ids it actually deleted. For each
--- perspective of the table's model: the cursor of each evicted stream goes (the next event must not
--- continue a row that no longer exists), and every snapshot but the latest goes (the latest is the floor
--- the rebuild restores from). "Latest" is the one a rewind would restore: highest stream version, with a
--- versionless snapshot (written before 209) last, because a rewind cannot place it in the stream. Other
--- perspectives' cursors and snapshots on the same streams are never touched. Returns rows removed.
--- <docs>fundamentals/perspectives/row-retention</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Cascade_RemovesTheEvictedRowsCursors_KeepsItsLatestSnapshot_LeavesTheRestAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Eviction_KeepsTheSnapshotARewindCanPlace_NotANewerVersionlessOneAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Eviction_ModelWithNoKnownPerspectives_RemovesOnlyTheRowAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Cascade_NoRowsDeleted_TouchesNoCompanionsAsync</tests>
--- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEvictionCompanionCleanupTests.cs:Cascade_OnADapperMigratedDatabase_RemovesCursor_KeepsLatestSnapshotAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_evict_perspective_row_companions(
-  p_table_name TEXT,
-  p_row_ids UUID[])
-RETURNS INTEGER AS $$
-DECLARE
-  v_names     TEXT[];
-  v_cursors   INTEGER := 0;
-  v_snapshots INTEGER := 0;
-BEGIN
-  IF COALESCE(cardinality(p_row_ids), 0) = 0 THEN
-    RETURN 0;
-  END IF;
-
-  SELECT array_agg(DISTINCT n.perspective_name)
-    INTO v_names
-    FROM __SCHEMA__.wh_perspective_registry r
-    CROSS JOIN LATERAL unnest(r.perspective_names) AS n(perspective_name)
-   WHERE r.table_name = p_table_name;
-
-  IF v_names IS NULL THEN
-    RETURN 0;
-  END IF;
-
-  DELETE FROM __SCHEMA__.wh_perspective_cursors c
-   WHERE c.stream_id = ANY(p_row_ids)
-     AND c.perspective_name = ANY(v_names);
-  GET DIAGNOSTICS v_cursors = ROW_COUNT;
-
-  DELETE FROM __SCHEMA__.wh_perspective_snapshots s
-   USING (
-     SELECT sn.stream_id, sn.perspective_name, sn.snapshot_event_id,
-            ROW_NUMBER() OVER (
-              PARTITION BY sn.stream_id, sn.perspective_name
-              ORDER BY sn.snapshot_version DESC NULLS LAST, sn.sequence_number DESC) AS rn
-       FROM __SCHEMA__.wh_perspective_snapshots sn
-      WHERE sn.stream_id = ANY(p_row_ids)
-        AND sn.perspective_name = ANY(v_names)) ranked
-   WHERE ranked.rn > 1
-     AND s.stream_id = ranked.stream_id
-     AND s.perspective_name = ranked.perspective_name
-     AND s.snapshot_event_id = ranked.snapshot_event_id;
-  GET DIAGNOSTICS v_snapshots = ROW_COUNT;
-
-  RETURN v_cursors + v_snapshots;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__._wh_evict_perspective_row_companions(TEXT, UUID[]) IS
-  'Issue #1483: for rows just evicted from a perspective table, removes each folding perspective''s '
-  'cursor and all but its latest snapshot for those streams. Called by every eviction path.';
-
 -- (1b) Expiry sweep re-created VERBATIM from 111 with one change: the DELETE journals its victims.
--- 1483: the victims' companions are cleaned in the same statement chain.
 DROP FUNCTION IF EXISTS __SCHEMA__.reap_enrolled_perspective_rows(INTEGER);
 
 -- Exactly one overload per framework function: this name is defined at more than one
@@ -121,10 +38,6 @@ DROP FUNCTION IF EXISTS __SCHEMA__.reap_enrolled_perspective_rows(INTEGER);
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('reap_enrolled_perspective_rows');
 
--- <docs>fundamentals/perspectives/row-retention</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EnrolledRowReaperSqlTests.cs:SlidingRule_ReapsIdleRowsWithNoStampedExpiryAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs:Sweep_JournalsItsVictims_InTheSameStatementAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:TtlReap_RemovesTheEvictedRowsCursors_KeepsItsLatestSnapshot_LeavesTheRestAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_enrolled_perspective_rows(p_batch_size INTEGER DEFAULT 5000)
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE
@@ -134,7 +47,6 @@ DECLARE
   v_debug_mode   BOOLEAN := FALSE;
   v_reg          RECORD;
   v_pending      INTEGER := 0;
-  v_victims      UUID[];
 BEGIN
   SELECT COALESCE(
     (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'), FALSE)
@@ -172,23 +84,17 @@ BEGIN
                SELECT 1 FROM %I.wh_perspective_row_hold h
                WHERE h.table_name = %L AND h.row_id = id AND h.hold_until > NOW())
            LIMIT $3)
-         RETURNING id),
-       journaled AS (
-         INSERT INTO %I.wh_row_eviction_journal (table_name, row_id)
-         SELECT %L, id FROM del
-         ON CONFLICT (table_name, row_id) DO NOTHING)
-       SELECT ARRAY(SELECT id FROM del)',
+         RETURNING id)
+       INSERT INTO %I.wh_row_eviction_journal (table_name, row_id)
+       SELECT %L, id FROM del
+       ON CONFLICT (table_name, row_id) DO NOTHING',
       current_schema(), v_reg.table_name, current_schema(), v_reg.table_name,
       current_schema(), v_reg.table_name,
       current_schema(), v_reg.table_name)
-    INTO v_victims
     USING v_reg.row_ttl_seconds, v_reg.row_max_age_seconds, p_batch_size;
 
-    -- 1483: counted from the rows deleted (the journal may already hold an id), and their cursors
-    -- and all but their latest snapshots go with them.
-    v_deleted := cardinality(v_victims);
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
     v_rows := v_rows + v_deleted;
-    PERFORM __SCHEMA__._wh_evict_perspective_row_companions(v_reg.table_name, v_victims);
     IF v_deleted >= p_batch_size THEN
       v_pending := v_pending + 1;
     END IF;
@@ -288,16 +194,12 @@ $$ LANGUAGE plpgsql;
 
 -- (1d) The cascade delete: hold-aware, so a guard's Defer on a cascaded row survives it; returns
 -- the count actually destroyed. NOT journaled — see the journal comment.
--- <docs>fundamentals/perspectives/row-retention</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs:CascadeDelete_HonorsHolds_AndRequeueIsIdempotentAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Cascade_RemovesTheEvictedRowsCursors_KeepsItsLatestSnapshot_LeavesTheRestAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.cascade_delete_perspective_rows(
   p_table_name TEXT,
   p_row_ids UUID[])
 RETURNS INTEGER AS $$
 DECLARE
   v_deleted INTEGER := 0;
-  v_victims UUID[];
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.tables
@@ -306,20 +208,14 @@ BEGIN
   END IF;
 
   EXECUTE format(
-    'WITH del AS (
-       DELETE FROM %I.%I WHERE id = ANY($1)
-         AND NOT EXISTS (
-           SELECT 1 FROM %I.wh_perspective_row_hold h
-           WHERE h.table_name = %L AND h.row_id = id AND h.hold_until > NOW())
-       RETURNING id)
-     SELECT ARRAY(SELECT id FROM del)',
+    'DELETE FROM %I.%I WHERE id = ANY($1)
+       AND NOT EXISTS (
+         SELECT 1 FROM %I.wh_perspective_row_hold h
+         WHERE h.table_name = %L AND h.row_id = id AND h.hold_until > NOW())',
     current_schema(), p_table_name, current_schema(), p_table_name)
-  INTO v_victims
   USING p_row_ids;
 
-  -- 1483: the cascaded rows' cursors and all but their latest snapshots go with them.
-  v_deleted := cardinality(v_victims);
-  PERFORM __SCHEMA__._wh_evict_perspective_row_companions(p_table_name, v_victims);
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
   RETURN v_deleted;
 END;
 $$ LANGUAGE plpgsql;

@@ -210,6 +210,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **Evicting a perspective row left its cursor and every snapshot behind, and a row evicted by a cap or a
+  stream-group cascade came back holding only the newest event (#1483).** An eviction now reclaims storage
+  only: for each perspective of the evicted model, the row's cursor and every snapshot but the latest are
+  removed with it, on every eviction path (row TTL, row cap, stream-group cascade, stamped expiry) and both
+  drivers (migration 211). The next event on the stream rebuilds the whole row from that snapshot plus the
+  later history, for any perspective whose rows can be evicted (`PerspectiveRowEviction.CanEvict`), not only
+  row-TTL ones. An ephemeral perspective rebuilds from a surviving snapshot; with none it starts the row
+  fresh and logs a warning. Perspectives on the same stream that fold another model are untouched. The EF
+  Core registry payload now names each model's perspectives (`wh_perspective_registry.perspective_names`),
+  recorded at the next startup; until then an eviction removes the row alone.
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator
