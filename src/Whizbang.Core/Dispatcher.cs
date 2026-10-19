@@ -816,21 +816,76 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Registers an envelope for a message a publish or cascade is about to run locally, so a receptor that
   /// looks up the envelope of the message it handles finds one, as on a send or invoke (#1410 follow-up).
-  /// Returns false when there is no registry, so there is nothing to unregister. <paramref name="stampMessage"/>
+  /// Returns the registered envelope, or null when there is no registry, so there is nothing to unregister. <paramref name="stampMessage"/>
   /// is false when the message's copy already stamped it, so the receptors see what the copy stored (#1455);
   /// <paramref name="copyId"/> is that copy's id, so the envelope they look up is the stored message (#1464).
   /// </summary>
-  private bool _registerLocalRunEnvelope(object message, IMessageEnvelope? sourceEnvelope, bool stampMessage, MessageId? copyId = null) {
+  private MessageEnvelope<object>? _registerLocalRunEnvelope(object message, IMessageEnvelope? sourceEnvelope, bool stampMessage, MessageId? copyId = null) {
     if (_envelopeRegistry is null) {
-      return false;
+      return null;
     }
     var cascade = sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope);
     // A message whose copy already stamped it is handed to the receptors as the copy was stored, so its
     // envelope does not stamp it again (#1455); one with no copy is stamped here, once
-    _envelopeRegistry.Register(_createEnvelope(message, MessageContext.Create(cascade),
+    var envelope = _createLocalRunEnvelope(message, cascade, copyId, stampMessage);
+    _envelopeRegistry.Register(envelope);
+    return envelope;
+  }
+
+  private MessageEnvelope<object> _createLocalRunEnvelope(object message, CascadeContext cascade, MessageId? copyId, bool stampMessage) =>
+    _createEnvelope(message, MessageContext.Create(cascade),
       new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
-      new CallerLocation(nameof(_registerLocalRunEnvelope), string.Empty, 0), copyId ?? MessageId.New(), stampMessage));
-    return true;
+      new CallerLocation(nameof(_registerLocalRunEnvelope), string.Empty, 0), copyId ?? MessageId.New(), stampMessage);
+
+  /// <summary>
+  /// Fires PostLifecycle for a message this service just handled in-process, as a local invoke does, so a
+  /// receptor at PostLifecycle runs whichever call handled the message (#1413). It fires once per handling
+  /// service: a stored event that a perspective here applies reaches PostLifecycle through the perspective
+  /// worker, after its perspectives, so the local run leaves it to the worker.
+  /// </summary>
+  /// <param name="message">The message the local run handled.</param>
+  /// <param name="messageType">Its runtime type.</param>
+  /// <param name="envelope">The local run's envelope, or null when none was built (no envelope registry).</param>
+  /// <param name="sourceEnvelope">The envelope that caused it, for an envelope built here.</param>
+  /// <param name="storedId">The id its copy carries, or null when the dispatch writes no copy.</param>
+  /// <param name="cancellationToken">The dispatch's token.</param>
+  private ValueTask _invokeLocalRunPostLifecycleAsync(object message, Type messageType, IMessageEnvelope? envelope,
+      IMessageEnvelope? sourceEnvelope, MessageId? storedId, CancellationToken cancellationToken) {
+    if (!_hasPostLifecycleReceptors(messageType) && !_processesTagsAfterReceptor) {
+      return ValueTask.CompletedTask;
+    }
+    // Stored means a copy is written and something can write it: with no outbox registered the copy is
+    // only deferred or logged, so it never reaches the perspective worker
+    if (storedId is not null && _outboxRegistered && _perspectiveEventTypes.Contains(messageType)) {
+      return ValueTask.CompletedTask;
+    }
+    // The message is not stamped again here: its local run, or its copy, already stamped it (#1455)
+    envelope ??= _createLocalRunEnvelope(message,
+      sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope),
+      storedId, stampMessage: false);
+    return _invokePostLifecycleReceptorsAsync(envelope, message, messageType, cancellationToken);
+  }
+
+  private HashSet<Type>? _perspectiveEventTypesCache;
+
+  /// <summary>
+  /// The event types a perspective on this service applies, read once from the perspective registry. The
+  /// perspective worker fires PostLifecycle for these once they are stored.
+  /// </summary>
+  private HashSet<Type> _perspectiveEventTypes {
+    get {
+      if (_perspectiveEventTypesCache is not null) {
+        return _perspectiveEventTypesCache;
+      }
+      try {
+        var registry = _internalServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+        _perspectiveEventTypesCache = registry is { IsAvailable: true } ? [.. registry.GetEventTypes()] : [];
+      } catch (ObjectDisposedException) {
+        // Provider disposed during shutdown: no perspective worker is left to fire it either
+        _perspectiveEventTypesCache = [];
+      }
+      return _perspectiveEventTypesCache;
+    }
   }
 
   /// <summary>
@@ -855,13 +910,14 @@ public abstract partial class Dispatcher(
       try { await outboxTask; } catch { /* outbox exception is secondary */ }
       throw;
     } finally {
-      if (registered) {
+      if (registered is not null) {
         _envelopeRegistry!.Unregister(message);
       }
     }
 
     // Process tags after successful receptor completion
     await _processTagsIfEnabledAsync(message, eventType, cancellationToken);
+    await _invokeLocalRunPostLifecycleAsync(message, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
   }
 
   /// <summary>
@@ -1350,10 +1406,10 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// A send's local run: the trace, the dispatch activity handler traces link to, any perspective wait,
-  /// the handler, the cascade of what it returned, tags, and the ImmediateDetached stage.
+  /// the handler, the cascade of what it returned, tags, PostLifecycle (#1413) and the ImmediateDetached stage.
   /// </summary>
   private async Task _runSendHandlerAsync<TMessage>(ReceptorInvoker<object> invoker, TMessage message, Type messageType,
-      MessageEnvelope<TMessage> envelope, IMessageContext context, CancellationToken cancellationToken) where TMessage : notnull {
+      MessageEnvelope<TMessage> envelope, IMessageContext context, MessageId? storedId, CancellationToken cancellationToken) where TMessage : notnull {
     if (_traceStore != null) {
       await _traceStore.StoreAsync(envelope, cancellationToken);
     }
@@ -1380,6 +1436,7 @@ public abstract partial class Dispatcher(
     // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
     await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope, cancellationToken: cancellationToken);
     await _processTagsIfEnabledAsync(message, messageType, cancellationToken);
+    await _invokeLocalRunPostLifecycleAsync(message, messageType, envelope, sourceEnvelope: null, storedId, cancellationToken);
     await _invokeImmediateDetachedReceptorsAsync(envelope, messageType, cancellationToken);
   }
 
@@ -1475,7 +1532,7 @@ public abstract partial class Dispatcher(
       var outerCause = _causeCopyWrite.Value;
       _causeCopyWrite.Value = copyWrite ?? outerCause;
       try {
-        await _runSendHandlerAsync(invoker, message, messageType, envelope, context, cancellationToken);
+        await _runSendHandlerAsync(invoker, message, messageType, envelope, context, storedId, cancellationToken);
       } catch (Exception ex) when (copyWrite is not null) {
         localFailure = ex;
       } finally {
@@ -2280,7 +2337,7 @@ public abstract partial class Dispatcher(
     dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
     // Invoke synchronously, with the message's envelope registered for a receptor that looks it up
-    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null, stampMessage: true);
+    var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null, stampMessage: true) is not null;
     try {
       invoker(message);
     } finally {
@@ -3433,8 +3490,10 @@ public abstract partial class Dispatcher(
       await _publishToRuntimeLocalReceptorsAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       // Tags after the handlers, as on a publish (#1410 follow-up)
       await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
+      await _invokeLocalRunPostLifecycleAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId, cancellationToken)
+        .ConfigureAwait(false);
     } finally {
-      if (registered) {
+      if (registered is not null) {
         _envelopeRegistry!.Unregister(message);
       }
     }
@@ -5306,11 +5365,12 @@ public abstract partial class Dispatcher(
       await _publishToForeignLookupsAsync(eventData, eventType, null, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, cancellationToken).ConfigureAwait(false);
     } finally {
-      if (registered) {
+      if (registered is not null) {
         _envelopeRegistry!.Unregister(eventData);
       }
     }
     await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
+    await _invokeLocalRunPostLifecycleAsync(eventData, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
     return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
       streamId: _streamIdExtractor?.ExtractStreamId(eventData, eventType));
   }
