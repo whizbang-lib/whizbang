@@ -981,7 +981,7 @@ public static class DiagnosticDescriptors {
       category: "Whizbang.ReceptorSafety",
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
+      description: "Calling WaitForStreamAsync, WaitAsync or WaitForAppliedAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead. IsCaughtUpAsync does not wait and is not reported."
   );
 
   /// <summary>
