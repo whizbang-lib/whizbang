@@ -38,7 +38,7 @@ public class DiagnosticMessageWordingTests {
     var descriptors = _allDescriptors();
     var withEmDash = descriptors
       .Where(static d => (d.Title.ToString(CultureInfo.InvariantCulture) + d.MessageFormat.ToString(CultureInfo.InvariantCulture)
-        + d.Description.ToString(CultureInfo.InvariantCulture)).Contains('—'))
+        + d.Description.ToString(CultureInfo.InvariantCulture)).Contains('\u2014'))
       .Select(static d => d.Id).Distinct().Order(StringComparer.Ordinal).ToList();
 
     await Assert.That(descriptors.Count).IsGreaterThan(100).Because("the scan must find the descriptors it checks");
@@ -174,9 +174,9 @@ public class DiagnosticMessageWordingTests {
   /// <summary>WHIZ104 finds a clock read however it is written, and names the one it found.</summary>
   [Test]
   [RequiresAssemblyFiles]
-  [Arguments("System.DateTime.UtcNow", "DateTime.UtcNow")]
-  [Arguments("global::System.DateTimeOffset.Now", "DateTimeOffset.Now")]
-  [Arguments("DateTimeOffset.UtcNow", "DateTimeOffset.UtcNow")]
+  [Arguments("System.DateTime.UtcNow", "DateTime.UtcNow")] // review-checks:allow source fed to the analyzer
+  [Arguments("global::System.DateTimeOffset.Now", "DateTimeOffset.Now")] // review-checks:allow source fed to the analyzer
+  [Arguments("DateTimeOffset.UtcNow", "DateTimeOffset.UtcNow")] // review-checks:allow source fed to the analyzer
   public async Task Whiz104_FindsAQualifiedClockRead_AndNamesItAsync(string expression, string named) {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(PERSPECTIVE_PREFIX + $$"""
       public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {

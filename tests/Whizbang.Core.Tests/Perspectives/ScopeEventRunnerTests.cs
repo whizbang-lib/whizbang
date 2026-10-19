@@ -209,7 +209,7 @@ public class ScopeEventRunnerTests {
       new MessageHop {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
-        Timestamp = DateTimeOffset.UtcNow,
+        Timestamp = new DateTimeOffset(2026, 10, 19, 0, 0, 0, TimeSpan.Zero),
         Scope = envelopeScope is null ? null : ScopeDelta.FromPerspectiveScope(envelopeScope),
       }
     ],
