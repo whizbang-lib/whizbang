@@ -66,9 +66,9 @@ rewritten TOASTed JSONB value writes new TOAST chunks regardless.
 | `Whizbang:Housekeeping:MaxDeferral` | `Whizbang__Housekeeping__MaxDeferral` | `01:00:00` |
 
 `TableRewriteStrategy` values: `Auto` (PgSqueeze if usable; otherwise VacuumFull at boot when
-`AllowTableRewrite` is true; otherwise detect only), `PgSqueeze`, `VacuumFull`, `None`. `PgSqueeze`
-carries `[RequiresPostgresExtension("pg_squeeze")]`, so an explicit choice on a server without it
-stops startup (WS-8).
+`AllowTableRewrite` is true; otherwise detect only), `PgSqueeze`, `PgRepack`, `VacuumFull`, `None`. `PgSqueeze` and `PgRepack` carry
+`[RequiresPostgresExtension(...)]`, so an explicit choice on a server without the extension stops
+startup with the capability verdict (WS-8).
 
 ## Slices
 
@@ -85,7 +85,7 @@ Each slice is one red-then-green increment and its own commit.
    `operations/infrastructure/migrations.md` ("Table rewrites run post-ready").
 2. **`TableRewriteStrategy` with `Auto`.** RED: the resolution matrix (four values by pg_squeeze
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
-   NotAllowlisted fails startup" (WS-8 slice 4). Docs:
+   NotAllowlisted fails startup" (WS-8 slice 3). Docs:
    `operations/configuration/configuration-reference.md` (Maintenance section).
 3. **PgSqueeze strategy, driven by maintenance.** The maintenance cycle (idle-gated by
    `HousekeepingCoordinator`) takes requested tables from `wh_tables_needing_rewrite()` largest
@@ -96,10 +96,14 @@ Each slice is one red-then-green increment and its own commit.
    rights. RED: unit tests for ordering, budget and "not cleared when not improved"; integration
    test on an image with pg_squeeze, which needs a new mirrored CI image
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
-4. **Retire the unread `table_rewrite_policy` key.** Edit 089 in place (pre-1.0 rule) to stop
-   inserting it and delete the row. RED: a migration test that the key is absent after apply.
-5. **pg_repack runbook.** Docs only, in the new storage-maintenance page: when to prefer it, the
-   client-binary requirement, and why the framework cannot drive it from SQL.
+4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
+   ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
+   databases too. RED: a migration test that the key is absent after apply.
+5. **PgRepack strategy.** A fifth `TableRewriteStrategy` value, `PgRepack`, carrying
+   `[RequiresPostgresExtension("pg_repack")]`. The extension is provisioned and the client program
+   probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
+   an external job reading the same queue). RED: the resolution matrix gains the PgRepack column.
+   Docs: the storage-maintenance page (when to prefer it over pg_squeeze).
 
 ### C2: autovacuum
 
