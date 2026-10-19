@@ -291,7 +291,8 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return false;
     }
     var isOwned = _isOwnedNamespace(messageType.Namespace);
-    var isEvent = message is IEvent;
+    // A composite carries events, so it is filtered as one
+    var isEvent = message is IEvent or Whizbang.Core.Minting.ICompositeEvent;
     if (isOwned ? isEvent : !isEvent) {
       return false;
     }

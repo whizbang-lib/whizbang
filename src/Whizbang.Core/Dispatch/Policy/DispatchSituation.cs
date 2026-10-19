@@ -26,6 +26,9 @@ public enum MessageTraits : byte {
 
   /// <summary>The message type is in one of this service's owned namespaces.</summary>
   Owned = 16,
+
+  /// <summary>The message is not an event, so the event store does not take it: a command, a composite, or a reply.</summary>
+  NotStorable = 32,
 }
 
 /// <summary>
@@ -74,6 +77,9 @@ public readonly record struct DispatchSituation(
 
   /// <summary>True when the message is a command (including a system command).</summary>
   public bool IsCommand => (Traits & (MessageTraits.Command | MessageTraits.SystemCommand)) != 0;
+
+  /// <summary>True when the event store takes the message: it is an event.</summary>
+  public bool IsStorable => (Traits & MessageTraits.NotStorable) == 0;
 
   /// <summary>True when the message type is in one of this service's owned namespaces.</summary>
   public bool IsOwned => (Traits & MessageTraits.Owned) != 0;
