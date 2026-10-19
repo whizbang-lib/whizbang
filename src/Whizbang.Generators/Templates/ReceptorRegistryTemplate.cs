@@ -50,6 +50,30 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
   private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Instance, global::Whizbang.Core.Messaging.ReceptorInfo Info)>> _runtimeRegistrations = new();
 
   /// <summary>
+  /// The receptors registered at runtime for an interface or base type of <paramref name="messageType"/>
+  /// at <paramref name="stage"/> (#1418). Runtime registrations are few, so each key is tested in turn.
+  /// </summary>
+  public IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> GetRuntimeReceptorsForBaseTypesOf(Type messageType, LifecycleStage stage) {
+    if (messageType is null) {
+      throw new ArgumentNullException(nameof(messageType));
+    }
+    if (_runtimeRegistrations.IsEmpty) {
+      return _emptyList;
+    }
+    var found = new List<global::Whizbang.Core.Messaging.ReceptorInfo>();
+    foreach (var entry in _runtimeRegistrations) {
+      if (entry.Key.Stage == stage && entry.Key.MessageType != messageType && entry.Key.MessageType.IsAssignableFrom(messageType)) {
+        lock (entry.Value) {
+          foreach (var registration in entry.Value) {
+            found.Add(registration.Info);
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
   /// Returns compile-time entries concatenated with any runtime-registered entries.
   /// </summary>

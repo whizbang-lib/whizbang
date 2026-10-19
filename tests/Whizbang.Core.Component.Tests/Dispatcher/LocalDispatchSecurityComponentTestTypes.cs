@@ -78,3 +78,33 @@ public sealed class SlEventPostLifecycle : IReceptor<SlEvent> {
     return ValueTask.CompletedTask;
   }
 }
+
+/// <summary>A command the application lists in <c>ExemptMessageTypes</c>.</summary>
+public record SlExemptCommand(Guid Id) : ICommand;
+
+/// <summary>A framework-style control-plane command, never refused for a missing context.</summary>
+public record SlControlPlaneCommand(Guid Id) : ICommand, IControlPlaneMessage;
+
+/// <summary>A system event, never refused for a missing context.</summary>
+public record SlSystemEvent([property: StreamId] Guid Id) : Whizbang.Core.SystemEvents.ISystemEvent;
+
+public sealed class SlExemptCommandReceptor : IReceptor<SlExemptCommand> {
+  public ValueTask HandleAsync(SlExemptCommand message, CancellationToken cancellationToken = default) {
+    LocalSecurityProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public sealed class SlControlPlaneCommandReceptor : IReceptor<SlControlPlaneCommand> {
+  public ValueTask HandleAsync(SlControlPlaneCommand message, CancellationToken cancellationToken = default) {
+    LocalSecurityProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public sealed class SlSystemEventReceptor : IReceptor<SlSystemEvent> {
+  public ValueTask HandleAsync(SlSystemEvent message, CancellationToken cancellationToken = default) {
+    LocalSecurityProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}

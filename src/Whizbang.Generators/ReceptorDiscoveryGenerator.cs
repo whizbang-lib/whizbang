@@ -324,7 +324,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           IsIdempotent: isIdempotent,
           SuppressesRegistration: _suppressesRegistration(classSymbol),
           LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol),
-          IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol)
+          IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol),
+          Priority: _receptorPriority(classSymbol)
       );
     }
 
@@ -716,6 +717,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Returns true when the receptor is decorated with <c>[ReceptorOnceAcrossServices]</c>: it runs once
   /// for a message across every service, so a prior invocation recorded by any service stops it.
   /// </summary>
+  /// <summary>
+  /// The receptor's <c>[ReceptorPriority]</c> value, or the middle default when it declares none (#1412).
+  /// </summary>
+  private static int _receptorPriority(INamedTypeSymbol classSymbol) {
+    const string RECEPTOR_PRIORITY_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorPriorityAttribute";
+    var attribute = classSymbol.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_PRIORITY_ATTRIBUTE));
+    return attribute?.ConstructorArguments is [{ Value: int priority }] ? priority : ReceptorInfo.DEFAULT_PRIORITY;
+  }
+
   private static bool _hasReceptorOnceAcrossServicesAttribute(INamedTypeSymbol classSymbol) {
     const string RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorOnceAcrossServicesAttribute";
     return classSymbol.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE));
@@ -1297,24 +1307,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var voidSyncReceptors = syncReceptors.Where(r => r.IsVoid).ToImmutableArray();
 
     // Group regular async receptors by message type to handle multi-destination routing
+    // Each group is in priority order (#1412), declaration order on ties, so the first is the earliest
     var regularReceptorsByMessage = regularReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group void async receptors by message type
     var voidReceptorsByMessage = voidReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group regular sync receptors by message type
     var regularSyncReceptorsByMessage = regularSyncReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group void sync receptors by message type
     var voidSyncReceptorsByMessage = voidSyncReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // The send lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve a message's HANDLER: a
     // receptor local dispatch fires (no [FireAt], or a LocalImmediate stage). A receptor declared only
@@ -1576,6 +1587,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UNTYPED_PUBLISH_ROUTING", untypedPublishRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "LOCAL_RUNNER_ROUTING", _buildLocalRunnerRouting(localRunReceptorsByMessage));
+    // The interfaces and base types local receptors are declared for, so a message with no receptor of its
+    // exact type finds them at runtime, whatever assembly it comes from (#1418)
+    var polymorphicTypes = receptors
+        .Where(r => r.IsPolymorphicMessageType && r.FiresOnLocalDispatch)
+        .Select(r => r.MessageType)
+        .Distinct()
+        .OrderBy(t => t, System.StringComparer.Ordinal)
+        .Select(t => $"typeof({t}),");
+    result = TemplateUtilities.ReplaceRegion(result, "POLYMORPHIC_RECEPTOR_MESSAGE_TYPES", string.Join("\n    ", polymorphicTypes));
     result = TemplateUtilities.ReplaceRegion(result, "SYNC_SEND_ROUTING", syncSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SYNC_SEND_ROUTING", voidSyncSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "ANY_SEND_ROUTING", anySendRouting.ToString());
@@ -1732,7 +1753,69 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         }
       }
     }
+    // Every local receptor runs in priority order (#1412); OrderBy is stable, so ties keep declaration order
+    foreach (var messageType in byMessage.Keys.ToList()) {
+      byMessage[messageType] = [.. byMessage[messageType].OrderBy(r => r.Priority)];
+    }
     return byMessage;
+  }
+
+  /// <summary>
+  /// The runner behind a send or local invoke of a message with two or more local receptors (#1412): it runs
+  /// every one, in priority order, and hands back the first result the caller asked for. Messages with one
+  /// receptor get no runner and keep the single-receptor lookups.
+  /// </summary>
+  private static string _buildLocalRunnerRouting(Dictionary<string, List<ReceptorInfo>> localRunReceptorsByMessage) {
+    var runnerSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "LOCAL_RUNNER_ROUTING_SNIPPET"
+    );
+    var routing = new StringBuilder();
+    foreach (var messageType in localRunReceptorsByMessage.Keys) {
+      var receptors = localRunReceptorsByMessage[messageType];
+      if (receptors.Count < 2) {
+        continue;
+      }
+      var invocations = new StringBuilder();
+      foreach (var receptor in receptors) {
+        _appendRunnerInvocation(invocations, messageType, receptor);
+      }
+      var generatedCode = runnerSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INVOCATIONS, invocations.ToString().TrimEnd());
+      routing.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+    }
+    return routing.ToString();
+  }
+
+  /// <summary>
+  /// One receptor's block in a runner: its perspective wait when it has one, then the invocation. The first
+  /// result the caller asked for is kept as the answer; every other result cascades, as on a publish.
+  /// </summary>
+  private static void _appendRunnerInvocation(StringBuilder sb, string messageType, ReceptorInfo receptor) {
+    var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
+    var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
+    var call = receptor.IsSync ? "r.Handle(typedMsg)" : "await r.HandleAsync(typedMsg, cancellationToken)";
+    sb.AppendLine("          {");
+    if (receptor.SyncAttributes is { Length: > 0 }) {
+      sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedMsg, typeof({messageType}), \"{receptor.ClassName}\", cancellationToken));");
+    }
+    sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
+    sb.AppendLine("            if (r is not null) {");
+    if (receptor.IsVoid) {
+      sb.AppendLine($"              {call};");
+    } else {
+      sb.AppendLine($"              var result = {call};");
+      sb.AppendLine($"              if (!answered && TryTakeLocalAnswer<TAnswer, {receptor.ResponseType}>(result, out var taken)) {{");
+      sb.AppendLine("                answer = taken;");
+      sb.AppendLine("                answered = true;");
+      sb.AppendLine("              } else {");
+      sb.AppendLine($"                await CascadeLocalResultAsync(result, typedMsg, typeof({messageType}), sourceEnvelope, cancellationToken);");
+      sb.AppendLine("              }");
+    }
+    sb.AppendLine("            }");
+    sb.AppendLine("          }");
   }
 
   /// <summary>

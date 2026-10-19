@@ -102,6 +102,31 @@ public class LocalDispatchSecurityComponentTests {
       .Because("a caller with a context is never refused");
   }
 
+  public enum ExemptKind {
+    DeclaredExempt,
+    ControlPlane,
+    SystemEvent,
+  }
+
+  [Test]
+  [MatrixDataSource]
+  public async Task AnExemptMessage_WithoutACallerContext_RunsEvenWhenRequiredAsync([Matrix] ExemptKind kind) {
+    // The application's own exempt list is read as it configured it: the options are registered as a
+    // singleton, and reading only IOptions saw an unconfigured instance with an empty list
+    await using var provider = _buildProvider(new PolicyRecordingOutbox(), requireContext: true, exempt: typeof(SlExemptCommand));
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    switch (kind) {
+      case ExemptKind.DeclaredExempt: await dispatcher.SendAsync(new SlExemptCommand(id)); break;
+      case ExemptKind.ControlPlane: await dispatcher.SendAsync(new SlControlPlaneCommand(id)); break;
+      default: await dispatcher.PublishAsync(new SlSystemEvent(id)); break;
+    }
+
+    await Assert.That(LocalSecurityProbe.HandledCount(id)).IsEqualTo(1)
+      .Because($"a {kind} message is exempt from the local-dispatch context requirement, as it is on receive");
+  }
+
   private static async Task _dispatchAsync(IDispatcher dispatcher, Entry entry, Guid id) {
     switch (entry) {
       case Entry.SendAsync:
@@ -130,9 +155,14 @@ public class LocalDispatchSecurityComponentTests {
     }
   }
 
-  private static ServiceProvider _buildProvider(PolicyRecordingOutbox outbox, bool requireContext) {
+  private static ServiceProvider _buildProvider(PolicyRecordingOutbox outbox, bool requireContext, Type? exempt = null) {
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(options => options.RequireContextForLocalDispatch = requireContext);
+    services.AddWhizbangMessageSecurity(options => {
+      options.RequireContextForLocalDispatch = requireContext;
+      if (exempt is not null) {
+        options.ExemptMessageTypes.Add(exempt);
+      }
+    });
     services.AddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));

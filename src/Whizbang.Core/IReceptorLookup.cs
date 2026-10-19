@@ -51,4 +51,12 @@ public interface IReceptorLookup {
 
   /// <summary>This assembly's [DefaultRouting] declaration for the message type, or null.</summary>
   Dispatch.DispatchModes? LookupReceptorDefaultRouting(Type messageType);
+
+  /// <summary>
+  /// The interfaces and base types this assembly's local receptors are declared for (#1418). A message with no
+  /// receptor for its exact type is handed to the receptors of each of these it implements, as a mediator
+  /// does. Empty by default, for a lookup that predates it.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#mediator-lookup</docs>
+  IReadOnlyList<Type> LookupPolymorphicReceptorMessageTypes() => [];
 }

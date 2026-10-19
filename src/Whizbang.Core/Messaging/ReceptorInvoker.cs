@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Messaging;
@@ -164,7 +165,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var messageType = message.GetType();
 
     // Establish security context from the envelope BEFORE checking for receptors
-    var securityContext = await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+    IScopeContext? securityContext;
+    try {
+      securityContext = await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+    } catch (SecurityContextRequiredException) when (Dispatch.LocalDispatchAdmission.IsAdmitted) {
+      // A stage of a dispatch handled in this process, which its entry already admitted: refusing it here,
+      // after its handler ran, would protect nothing, so it runs without a context (#1419)
+      securityContext = null;
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.LocalStageRanWithoutContext(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
+    }
 
     // Extract caller info from the first Current hop (captured at dispatch time)
     var callerInfo = _extractCallerInfo(envelope);
@@ -1095,6 +1107,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Exception exception,
       string messageType,
       LifecycleStage stage);
+
+    [LoggerMessage(
+      EventId = 20,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] {Stage} for {MessageType} ({MessageId}) ran without a security context: a stage of a dispatch handled in this process")]
+    public static partial void LocalStageRanWithoutContext(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
   }
 }
 

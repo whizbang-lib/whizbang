@@ -26,6 +26,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
@@ -119,6 +120,34 @@ public abstract partial class Dispatcher(
   private ISchemaReadyGate? _schemaReadyGateCache;
   private bool _schemaReadyGateResolved;
 
+  /// <summary>
+  /// Refuses a dispatch whose caller has no security context, before any handler runs or anything is
+  /// written, when <see cref="Security.MessageSecurityOptions.RequireContextForLocalDispatch"/> is set
+  /// (#1419). Off by default: an in-process dispatch is trusted like a mediator call. Control-plane
+  /// messages, system events and the types the application exempts are never refused, as on receive.
+  /// </summary>
+  /// <param name="message">The message being dispatched; a null message passes, for its entry to refuse next.</param>
+  /// <exception cref="SecurityContextRequiredException">The caller has no context and one is required.</exception>
+  private void _throwIfLocalDispatchNeedsContext<TMessage>(TMessage message) {
+    if (!_localDispatchRequiresContext || message is null || ScopeContextAccessor.CurrentContext is not null) {
+      return;
+    }
+    _throwIfLocalDispatchTypeNeedsContext(message.GetType());
+  }
+
+  /// <summary>The check of <see cref="_throwIfLocalDispatchNeedsContext{TMessage}"/>, for a caller that holds only the type.</summary>
+  private void _throwIfLocalDispatchTypeNeedsContext(Type messageType) {
+    if (!_localDispatchRequiresContext || ScopeContextAccessor.CurrentContext is not null) {
+      return;
+    }
+    if (typeof(IControlPlaneMessage).IsAssignableFrom(messageType)
+        || typeof(SystemEvents.ISystemEvent).IsAssignableFrom(messageType)
+        || _declaredUnscopedTypes?.Contains(messageType) == true) {
+      return;
+    }
+    throw new SecurityContextRequiredException(messageType);
+  }
+
   private void _throwIfSchemaNotReady() {
     if (!_schemaReadyGateResolved) {
       try {
@@ -181,6 +210,10 @@ public abstract partial class Dispatcher(
   }
 
   private VoidReceptorInvoker? _lookupVoidReceptorInvoker(object message, Type messageType) {
+    // Two or more local receptors: every one runs, in priority order (#1412)
+    if (_runnerAsVoid(messageType) is { } everyReceptor) {
+      return everyReceptor;
+    }
     var own = GetVoidReceptorInvoker(message, messageType);
     if (own is not null) {
       return own;
@@ -232,6 +265,10 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendAsync_VoidSyncReceptor_InvokesLocally_AndSendsOnUnlessOwnedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCoverageSweepRoutedCascadeTests.cs:SendManyAsync_VoidReceptor_InvokesLocallyAsync</tests>
   private ReceptorInvoker<object>? _lookupSendInvoker(object message, Type messageType) {
+    // Two or more local receptors: every one runs, in priority order (#1412)
+    if (_runnerAsResult<object>(messageType) is { } everyReceptor) {
+      return everyReceptor;
+    }
     if (_lookupReceptorInvoker<object>(message, messageType) is { } invoker) {
       return invoker;
     }
@@ -317,6 +354,12 @@ public abstract partial class Dispatcher(
   /// <see cref="_invokeAndCascadeAsync"/> to extract the response from (#1410 follow-up).
   /// </summary>
   private ReceptorInvoker<TResult>? _lookupResultInvoker<TResult>(object message, Type messageType) {
+    // Two or more local receptors, one of which answers with TResult: every one runs, in priority order,
+    // and the earliest answer is returned (#1412). Without an answering receptor the lookups below decide.
+    if ((GetReceptorInvoker<TResult>(message, messageType) is not null || GetSyncReceptorInvoker<TResult>(message, messageType) is not null)
+        && _runnerAsResult<TResult>(messageType) is { } everyReceptor) {
+      return everyReceptor;
+    }
     if (_lookupReceptorInvoker<TResult>(message, messageType) is { } asyncInvoker) {
       return asyncInvoker;
     }
@@ -408,8 +451,10 @@ public abstract partial class Dispatcher(
   /// Runs every receptor registered at runtime at a local stage for a published or cascaded message
   /// (#1399), each in its own scope with the cascade's security context.
   /// </summary>
-  private async Task _publishToRuntimeLocalReceptorsAsync(object message, Type messageType, CancellationToken cancellationToken) {
-    var receptors = _runtimeLocalReceptorsFor(messageType);
+  private Task _publishToRuntimeLocalReceptorsAsync(object message, Type messageType, CancellationToken cancellationToken) =>
+    _invokeRuntimeLocalReceptorsAsync(_runtimeLocalReceptorsFor(messageType), message, messageType, cancellationToken);
+
+  private async Task _invokeRuntimeLocalReceptorsAsync(List<ReceptorInfo> receptors, object message, Type messageType, CancellationToken cancellationToken) {
     foreach (var receptor in receptors) {
       await using var scope = _scopeFactory.CreateAsyncScope();
       SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
@@ -727,8 +772,17 @@ public abstract partial class Dispatcher(
   // The application author's own declaration that a message type carries no authority (a
   // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
   // that simply LOST its scope — without it, the missing-scope invariant flags them as defects.
-  private readonly IReadOnlySet<Type>? _declaredUnscopedTypes =
-    serviceProvider.GetOptionsValue<Security.MessageSecurityOptions>()?.ExemptMessageTypes;
+  private readonly HashSet<Type>? _declaredUnscopedTypes = _messageSecurityOptions(serviceProvider)?.ExemptMessageTypes;
+  // Whether a dispatch handled here must have a caller context (#1419); false, the default, trusts it
+  private readonly bool _localDispatchRequiresContext = _messageSecurityOptions(serviceProvider)?.RequireContextForLocalDispatch ?? false;
+
+  /// <summary>
+  /// The message security options as the application configured them. <c>AddWhizbangMessageSecurity</c>
+  /// registers them as a singleton, not through <c>IOptions</c>, so reading only <c>IOptions</c> saw an
+  /// unconfigured instance and lost the exempt types and every other setting (#1419).
+  /// </summary>
+  private static Security.MessageSecurityOptions? _messageSecurityOptions(IServiceProvider serviceProvider) =>
+    serviceProvider.GetService<Security.MessageSecurityOptions>() ?? serviceProvider.GetOptionsValue<Security.MessageSecurityOptions>();
 #pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
@@ -1481,6 +1535,7 @@ public abstract partial class Dispatcher(
     using var timeoutDisposal = timeoutScope;
     var cancellationToken = options?.CancellationToken ?? CancellationToken.None;
     _throwIfSchemaNotReady();
+    _throwIfLocalDispatchTypeNeedsContext(messageType);
     // The caller's context is the one the receptor sees, as on a local invoke (#1410 follow-up)
     MessageContextAccessor.CurrentContext = context;
 
@@ -1703,6 +1758,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
 
     ArgumentNullException.ThrowIfNull(context);
 
@@ -1802,6 +1858,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
 
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2076,6 +2133,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
 
     // Set message context accessor so receptors can inject IMessageContext
@@ -2121,6 +2179,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
 
     // Set message context accessor so receptors can inject IMessageContext
@@ -2144,8 +2203,8 @@ public abstract partial class Dispatcher(
     // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
     var hasSyncAttributes = _receptorRegistry is not null && _localReceptorsFor(messageType).Exists(r => r.SyncAttributes is { Count: > 0 });
 
-    // Try async receptor first (async takes precedence)
-    var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
+    // Try async receptor first (async takes precedence); two or more local receptors all run (#1412)
+    var asyncInvoker = _runnerAsVoid(messageType) ?? GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
       return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
     }
@@ -2435,6 +2494,7 @@ public abstract partial class Dispatcher(
   ) {
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
+    _throwIfLocalDispatchNeedsContext(message);
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
@@ -2485,6 +2545,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
 
     options = _withTimeout(options, out var timeoutScope);
@@ -2778,6 +2839,7 @@ public abstract partial class Dispatcher(
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
     ArgumentNullException.ThrowIfNull(message);
+    _throwIfLocalDispatchNeedsContext(message);
     ArgumentNullException.ThrowIfNull(context);
 
     // Set message context accessor so receptors can inject IMessageContext
@@ -2810,6 +2872,7 @@ public abstract partial class Dispatcher(
   public async ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
+    _throwIfLocalDispatchNeedsContext(message);
     options.CancellationToken.ThrowIfCancellationRequested();
     var cascade = _cascadeContextFactory.NewRoot();
     var context = MessageContext.Create(cascade);
@@ -3414,7 +3477,7 @@ public abstract partial class Dispatcher(
       CancellationToken cancellationToken) {
     var decision = _decide(DispatchPolicies.Cascade, message, messageType,
       _hasLocalPublishReceptors(messageType), options: null, route: mode);
-    if (_skipsCascade(in decision, message, messageType)) {
+    if (await _cascadeEndsHereAsync(decision, message, messageType, sourceEnvelope, cancellationToken).ConfigureAwait(false)) {
       return;
     }
     _throwIfRejected(in decision, messageType);
@@ -3456,9 +3519,13 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Whether a cascade has nothing to do and is skipped rather than refused.
+  /// Whether a cascade ends before the decision is carried out: routed nowhere, or a returned value that is
+  /// neither a command nor an event, with no receptor of its own here. That value goes to the receptors of
+  /// an interface or base type it implements, as a mediator would; with none it is refused (false), unless
+  /// <see cref="WhizbangCoreOptions.RequireReceptorForReturnedResult"/> is off, when it is skipped (#1418).
   /// </summary>
-  private bool _skipsCascade(in DispatchDecision decision, IMessage message, Type messageType) {
+  private async Task<bool> _cascadeEndsHereAsync(DispatchDecision decision, IMessage message, Type messageType,
+      IMessageEnvelope? sourceEnvelope, CancellationToken cancellationToken) {
     if (decision.Reject == DispatchRejection.NoRoute) {
       // A cascade routed nowhere (Route.None) has nothing to do; it has always been skipped quietly
       return true;
@@ -3466,9 +3533,12 @@ public abstract partial class Dispatcher(
     if (decision.Reject != DispatchRejection.NoHandler || message is ICommand || message is IEvent) {
       return false;
     }
-    // A returned value that is neither a command nor an event (a response record that implements
-    // IMessage), owned, with nothing here to handle it: it is a result, not an instruction, so the
-    // call whose receptor returned it does not fail. It goes nowhere, so say so (#1410 follow-up).
+    if (await _runBaseTypeReceptorsAsync(message, messageType, sourceEnvelope, cancellationToken).ConfigureAwait(false)) {
+      return true;
+    }
+    if (_coreOptions.RequireReceptorForReturnedResult) {
+      return false;
+    }
     if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
       Log.UnhandledResultSkipped(CascadeLogger, messageType.Name);
     }
@@ -3602,6 +3672,8 @@ public abstract partial class Dispatcher(
       return;
     }
 
+    // This message was admitted at its entry; its stages do not refuse it again (#1419)
+    LocalDispatchAdmission.Mark();
     // Create a scope to resolve scoped IReceptorInvoker
     // Dispatcher is a singleton — cannot inject scoped services directly
     await using var scope = _scopeFactory.CreateAsyncScope();
@@ -3638,6 +3710,8 @@ public abstract partial class Dispatcher(
     if (_receptorRegistry is null) {
       return;
     }
+    // This message was admitted at its entry; its stages do not refuse it again (#1419)
+    LocalDispatchAdmission.Mark();
 
     // Create a scope to resolve scoped services
     // Dispatcher is a singleton — cannot inject scoped services directly
@@ -3788,6 +3862,7 @@ public abstract partial class Dispatcher(
 #pragma warning restore S2955
 
     _throwIfSchemaNotReady();
+    _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData.GetType();
     var eventTypeName = eventType.Name;
@@ -3916,6 +3991,7 @@ public abstract partial class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
 
     _throwIfSchemaNotReady();
+    _throwIfLocalDispatchNeedsContext(eventData);
     var sw = Stopwatch.StartNew();
     var eventType = eventData!.GetType();
     var eventTypeName = eventType.Name;
@@ -4068,6 +4144,10 @@ public abstract partial class Dispatcher(
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
     // Dispatch writes, so every entry refuses while the schema is not ready (#1410 follow-up)
     _throwIfSchemaNotReady();
+    // A cascade with a source envelope continues a flow that was already admitted; only a new one is checked
+    if (sourceEnvelope is null) {
+      _throwIfLocalDispatchNeedsContext(message);
+    }
 #pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
@@ -5238,6 +5318,9 @@ public abstract partial class Dispatcher(
     // written under its own route
     var routes = _unwrapBatchRoutes(messages);
     var (types, decisions) = _decideBatch(messages, routes, callPolicy, options);
+    foreach (var type in types) {
+      _throwIfLocalDispatchTypeNeedsContext(type);
+    }
 
     var batch = new BatchRun(messages, routes, types, decisions);
     var stopAtFirstFailure = options.BatchFailure == BatchFailureMode.Stop;
@@ -6211,6 +6294,102 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/dispatcher/message-cascade#cascade-security-context</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   protected abstract Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType);
+
+  /// <summary>
+  /// For a message with two or more local receptors, a runner that runs every one, in priority order (#1412).
+  /// When <paramref name="wantsAnswer"/> is set, the first result that is a <typeparamref name="TAnswer"/> is
+  /// returned instead of cascaded; every other result cascades. Null for a message with one receptor or none,
+  /// which the single-receptor lookups handle. Generated.
+  /// </summary>
+  /// <typeparam name="TAnswer">The result type the caller asked for.</typeparam>
+  /// <param name="messageType">The message's runtime type.</param>
+  /// <param name="wantsAnswer">Whether the caller takes a result.</param>
+  /// <returns>The runner: (message, source envelope, token) to the answer, or default when none answered.</returns>
+  /// <docs>fundamentals/receptors/receptor-priority</docs>
+  protected virtual Func<object, IMessageEnvelope?, CancellationToken, Task<TAnswer?>>? GetLocalReceptorRunner<TAnswer>(Type messageType, bool wantsAnswer) => null;
+
+  /// <summary>
+  /// The interfaces and base types this assembly's local receptors are declared for (#1418). Generated.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#mediator-lookup</docs>
+  protected virtual IReadOnlyList<Type> GetPolymorphicReceptorMessageTypes() => [];
+
+  /// <summary>
+  /// Where receptors declared for interfaces and base types come from: this assembly's tables, then every
+  /// other assembly's lookup, each as its declared types and the publisher for one of them (#1418).
+  /// </summary>
+  private IEnumerable<(IReadOnlyList<Type> DeclaredTypes, Func<Type, Func<object, IMessageEnvelope?, CancellationToken, Task>?> PublisherFor)> _baseTypeReceptorSources() {
+    yield return (GetPolymorphicReceptorMessageTypes(), GetUntypedReceptorPublisher);
+    foreach (var lookup in _foreignLookups()) {
+      yield return (lookup.LookupPolymorphicReceptorMessageTypes(), lookup.LookupUntypedReceptorPublisher);
+    }
+  }
+
+  /// <summary>
+  /// Hands a message that has no receptor of its own to the receptors declared for an interface or base type
+  /// it implements, as a mediator does (#1418): this assembly's, then other assemblies', then runtime
+  /// registrations. Returns whether any ran.
+  /// </summary>
+  private async Task<bool> _runBaseTypeReceptorsAsync(object message, Type messageType, IMessageEnvelope? sourceEnvelope,
+      CancellationToken cancellationToken) {
+    var ran = false;
+    foreach (var (declaredTypes, publisherFor) in _baseTypeReceptorSources()) {
+      foreach (var declared in declaredTypes) {
+        if (declared != messageType && declared.IsAssignableFrom(messageType) && publisherFor(declared) is { } publish) {
+          await publish(message, sourceEnvelope, cancellationToken).ConfigureAwait(false);
+          ran = true;
+        }
+      }
+    }
+    if (_receptorRegistry is not null) {
+      var runtime = new List<ReceptorInfo>();
+      foreach (var stage in _localStages) {
+        foreach (var receptor in _receptorRegistry.GetRuntimeReceptorsForBaseTypesOf(messageType, stage)) {
+          if (receptor.RuntimeInstance is { } instance && !runtime.Exists(r => ReferenceEquals(r.RuntimeInstance, instance))) {
+            runtime.Add(receptor);
+          }
+        }
+      }
+      if (runtime.Count > 0) {
+        await _invokeRuntimeLocalReceptorsAsync(runtime, message, messageType, cancellationToken).ConfigureAwait(false);
+        ran = true;
+      }
+    }
+    return ran;
+  }
+
+  /// <summary>
+  /// Whether a receptor's result answers a caller that asked for <typeparamref name="TAnswer"/>: the result
+  /// itself, or the value of a <c>Routed&lt;T&gt;</c> when the caller asked for the inner type. Generic, so a
+  /// value-type result is matched without boxing. Used by the generated runner (#1412).
+  /// </summary>
+  /// <typeparam name="TAnswer">The type the caller asked for.</typeparam>
+  /// <typeparam name="TResponse">The receptor's declared response type.</typeparam>
+  /// <param name="result">The receptor's result.</param>
+  /// <param name="answer">The answer, when this returns true.</param>
+  /// <returns>True when the result answers the caller.</returns>
+  protected static bool TryTakeLocalAnswer<TAnswer, TResponse>(TResponse result, out TAnswer? answer) {
+    if (result is TAnswer typed) {
+      answer = typed;
+      return true;
+    }
+    if (result is IRouted { Value: TAnswer inner }) {
+      answer = inner;
+      return true;
+    }
+    answer = default;
+    return false;
+  }
+
+  private VoidReceptorInvoker? _runnerAsVoid(Type messageType) =>
+    GetLocalReceptorRunner<object>(messageType, wantsAnswer: false) is { } runner
+      ? msg => new ValueTask(runner(msg, null, CancellationToken.None))
+      : null;
+
+  private ReceptorInvoker<TResult>? _runnerAsResult<TResult>(Type messageType) =>
+    GetLocalReceptorRunner<TResult>(messageType, wantsAnswer: true) is { } runner
+      ? async msg => (await runner(msg, null, CancellationToken.None).ConfigureAwait(false))!
+      : null;
 
   /// <summary>
   /// Implemented by generated code - returns a sync delegate for invoking a sync receptor.

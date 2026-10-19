@@ -45,6 +45,17 @@ public interface IReceptorRegistry {
   IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage);
 
   /// <summary>
+  /// The receptors registered at runtime for an interface or base type of <paramref name="messageType"/>
+  /// (not the type itself) at <paramref name="stage"/>: the ones a mediator hands a message with no receptor
+  /// of its own (#1418). Empty by default, for a registry that predates it.
+  /// </summary>
+  /// <param name="messageType">The message's runtime type.</param>
+  /// <param name="stage">The lifecycle stage to query.</param>
+  /// <returns>The runtime receptors declared for a type <paramref name="messageType"/> is assignable to.</returns>
+  /// <docs>fundamentals/dispatcher/message-cascade#mediator-lookup</docs>
+  IReadOnlyList<ReceptorInfo> GetRuntimeReceptorsForBaseTypesOf(Type messageType, LifecycleStage stage) => [];
+
+  /// <summary>
   /// Registers a void receptor at a specific lifecycle stage for runtime invocation.
   /// Primarily used in integration tests for deterministic synchronization.
   /// </summary>
