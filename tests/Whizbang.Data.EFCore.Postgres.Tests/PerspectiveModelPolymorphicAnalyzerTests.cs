@@ -598,13 +598,11 @@ public class PerspectiveModelPolymorphicAnalyzerTests {
   }
 
   /// <summary>
-  /// Documents current behavior: WHIZ811 is an Info-level SUGGESTION to add
-  /// [PolymorphicDiscriminator]; the analyzer still reports the abstract property
-  /// even when a discriminator property is present. The (string-typed) discriminator
-  /// property itself is never flagged. Exactly one diagnostic is expected.
+  /// WHIZ811 is an Info-level suggestion to add a [PolymorphicDiscriminator] property. A model that already
+  /// declares one has done what it asks, so it is not reported (#1428); the discriminator itself never was.
   /// </summary>
   [Test]
-  public async Task PerspectiveModel_WithDiscriminatorAndAbstractProperty_StillReportsWHIZ811ForAbstractPropertyOnlyAsync() {
+  public async Task PerspectiveModel_WithDiscriminatorAndAbstractProperty_IsNotReportedAsync() {
     // Arrange
     const string source = """
             using System;
@@ -642,11 +640,8 @@ public class PerspectiveModelPolymorphicAnalyzerTests {
     // Act
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(source);
 
-    // Assert - only the abstract property is reported, never the discriminator itself
-    await Assert.That(diagnostics).Count().IsEqualTo(1);
-    await Assert.That(diagnostics[0].Id).IsEqualTo("WHIZ811");
-    await Assert.That(diagnostics[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Payment");
-    await Assert.That(diagnostics[0].GetMessage(CultureInfo.InvariantCulture)).DoesNotContain("PaymentType");
+    // Assert - the discriminator the diagnostic suggests is present, so nothing is reported
+    await Assert.That(diagnostics).IsEmpty();
   }
 
   /// <summary>

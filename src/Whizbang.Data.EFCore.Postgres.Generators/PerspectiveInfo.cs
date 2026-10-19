@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Immutable;
+using Microsoft.CodeAnalysis;
 using Whizbang.Generators.Shared.Models;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -25,12 +26,14 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
+/// <param name="ModelLocation">The model's declaration; the identifier-limit errors are reported there so they can be suppressed there (#1429)</param>
 internal sealed record PerspectiveInfo(
     string ModelTypeName,
     string TableName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
-    bool BuildsDataIndex = false
+    bool BuildsDataIndex = false,
+    Location? ModelLocation = null
 );
 
 /// <summary>
@@ -42,10 +45,12 @@ internal sealed record PerspectiveInfo(
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
+/// <param name="ModelLocation">The model's declaration; the identifier-limit errors are reported there so they can be suppressed there (#1429)</param>
 internal sealed record PerspectiveCandidate(
     string ModelTypeName,
     string TableBaseName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
-    bool BuildsDataIndex = false
+    bool BuildsDataIndex = false,
+    Location? ModelLocation = null
 );

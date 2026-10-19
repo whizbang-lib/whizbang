@@ -32,7 +32,7 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_ConcreteEventWithoutPinnedId_ReportsWhiz100Async() {
+  public async Task Analyzer_ConcreteEventWithoutPinnedId_ReportsWhiz110Async() {
     const string source = """
         using Whizbang.Core;
         namespace TestApp;
@@ -49,7 +49,7 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_ConcreteCommandWithoutPinnedId_ReportsWhiz100Async() {
+  public async Task Analyzer_ConcreteCommandWithoutPinnedId_ReportsWhiz110Async() {
     const string source = """
         using Whizbang.Core;
         namespace TestApp;
@@ -93,7 +93,7 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_PerspectiveWithoutPinnedId_ReportsWhiz101Async() {
+  public async Task Analyzer_PerspectiveWithoutPinnedId_ReportsWhiz111Async() {
     const string source = """
         using Whizbang.Core;
         using Whizbang.Core.Perspectives;
@@ -115,7 +115,7 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_PerspectiveWithActionsForWithoutPinnedId_ReportsWhiz101Async() {
+  public async Task Analyzer_PerspectiveWithActionsForWithoutPinnedId_ReportsWhiz111Async() {
     // IPerspectiveWithActionsFor types must be subject to the same [PinnedId]
     // enforcement as IPerspectiveFor; otherwise the analyzer silently lets a
     // pinned-id-less perspective ship.
@@ -163,7 +163,7 @@ public class PinnedIdAnalyzerTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_PinnedIdValueNotAGuid_ReportsWhiz102Async() {
+  public async Task Analyzer_PinnedIdValueNotAGuid_ReportsWhiz112Async() {
     const string source = """
         using Whizbang.Core;
         using Whizbang.Core.Attributes;

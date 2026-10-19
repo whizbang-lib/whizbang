@@ -86,7 +86,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective implementation was discovered and will be registered."
+      description: "A perspective implementation was discovered and will be registered. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -103,16 +103,16 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ009: Warning - IEvent or ICommand implementation missing [StreamId] attribute.
+  /// WHIZ009: Warning - IEvent implementation missing [StreamId] attribute (commands are not checked).
   /// </summary>
   public static readonly DiagnosticDescriptor MissingStreamIdAttribute = new(
       id: "WHIZ009",
       title: "Missing StreamId Attribute",
-      messageFormat: "Type '{0}' implements {1} but has no property or parameter marked with [StreamId]. Stream ID resolution will fail at runtime.",
+      messageFormat: "Event '{0}' has no property or parameter marked with [StreamId]. Stream ID resolution will fail at runtime.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "All IEvent and ICommand implementations should have exactly one property or constructor parameter marked with [StreamId] to identify the stream."
+      description: "Every IEvent implementation should have exactly one property or constructor parameter marked with [StreamId] to identify the stream. Commands are not checked."
   );
 
   /// <summary>
@@ -134,11 +134,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor GenerateStreamIdOnInitOnly = new(
       id: "WHIZ013",
       title: "GenerateStreamId requires a settable StreamId",
-      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property — so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
+      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property, so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Applies to every message kind (IEvent, ICommand, collective events)."
+      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Checked on events and commands."
   );
 
   /// <summary>
@@ -147,15 +147,15 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor JsonSerializableTypeDiscovered = new(
       id: "WHIZ011",
       title: "JSON Serializable Type Discovered",
-      messageFormat: "Found {1} type '{0}' - adding to JsonSerializerContext for AOT-compatible serialization",
+      messageFormat: "Found {1} '{0}' - adding to JsonSerializerContext for AOT-compatible serialization",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A message type (ICommand or IEvent) was discovered and will be included in the generated JsonSerializerContext."
+      description: "A message type (ICommand or IEvent), or a type a message carries, was discovered and will be included in the generated JsonSerializerContext. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
-  /// WHIZ012: Info - Perspective invoker routing generated for event type.
+  /// WHIZ012: Info - Perspective invoker routing generated, reported once per perspective with the events it routes.
   /// </summary>
   public static readonly DiagnosticDescriptor PerspectiveInvokerGenerated = new(
       id: "WHIZ012",
@@ -164,7 +164,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued."
+      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -242,7 +242,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveModel<TModel>."
+      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveFor, IPerspectiveWithActionsFor or IGlobalPerspectiveFor. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -255,7 +255,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker."
+      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -329,11 +329,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor UserServiceDiscovered = new(
       id: "WHIZ040",
       title: "User Service Discovered",
-      messageFormat: "Registered {0} '{1}' as scoped service implementing '{2}'",
+      messageFormat: "Registered {0} '{1}' as transient service implementing '{2}'",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container."
+      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -349,7 +349,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated."
+      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   // ========================================
@@ -439,7 +439,7 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor NonSerializableNestedProperty = new(
       id: "WHIZ063",
       title: "Nested type contains non-serializable property",
-      messageFormat: "Nested type '{0}' (used by '{1}.{2}') contains non-serializable property '{3}' of type '{4}'",
+      messageFormat: "Nested type '{0}' (used by '{1}') contains non-serializable property '{2}' of type '{3}'",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -760,7 +760,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance — an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
+      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance: an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
       customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
@@ -856,7 +856,7 @@ public static class DiagnosticDescriptors {
       category: "Whizbang.ReceptorSafety",
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
+      description: "Calling WaitForStreamAsync, WaitAsync or WaitForAppliedAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead. IsCaughtUpAsync does not wait and is not reported."
   );
 
   /// <summary>
@@ -893,7 +893,7 @@ public static class DiagnosticDescriptors {
       category: "Whizbang.ReceptorSafety",
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic — a generator cannot know what an application registers — so it warns rather than errors."
+      description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic (a generator cannot know what an application registers), so it warns rather than errors."
   );
 
   /// <summary>
@@ -931,5 +931,27 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "Make the parameter required and register a default with TryAdd, so a construction site cannot drop the dependency and a missing registration fails loudly instead of silently."
+  );
+
+  /// <summary>
+  /// WHIZ015: Warning - a message type is generic, so the generators skip it.
+  /// </summary>
+  /// <remarks>
+  /// An open generic type has no closed form generated code can name, so the dispatcher, the message
+  /// catalog, the topic registry and the serialization context leave it out (#1481). Before this, the
+  /// generators emitted the open type literally and the project failed to build with errors pointing
+  /// into generated files. A closed form a receptor handles is still routed for local dispatch, but it
+  /// has no generated serializer, so it cannot cross a transport.
+  /// </remarks>
+  /// <docs>operations/diagnostics/whiz015</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/GenericMessageTypeAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor GenericMessageType = new(
+      id: "WHIZ015",
+      title: "Generic message types are not supported",
+      messageFormat: "Message type '{0}' is generic, so the source generators skip it: it is not in the message catalog, the topic registry or the serialization context, and it cannot be sent across a transport. Declare a non-generic message type instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Generated code must name a closed type, and an open generic message type has none. The generators leave it out rather than emit code that cannot compile. A closed form handled by a receptor is routed for local dispatch only."
   );
 }

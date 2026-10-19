@@ -52,6 +52,9 @@ public static class AnalyzerTestHelper {
     // System.Net.Http so HttpClient resolves to a symbol: the purity analyzer classifies I/O by
     // the containing type of the resolved method, and an unresolved call is simply not seen.
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Net.Http.dll")));
+    // System.Text.Json, so [JsonPolymorphic] and the other serialization attributes bind: without it a test of an
+    // analyzer that reads them sees no attribute at all and passes on silence (#1431).
+    references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.JsonSerializer).Assembly.Location));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "netstandard.dll")));
 
     // Add reference to Whizbang.Core (for TrackedGuid, WhizbangId, etc.)

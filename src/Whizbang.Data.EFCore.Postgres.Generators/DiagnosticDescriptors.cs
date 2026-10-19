@@ -19,7 +19,7 @@ internal static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor PerspectiveModelDictionaryProperty = new(
       id: "WHIZ810",
       title: "Perspective model contains Dictionary property",
-      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use List<{4}> with Key/Value properties instead.",
+      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use a List of a class with Key ({2}) and Value ({3}) properties instead.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
@@ -92,11 +92,11 @@ internal static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor PerspectiveModelPolymorphicProperty = new(
       id: "WHIZ811",
       title: "Perspective model contains polymorphic type",
-      messageFormat: "Property '{0}' on perspective model '{1}' is abstract type '{2}'. Consider using [PolymorphicDiscriminator] on a discriminator property for efficient type-based queries.",
+      messageFormat: "Property '{0}' on perspective model '{1}' is polymorphic type '{2}'. Consider adding a [PolymorphicDiscriminator] property to '{1}' for efficient type-based queries.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "Abstract types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
+      description: "Abstract and [JsonPolymorphic] types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
   );
 
   /// <summary>

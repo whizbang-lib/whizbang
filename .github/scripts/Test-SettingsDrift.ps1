@@ -24,6 +24,10 @@
         and web commit sign-off.
 
     A read that fails stops the run: a setting that could not be read is never reported as removed.
+    A field GitHub leaves out for a read-only reader (a ruleset's bypass actors, shown only to someone
+    who can edit the ruleset) is recorded as not visible: it is neither compared nor reported as a
+    difference, and the report lists it as not checked. The baseline, captured by an admin, still
+    records it, so a change to it is reviewed in the baseline pull request.
 
     Changing a setting on purpose means changing the baseline in a pull request, which CODEOWNERS gives to
     build-admins: run -Mode Capture -OutFile .github/settings-baseline.json with an admin's gh login.
@@ -49,6 +53,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:DriftIssueTitle = 'Security settings differ from the baseline'
+$script:NotVisible = '(not visible to this reader)'
 $script:OrganizationKeys = @(
   'default_repository_permission', 'members_can_create_private_repositories', 'members_can_create_public_repositories',
   'members_can_create_repositories', 'two_factor_requirement_enabled', 'web_commit_signoff_required')
@@ -92,9 +97,13 @@ function Get-RulesetSetting {
   $byName = [ordered]@{}
   $rulesets = @(Invoke-GhJson -Path "repos/$Repository/rulesets" | ForEach-Object { Invoke-GhJson -Path "repos/$Repository/rulesets/$($_.id)" })
   foreach ($r in @($rulesets | Sort-Object name)) {
-    $byName[$r.name] = [ordered]@{
-      bypass_actors = @(@($r.bypass_actors) | Where-Object { $_ } | Sort-Object actor_type, actor_id |
+    # GitHub returns bypass_actors only to a reader who can edit the ruleset.
+    $bypass = if ($r.PSObject.Properties['bypass_actors']) {
+      @(@($r.bypass_actors) | Where-Object { $_ } | Sort-Object actor_type, actor_id |
           ForEach-Object { [ordered]@{ actor_id = $_.actor_id; actor_type = $_.actor_type; bypass_mode = $_.bypass_mode } })
+    } else { $NotVisible }
+    $byName[$r.name] = [ordered]@{
+      bypass_actors = $bypass
       conditions    = ConvertTo-SortedValue $r.conditions
       enforcement   = $r.enforcement
       rules         = @(@($r.rules) | Where-Object { $_ } | Sort-Object type | ForEach-Object { ConvertTo-SortedValue $_ })
@@ -202,14 +211,28 @@ function ConvertTo-FlatSetting {
   else { ConvertTo-Json -InputObject $Value -Compress }
 }
 
+function Get-UncheckedSetting {
+  <# .SYNOPSIS The path of each live setting the reader could not see, sorted. #>
+  param([Parameter(Mandatory)]$Live)
+  $l = @{}; ConvertTo-FlatSetting -Value $Live -Into $l
+  $hidden = ConvertTo-Json -InputObject $NotVisible -Compress
+  @($l.Keys | Where-Object { $l[$_] -ceq $hidden } | Sort-Object { $_ } -CaseSensitive)
+}
+
 function Compare-SecuritySettings {
-  <# .SYNOPSIS Each setting that differs between the baseline and the live settings: Setting, Baseline, Live. #>
+  <#
+  .SYNOPSIS
+      Each setting that differs between the baseline and the live settings: Setting, Baseline, Live. A live
+      setting the reader could not see is skipped, with everything the baseline has under it.
+  #>
   param([Parameter(Mandatory)]$Baseline, [Parameter(Mandatory)]$Live)
   $b = @{}; ConvertTo-FlatSetting -Value $Baseline -Into $b
   $l = @{}; ConvertTo-FlatSetting -Value $Live -Into $l
+  $unchecked = @(Get-UncheckedSetting -Live $Live)
   $paths = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
   foreach ($p in @($b.Keys) + @($l.Keys)) { [void]$paths.Add($p) }
   foreach ($p in $paths) {
+    if ($unchecked | Where-Object { $p -eq $_ -or $p.StartsWith("$_[") -or $p.StartsWith("$_.") }) { continue }
     $expected = if ($b.ContainsKey($p)) { $b[$p] } else { '(absent)' }
     $actual = if ($l.ContainsKey($p)) { $l[$p] } else { '(absent)' }
     if ($expected -cne $actual) { [pscustomobject]@{ Setting = $p; Baseline = $expected; Live = $actual } }
@@ -218,8 +241,11 @@ function Compare-SecuritySettings {
 
 function Format-DriftIssueBody {
   <# .SYNOPSIS The drift issue's body: what differs, where it was found, and how to resolve it. #>
-  param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Differences, [string]$RunUrl)
+  param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Differences, [string]$RunUrl, [string[]]$Unchecked = @())
   $cell = { param($s) '`' + ("$s" -replace '\|', '\|') + '`' }
+  $notChecked = if ($Unchecked.Count -gt 0) {
+    @('', "**Not checked** (the read-only reader cannot see them; the baseline records them, so a change is reviewed there): $(($Unchecked | ForEach-Object { & $cell $_ }) -join ', ').")
+  } else { @() }
   $rows = $Differences | ForEach-Object { "| $(& $cell $_.Setting) | $(& $cell $_.Baseline) | $(& $cell $_.Live) |" }
   return @(
     "The repository's security settings no longer match [.github/settings-baseline.json](../blob/develop/.github/settings-baseline.json) ($($Differences.Count) difference(s), found by [the settings drift check]($RunUrl))."
@@ -227,6 +253,8 @@ function Format-DriftIssueBody {
     '| Setting | Baseline | Live |'
     '|---|---|---|'
     $rows
+    ''
+    $notChecked
     ''
     '**To resolve:** if the change was intended, update the baseline in a pull request (`pwsh .github/scripts/Test-SettingsDrift.ps1 -Mode Capture -OutFile .github/settings-baseline.json`), which a build admin approves. If it was not, put the setting back and find out who changed it in the organization audit log. This issue closes itself on the first run that finds no difference.'
   ) -join "`n"
@@ -237,7 +265,8 @@ function Update-DriftIssue {
   param(
     [Parameter(Mandatory)][string]$Repository,
     [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Differences,
-    [string]$RunUrl
+    [string]$RunUrl,
+    [string[]]$Unchecked = @()
   )
   $listed = Invoke-Gh issue list -R $Repository --state open --label security --search "`"$DriftIssueTitle`" in:title" --json number
   $open = @(if ($listed) { @($listed | ConvertFrom-Json) | Where-Object { $_ } })
@@ -246,7 +275,7 @@ function Update-DriftIssue {
     if ($number) { [void](Invoke-Gh issue close $number -R $Repository --comment "The settings match the baseline again ([run]($RunUrl)).") }
     return
   }
-  $body = Format-DriftIssueBody -Differences $Differences -RunUrl $RunUrl
+  $body = Format-DriftIssueBody -Differences $Differences -RunUrl $RunUrl -Unchecked $Unchecked
   if ($number) {
     [void](Invoke-Gh issue edit $number -R $Repository --body $body)
   } else {
@@ -270,8 +299,10 @@ if (-not $LivePath) { throw 'Check needs -LivePath (the output of -Mode Capture)
 $baseline = Get-Content -Raw -LiteralPath $BaselinePath | ConvertFrom-Json -AsHashtable
 $live = Get-Content -Raw -LiteralPath $LivePath | ConvertFrom-Json -AsHashtable
 $differences = @(Compare-SecuritySettings -Baseline $baseline -Live $live)
-Update-DriftIssue -Repository $Repository -Differences $differences -RunUrl $RunUrl
-if ($env:GITHUB_STEP_SUMMARY) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (Format-DriftIssueBody -Differences $differences -RunUrl $RunUrl) }
+$unchecked = @(Get-UncheckedSetting -Live $live)
+Update-DriftIssue -Repository $Repository -Differences $differences -RunUrl $RunUrl -Unchecked $unchecked
+if ($env:GITHUB_STEP_SUMMARY) { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (Format-DriftIssueBody -Differences $differences -RunUrl $RunUrl -Unchecked $unchecked) }
+if ($unchecked.Count -gt 0) { Write-Host "Not checked (not visible to this reader): $($unchecked -join ', ')" }
 if ($differences.Count -gt 0) {
   $differences | Format-Table -AutoSize | Out-String | Write-Host
   Write-Host "::error::$($differences.Count) security setting(s) differ from the baseline."

@@ -946,30 +946,47 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonApplyMethod_IsNotCheckedForPurityAsync() {
     // Only the replayed fold has to be pure. A perspective's other members are ordinary code,
-    // and flagging them would make the analyzer noise rather than signal.
+    // and flagging them would make the analyzer noise rather than signal. Both classes are real
+    // perspectives, so the analyzer examines them: the second one's async Apply is reported, which
+    // proves the first one's async LoadAsync was examined and passed rather than never reached (#1431).
     const string source = """
             using System;
             using System.Threading.Tasks;
+            using Whizbang.Core.Perspectives;
 
             namespace TestApp;
 
-            public interface IPerspectiveStore {
+            public interface IOrderReader {
               Task<Order> GetAsync(Guid id);
             }
 
-            public class Order { public Guid Id { get; set; } }
+            public record Order { public Guid Id { get; init; } }
+            public record OrderCreated { public Guid OrderId { get; init; } }
 
-            public class OrderPerspective {
-              private readonly IPerspectiveStore _store;
-              public OrderPerspective(IPerspectiveStore store) { _store = store; }
+            public class OrderPerspective : IPerspectiveFor<Order, OrderCreated> {
+              private readonly IOrderReader _reader;
+              public OrderPerspective(IOrderReader reader) { _reader = reader; }
 
-              public Task<Order> LoadAsync(Guid id) => _store.GetAsync(id);
+              public Order Apply(Order current, OrderCreated @event) => current with { Id = @event.OrderId };
+
+              public async Task<Order> LoadAsync(Guid id) => await _reader.GetAsync(id);
+            }
+
+            public class ImpurePerspective : IPerspectiveFor<Order, OrderCreated> {
+              public async Task<Order> Apply(Order current, OrderCreated @event) {
+                await Task.Yield();
+                return current;
+              }
             }
             """;
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+    var purity = diagnostics.Where(d => d.Id is "WHIZ101" or "WHIZ102" or "WHIZ103").ToList();
 
-    await Assert.That(diagnostics.Any(d => d.Id is "WHIZ101" or "WHIZ102" or "WHIZ103")).IsFalse()
+    await Assert.That(purity.Select(d => d.Id)).IsEquivalentTo(["WHIZ101"])
+      .Because("the impure perspective's async Apply is the only purity finding");
+    var reported = purity[0].Location.SourceSpan.Start;
+    await Assert.That(reported).IsGreaterThan(source.IndexOf("class ImpurePerspective", StringComparison.Ordinal))
       .Because("purity is a constraint on the replayed fold, not on the class around it");
   }
 }
