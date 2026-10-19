@@ -184,7 +184,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // Recording it for an instance argument too costs nothing: that descriptor is also matched by
     // its instance's type.
     var factoryServiceTypes = new List<string>();
-    if (invocation.ArgumentList.Arguments.Count > 0) {
+    if (invocation.ArgumentList.Arguments.Any()) {
       var serviceType = _factoryServiceType(ctx, generic, ct);
       var implementationName = TypeNameUtilities.FullyQualified(implementation);
       if (serviceType is not null && !string.Equals(serviceType, implementationName, System.StringComparison.Ordinal)) {
@@ -296,7 +296,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
 
     // The requirement is named after the type argument, which is the descriptor's service type for
     // every registration method but AddHostedService: that one registers under IHostedService, so
-    // record it or the factory registration would never be recognised as present.
+    // record it or the factory registration would never be recognized as present.
     var factoryServiceTypes = new List<string>();
     if (string.Equals(generic.Identifier.ValueText, ADD_HOSTED_SERVICE, System.StringComparison.Ordinal)) {
       factoryServiceTypes.Add(HOSTED_SERVICE_TYPE);
@@ -344,7 +344,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // Two registrations of the same type contribute the same requirement; emitting it twice would
     // report the same gap twice and overstate how many things are broken. The service types its
     // factory registrations were made under are merged, though: a composition may make any one of
-    // those registrations, and each must be recognised as registering the type.
+    // those registrations, and each must be recognized as registering the type.
     foreach (var group in items
         .GroupBy(i => i.ImplementationType, System.StringComparer.Ordinal)
         .OrderBy(g => g.Key, System.StringComparer.Ordinal)) {
