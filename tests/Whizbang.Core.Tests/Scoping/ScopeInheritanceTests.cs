@@ -97,7 +97,7 @@ public class ScopeInheritanceTests {
   public async Task Resolve_NewRow_CarriesTheCreateAndAlwaysFieldsAsync() {
     var write = ScopeInheritance.Resolve(
       messageScope: _creator(), rowScope: null, rowExists: false,
-      onCreate: ScopeFields.Tenant, always: ScopeFields.User, scopeEventChanged: false);
+      onCreate: ScopeFields.Tenant, always: ScopeFields.User, scopeEventScope: null);
 
     await Assert.That(write.ForceUpdate).IsFalse();
     await Assert.That(write.Scope!.TenantId).IsEqualTo("tenant-1");
@@ -110,7 +110,7 @@ public class ScopeInheritanceTests {
   public async Task Resolve_NewRow_WithDefaults_CarriesEveryFieldAsync() {
     var write = ScopeInheritance.Resolve(
       messageScope: _creator(), rowScope: null, rowExists: false,
-      onCreate: ScopeFields.All, always: ScopeFields.None, scopeEventChanged: false);
+      onCreate: ScopeFields.All, always: ScopeFields.None, scopeEventScope: null);
 
     await Assert.That(write.Scope!.UserId).IsEqualTo("user-creator");
     await Assert.That(write.Scope.OrganizationId).IsEqualTo("org-1");
@@ -121,7 +121,7 @@ public class ScopeInheritanceTests {
   public async Task Resolve_ExistingRow_WithNoAlwaysFields_LeavesTheStoredScopeAloneAsync() {
     var write = ScopeInheritance.Resolve(
       messageScope: _editor(), rowScope: _creator(), rowExists: true,
-      onCreate: ScopeFields.All, always: ScopeFields.None, scopeEventChanged: false);
+      onCreate: ScopeFields.All, always: ScopeFields.None, scopeEventScope: null);
 
     await Assert.That(write.ForceUpdate).IsFalse()
       .Because("scope is set once at creation unless the model asks for fields to follow the latest writer");
@@ -131,7 +131,7 @@ public class ScopeInheritanceTests {
   public async Task Resolve_ExistingRow_WithAlwaysFields_UpdatesOnlyThoseFieldsAsync() {
     var write = ScopeInheritance.Resolve(
       messageScope: _editor(), rowScope: _creator(), rowExists: true,
-      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventChanged: false);
+      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventScope: null);
 
     await Assert.That(write.ForceUpdate).IsTrue();
     await Assert.That(write.Scope!.UserId).IsEqualTo("user-editor");
@@ -145,7 +145,7 @@ public class ScopeInheritanceTests {
     // A row written before scope existed reads back with no scope; the latest writer's fields still land.
     var write = ScopeInheritance.Resolve(
       messageScope: _editor(), rowScope: null, rowExists: true,
-      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventChanged: false);
+      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventScope: null);
 
     await Assert.That(write.ForceUpdate).IsTrue();
     await Assert.That(write.Scope!.UserId).IsEqualTo("user-editor");
@@ -155,19 +155,40 @@ public class ScopeInheritanceTests {
   [Test]
   public async Task Resolve_ScopeEvent_ForcesTheEventsScopeAsBeforeAsync() {
     var write = ScopeInheritance.Resolve(
-      messageScope: _editor(), rowScope: _creator(), rowExists: true,
-      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventChanged: true);
+      messageScope: _creator(), rowScope: _creator(), rowExists: true,
+      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventScope: _editor());
 
     await Assert.That(write.ForceUpdate).IsTrue();
     await Assert.That(write.Scope!.OrganizationId).IsEqualTo("org-2")
-      .Because("a scope event replaces the row's scope; Always fields do not narrow it");
+      .Because("a scope event replaces the row's scope; Always fields do not narrow it, and the latest message's scope does not replace it");
+  }
+
+  [Test]
+  public async Task Resolve_ScopeEvent_IsNotFilteredByTheCreateFieldsAsync() {
+    var write = ScopeInheritance.Resolve(
+      messageScope: _creator(), rowScope: null, rowExists: false,
+      onCreate: ScopeFields.Tenant, always: ScopeFields.None, scopeEventScope: _creator());
+
+    await Assert.That(write.ForceUpdate).IsTrue();
+    await Assert.That(write.Scope!.AllowedPrincipals).IsEquivalentTo(["group:owners"])
+      .Because("OnCreate decides what a row inherits from a message, not what a scope event sets (#1432)");
+  }
+
+  [Test]
+  public async Task Resolve_ScopeEvent_WithNoMessageScope_IsStillWrittenAsync() {
+    var write = ScopeInheritance.Resolve(
+      messageScope: null, rowScope: _creator(), rowExists: true,
+      onCreate: ScopeFields.All, always: ScopeFields.None, scopeEventScope: _editor());
+
+    await Assert.That(write.ForceUpdate).IsTrue();
+    await Assert.That(write.Scope!.UserId).IsEqualTo("user-editor");
   }
 
   [Test]
   public async Task Resolve_NoMessageScope_WritesNothingAndForcesNothingAsync() {
     var write = ScopeInheritance.Resolve(
       messageScope: null, rowScope: _creator(), rowExists: true,
-      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventChanged: false);
+      onCreate: ScopeFields.All, always: ScopeFields.User, scopeEventScope: null);
 
     await Assert.That(write.Scope).IsNull();
     await Assert.That(write.ForceUpdate).IsFalse();

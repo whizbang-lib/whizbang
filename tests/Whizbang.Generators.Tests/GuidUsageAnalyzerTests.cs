@@ -17,11 +17,11 @@ public class GuidUsageAnalyzerTests {
   // ========================================
 
   /// <summary>
-  /// Test that Guid.NewGuid() usage is detected and reports WHIZ055 error.
+  /// Test that Guid.NewGuid() usage is detected and reports WHIZ055 (a warning).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_GuidNewGuid_ReportsWHIZ055ErrorAsync() {
+  public async Task Analyzer_GuidNewGuid_ReportsWHIZ055WarningAsync() {
     // Arrange
     const string source = """
             using System;
@@ -50,9 +50,10 @@ public class GuidUsageAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Analyzer_TrackedGuidNew_NoErrorAsync() {
-    // Arrange
+    // Arrange: TrackedGuid lives in Whizbang.Core.ValueObjects. Without that using the call does not bind, and the
+    // analyzer has nothing to inspect, so "no diagnostic" would prove nothing (#1431).
     const string source = """
-            using Whizbang.Core;
+            using Whizbang.Core.ValueObjects;
 
             namespace TestApp;
 
@@ -67,24 +68,33 @@ public class GuidUsageAnalyzerTests {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<GuidUsageAnalyzer>(source);
 
     // Assert
+    await Assert.That(_compileErrors(source)).IsEmpty().Because("the call must bind for the analyzer to inspect it");
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ055" || d.Id == "WHIZ056")).IsEmpty();
   }
 
   /// <summary>
-  /// Test that WhizbangId.New() does not trigger any diagnostics.
+  /// Test that a [WhizbangId] type's New() does not trigger any diagnostics.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
   public async Task Analyzer_WhizbangIdNew_NoErrorAsync() {
     // Arrange
+    // Arrange: there is no WhizbangId type to call; [WhizbangId] marks an id type the generator gives a New().
+    // The id type is written out here because this compilation runs no generators, and the call has to bind for
+    // "no diagnostic" to mean anything (#1431).
     const string source = """
             using Whizbang.Core;
 
             namespace TestApp;
 
+            [WhizbangId]
+            public readonly partial struct OrderId {
+              public static OrderId New() => default;
+            }
+
             public class MyService {
               public void CreateId() {
-                var id = WhizbangId.New();
+                var id = OrderId.New();
               }
             }
             """;
@@ -93,19 +103,48 @@ public class GuidUsageAnalyzerTests {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<GuidUsageAnalyzer>(source);
 
     // Assert
+    await Assert.That(_compileErrors(source)).IsEmpty().Because("the call must bind for the analyzer to inspect it");
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ055" || d.Id == "WHIZ056")).IsEmpty();
   }
+
+  /// <summary>
+  /// A call that does not bind has no method to recognize, so it is not reported. The WhizbangId test used to
+  /// exercise this by accident, calling a type that does not exist (#1431).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_AnUnboundCall_IsNotReportedAsync() {
+    const string source = """
+            namespace TestApp;
+
+            public class MyService {
+              public void CreateId() {
+                var id = Missing.NewGuid();
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<GuidUsageAnalyzer>(source);
+
+    await Assert.That(_compileErrors(source)).IsNotEmpty().Because("the call must not bind for this to test the unbound path");
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ055" || d.Id == "WHIZ056")).IsEmpty();
+  }
+
+  private static List<string> _compileErrors(string source) =>
+    [.. AnalyzerTestHelper.CreateCompilationWithFrameworkReferences(source).GetDiagnostics()
+      .Where(static d => d.Severity == DiagnosticSeverity.Error)
+      .Select(static d => d.ToString())];
 
   // ========================================
   // WHIZ056: Guid.CreateVersion7() Detection Tests
   // ========================================
 
   /// <summary>
-  /// Test that Guid.CreateVersion7() usage is detected and reports WHIZ056 error.
+  /// Test that Guid.CreateVersion7() usage is detected and reports WHIZ056 (a warning).
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task Analyzer_GuidCreateVersion7_ReportsWHIZ056ErrorAsync() {
+  public async Task Analyzer_GuidCreateVersion7_ReportsWHIZ056WarningAsync() {
     // Arrange
     const string source = """
             using System;
