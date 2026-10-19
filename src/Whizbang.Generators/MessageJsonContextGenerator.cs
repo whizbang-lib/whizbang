@@ -626,7 +626,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          message.Location,
+          Location.None,
           message.SimpleName,
           _getMessageKind(message)
       ));
@@ -640,7 +640,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in types) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          type.Location,
+          Location.None,
           type.SimpleName,
           kind
       ));
@@ -2193,8 +2193,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: false,
         IsComposite: false,
         Properties: nestedProperties,
-        HasParameterizedConstructor: hasParameterizedConstructor,
-        Location: LocationUtilities.FirstOrNone(typeSymbol)
+        HasParameterizedConstructor: hasParameterizedConstructor
     );
 
     nestedTypes[typeNameToProcess] = nestedTypeInfo;
@@ -2241,8 +2240,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           IsSerializable: false,
           IsComposite: false,
           Properties: derivedProperties,
-          HasParameterizedConstructor: hasDerivedCtor,
-          Location: LocationUtilities.FirstOrNone(derivedType)
+          HasParameterizedConstructor: hasDerivedCtor
       );
 
       nestedTypes[derivedTypeName] = derivedTypeInfo;
@@ -3437,8 +3435,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: isSerializable,
         IsComposite: isComposite,
         Properties: properties,
-        HasParameterizedConstructor: hasParameterizedConstructor,
-        Location: LocationUtilities.FirstOrNone(type)
+        HasParameterizedConstructor: hasParameterizedConstructor
     );
   }
 

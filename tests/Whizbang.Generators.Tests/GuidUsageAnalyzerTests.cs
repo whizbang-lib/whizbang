@@ -107,6 +107,29 @@ public class GuidUsageAnalyzerTests {
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ055" || d.Id == "WHIZ056")).IsEmpty();
   }
 
+  /// <summary>
+  /// A call that does not bind has no method to recognize, so it is not reported. The WhizbangId test used to
+  /// exercise this by accident, calling a type that does not exist (#1431).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_AnUnboundCall_IsNotReportedAsync() {
+    const string source = """
+            namespace TestApp;
+
+            public class MyService {
+              public void CreateId() {
+                var id = Missing.NewGuid();
+              }
+            }
+            """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<GuidUsageAnalyzer>(source);
+
+    await Assert.That(_compileErrors(source)).IsNotEmpty().Because("the call must not bind for this to test the unbound path");
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ055" || d.Id == "WHIZ056")).IsEmpty();
+  }
+
   private static List<string> _compileErrors(string source) =>
     [.. AnalyzerTestHelper.CreateCompilationWithFrameworkReferences(source).GetDiagnostics()
       .Where(static d => d.Severity == DiagnosticSeverity.Error)

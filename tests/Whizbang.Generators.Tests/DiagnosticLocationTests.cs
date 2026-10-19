@@ -79,35 +79,14 @@ public class DiagnosticLocationTests {
     await Assert.That(DiagnosticSourceText.Of(result.Diagnostics.Single(d => d.Id == "WHIZ033"))).IsEqualTo("NoIdPerspective");
   }
 
-  /// <summary>The perspective's own Info diagnostics point at the perspective class.</summary>
+  /// <summary>
+  /// The informational "discovered" and "generated" diagnostics stay without a location. With one, a code-quality
+  /// tool imports each as an issue on every message type and perspective, in this repository and in a consumer's.
+  /// </summary>
   [Test]
   [RequiresAssemblyFiles]
-  public async Task PerspectiveInfoDiagnostics_AreReportedAtThePerspectiveAsync() {
-    var discovered = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(PERSPECTIVE).Diagnostics;
-    var invoker = GeneratorTestHelper.RunGenerator<PerspectiveInvokerGenerator>(PERSPECTIVE).Diagnostics;
-    var runner = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(PERSPECTIVE).Diagnostics;
-
-    await Assert.That(DiagnosticSourceText.Of(discovered.Single(d => d.Id == "WHIZ007"))).IsEqualTo("OrderViewPerspective");
-    await Assert.That(DiagnosticSourceText.Of(invoker.Single(d => d.Id == "WHIZ012"))).IsEqualTo("OrderViewPerspective");
-    await Assert.That(DiagnosticSourceText.Of(runner.Single(d => d.Id == "WHIZ027"))).IsEqualTo("OrderViewPerspective");
-  }
-
-  /// <summary>WHIZ011 points at the message type it adds to the serialization context.</summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Whiz011_IsReportedAtTheTypeAsync() {
-    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(PERSPECTIVE);
-
-    var placed = result.Diagnostics.Where(d => d.Id == "WHIZ011")
-      .Single(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture).Contains("'OrderPlaced'", StringComparison.Ordinal));
-    await Assert.That(DiagnosticSourceText.Of(placed)).IsEqualTo("OrderPlaced");
-  }
-
-  /// <summary>WHIZ040 and WHIZ041 point at the service class.</summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task ServiceRegistrationDiagnostics_AreReportedAtTheClassAsync() {
-    var result = GeneratorTestHelper.RunGenerator<ServiceRegistrationGenerator>("""
+  public async Task InformationalDiagnostics_HaveNoLocationAsync() {
+    var services = """
       using System;
       using System.Linq;
       using System.Threading;
@@ -124,9 +103,18 @@ public class DiagnosticLocationTests {
         public override IQueryable<PerspectiveRow<Order>> Query => throw new NotImplementedException();
         public override Task<Order?> GetByIdAsync(Guid id, CancellationToken ct = default) => Task.FromResult<Order?>(null);
       }
-      """);
+      """;
+    var reported = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(PERSPECTIVE).Diagnostics
+      .Concat(GeneratorTestHelper.RunGenerator<PerspectiveInvokerGenerator>(PERSPECTIVE).Diagnostics)
+      .Concat(GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(PERSPECTIVE).Diagnostics)
+      .Concat(GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(PERSPECTIVE).Diagnostics)
+      .Concat(GeneratorTestHelper.RunGenerator<ServiceRegistrationGenerator>(services).Diagnostics)
+      .Where(static d => d.Id is "WHIZ007" or "WHIZ011" or "WHIZ012" or "WHIZ027" or "WHIZ040" or "WHIZ041")
+      .ToList();
 
-    await Assert.That(DiagnosticSourceText.Of(result.Diagnostics.Single(d => d.Id == "WHIZ040"))).IsEqualTo("OrderLens");
-    await Assert.That(DiagnosticSourceText.Of(result.Diagnostics.Single(d => d.Id == "WHIZ041"))).IsEqualTo("BaseOrderLens");
+    await Assert.That(reported.Select(static d => d.Id).Distinct().Order(StringComparer.Ordinal))
+      .IsEquivalentTo(["WHIZ007", "WHIZ011", "WHIZ012", "WHIZ027", "WHIZ040", "WHIZ041"])
+      .Because("every one of them must be reported for the check below to cover it");
+    await Assert.That(reported.Where(static d => d.Location.IsInSource).Select(static d => d.Id)).IsEmpty();
   }
 }

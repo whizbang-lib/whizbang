@@ -189,6 +189,24 @@ public class DiagnosticMessageWordingTests {
     await Assert.That(_message(whiz104[0])).Contains($"uses {named}");
   }
 
+  /// <summary>
+  /// WHIZ104 is about the clock, not the name: an instance property called Now and a static UtcNow on another type
+  /// are not clock reads.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Whiz104_ANowThatIsNotTheClock_IsNotReportedAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(PERSPECTIVE_PREFIX + """
+      public static class Calendar { public static DateTimeOffset UtcNow => DateTimeOffset.MinValue; }
+      public record Stamped { public DateTimeOffset Now { get; init; } }
+      public class OrderPerspective : IPerspectiveFor<Order, Stamped> {
+        public Order Apply(Order current, Stamped @event) => current with { At = @event.Now > Calendar.UtcNow ? @event.Now : Calendar.UtcNow };
+      }
+      """);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ104")).IsEmpty();
+  }
+
   /// <summary>An HttpClient call is an HTTP call (WHIZ103), not also a database call (WHIZ102).</summary>
   [Test]
   [RequiresAssemblyFiles]

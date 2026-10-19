@@ -110,8 +110,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
           SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
           UserInterfaceName: TypeNameUtilities.FullyQualified(userInterface),
           Category: category,
-          IsAbstract: isAbstract,
-          Location: classDeclaration.Identifier.GetLocation()
+          IsAbstract: isAbstract
       );
     }
 
@@ -126,8 +125,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
           SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
           UserInterfaceName: TypeNameUtilities.FullyQualified(directWhizbangInterface),
           Category: category,
-          IsAbstract: isAbstract,
-          Location: classDeclaration.Identifier.GetLocation()
+          IsAbstract: isAbstract
       );
     }
 
@@ -278,7 +276,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var abstractService in abstractServices) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.AbstractClassSkipped,
-          abstractService.Location,
+          Location.None,
           abstractService.SimpleTypeName,
           abstractService.UserInterfaceName
       ));
@@ -289,7 +287,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
       var categoryName = service.Category == ServiceCategory.Perspective ? "Perspective" : "Lens";
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.UserServiceDiscovered,
-          service.Location,
+          Location.None,
           categoryName,
           service.SimpleTypeName,
           service.UserInterfaceName

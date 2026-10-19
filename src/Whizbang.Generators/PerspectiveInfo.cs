@@ -23,7 +23,6 @@ namespace Whizbang.Generators;
 /// <param name="InheritScopeOnCreate">ScopeFields flag set declared via [InheritScope(OnCreate = ...)] on the perspective model. Default 63 = ScopeFields.All: creation records ownership, with or without the attribute.</param>
 /// <param name="InheritScopeAlways">ScopeFields flag set declared via [InheritScope(Always = ...)] on the perspective model: fields that follow the latest writer. Default 0 = ScopeFields.None, so scope is set once, at creation.</param>
 /// <param name="ModelCopy">For a Split class model with an <c>init</c>-only promoted field, how the runner copies it to strip and load those fields (issue #1002); null for every other model</param>
-/// <param name="Location">The perspective class's name in source; WHIZ027 is reported there (#1429)</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs</tests>
@@ -54,8 +53,7 @@ internal sealed record PerspectiveInfo(
     string? StreamGroupSpec = null,
     Whizbang.Generators.Shared.Models.ModelCopyInfo? ModelCopy = null,
     string[]? MemberDefaults = null,
-    string[]? UnconditionalPurgeEventTypes = null,
-    Location? Location = null
+    string[]? UnconditionalPurgeEventTypes = null
 );
 
 /// <summary>

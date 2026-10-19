@@ -258,8 +258,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamGroupSpec: streamGroupSpec,
             ModelCopy: modelCopy,
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
-            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
-            Location: classDeclaration.Identifier.GetLocation()),
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null),
         Warning: null
     );
   }
@@ -473,7 +472,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       // Report diagnostic
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveRunnerGenerated,
-          perspective.Location,
+          Location.None,
           perspective.SimpleName,
           runnerName
       ));

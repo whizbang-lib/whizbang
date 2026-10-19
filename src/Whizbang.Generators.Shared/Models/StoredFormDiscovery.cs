@@ -156,7 +156,7 @@ public static class StoredFormDiscovery {
   }
 
   private static void _removal(Walk walk, AttributeData removed, string prefix, string? collection) {
-    walk.Declaration = removed.ApplicationSyntaxReference?.GetSyntax().GetLocation();
+    walk.Declaration = LocationUtilities.ApplicationOrFallback(removed, Location.None, System.Threading.CancellationToken.None);
     var relative = removed.ConstructorArguments.Length > 0 ? removed.ConstructorArguments[0].Value as string : null;
     var path = prefix + relative;
     if (collection is not null) {

@@ -102,7 +102,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective implementation was discovered and will be registered."
+      description: "A perspective implementation was discovered and will be registered. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -167,7 +167,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A message type (ICommand or IEvent), or a type a message carries, was discovered and will be included in the generated JsonSerializerContext."
+      description: "A message type (ICommand or IEvent), or a type a message carries, was discovered and will be included in the generated JsonSerializerContext. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -180,7 +180,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued."
+      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -284,7 +284,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveFor, IPerspectiveWithActionsFor or IGlobalPerspectiveFor."
+      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveFor, IPerspectiveWithActionsFor or IGlobalPerspectiveFor. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -375,7 +375,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container."
+      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -391,7 +391,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated."
+      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>

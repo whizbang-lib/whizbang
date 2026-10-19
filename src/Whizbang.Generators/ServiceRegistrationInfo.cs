@@ -1,8 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Microsoft.CodeAnalysis;
-
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -14,15 +12,13 @@ namespace Whizbang.Generators;
 /// <param name="UserInterfaceName">Fully qualified user interface name (e.g., "global::MyApp.IOrderLens")</param>
 /// <param name="Category">Category of service (Lens or Perspective)</param>
 /// <param name="IsAbstract">True if the class is abstract (will be skipped for registration)</param>
-/// <param name="Location">The class declaration; WHIZ040 and WHIZ041 are reported there (#1429).</param>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
 internal sealed record ServiceRegistrationInfo(
     string ConcreteTypeName,
     string SimpleTypeName,
     string UserInterfaceName,
     ServiceCategory Category,
-    bool IsAbstract = false,
-    Location? Location = null
+    bool IsAbstract = false
 );
 
 /// <summary>
