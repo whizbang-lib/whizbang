@@ -38,12 +38,19 @@
 --              turn a redelivered copy of one away instead of storing it again below the close point, and
 --              they age out under the deduplication retention.
 --
---              close_stream is its 093 definition copied whole (rule 5) plus the delta; the signature is
---              unchanged, so CREATE OR REPLACE replaces it in place. No later migration redefines it.
+--              close_stream is its 093 definition copied whole (rule 5) plus the delta, at the 093 signature.
+--              The name was defined at other arities earlier in the set, so the overloads are cleared first.
 -- Dependencies: 093 (close_stream, epoch refold, origin generation), 079 (wh_event_destruction_hold),
 --               209 (wh_perspective_snapshots.snapshot_version)
 -- Objects: close_stream
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
+
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('close_stream');
 
 -- <docs>fundamentals/events/event-streams</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_CursorOfAPerspectiveWithNothingLeftToConsume_IsReanchoredOntoTheBoundaryEventAsync</tests>
