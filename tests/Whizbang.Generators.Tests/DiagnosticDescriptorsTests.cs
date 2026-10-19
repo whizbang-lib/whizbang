@@ -24,7 +24,6 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
-      DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
@@ -56,7 +55,6 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
-      DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
@@ -86,7 +84,6 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
-      DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
@@ -116,7 +113,6 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
-      DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
@@ -161,17 +157,7 @@ public class DiagnosticDescriptorsTests {
       .ToHashSet();
 
     await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Where(declared.Contains).ToArray()).IsEmpty();
-    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Length).IsEqualTo(9);
-  }
-
-  [Test]
-  public async Task StreamIdMustBeGuid_HasErrorSeverityAsync() {
-    // Arrange & Act
-    var descriptor = DiagnosticDescriptors.StreamIdMustBeGuid;
-
-    // Assert
-    await Assert.That(descriptor.Id).IsEqualTo("WHIZ005");
-    await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Length).IsEqualTo(10);
   }
 
   [Test]

@@ -16,7 +16,7 @@ public static class DiagnosticDescriptors {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
   public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
-    "WHIZ003", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
+    "WHIZ003", "WHIZ005", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
   ];
 
   private const string CATEGORY = "Whizbang.SourceGeneration";
@@ -62,18 +62,6 @@ public static class DiagnosticDescriptors {
       description: "A stream ID property was discovered on a command and will be accessible via PolicyContext."
   );
 
-  /// <summary>
-  /// WHIZ005: Error - [StreamId] must be on Guid property or type with .Value property.
-  /// </summary>
-  public static readonly DiagnosticDescriptor StreamIdMustBeGuid = new(
-      id: "WHIZ005",
-      title: "Stream ID Must Be Guid",
-      messageFormat: "[StreamId] on {0}.{1} is not a Guid. A stream id must be a Guid, a Guid?, or a strongly-typed id whose Value property is a Guid.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Error,
-      isEnabledByDefault: true,
-      description: "The [StreamId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
-  );
 
   /// <summary>
   /// WHIZ006: Warning - Multiple [StreamId] attributes on same type.
