@@ -37,7 +37,7 @@ public class CapabilityMetricsTests {
 
   [Test]
   public async Task Gauge_ReportsOneSeriesPerCapabilityAndScope_WithEveryTagAsync() {
-    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var registry = new FixedRegistry([
       new(FakeCapabilityProvider.Describe("postgres", "vector"), "orders-db", CapabilityState.Ready, "0.8.0", null, null),
       new(FakeCapabilityProvider.Describe("postgres", "pg_squeeze"), "orders-db", CapabilityState.NotPermitted, null, null, null),
@@ -54,7 +54,7 @@ public class CapabilityMetricsTests {
 
   [Test]
   public async Task Gauge_ReadsTheLatestAnswerAtEachCollectionAsync() {
-    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var descriptor = FakeCapabilityProvider.Describe("postgres", "vector");
     var registry = new FixedRegistry([new(descriptor, "orders-db", CapabilityState.Unknown, null, null, "not probed yet")]);
     var metrics = new CapabilityMetrics(_whizbangMetrics(provider), registry);
@@ -67,7 +67,7 @@ public class CapabilityMetricsTests {
 
   [Test]
   public async Task Gauge_IsNamedOnTheWhizbangCapabilitiesMeter_InTheTurnkeyListAsync() {
-    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new CapabilityMetrics(_whizbangMetrics(provider), new FixedRegistry([]));
 
     await Assert.That(metrics.CapabilityState.Name).IsEqualTo("whizbang.capability.state");

@@ -60,7 +60,7 @@ internal sealed class ConfigureCapabilityOptions(IConfiguration? configuration) 
       return;
     }
 #pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-    ConfigurationBinder.Bind(configuration.GetSection("Whizbang:Capabilities"), options);
+    configuration.GetSection("Whizbang:Capabilities").Bind(options);
 #pragma warning restore IL2026, IL3050
   }
 }

@@ -122,7 +122,7 @@ public class CapabilityRegistryTests {
 
   [Test]
   public async Task WithMetrics_TheGaugeIsCreated_WithoutNoneIsAsync() {
-    using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
     var metrics = new WhizbangMetrics(provider.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>());
 
     var withMetrics = new CapabilityRegistry([_broker()], NullLogger<CapabilityRegistry>.Instance, metrics);
