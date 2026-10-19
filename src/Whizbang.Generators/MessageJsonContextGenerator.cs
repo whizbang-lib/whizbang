@@ -626,7 +626,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
+          message.Location,
           message.SimpleName,
           _getMessageKind(message)
       ));
@@ -640,7 +640,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in types) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
+          type.Location,
           type.SimpleName,
           kind
       ));
@@ -738,7 +738,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             "MessageJsonContextGenerator invoked for assembly '{0}' with {1} message type(s)",
             "Whizbang.SourceGeneration",
             DiagnosticSeverity.Info,
-            true),
+            true,
+            "Reports that the generator ran and how many message types it found. It is reported without a location "
+            + "because it is about the whole compilation, not one declaration; turn it off for a project in "
+            + ".globalconfig or NoWarn."),
         Location.None,
         compilation.AssemblyName ?? "Unknown",
         messages.Length
@@ -2190,7 +2193,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: false,
         IsComposite: false,
         Properties: nestedProperties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        HasParameterizedConstructor: hasParameterizedConstructor,
+        Location: LocationUtilities.FirstOrNone(typeSymbol)
     );
 
     nestedTypes[typeNameToProcess] = nestedTypeInfo;
@@ -2237,7 +2241,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           IsSerializable: false,
           IsComposite: false,
           Properties: derivedProperties,
-          HasParameterizedConstructor: hasDerivedCtor
+          HasParameterizedConstructor: hasDerivedCtor,
+          Location: LocationUtilities.FirstOrNone(derivedType)
       );
 
       nestedTypes[derivedTypeName] = derivedTypeInfo;
@@ -3432,7 +3437,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         IsSerializable: isSerializable,
         IsComposite: isComposite,
         Properties: properties,
-        HasParameterizedConstructor: hasParameterizedConstructor
+        HasParameterizedConstructor: hasParameterizedConstructor,
+        Location: LocationUtilities.FirstOrNone(type)
     );
   }
 

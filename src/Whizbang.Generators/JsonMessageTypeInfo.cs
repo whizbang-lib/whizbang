@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.CodeAnalysis;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -16,6 +18,7 @@ namespace Whizbang.Generators;
 /// <param name="IsComposite">True if type implements ICompositeEvent (wire-only; registered as IMessage but NOT IEvent, so it is never persisted)</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
 /// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
+/// <param name="Location">The type's declaration; WHIZ011 is reported there (#1429). Null for a type with none in source.</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record JsonMessageTypeInfo(
     string FullyQualifiedName,
@@ -26,7 +29,8 @@ internal sealed record JsonMessageTypeInfo(
     bool IsSerializable,
     bool IsComposite,
     PropertyInfo[] Properties,
-    bool HasParameterizedConstructor
+    bool HasParameterizedConstructor,
+    Location? Location = null
 ) {
   /// <summary>
   /// Unique identifier derived from fully qualified name, suitable for C# identifiers.

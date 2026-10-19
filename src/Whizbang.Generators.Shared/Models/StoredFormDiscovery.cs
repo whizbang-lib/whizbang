@@ -63,8 +63,12 @@ public sealed record StoredFormInfo(
 /// <param name="Id">WHIZ830 (cannot be generated) or WHIZ832 (inside a collection element).</param>
 /// <param name="Subject">The model and path: <c>App.OrderModel.Status</c>.</param>
 /// <param name="Reason">Why.</param>
+/// <param name="Location">
+/// The declaration it is about (the property, or the [StoredFormRemoved] attribute), so it can be suppressed there
+/// (#1429). A declaration on a shared nested type has one location however many models reach it.
+/// </param>
 /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
-public sealed record StoredFormProblem(string Id, string Subject, string Reason);
+public sealed record StoredFormProblem(string Id, string Subject, string Reason, Location? Location = null);
 
 /// <summary>
 /// Finds a perspective model's stored-form declarations (<c>[StoredForm]</c> on a property, <c>[StoredFormRemoved]</c>
@@ -125,7 +129,11 @@ public static class StoredFormDiscovery {
     public List<StoredFormProblem> Problems { get; } = [];
     public HashSet<string> OnPath { get; } = new(StringComparer.Ordinal);
 
-    public void Problem(string id, string path, string reason) => Problems.Add(new StoredFormProblem(id, $"{Model}.{path}", reason));
+    /// <summary>The declaration being read, which a problem found now is reported at.</summary>
+    public Location? Declaration { get; set; }
+
+    public void Problem(string id, string path, string reason) =>
+      Problems.Add(new StoredFormProblem(id, $"{Model}.{path}", reason, Declaration));
   }
 
   private static void _walk(Walk walk, ITypeSymbol type, string prefix, int depth, string? collection) {
@@ -148,6 +156,7 @@ public static class StoredFormDiscovery {
   }
 
   private static void _removal(Walk walk, AttributeData removed, string prefix, string? collection) {
+    walk.Declaration = removed.ApplicationSyntaxReference?.GetSyntax().GetLocation();
     var relative = removed.ConstructorArguments.Length > 0 ? removed.ConstructorArguments[0].Value as string : null;
     var path = prefix + relative;
     if (collection is not null) {
@@ -164,6 +173,7 @@ public static class StoredFormDiscovery {
     if (declaration is null) {
       return;
     }
+    walk.Declaration = LocationUtilities.FirstOrNone(property);
     if (collection is not null) {
       walk.Problem(INSIDE_COLLECTION, path, $"it is inside an element of the collection {collection}");
     } else {

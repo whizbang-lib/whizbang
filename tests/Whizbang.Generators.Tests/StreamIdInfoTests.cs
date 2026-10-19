@@ -82,7 +82,7 @@ public class StreamIdInfoTests {
     );
 
     // Act
-    var (eventType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly) = info;
+    var (eventType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly, propertyLocation) = info;
 
     // Assert
     await Assert.That(eventType).IsEqualTo("global::MyApp.Events.ProductCreatedEvent");
@@ -92,6 +92,7 @@ public class StreamIdInfoTests {
     await Assert.That(hasGenerate).IsFalse();
     await Assert.That(onlyIfEmpty).IsFalse();
     await Assert.That(isPropertyInitOnly).IsFalse();
+    await Assert.That(propertyLocation).IsNull();
   }
 
   [Test]
@@ -193,7 +194,7 @@ public class CommandStreamIdInfoTests {
     );
 
     // Act
-    var (commandType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly) = info;
+    var (commandType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty, isPropertyInitOnly, propertyLocation) = info;
 
     // Assert
     await Assert.That(commandType).IsEqualTo("global::MyApp.Commands.CreateProductCommand");
@@ -203,6 +204,7 @@ public class CommandStreamIdInfoTests {
     await Assert.That(hasGenerate).IsFalse();
     await Assert.That(onlyIfEmpty).IsFalse();
     await Assert.That(isPropertyInitOnly).IsFalse();
+    await Assert.That(propertyLocation).IsNull();
   }
 
 }

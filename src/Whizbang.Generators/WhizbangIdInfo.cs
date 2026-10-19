@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.CodeAnalysis;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -39,12 +41,14 @@ public enum DiscoverySource {
 /// <param name="Namespace">Namespace where the ID type should be generated (e.g., "MyApp.Domain")</param>
 /// <param name="Source">How the ID was discovered (ExplicitType, Property, or Parameter)</param>
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
+/// <param name="Location">Where the [WhizbangId] attribute is written; WHIZ024 is reported there. Not part of equality.</param>
 /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
 public sealed record WhizbangIdInfo(
   string TypeName,
   string Namespace,
   DiscoverySource Source,
-  bool SuppressDuplicateWarning = false
+  bool SuppressDuplicateWarning = false,
+  Location? Location = null
 ) {
   /// <summary>
   /// Gets the fully qualified name of the ID type (Namespace.TypeName).

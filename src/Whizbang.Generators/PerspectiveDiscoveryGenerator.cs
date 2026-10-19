@@ -138,7 +138,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           MessageTypeNames: messageTypeNames,
           EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
           EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null,
-          IsWithActionsInterface: isWithActions
+          IsWithActionsInterface: isWithActions,
+          Location: LocationUtilities.FirstOrNone(classSymbol)
       );
     }).ToArray();
 
@@ -243,7 +244,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveDiscovered,
-          Location.None,
+          perspective.Location,
           TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));

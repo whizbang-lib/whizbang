@@ -120,7 +120,8 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         ClrTypeName: clrTypeName,
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes,
-        MessageTypeNames: messageTypeNames
+        MessageTypeNames: messageTypeNames,
+        Location: LocationUtilities.FirstOrNone(classSymbol)
     );
   }
 
@@ -150,7 +151,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
       var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveInvokerGenerated,
-          Location.None,
+          perspective.Location,
           TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));

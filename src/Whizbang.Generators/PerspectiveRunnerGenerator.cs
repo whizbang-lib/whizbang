@@ -62,12 +62,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             if (result!.Warning is { } warning) {
               ctx.ReportDiagnostic(Diagnostic.Create(
                   DiagnosticDescriptors.PerspectiveModelMissingStreamId,
-                  Location.Create(
-                      warning.FilePath,
-                      default,
-                      new Microsoft.CodeAnalysis.Text.LinePositionSpan(
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column),
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column))),
+                  warning.Location,
                   warning.PerspectiveName,
                   warning.ModelName
               ));
@@ -263,7 +258,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamGroupSpec: streamGroupSpec,
             ModelCopy: modelCopy,
             MemberDefaults: memberDefaults.Length > 0 ? memberDefaults : null,
-            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null),
+            UnconditionalPurgeEventTypes: unconditionalPurges.Length > 0 ? unconditionalPurges : null,
+            Location: classDeclaration.Identifier.GetLocation()),
         Warning: null
     );
   }
@@ -275,16 +271,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       ClassDeclarationSyntax classDeclaration,
       INamedTypeSymbol classSymbol,
       ITypeSymbol modelType) {
-    var location = classDeclaration.GetLocation();
-    var lineSpan = location.GetLineSpan();
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
             PerspectiveName: classSymbol.Name,
             ModelName: modelType.Name,
-            FilePath: lineSpan.Path,
-            Line: lineSpan.StartLinePosition.Line,
-            Column: lineSpan.StartLinePosition.Character
+            Location: classDeclaration.Identifier.GetLocation()
         )
     );
   }
@@ -481,7 +473,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       // Report diagnostic
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveRunnerGenerated,
-          Location.None,
+          perspective.Location,
           perspective.SimpleName,
           runnerName
       ));

@@ -297,7 +297,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker."
+      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -407,7 +407,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "The source generator did not find any user-defined interfaces extending ILensQuery or IPerspectiveFor."
+      description: "The source generator did not find any user-defined interfaces extending ILensQuery or IPerspectiveFor. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn."
   );
 
   // ========================================

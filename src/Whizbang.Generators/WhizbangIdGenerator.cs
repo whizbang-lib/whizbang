@@ -151,7 +151,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: structSymbol.Name,
         Namespace: targetNamespace,
         Source: DiscoverySource.ExplicitType,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -221,7 +223,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: typeName,
         Namespace: targetNamespace,
         Source: DiscoverySource.Property,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -275,7 +279,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: typeName,
         Namespace: targetNamespace,
         Source: DiscoverySource.Parameter,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -422,7 +428,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         if (!id1.SuppressDuplicateWarning && !id2.SuppressDuplicateWarning) {
           context.ReportDiagnostic(Diagnostic.Create(
               DiagnosticDescriptors.WhizbangIdDuplicateName,
-              Location.None,
+              id2.Location,
               id1.TypeName,
               id1.Namespace,
               id2.Namespace
