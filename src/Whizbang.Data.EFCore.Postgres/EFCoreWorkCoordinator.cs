@@ -3142,8 +3142,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <inheritdoc />
   public Task<int> ReconcileFollowerPresenceAsync(
       string followerTable, IReadOnlyCollection<string> announcerTables,
+      CancellationToken cancellationToken = default) =>
+    ReconcileFollowerPresenceAsync(followerTable, announcerTables, streamIds: null, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<int> ReconcileFollowerPresenceAsync(
+      string followerTable, IReadOnlyCollection<string> announcerTables, IReadOnlyCollection<Guid>? streamIds,
       CancellationToken cancellationToken = default) {
-    if (announcerTables.Count == 0) {
+    if (announcerTables.Count == 0 || streamIds is { Count: 0 }) {
       return Task.FromResult(0);
     }
     return _withCoordinatorCommandAsync(async (cmd, schema) => {
@@ -3152,11 +3158,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var absentFromEveryAnnouncer = string.Join(" AND ", announcerTables.Select(a =>
         $"NOT EXISTS (SELECT 1 FROM {BuildSchemaQualifiedName(schema, a)} a WHERE a.id = f.id)"));
 #pragma warning disable S2077 // identifiers originate from wh_perspective_registry, not user input
+      // Scoped to the streams a rebuild replayed, the delete reads only their rows; unscoped, the whole table
+      var scoped = streamIds is null ? "" : "f.id = ANY(@ids) AND ";
       cmd.CommandText =
-        $"DELETE FROM {follower} f WHERE {absentFromEveryAnnouncer} " +
+        $"DELETE FROM {follower} f WHERE {scoped}{absentFromEveryAnnouncer} " +
         $"AND NOT EXISTS (SELECT 1 FROM {hold} h WHERE h.table_name = @t AND h.row_id = f.id AND h.hold_until > NOW())";
 #pragma warning restore S2077
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("t", followerTable));
+      if (streamIds is not null) {
+        cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+          Value = streamIds.ToArray()
+        });
+      }
       return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }, cancellationToken);
   }

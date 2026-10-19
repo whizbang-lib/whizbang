@@ -24,7 +24,8 @@ public sealed class RebuildPerspectiveStreamsHandler(IPerspectiveRebuilder rebui
   /// <exception cref="InvalidOperationException">The stream's rebuild did not succeed.</exception>
   public async ValueTask HandleStreamAsync(RebuildPerspectiveStreamsCommand command, Guid streamId, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(command);
-    var result = await _rebuilder.RebuildStreamsAsync(command.PerspectiveName, [streamId], command.Origin, cancellationToken).ConfigureAwait(false);
+    // As one stream of the run: the run reports once when it completes, so the stream announces nothing of its own
+    var result = await _rebuilder.RebuildStreamOfRunAsync(command.PerspectiveName, streamId, command.Origin, cancellationToken).ConfigureAwait(false);
     if (!result.Success) {
       throw new InvalidOperationException($"Rebuilding stream {streamId} of {command.PerspectiveName} failed: {result.Error}");
     }

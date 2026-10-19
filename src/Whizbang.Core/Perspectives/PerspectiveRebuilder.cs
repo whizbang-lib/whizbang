@@ -83,6 +83,11 @@ public sealed partial class PerspectiveRebuilder(
   }
 
   /// <inheritdoc/>
+  public async Task<RebuildResult> RebuildStreamOfRunAsync(
+      string perspectiveName, Guid streamId, RebuildOrigin origin, CancellationToken ct = default) =>
+    await _rebuildCoreAsync(perspectiveName, RebuildMode.SelectedStreams, [streamId], ct, origin, partOfRun: true);
+
+  /// <inheritdoc/>
   public async Task<IReadOnlyList<Guid>?> ResolveStreamIdsAsync(string perspectiveName, CancellationToken ct = default) {
     await using var scope = scopeFactory.CreateAsyncScope();
     var sp = scope.ServiceProvider;
@@ -174,7 +179,11 @@ public sealed partial class PerspectiveRebuilder(
   /// Takes its own scope. The catch in <c>_rebuildCoreAsync</c> runs after that method's scope is disposed, and
   /// the failure event has to go out from there too.
   /// </remarks>
-  private async Task _emitAsync<TEvent>(TEvent rebuildEvent) where TEvent : IEvent {
+  private async Task _emitAsync<TEvent>(TEvent rebuildEvent, bool partOfRun = false) where TEvent : IEvent {
+    // One stream of a multi-stream run announces nothing of its own: the run reports once, when it completes
+    if (partOfRun) {
+      return;
+    }
     try {
       await using var scope = scopeFactory.CreateAsyncScope();
       var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
@@ -187,9 +196,13 @@ public sealed partial class PerspectiveRebuilder(
     }
   }
 
+  /// <summary>Runs a rebuild of every stream, named streams, or one stream of a multi-stream run.</summary>
+  /// <param name="partOfRun">True for one stream of a multi-stream run: it reports nothing of its own (no rebuild events,
+  /// no row digests, no Information log), because the run reports once when it completes; its result still says how it
+  /// ended, so the stream's outcome records it.</param>
   private async Task<RebuildResult> _rebuildCoreAsync(
       string perspectiveName, RebuildMode mode, List<Guid>? streamIds, CancellationToken ct,
-      RebuildOrigin? origin = null) {
+      RebuildOrigin? origin = null, bool partOfRun = false) {
 
     var sw = Stopwatch.StartNew();
     RebuildRun? run = null;
@@ -210,7 +223,7 @@ public sealed partial class PerspectiveRebuilder(
         var registered = string.Join(", ", registry.GetRegisteredPerspectives().Select(p => p.ClrTypeName));
         var noRunner = $"No runner found for perspective '{perspectiveName}'. Registered: {registered}";
         await _emitAsync(new PerspectiveRebuildFailed(
-            rebuildStreamId, perspectiveName, mode, noRunner, 0, sw.Elapsed, origin));
+            rebuildStreamId, perspectiveName, mode, noRunner, 0, sw.Elapsed, origin), partOfRun);
         return new RebuildResult(perspectiveName, 0, 0, sw.Elapsed, false, noRunner);
       }
 
@@ -220,6 +233,7 @@ public sealed partial class PerspectiveRebuilder(
       // rebuilder still updates projections and just skips cursor persistence.
       var completer = sp.GetService<IPerspectiveCheckpointCompleter>();
       run = new RebuildRun(runner, perspectiveName, mode, completer, rebuildStreamId, origin) {
+        PartOfRun = partOfRun,
         PurgeMarkers = sp.GetService<IPerspectivePurgeMarkerStore>(),
       };
 
@@ -239,16 +253,18 @@ public sealed partial class PerspectiveRebuilder(
         LogBlueGreenInPlace(logger, perspectiveName);
       }
 
-      LogRebuildStarting(logger, mode, perspectiveName, streamIds.Count, completer != null);
+      if (!partOfRun) {
+        LogRebuildStarting(logger, mode, perspectiveName, streamIds.Count, completer != null);
+      }
       await _emitAsync(new PerspectiveRebuildStarted(
-          rebuildStreamId, perspectiveName, mode, streamIds.Count, DateTimeOffset.UtcNow, origin));
+          rebuildStreamId, perspectiveName, mode, streamIds.Count, DateTimeOffset.UtcNow, origin), partOfRun);
 
       // Only for a rebuild of named streams. The targeted set is known and small there, so the digest costs in
       // proportion to the repair; a whole-perspective rebuild would have to hash the table it is about to
       // replace. Taken after the state-based guard has filtered the list, so it describes the rows actually
       // replayed rather than the rows asked for.
-      var digester = mode == RebuildMode.SelectedStreams ? sp.GetService<IPerspectiveRowDigest>() : null;
-      var digestUnavailable = _digestAbsence(mode, digester, perspectiveName);
+      var digester = mode == RebuildMode.SelectedStreams && !partOfRun ? sp.GetService<IPerspectiveRowDigest>() : null;
+      var digestUnavailable = partOfRun ? null : _digestAbsence(mode, digester, perspectiveName);
       var (digestBefore, digestBeforeFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
@@ -276,7 +292,8 @@ public sealed partial class PerspectiveRebuilder(
       // of its groups' announcers (their live tables materialize the eviction decisions —
       // decisions, not rules). Conservative all-absent rule; holds honored; direct announcers
       // only in v1 (no Bridge transitivity in presence).
-      await _streamGroupPresenceReconcileAsync(perspectiveName, sp, ct);
+      // Scoped to the streams named, which are the only ones replayed; a rebuild of every stream checks the whole table
+      await _streamGroupPresenceReconcileAsync(perspectiveName, sp, requested > 0 ? streamIds : null, ct);
 
       sw.Stop();
       // A caller that names streams is asserting they exist. Rebuilding none of them is not success, whether every
@@ -285,20 +302,22 @@ public sealed partial class PerspectiveRebuilder(
         var nothingRebuilt = _nothingRebuiltError(requested, run.StreamsRefused, run.StreamsUnchanged);
         LogRebuildNothingRebuilt(logger, mode, perspectiveName, requested, run.StreamsRefused);
         await _emitAsync(new PerspectiveRebuildFailed(
-            rebuildStreamId, perspectiveName, mode, nothingRebuilt, 0, sw.Elapsed, origin));
+            rebuildStreamId, perspectiveName, mode, nothingRebuilt, 0, sw.Elapsed, origin), partOfRun);
         return new RebuildResult(perspectiveName, 0, run.EventsReplayed, sw.Elapsed, false, nothingRebuilt) {
           StreamsRequested = requested,
           StreamsRefused = run.StreamsRefused,
         };
       }
-      LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
+      if (!partOfRun) {
+        LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
+      }
       var (digestAfter, digestAfterFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
       digestUnavailable ??= digestAfterFailure;
       await _emitAsync(new PerspectiveRebuildCompleted(
           rebuildStreamId, perspectiveName, mode, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, origin,
-          digestBefore, digestAfter, digestUnavailable));
+          digestBefore, digestAfter, digestUnavailable), partOfRun);
 
       return new RebuildResult(perspectiveName, run.StreamsProcessed, run.EventsReplayed, sw.Elapsed, true, null) {
         StreamsRequested = requested,
@@ -310,7 +329,7 @@ public sealed partial class PerspectiveRebuilder(
       var streamsProcessed = run?.StreamsProcessed ?? 0;
       LogRebuildFailed(logger, ex, mode, perspectiveName, streamsProcessed, sw.ElapsedMilliseconds);
       await _emitAsync(new PerspectiveRebuildFailed(
-          rebuildStreamId, perspectiveName, mode, ex.Message, streamsProcessed, sw.Elapsed, origin));
+          rebuildStreamId, perspectiveName, mode, ex.Message, streamsProcessed, sw.Elapsed, origin), partOfRun);
       return new RebuildResult(perspectiveName, streamsProcessed, run?.EventsReplayed ?? 0, sw.Elapsed, false, ex.Message) {
         StreamsRequested = requested,
         StreamsRefused = run?.StreamsRefused ?? 0,
@@ -508,7 +527,7 @@ public sealed partial class PerspectiveRebuilder(
   /// counters so the caller's tuple stays coherent.
   /// </summary>
   private static async Task _streamGroupPresenceReconcileAsync(
-      string perspectiveName, IServiceProvider sp, CancellationToken ct) {
+      string perspectiveName, IServiceProvider sp, IReadOnlyCollection<Guid>? streamIds, CancellationToken ct) {
     var model = PerspectiveStreamGroupRegistry.RegisteredModels()
       .FirstOrDefault(m => TypeNameFormatter.HasClrTypeName(m, perspectiveName));
     if (model is null) {
@@ -541,7 +560,7 @@ public sealed partial class PerspectiveRebuilder(
     if (followerTable is null || announcerTables.Count == 0) {
       return;
     }
-    await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, ct).ConfigureAwait(false);
+    await coordinator.ReconcileFollowerPresenceAsync(followerTable, announcerTables, streamIds, ct).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -592,13 +611,15 @@ public sealed partial class PerspectiveRebuilder(
 
       if (processed % 100 == 0 || processed == status.TotalStreams) {
         _activeRebuilds[run.PerspectiveName] = status with { ProcessedStreams = processed };
-        LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
-            run.Elapsed.ElapsedMilliseconds);
+        if (!run.PartOfRun) {
+          LogRebuildProgress(logger, run.PerspectiveName, processed, status.TotalStreams,
+              run.Elapsed.ElapsedMilliseconds);
+        }
         // Documented as emitted "periodically during rebuild", so it is emitted on the same bounded cadence the
         // log uses rather than per stream. A long rebuild reports progress; a short one reports once at the end.
         await _emitAsync(new PerspectiveRebuildProgress(
             run.RebuildStreamId, run.PerspectiveName, run.Mode, processed, status.TotalStreams,
-            run.EventsReplayed, run.StartedAt, run.Origin));
+            run.EventsReplayed, run.StartedAt, run.Origin), run.PartOfRun);
       }
     } catch (Exception ex) {
       streamSw.Stop();
@@ -636,6 +657,8 @@ public sealed partial class PerspectiveRebuilder(
     public IPerspectiveCheckpointCompleter? Completer { get; } = completer;
     public List<PerspectiveCursorCompletion>? PendingCompletions { get; } = completer is null ? null : new(64);
     public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    /// <summary>True for one stream of a multi-stream run, which reports nothing of its own.</summary>
+    public bool PartOfRun { get; init; }
     public Stopwatch Elapsed { get; } = Stopwatch.StartNew();
     public int StreamsProcessed { get; set; }
     public int EventsReplayed { get; set; }
