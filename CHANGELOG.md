@@ -214,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included, and every claimed stream read and parsed it again, so a run's cost grew with the square of its stream
   count: an in-place rebuild over 127,288 streams parsed about 630 GB and OOMKilled its pods. A run's payload now
   carries no stream ids (they are rows of the run, and each stream's handler is given its id), the claim sends each
-  run's payload once (migration 212), and a run's payload is read back once and shared by its streams. A run recorded
+  run's payload once (migration 213), and a run's payload is read back once and shared by its streams. A run recorded
   by an earlier release still works each of its streams.
 - **Each stream of a multi-stream rebuild did a whole rebuild's reporting.** Every stream published its own rebuild
   Started, Progress and Completed events, computed two row digests and logged at Information, about 254,000 system

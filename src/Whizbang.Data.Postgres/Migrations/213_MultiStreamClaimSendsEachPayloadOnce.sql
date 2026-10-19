@@ -1,4 +1,4 @@
--- Migration: 212_MultiStreamClaimSendsEachPayloadOnce.sql
+-- Migration: 213_MultiStreamClaimSendsEachPayloadOnce.sql
 -- Date: 2026-10-19
 -- Description: The multi-stream claim returns a run's payload on the run's first claimed row only; its other rows carry
 --              NULL, and the store reuses the first row's payload for them. The claim returned the payload on every
@@ -109,7 +109,7 @@ BEGIN
     WHERE rs.run_id = c.run_id AND rs.stream_id = c.stream_id
     RETURNING rs.run_id, rs.stream_id, rs.attempts
   )
-  -- A run's payload is the same for every one of its streams, so it is sent on the run's first row only (212): sent on
+  -- A run's payload is the same for every one of its streams, so it is sent on the run's first row only (213): sent on
   -- every row, a large payload crossed the wire once per claimed stream. The CASE keeps it from being read for the rest.
   SELECT c.run_id, c.stream_id, r.command_type,
          CASE WHEN ROW_NUMBER() OVER (PARTITION BY c.run_id ORDER BY c.stream_id) = 1 THEN r.payload END,
@@ -121,6 +121,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_claim_multi_stream_work(UUID, INTEGER, INTEGER, BIGINT, BIGINT) IS
-  '212: claims up to p_batch_size pending multi-stream items this instance owns (its stream lease, else its '
+  '213: claims up to p_batch_size pending multi-stream items this instance owns (its stream lease, else its '
   'partition share unless a live sibling holds the lease), leasing each and counting the attempt. Reads '
   'wh_active_streams; never writes it. A run''s payload is returned on its first claimed row only; later rows carry NULL.';

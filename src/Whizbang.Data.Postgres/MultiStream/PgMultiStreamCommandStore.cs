@@ -83,9 +83,9 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
       cmd.Parameters.Add(new NpgsqlParameter("epoch", NpgsqlDbType.Bigint) { Value = (object?)claim.Assignment?.Epoch ?? DBNull.Value });
       cmd.Parameters.Add(new NpgsqlParameter("revision", NpgsqlDbType.Bigint) { Value = (object?)claim.Assignment?.Revision ?? DBNull.Value });
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      // The claim sends a run's payload on its first row only (212), and each run's rows share that one string, so a
+      // The claim sends a run's payload on its first row only (213), and each run's rows share that one string, so a
       // batch holds one copy of each run's payload however many of its streams it claimed. A row with a payload of its
-      // own (a claim from before 212) is read once per run too.
+      // own (a claim from before 213) is read once per run too.
       var payloads = new Dictionary<Guid, string>();
       var rows = new List<(Guid RunId, Guid StreamId, string CommandType, string? Scope, int Attempt)>();
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
