@@ -250,6 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **Startup failed with `ITransport (required by TransportConsumerWorker)` when no transport was composed
+  (#1529).** Registration validation checked every requirement in the generated manifest, including types the
+  composition never registers, so `AddWhizbang()` with a storage driver and no `AddTransportConsumer()` could not
+  start. A requirement is now checked only when its implementation is registered in the service collection being
+  validated: as a service type, an implementation type, an instance (keyed or not), or through a factory
+  registration. For factory registrations the generator records the service type each descriptor carries in the
+  new `ServiceRequirement.FactoryServiceTypes` (`IHostedService` for `AddHostedService<T>`); the two-argument
+  `ServiceRequirement` constructor is unchanged. A registered type with a missing dependency still fails startup.
 - **Closing a stream failed whenever a perspective cursor pointed into the truncated range, and left snapshots a
   rewind could no longer replay from (#1486).** `CloseStreamAsync` now moves such a cursor onto the first event
   that survives the close, removes every snapshot that needs a truncated event (keeping a moved perspective's
