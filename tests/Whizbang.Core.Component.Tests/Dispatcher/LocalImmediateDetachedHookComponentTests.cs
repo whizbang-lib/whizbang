@@ -3,11 +3,13 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.LocalDetachedHooks;
+using Whizbang.Core.Component.Tests.TestLogging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -82,6 +84,63 @@ public class LocalImmediateDetachedHookComponentTests {
     await Assert.That(LocalDetachedProbe.HookedCount(id)).IsEqualTo(1);
   }
 
+  public enum EventEntry {
+    PublishGeneric,
+    PublishObject,
+    PublishManyGeneric,
+    CascadeFromSend,
+  }
+
+  [Test]
+  [MatrixDataSource]
+  [Timeout(60_000)]
+  public async Task AnEventHandledHere_ReturnsWithoutWaitingForItsLocalImmediateDetachedHookAsync(
+      [Matrix] EventEntry entry, CancellationToken ct) {
+    await using var provider = _buildProvider();
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    Task dispatch = entry switch {
+      EventEntry.PublishGeneric => dispatcher.PublishAsync(new LdGatedEvent(id)),
+      EventEntry.PublishObject => dispatcher.PublishAsync((object)new LdGatedEvent(id)),
+      EventEntry.PublishManyGeneric => dispatcher.PublishManyAsync<LdGatedEvent>([new LdGatedEvent(id)]),
+      _ => dispatcher.SendAsync(new LdCascadingCommand(id)),
+    };
+    await dispatch.WaitAsync(ct);
+    await LocalDetachedProbe.HookStarted(id).Task.WaitAsync(ct);
+    LocalDetachedProbe.Released(id).TrySetResult();
+
+    await Assert.That(LocalDetachedProbe.HandledCount(id)).IsEqualTo(1)
+      .Because("the event's handler runs once, and the dispatch waits for it");
+    await Assert.That(LocalDetachedProbe.HookedCount(id)).IsEqualTo(1)
+      .Because("a publish or a cascade starts the hook once, in the background, and returns without waiting for it");
+  }
+
+  [Test]
+  [Timeout(60_000)]
+  public async Task ADetachedStageWhoseInvokerCannotBeResolved_IsLoggedAndNeverReachesTheCallerAsync(CancellationToken ct) {
+    var log = new ErrorSignalingLoggerProvider("Whizbang.Core.Dispatcher");
+    await using var provider = _buildProvider(services => {
+      services.AddSingleton<ILoggerFactory>(new LoggerFactory([log]));
+      // Every stage's own scope resolves the invoker; here that resolution fails
+      services.AddScoped<IReceptorInvoker>(_ => throw new InvalidOperationException("the receptor invoker is unavailable"));
+    });
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    await dispatcher.SendAsync(new LdResultCommand(id)).WaitAsync(ct);
+    await log.FirstError.Task.WaitAsync(ct);
+
+    await Assert.That(LocalDetachedProbe.HandledCount(id)).IsEqualTo(1)
+      .Because("the dispatch completed: the detached stage's failure is logged, never returned to the caller");
+    await Assert.That(LocalDetachedProbe.HookedCount(id)).IsEqualTo(0)
+      .Because("with no invoker the hook cannot run");
+    var error = log.Errors.Single();
+    await Assert.That(error.EventId.Id).IsEqualTo(8);
+    await Assert.That(error.Exception).IsTypeOf<InvalidOperationException>();
+    await Assert.That(error.Message).Contains("ImmediateDetached");
+  }
+
   private static async Task _dispatchAsync<TCommand>(IDispatcher dispatcher, Entry entry, TCommand command) where TCommand : notnull {
     switch (entry) {
       case Entry.SendGeneric:
@@ -101,11 +160,12 @@ public class LocalImmediateDetachedHookComponentTests {
     }
   }
 
-  private static ServiceProvider _buildProvider() {
+  private static ServiceProvider _buildProvider(Action<IServiceCollection>? configure = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
+    configure?.Invoke(services);
     return services.BuildServiceProvider();
   }
 }

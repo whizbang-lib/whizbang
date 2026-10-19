@@ -55,4 +55,35 @@ public class TopicFilterTargetAnalyzerTests {
 
     await Assert.That(diagnostics.Count(d => d.Id == "WHIZ025")).IsEqualTo(0);
   }
+
+  [Test]
+  public async Task AnEventWithOnlyAnUnrelatedAttribute_IsNotReportedAsync() {
+    // The attribute's whole base chain is walked and none of it is a topic filter
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      [System.Obsolete("retired")]
+      public record OrderPlaced : IEvent;
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<TopicFilterTargetAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ025")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ATopicFilterAfterAnUnrelatedAttribute_IsReportedOnTheTopicFilterAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      [System.Obsolete("retired")]
+      [TopicFilter("orders")]
+      public record OrderPlaced : IEvent;
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<TopicFilterTargetAnalyzer>(source);
+
+    var whiz025 = diagnostics.Single(d => d.Id == "WHIZ025");
+    var reportedAt = (await whiz025.Location.SourceTree!.GetTextAsync()).ToString(whiz025.Location.SourceSpan);
+    await Assert.That(reportedAt).IsEqualTo("TopicFilter(\"orders\")")
+      .Because("the unrelated attribute is passed over and the diagnostic is reported where the topic filter is written");
+  }
 }

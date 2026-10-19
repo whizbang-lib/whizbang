@@ -86,6 +86,20 @@ public class EveryReceptorInPriorityOrderComponentTests {
       .Because("the other answering receptor still runs");
   }
 
+  [Test]
+  public async Task LocalInvokeForAResult_SkipsAResultOfAnotherType_AndTakesTheValueOfARoutedAnswerAsync() {
+    await using var provider = _buildProvider();
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    var result = await dispatcher.LocalInvokeAsync<PrMixedAnswersCommand, PrResult>(new PrMixedAnswersCommand(id));
+
+    await Assert.That(result.AnsweredBy).IsEqualTo("late-routed")
+      .Because("the earlier result is not a PrResult, and a Routed<PrResult> answers a caller asking for the inner type");
+    await Assert.That(PriorityProbe.Ran(id)).IsEquivalentTo(["early-note", "note-cascaded", "late-routed"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the result that answered nothing is not dropped: it cascades as soon as its receptor returns, before the next receptor runs");
+  }
+
   private static ServiceProvider _buildProvider() {
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));

@@ -115,7 +115,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     foreach (var attr in topicFilterAttrs) {
       var filterString = _extractFilterString(attr);
       if (filterString is not null) {
-        filters.Add(new TopicFilterInfo(commandType, filterString, attr.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation()));
+        filters.Add(new TopicFilterInfo(commandType, filterString, LocationUtilities.ApplicationOrFallback(attr, Location.None, cancellationToken)));
       }
     }
 

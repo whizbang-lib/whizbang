@@ -86,3 +86,29 @@ public sealed class LdResultCommandHook : IReceptor<LdResultCommand> {
     return ValueTask.CompletedTask;
   }
 }
+
+/// <summary>An event whose LocalImmediateDetached hook does not finish until the test releases it.</summary>
+public record LdGatedEvent([property: StreamId] Guid Id) : IEvent;
+
+/// <summary>A command whose handler returns <see cref="LdGatedEvent"/>, which cascades and runs here.</summary>
+public record LdCascadingCommand(Guid Id) : ICommand;
+
+public sealed class LdGatedEventReceptor : IReceptor<LdGatedEvent> {
+  public ValueTask HandleAsync(LdGatedEvent message, CancellationToken cancellationToken = default) {
+    LocalDetachedProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public sealed class LdCascadingCommandHandler : IReceptor<LdCascadingCommand, LdGatedEvent> {
+  public ValueTask<LdGatedEvent> HandleAsync(LdCascadingCommand message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new LdGatedEvent(message.Id));
+}
+
+[FireAt(LifecycleStage.LocalImmediateDetached)]
+public sealed class LdGatedEventHook : IReceptor<LdGatedEvent> {
+  public async ValueTask HandleAsync(LdGatedEvent message, CancellationToken cancellationToken = default) {
+    LocalDetachedProbe.RecordHooked(message.Id);
+    await LocalDetachedProbe.Released(message.Id).Task;
+  }
+}

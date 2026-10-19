@@ -1802,7 +1802,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
     var call = receptor.IsSync ? "r.Handle(typedMsg)" : "await r.HandleAsync(typedMsg, cancellationToken)";
     sb.AppendLine("          {");
-    if (receptor.SyncAttributes is { Length: > 0 }) {
+    if (receptor.HasSyncAttributes) {
       sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedMsg, typeof({messageType}), \"{receptor.ClassName}\", cancellationToken));");
     }
     sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");

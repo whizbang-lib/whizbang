@@ -142,7 +142,7 @@ public abstract partial class Dispatcher(
     }
     if (typeof(IControlPlaneMessage).IsAssignableFrom(messageType)
         || typeof(SystemEvents.ISystemEvent).IsAssignableFrom(messageType)
-        || _declaredUnscopedTypes?.Contains(messageType) == true) {
+        || _localDispatchExemptTypes.Contains(messageType)) {
       return;
     }
     throw new SecurityContextRequiredException(messageType);
@@ -775,6 +775,8 @@ public abstract partial class Dispatcher(
   private readonly HashSet<Type>? _declaredUnscopedTypes = _messageSecurityOptions(serviceProvider)?.ExemptMessageTypes;
   // Whether a dispatch handled here must have a caller context (#1419); false, the default, trusts it
   private readonly bool _localDispatchRequiresContext = _messageSecurityOptions(serviceProvider)?.RequireContextForLocalDispatch ?? false;
+  // The types the application exempts from that requirement; empty when no security options are configured
+  private readonly HashSet<Type> _localDispatchExemptTypes = _messageSecurityOptions(serviceProvider)?.ExemptMessageTypes ?? [];
 
   /// <summary>
   /// The message security options as the application configured them. <c>AddWhizbangMessageSecurity</c>
@@ -913,12 +915,19 @@ public abstract partial class Dispatcher(
     if (storedId is not null && _outboxRegistered && _perspectiveEventTypes.Contains(messageType)) {
       return ValueTask.CompletedTask;
     }
-    // The message is not stamped again here: its local run, or its copy, already stamped it (#1455)
-    envelope ??= _createLocalRunEnvelope(message,
+    return _invokePostLifecycleReceptorsAsync(_localRunEnvelopeFor(message, envelope, sourceEnvelope, storedId), message, messageType,
+      cancellationToken);
+  }
+
+  /// <summary>
+  /// The envelope a local run's later stages see: the one it registered, or, with no envelope registry, one built here.
+  /// The message is not stamped again here: its local run, or its copy, already stamped it (#1455).
+  /// </summary>
+  private IMessageEnvelope _localRunEnvelopeFor(object message, IMessageEnvelope? envelope, IMessageEnvelope? sourceEnvelope,
+      MessageId? storedId) =>
+    envelope ?? _createLocalRunEnvelope(message,
       sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope),
       storedId, stampMessage: false);
-    return _invokePostLifecycleReceptorsAsync(envelope, message, messageType, cancellationToken);
-  }
 
   private HashSet<Type>? _perspectiveEventTypesCache;
 
@@ -3679,10 +3688,8 @@ public abstract partial class Dispatcher(
     if (_receptorRegistry is null || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached).Count == 0) {
       return ValueTask.CompletedTask;
     }
-    envelope ??= _createLocalRunEnvelope(message,
-      sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope),
-      storedId, stampMessage: false);
-    return _startDetachedStagesAsync(envelope, messageType, _localImmediateDetachedStage);
+    return _startDetachedStagesAsync(_localRunEnvelopeFor(message, envelope, sourceEnvelope, storedId), messageType,
+      _localImmediateDetachedStage);
   }
 
   private ValueTask _startDetachedStagesAsync(IMessageEnvelope envelope, Type messageType, LifecycleStage[] stages) {
@@ -4148,21 +4155,25 @@ public abstract partial class Dispatcher(
 
     _dispatcherMetrics?.PublishOnceClaimsWon.Add(1,
       new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName));
+    Exception publishFailure;
     try {
       // The publish runs under the caller's token (#1414)
       await PublishAsync(eventData, new DispatchOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
-    } catch (Exception publishFailure) {
-      // A claim kept after its publish failed makes every retry a duplicate, so the event would never be
-      // published. Inside a transaction the rollback undoes the claim too; outside one it is given back
-      // here (#1414). The release is not canceled with the publish: it must run to give the key back.
-      try {
-        await claimStore.ReleaseAsync(claimKey, CancellationToken.None).ConfigureAwait(false);
-      } catch (Exception releaseFailure) {
-        throw new AggregateException(publishFailure, releaseFailure);
-      }
-      throw;
+      return true;
+    } catch (Exception ex) {
+      publishFailure = ex;
     }
-    return true;
+    // A claim kept after its publish failed makes every retry a duplicate, so the event would never be
+    // published. Inside a transaction the rollback undoes the claim too; outside one it is given back
+    // here (#1414). The release is not canceled with the publish: it must run to give the key back.
+    try {
+      await claimStore.ReleaseAsync(claimKey, CancellationToken.None).ConfigureAwait(false);
+    } catch (Exception releaseFailure) {
+      throw new AggregateException(publishFailure, releaseFailure);
+    }
+    // Rethrown with its original stack trace. The release is awaited outside the catch: an await inside one
+    // leaves a sequence point after its rethrow that nothing can reach.
+    return await Task.FromException<bool>(publishFailure).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -6380,20 +6391,29 @@ public abstract partial class Dispatcher(
       }
     }
     if (_receptorRegistry is not null) {
-      var runtime = new List<ReceptorInfo>();
-      foreach (var stage in _localStages) {
-        foreach (var receptor in _receptorRegistry.GetRuntimeReceptorsForBaseTypesOf(messageType, stage)) {
-          if (receptor.RuntimeInstance is { } instance && !runtime.Exists(r => ReferenceEquals(r.RuntimeInstance, instance))) {
-            runtime.Add(receptor);
-          }
-        }
-      }
+      var runtime = _runtimeReceptorsForBaseTypesOf(_receptorRegistry, messageType);
       if (runtime.Count > 0) {
         await _invokeRuntimeLocalReceptorsAsync(runtime, message, messageType, cancellationToken).ConfigureAwait(false);
         ran = true;
       }
     }
     return ran;
+  }
+
+  /// <summary>
+  /// The receptors registered at runtime for an interface or base type of <paramref name="messageType"/> at the local
+  /// stages, each instance once (#1418).
+  /// </summary>
+  private static List<ReceptorInfo> _runtimeReceptorsForBaseTypesOf(IReceptorRegistry registry, Type messageType) {
+    var runtime = new List<ReceptorInfo>();
+    foreach (var stage in _localStages) {
+      foreach (var receptor in registry.GetRuntimeReceptorsForBaseTypesOf(messageType, stage)) {
+        if (receptor.RuntimeInstance is { } instance && !runtime.Exists(r => ReferenceEquals(r.RuntimeInstance, instance))) {
+          runtime.Add(receptor);
+        }
+      }
+    }
+    return runtime;
   }
 
   /// <summary>

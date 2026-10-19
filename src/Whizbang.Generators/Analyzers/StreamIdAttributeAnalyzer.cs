@@ -38,9 +38,9 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
     // Each [StreamId] the type declares itself, on a property or on a primary-constructor parameter that is
     // not also the target of a property-targeted [StreamId]
     var declared = type.GetMembers().OfType<IPropertySymbol>()
-      .Select(p => (Name: p.Name, Attribute: _streamIdAttribute(p)))
+      .Select(p => (p.Name, Attribute: _streamIdAttribute(p)))
       .Concat(type.InstanceConstructors.SelectMany(c => c.Parameters)
-        .Select(p => (Name: p.Name, Attribute: _streamIdAttribute(p))))
+        .Select(p => (p.Name, Attribute: _streamIdAttribute(p))))
       .Where(d => d.Attribute is not null)
       .GroupBy(d => d.Name, System.StringComparer.OrdinalIgnoreCase)
       .Select(g => g.First())
@@ -48,14 +48,10 @@ public sealed class StreamIdAttributeAnalyzer : DiagnosticAnalyzer {
 
     for (var i = 1; i < declared.Count; i++) {
       context.ReportDiagnostic(Diagnostic.Create(
-        DiagnosticDescriptors.MultipleStreamIdAttributes, _location(declared[i].Attribute!, context.CancellationToken), type.Name, declared[0].Name));
+        DiagnosticDescriptors.MultipleStreamIdAttributes, LocationUtilities.ApplicationOrFallback(declared[i].Attribute!, Location.None, context.CancellationToken), type.Name, declared[0].Name));
     }
   }
 
   private static AttributeData? _streamIdAttribute(ISymbol symbol) =>
     symbol.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, STREAM_ID_ATTRIBUTE));
-
-  private static Location _location(AttributeData attribute, System.Threading.CancellationToken cancellationToken) =>
-    attribute.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation() ?? Location.None;
-
 }

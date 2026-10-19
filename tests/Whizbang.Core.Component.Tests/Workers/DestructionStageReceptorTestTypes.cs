@@ -32,6 +32,13 @@ public static class DestructionProbe {
   public static void FailPreInlineFor(Guid id) => _failPreInline[id] = true;
 
   public static bool ShouldFailPreInline(Guid id) => _failPreInline.ContainsKey(id);
+
+  private static readonly ConcurrentDictionary<Guid, bool> _failPreDetached = new();
+
+  /// <summary>Makes the Pre Detached receptor throw for <paramref name="id"/>.</summary>
+  public static void FailPreDetachedFor(Guid id) => _failPreDetached[id] = true;
+
+  public static bool ShouldFailPreDetached(Guid id) => _failPreDetached.ContainsKey(id);
 }
 
 public record DsEphemeralEvent([property: StreamId] Guid Id) : IEvent;
@@ -40,6 +47,9 @@ public record DsEphemeralEvent([property: StreamId] Guid Id) : IEvent;
 [ReceptorIdempotent]
 public sealed class DsPreDetached : IReceptor<DsEphemeralEvent> {
   public ValueTask HandleAsync(DsEphemeralEvent message, CancellationToken cancellationToken = default) {
+    if (DestructionProbe.ShouldFailPreDetached(message.Id)) {
+      throw new InvalidOperationException("the detached notification failed");
+    }
     DestructionProbe.Record(message.Id, LifecycleStage.PreDestructionDetached);
     return ValueTask.CompletedTask;
   }

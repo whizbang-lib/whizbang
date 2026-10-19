@@ -45,7 +45,7 @@ public sealed class PerspectiveFieldAnalyzer : DiagnosticAnalyzer {
     if (_attribute(property, VECTOR_FIELD_ATTRIBUTE) is not { } vector) {
       return;
     }
-    var location = vector.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ?? Location.None;
+    var location = LocationUtilities.ApplicationOrFallback(vector, Location.None, context.CancellationToken);
     if (property.Type is not IArrayTypeSymbol { Rank: 1, ElementType.SpecialType: SpecialType.System_Single }) {
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.VectorFieldInvalidType, location, property.ContainingType.Name, property.Name));
@@ -66,7 +66,7 @@ public sealed class PerspectiveFieldAnalyzer : DiagnosticAnalyzer {
     if (!hasField) {
       context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.SplitModeNoPhysicalFields,
-        storage.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ?? Location.None,
+        LocationUtilities.ApplicationOrFallback(storage, Location.None, context.CancellationToken),
         type.Name));
     }
   }

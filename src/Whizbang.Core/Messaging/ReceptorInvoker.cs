@@ -165,18 +165,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var messageType = message.GetType();
 
     // Establish security context from the envelope BEFORE checking for receptors
-    IScopeContext? securityContext;
-    try {
-      securityContext = await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
-    } catch (SecurityContextRequiredException) when (Dispatch.LocalDispatchAdmission.IsAdmitted) {
-      // A stage of a dispatch handled in this process, which its entry already admitted: refusing it here,
-      // after its handler ran, would protect nothing, so it runs without a context (#1419)
-      securityContext = null;
-      _ensureLogger();
-      if (_logger is not null) {
-        Log.LocalStageRanWithoutContext(_logger, stage, messageType.Name, envelope.MessageId.Value);
-      }
-    }
+    var securityContext = await _establishStageSecurityContextAsync(envelope, stage, messageType, cancellationToken).ConfigureAwait(false);
 
     // Extract caller info from the first Current hop (captured at dispatch time)
     var callerInfo = _extractCallerInfo(envelope);
@@ -445,6 +434,27 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     return message;
+  }
+
+  /// <summary>
+  /// The stage's security context, from <see cref="_establishSecurityContextAsync"/>. A stage of a dispatch handled
+  /// in this process, which its entry already admitted, runs without one rather than being refused (#1419).
+  /// </summary>
+  private async ValueTask<IScopeContext?> _establishStageSecurityContextAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      Type messageType,
+      CancellationToken cancellationToken) {
+    try {
+      return await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+    } catch (SecurityContextRequiredException) when (Dispatch.LocalDispatchAdmission.IsAdmitted) {
+      // Refusing it here, after its handler ran, would protect nothing, so it runs without a context
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.LocalStageRanWithoutContext(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
+      return null;
+    }
   }
 
   /// <summary>

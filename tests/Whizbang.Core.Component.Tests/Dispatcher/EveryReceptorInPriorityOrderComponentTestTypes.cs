@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 
 // Types for EveryReceptorInPriorityOrderComponentTests (#1412). A command and an event each have three
@@ -88,6 +89,38 @@ public sealed class PrEventDefault : IReceptor<PrEvent> {
 public sealed class PrEventEarly : IReceptor<PrEvent> {
   public ValueTask HandleAsync(PrEvent message, CancellationToken cancellationToken = default) {
     PriorityProbe.Record(message.Id, "early");
+    return ValueTask.CompletedTask;
+  }
+}
+
+/// <summary>
+/// A command whose earlier receptor returns a value of another type, which is no answer to a caller asking for
+/// <see cref="PrResult"/>, and whose later receptor returns the answer wrapped in a route.
+/// </summary>
+public record PrMixedAnswersCommand(Guid Id) : ICommand;
+
+/// <summary>What the earlier receptor of <see cref="PrMixedAnswersCommand"/> returns; it cascades.</summary>
+public record PrNote([property: StreamId] Guid Id) : IEvent;
+
+[ReceptorPriority(ReceptorPriority.EARLY)]
+public sealed class PrMixedAnswersNote : IReceptor<PrMixedAnswersCommand, PrNote> {
+  public ValueTask<PrNote> HandleAsync(PrMixedAnswersCommand message, CancellationToken cancellationToken = default) {
+    PriorityProbe.Record(message.Id, "early-note");
+    return ValueTask.FromResult(new PrNote(message.Id));
+  }
+}
+
+[ReceptorPriority(ReceptorPriority.LATE)]
+public sealed class PrMixedAnswersRouted : IReceptor<PrMixedAnswersCommand, Routed<PrResult>> {
+  public ValueTask<Routed<PrResult>> HandleAsync(PrMixedAnswersCommand message, CancellationToken cancellationToken = default) {
+    PriorityProbe.Record(message.Id, "late-routed");
+    return ValueTask.FromResult(Route.Local(new PrResult(message.Id, "late-routed")));
+  }
+}
+
+public sealed class PrNoteReceptor : IReceptor<PrNote> {
+  public ValueTask HandleAsync(PrNote message, CancellationToken cancellationToken = default) {
+    PriorityProbe.Record(message.Id, "note-cascaded");
     return ValueTask.CompletedTask;
   }
 }

@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -10,6 +11,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Component.Tests.DestructionStages;
 using Whizbang.Core.Component.Tests.Generated;
+using Whizbang.Core.Component.Tests.TestLogging;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -72,7 +75,53 @@ public class DestructionStageReceptorComponentTests {
     await Assert.That(store.Reads).IsEqualTo(0).Because("only events a destruction receptor handles are read before the delete");
   }
 
-  private static async Task<(MaintenanceWorker Worker, ReapCoordinator Coordinator, CountingEventStore Store)> _buildAsync(Guid id, Type eventType) {
+  [Test]
+  public async Task AFailingDetachedReceptor_IsLoggedAndTheReapCarriesOnAsync() {
+    var id = Guid.CreateVersion7();
+    DestructionProbe.FailPreDetachedFor(id);
+    var log = new ErrorSignalingLoggerProvider("Whizbang.Core.Lifecycle.DestructionStages");
+    var (worker, coordinator, _) = await _buildAsync(id, typeof(DsEphemeralEvent), log);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    await log.FirstError.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+    var error = log.Errors.Single();
+    await Assert.That(error.Exception).IsNotNull();
+    await Assert.That(error.Message).Contains(nameof(LifecycleStage.PreDestructionDetached)).And.Contains(id.ToString());
+    await Assert.That(coordinator.Failures).IsEmpty()
+      .Because("a Detached stage runs in the background: its failure is logged and never fails the destruction");
+    await Assert.That(DestructionProbe.Stages(id)).Contains(LifecycleStage.PostDestructionInline)
+      .Because("the delete went ahead and the Post stages ran");
+  }
+
+  [Test]
+  public async Task TypesWithReceptors_ListsOnlyTheCatalogedTypesADestructionReceptorHandlesAsync() {
+    await using var provider = _buildCatalogProvider(typeof(DsUnwatchedEvent));
+    await using var watched = _buildCatalogProvider(typeof(DsUnwatchedEvent), typeof(DsEphemeralEvent));
+
+    await Assert.That(DestructionStageReceptors.TypesWithReceptors(provider)).IsEmpty()
+      .Because("no cataloged type has a destruction-stage receptor, so nothing is ever loaded before a delete");
+    await Assert.That(DestructionStageReceptors.TypesWithReceptors(watched).Values.Distinct().Select(t => t.FullName)).IsEquivalentTo([typeof(DsEphemeralEvent).FullName])
+      .Because("the cataloged type with a destruction-stage receptor is resolvable by each name a stored event may carry");
+  }
+
+  private static ServiceProvider _buildCatalogProvider(params Type[] cataloged) {
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+    services.AddSingleton<IMessageTypeCatalog>(new FixedCatalog(cataloged));
+    return services.BuildServiceProvider();
+  }
+
+  private sealed class FixedCatalog(Type[] types) : IMessageTypeCatalog {
+    public IReadOnlyList<MessageTypeCatalogEntry> GetAll() =>
+      [.. types.Select(t => new MessageTypeCatalogEntry(t, t.FullName!, "Event", PinnedId: null))];
+  }
+
+  private static async Task<(MaintenanceWorker Worker, ReapCoordinator Coordinator, CountingEventStore Store)> _buildAsync(Guid id, Type eventType,
+      ErrorSignalingLoggerProvider? log = null) {
     var store = new CountingEventStore();
     object payload = eventType == typeof(DsEphemeralEvent) ? new DsEphemeralEvent(id) : new DsUnwatchedEvent(id);
     await store.AppendAsync(id, new MessageEnvelope<IEvent> {
@@ -89,6 +138,9 @@ public class DestructionStageReceptorComponentTests {
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<IEventStore>(store);
+    if (log is not null) {
+      services.AddSingleton<ILoggerFactory>(new LoggerFactory([log]));
+    }
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     // The generated message-type catalog, which AddWhizbang() registers through this callback

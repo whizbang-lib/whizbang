@@ -39,7 +39,7 @@ public sealed class TopicFilterTargetAnalyzer : DiagnosticAnalyzer {
     }
     context.ReportDiagnostic(Diagnostic.Create(
       DiagnosticDescriptors.TopicFilterOnNonCommand,
-      filter.ApplicationSyntaxReference?.GetSyntax(context.CancellationToken).GetLocation() ?? Location.None,
+      LocationUtilities.ApplicationOrFallback(filter, Location.None, context.CancellationToken),
       type.Name));
   }
 

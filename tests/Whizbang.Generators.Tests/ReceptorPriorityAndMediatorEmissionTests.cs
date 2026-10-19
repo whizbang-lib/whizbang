@@ -127,6 +127,49 @@ public interface IStageAnswer : IMessage { }
     await Assert.That(table).DoesNotContain("IStageAnswer").Because("a receptor declared only at a pipeline stage does not handle local dispatch");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Runner_WaitsForPerspectivesOnlyBeforeAReceptorThatDeclaresAnAwaitAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives.Sync;
+
+namespace MyApp.Receptors;
+
+public record Ship(System.Guid Id) : ICommand;
+public class ShipmentPerspective { }
+
+[ReceptorPriority(ReceptorPriority.EARLY)]
+[AwaitPerspectiveSync(typeof(ShipmentPerspective))]
+public class ShipWaits : IReceptor<Ship> {
+  public ValueTask HandleAsync(Ship message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[ReceptorPriority(ReceptorPriority.LATE)]
+public class ShipNoWait : IReceptor<Ship> {
+  public ValueTask HandleAsync(Ship message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+";
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs")!;
+
+    var runner = _section(dispatcher, "GetLocalReceptorRunner<TAnswer>(Type messageType, bool wantsAnswer)");
+    const string wait = "SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedMsg, typeof(global::MyApp.Receptors.Ship), \"global::MyApp.Receptors.ShipWaits\", cancellationToken));";
+    await Assert.That(runner).Contains(wait)
+      .Because("a receptor that declares [AwaitPerspectiveSync] waits for its perspectives before it runs");
+    await Assert.That(runner).DoesNotContain("\"global::MyApp.Receptors.ShipNoWait\", cancellationToken));")
+      .Because("a receptor that declares no await runs without waiting");
+    var waitAt = runner.IndexOf(wait, StringComparison.Ordinal);
+    var waitsAt = runner.IndexOf("GetKeyedService<global::Whizbang.Core.IReceptor<global::MyApp.Receptors.Ship>>(\"global::MyApp.Receptors.ShipWaits\")", StringComparison.Ordinal);
+    var noWaitAt = runner.IndexOf("(\"global::MyApp.Receptors.ShipNoWait\")", StringComparison.Ordinal);
+    await Assert.That(waitsAt).IsGreaterThan(waitAt).Because("the wait comes before the receptor it belongs to is resolved");
+    await Assert.That(noWaitAt).IsGreaterThan(waitsAt);
+  }
+
   /// <summary>The generated text from <paramref name="start"/> to the end of that member's block.</summary>
   private static string _section(string source, string start) {
     var from = source.IndexOf(start, StringComparison.Ordinal);

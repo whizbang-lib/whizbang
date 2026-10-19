@@ -521,4 +521,26 @@ public class DispatcherForeignLookupTests {
              + "than assuming the host's default");
   }
 
+  /// <summary>A returned value that is neither a command nor an event, with no receptor of its own (#1418).</summary>
+  private sealed record PlainAnswer(Guid Id) : IMessage;
+
+  [Test]
+  [Timeout(30000)]
+  public async Task Cascade_OfAnUnhandledValue_WithTablesAndARegistryThatPredateTheMediatorLookup_IsRefusedAsync(
+      CancellationToken cancellationToken) {
+    // #1418: a dispatcher, a foreign lookup and a registry written before the mediator lookup declare no
+    // receptor for an interface or base type. Their defaults answer "none", so the value is refused as it
+    // was before, rather than the lookup failing on a member they never implemented.
+    var foreign = new ForeignAssemblyLookup();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorLookup>(foreign);
+    services.AddSingleton<Whizbang.Core.Messaging.IReceptorRegistry>(Whizbang.Core.Messaging.NullReceptorRegistry.Instance);
+    await using var sp = services.BuildServiceProvider();
+    var dispatcher = new BlindDispatcher(sp);
+
+    await Assert.That(async () => await dispatcher.CascadeMessageAsync(new PlainAnswer(Guid.NewGuid()), sourceEnvelope: null, DispatchModes.Local, cancellationToken))
+      .Throws<ReceptorNotFoundException>()
+      .Because("no receptor handles the value by its own type or by any type it implements");
+    await Assert.That(foreign.Published).IsEqualTo(0);
+  }
 }

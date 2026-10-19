@@ -92,6 +92,23 @@ public class PostLifecycleOncePerHandlingServiceComponentTests {
       .Because("both PostLifecycle stages follow the same rule");
   }
 
+  [Test]
+  public async Task APerspectiveRegistryDisposedAtShutdown_LeavesPostLifecycleToTheLocalRunAsync() {
+    // Shutdown disposed the provider: no perspective worker is left to fire PostLifecycle, so the local run does
+    await using var provider = _buildProvider(withOutbox: true, withLifecycleCoordinator: false, withPerspective: false,
+      perspectiveRegistryDisposed: true);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    await dispatcher.PublishAsync(new PlProjectedEvent(id));
+
+    await Assert.That(PostLifecycleProbe.HandledCount(id)).IsEqualTo(1)
+      .Because("the publish completes: a perspective registry lost to disposal is read as no perspective here");
+    await Assert.That(PostLifecycleProbe.DetachedCount(id)).IsEqualTo(1)
+      .Because("with no perspective known to apply the stored event, the local run fires PostLifecycle itself");
+    await Assert.That(PostLifecycleProbe.InlineCount(id)).IsEqualTo(1);
+  }
+
   private static async Task _dispatchAsync(IDispatcher dispatcher, Entry entry, Guid id) {
     var command = new PlCommand(id);
     var @event = new PlEvent(id);
@@ -134,7 +151,8 @@ public class PostLifecycleOncePerHandlingServiceComponentTests {
     }
   }
 
-  private static ServiceProvider _buildProvider(bool withOutbox, bool withLifecycleCoordinator, bool withPerspective) {
+  private static ServiceProvider _buildProvider(bool withOutbox, bool withLifecycleCoordinator, bool withPerspective,
+      bool perspectiveRegistryDisposed = false) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(
@@ -148,6 +166,9 @@ public class PostLifecycleOncePerHandlingServiceComponentTests {
     }
     if (withPerspective) {
       services.AddSingleton<IPerspectiveRunnerRegistry, PlPerspectiveRegistry>();
+    }
+    if (perspectiveRegistryDisposed) {
+      services.AddSingleton<IPerspectiveRunnerRegistry>(_ => throw new ObjectDisposedException(nameof(IServiceProvider)));
     }
     services.AddSingleton<IEnvelopeSerializer>(new PolicyContextKeepingEnvelopeSerializer());
     services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
