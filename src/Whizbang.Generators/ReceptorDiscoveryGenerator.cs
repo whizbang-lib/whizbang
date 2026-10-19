@@ -1612,7 +1612,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached (never at an outbox stage)
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached (never at an outbox stage)
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
@@ -1666,7 +1666,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-      sb.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
+      // Through object: a reply type that is sealed and not a message cannot be cast from IMessage (CS0030); such a
+      // value never matches here, since only messages are cascaded
+      sb.AppendLine($"        return PublishToOutboxAsync(({eventType})(object)message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
       sb.AppendLine(INDENT_6_CLOSE_BRACE);
       sb.AppendLine();
     }
@@ -1865,14 +1867,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors) {
-    // Default stages: LocalImmediateDetached + PostInboxDetached.
+    // Default stages: LocalImmediateInline + PostInboxDetached. The local caller waits for its handler and gets
+    // its result or exception, which is Inline (#1392).
     // LocalImmediate fires for locally-dispatched messages (this service).
     // PostInbox fires for messages arriving from other services via transport.
     // Source-service filtering in ReceptorInvoker prevents double-fire:
     //   LocalImmediate: only if source = this service
     //   PostInbox: only if source = other service
     var defaultStages = new[] {
-      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached",
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
       "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached"
     };
 
