@@ -18,7 +18,17 @@ namespace Whizbang.Generators.Tests;
 /// <tests>src/Whizbang.Generators/ReceptorDiscoveryGenerator.cs</tests>
 [Category("SourceGenerators")]
 public class GenericMessageTypeGenerationTests {
-  private const string GENERIC_MESSAGE = """
+  // The implicit usings an SDK project gets, which the generated dispatcher relies on.
+  private const string IMPLICIT_USINGS = """
+    global using System;
+    global using System.Collections.Generic;
+    global using System.Linq;
+    global using System.Threading;
+    global using System.Threading.Tasks;
+
+    """;
+
+  private const string GENERIC_MESSAGE = IMPLICIT_USINGS + """
     using System;
     using System.Threading;
     using System.Threading.Tasks;
@@ -52,6 +62,30 @@ public class GenericMessageTypeGenerationTests {
         && typeof(IIncrementalGenerator).IsAssignableFrom(type))
       .Select(type => (IIncrementalGenerator)Activator.CreateInstance(type)!)];
 
+  private const string NO_GENERICS = IMPLICIT_USINGS + """
+    using System;
+    using System.Threading;
+    using System.Threading.Tasks;
+    using Whizbang.Core;
+
+    namespace Shop;
+
+    public record OrderPlaced(Guid Id) : IEvent;
+    public class OrderPlacedReceptor : IReceptor<OrderPlaced> {
+      public ValueTask HandleAsync(OrderPlaced message, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+    }
+    """;
+
+  /// <summary>The same project without the generic types compiles, so an error below comes from the generic types.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [RequiresUnreferencedCode("Finds the generators by reflection over the generator assembly.")]
+  public async Task WithoutGenericTypes_GeneratedCodeCompilesAsync() {
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors(_allGenerators(), NO_GENERICS);
+
+    await Assert.That(_byFile(errors)).IsEmpty();
+  }
+
   /// <summary>Open generic message types are skipped, and the generated code compiles.</summary>
   [Test]
   [RequiresAssemblyFiles]
@@ -59,7 +93,7 @@ public class GenericMessageTypeGenerationTests {
   public async Task OpenGenericMessageTypes_GeneratedCodeCompilesAsync() {
     var errors = GeneratorTestHelper.GetGeneratedCompilationErrors(_allGenerators(), GENERIC_MESSAGE);
 
-    await Assert.That(errors.Select(static e => $"{e.Id} {e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)} @ {e.Location.SourceTree?.FilePath}")).IsEmpty();
+    await Assert.That(_byFile(errors)).IsEmpty();
   }
 
   /// <summary>A receptor of a closed generic message is discovered, and the generated code compiles.</summary>
@@ -69,8 +103,14 @@ public class GenericMessageTypeGenerationTests {
   public async Task ClosedGenericMessageReceptor_GeneratedCodeCompilesAsync() {
     var errors = GeneratorTestHelper.GetGeneratedCompilationErrors(_allGenerators(), CLOSED_GENERIC_RECEPTOR);
 
-    await Assert.That(errors.Select(static e => $"{e.Id} {e.GetMessage(System.Globalization.CultureInfo.InvariantCulture)} @ {e.Location.SourceTree?.FilePath}")).IsEmpty();
+    await Assert.That(_byFile(errors)).IsEmpty();
   }
+
+  // One line per generated file with errors, naming its first error, so a failure lists every generator at fault.
+  private static List<string> _byFile(IEnumerable<Diagnostic> errors) =>
+    [.. errors.GroupBy(static e => Path.GetFileName(e.Location.SourceTree?.FilePath ?? "(no file)"))
+      .Select(static g => $"{g.Key}: {g.Count()} error(s), first {g.First().Id} {g.First().GetMessage(System.Globalization.CultureInfo.InvariantCulture)}")
+      .Order(StringComparer.Ordinal)];
 
   /// <summary>The closed form a receptor handles is still routed: the dispatcher names it.</summary>
   [Test]
