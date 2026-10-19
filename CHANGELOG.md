@@ -82,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maintenance cycle publishes the options you set before the sweep runs; an option left unset leaves the stored
   value alone, a negative value fails startup naming the key, and a failed write is logged without failing the
   cycle. The Dapper engine now also publishes `debug_mode`, which it never did.
+- **Maintenance deferral ceiling is a time** (#1491): `Whizbang:Housekeeping:MaxDeferral` (default one hour)
+  bounds how long the idle gate can hold back maintenance or dead-letter recovery, measured from the first
+  deferral, so changing a tick interval no longer moves the ceiling. The forced pass still reports as
+  `ProceedDeferralLimit`. `MaxConsecutiveDeferrals` remains as a legacy fallback, used only when it is set and
+  `MaxDeferral` is not; with neither set the one-hour time applies. A zero or negative `MaxDeferral` fails
+  startup naming the key. The turnkey coordinator now measures its dwell and ceiling on the registered
+  `TimeProvider`.
 
 #### Context, identity & serialization
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
