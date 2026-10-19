@@ -1057,4 +1057,26 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Make the parameter required and register a default with TryAdd, so a construction site cannot drop the dependency and a missing registration fails loudly instead of silently."
   );
+
+  /// <summary>
+  /// WHIZ015: Warning - a message type is generic, so the generators skip it.
+  /// </summary>
+  /// <remarks>
+  /// An open generic type has no closed form generated code can name, so the dispatcher, the message
+  /// catalog, the topic registry and the serialization context leave it out (#1481). Before this, the
+  /// generators emitted the open type literally and the project failed to build with errors pointing
+  /// into generated files. A closed form a receptor handles is still routed for local dispatch, but it
+  /// has no generated serializer, so it cannot cross a transport.
+  /// </remarks>
+  /// <docs>operations/diagnostics/whiz015</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/GenericMessageTypeAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor GenericMessageType = new(
+      id: "WHIZ015",
+      title: "Generic message types are not supported",
+      messageFormat: "Message type '{0}' is generic, so the source generators skip it: it is not in the message catalog, the topic registry or the serialization context, and it cannot be sent across a transport. Declare a non-generic message type instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Generated code must name a closed type, and an open generic message type has none. The generators leave it out rather than emit code that cannot compile. A closed form handled by a receptor is routed for local dispatch only."
+  );
 }

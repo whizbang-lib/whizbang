@@ -12,7 +12,8 @@ namespace Whizbang.Generators.Tests;
 
 /// <summary>
 /// A generic message type never makes the generators emit code that does not compile (#1481). The open type has no
-/// closed form to name, so the generators skip it; a closed form a receptor handles is an ordinary message type.
+/// closed form to name, so the generators skip it, and WHIZ015 says so at its declaration. A closed form a receptor
+/// handles is still routed for local dispatch.
 /// </summary>
 /// <tests>src/Whizbang.Generators/MessageTypeCatalogGenerator.cs</tests>
 /// <tests>src/Whizbang.Generators/ReceptorDiscoveryGenerator.cs</tests>
