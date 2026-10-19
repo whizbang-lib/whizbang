@@ -98,7 +98,7 @@ Decisions made with the maintainer, 2026-10-16 to 2026-10-19.
 | 15 | C1 table rewrite | Two strategies behind one seam (VacuumFull, PgSqueeze); pg_repack is a runbook only. |
 | 16 | C2, C3, C4 | Autovacuum tuning, fillfactor attributes, stop event-store churn; framework tables via migrations, perspective tables via generator attributes. |
 | 17 | D5 telemetry | Yes; the 2.0 portal reads the same meters. |
-| 18 | E extension capabilities | Catalog, startup probe and report, requirement metadata with fail-fast on explicit configuration. WS-4 and WS-5 depend on it. |
+| 18 | E extension capabilities | One capability pattern for every external dependency (#1513): catalog, probe, managed provisioning with `AutoProvision` switches, a verdict line per required capability naming its features, fail-fast on explicit configuration. Postgres extensions first: pgvector, pg_trgm, pg_squeeze, pg_partman, pg_repack (in process or external job). WS-4 and WS-5 depend on it. |
 | 19 | P3 canonical-model compaction | Abandoned (below). |
 
 ## Abandoned: canonical-model compaction (P3)
@@ -131,7 +131,7 @@ The reasoning is recorded in the docs repo at `src/assets/docs/proposals/archiva
 | WS-4 (#1495) | [storage-bloat.md](storage-bloat.md) | C1 rewriter seam, C2 autovacuum, C3 fillfactor + event-store churn, C4 | 1.0 | WS-8 (pg_squeeze) |
 | WS-5 (#1496) | [storage-ledger-retention.md](storage-ledger-retention.md) | B5 companion cleanup, time-partitioned work ledgers, log retention, settings config path | 1.0 | WS-8 (optional pg_partman) |
 | WS-6 (#1497) | [storage-telemetry.md](storage-telemetry.md) | D5 table meters for every `wh_` table, bytes per event type, dashboard | 1.0 (portal 2.0) | none |
-| WS-8 (#1498) | [storage-extension-capabilities.md](storage-extension-capabilities.md) | E catalog, probe, report, requirement metadata, options validation | 1.0 | none |
+| WS-8 (#1498, #1513) | [storage-extension-capabilities.md](storage-extension-capabilities.md) | E capability pattern, Postgres provider, managed pgvector / pg_trgm / pg_squeeze / pg_partman / pg_repack, verdict, options validation | 1.0 | none |
 | WS-7 (#1499) | [storage-post-1.0.md](storage-post-1.0.md) | A4 claim-check, A5 foreign-copy pointers, event-store partitioning, K2 dedupe, K3 stream packs | 2.0 | WS-2, WS-3 |
 
 Operator tuning of the settings that already ship (retention windows, maintenance cadence, turning
