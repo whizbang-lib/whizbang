@@ -49,7 +49,7 @@ public class PostgresExtensionCatalogTests {
   [Arguments("pg_partman", true)]
   [Arguments("pgstattuple", true)]
   [Arguments("pg_stat_statements", true)]
-  [Arguments("pg_repack", false)]
+  [Arguments("pg_repack", true)]
   [Arguments("pg_cron", false)]
   public async Task LibraryMayCreate_MatchesTheDesignAsync(string name, bool mayCreate) {
     await Assert.That(_entry(name).LibraryMayCreate).IsEqualTo(mayCreate);
@@ -72,6 +72,15 @@ public class PostgresExtensionCatalogTests {
   public async Task Prerequisites_PgSqueezeNeedsLogicalWal_PgRepackNeedsItsClientAsync() {
     await Assert.That(_entry("pg_squeeze").Prerequisites.HasFlag(PostgresExtensionPrerequisites.LogicalWalLevel)).IsTrue();
     await Assert.That(_entry("pg_repack").Prerequisites.HasFlag(PostgresExtensionPrerequisites.ClientBinary)).IsTrue();
+  }
+
+  [Test]
+  public async Task Features_DescribeLibraryManagedUse_NotDetectionOnlyAsync() {
+    await Assert.That(string.Join(" ", _entry("pg_repack").Features)).Contains("in process or external job");
+    await Assert.That(string.Join(" ", _entry("pg_repack").Features)).DoesNotContain("detection only");
+    await Assert.That(string.Join(" ", _entry("pg_squeeze").Features)).Contains("table rewriter");
+    await Assert.That(string.Join(" ", _entry("pg_partman").Features)).Contains("create_parent");
+    await Assert.That(string.Join(" ", _entry("pg_partman").Features)).Contains("run_maintenance");
   }
 
   // ---- remedies, one per state ----

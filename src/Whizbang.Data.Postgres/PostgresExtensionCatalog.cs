@@ -37,8 +37,9 @@ public enum PostgresExtensionPrerequisites {
 /// <param name="Enables">What it enables, in a phrase, for the startup report.</param>
 /// <param name="Features">The library features that use it.</param>
 /// <param name="LibraryMayCreate">
-/// Whether the library may run <c>CREATE EXTENSION</c> for it. False for an extension an operator
-/// installs and runs by hand (<c>pg_repack</c>) or one that lives in a single database (<c>pg_cron</c>).
+/// Whether the library may run <c>CREATE EXTENSION</c> for it, once the operator has done the
+/// server-level enablement (allowlist, preload). False for one that lives in a single database
+/// (<c>pg_cron</c>).
 /// </param>
 /// <param name="Prerequisites">What the server needs beyond the extension's files.</param>
 /// <docs>operations/infrastructure/postgres-extensions#catalog</docs>
@@ -81,13 +82,14 @@ public static class PostgresExtensionCatalog {
     new("pg_trgm", "substring (trigram) indexes",
       ["Substring indexes on perspective fields"], LibraryMayCreate: true, ALLOWLIST),
     new("pg_squeeze", "online table rewrite without a long exclusive lock",
-      ["Table rewrite (bloat reclaim)"], LibraryMayCreate: true,
+      ["Table rewrite (bloat reclaim), driven by the library's table rewriter"], LibraryMayCreate: true,
       PRELOAD | PostgresExtensionPrerequisites.LogicalWalLevel),
     new("pg_repack", "online table rewrite run by its own client program",
-      ["Table rewrite runbook (detection only)"], LibraryMayCreate: false,
+      ["Table rewrite (pg_repack client, in process or external job)"], LibraryMayCreate: true,
       ALLOWLIST | PostgresExtensionPrerequisites.ClientBinary),
     new("pg_partman", "partition management (a built-in fallback exists)",
-      ["Ledger partition management"], LibraryMayCreate: true, ALLOWLIST),
+      ["Ledger partition management (create_parent, then run_maintenance from the maintenance worker)"],
+      LibraryMayCreate: true, ALLOWLIST),
     new("pgstattuple", "exact table bloat measurement (otherwise estimated)",
       ["Table bloat measurement"], LibraryMayCreate: true, ALLOWLIST),
     new("pg_stat_statements", "query statistics",
