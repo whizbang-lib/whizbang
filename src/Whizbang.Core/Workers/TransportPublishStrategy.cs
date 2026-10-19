@@ -503,7 +503,10 @@ public partial class TransportPublishStrategy(
     // ALWAYS detect message kind - commands MUST go to inbox, not individual command topics
     // This is critical: without this, commands would be published to non-existent topics
     // and silently dropped by the message broker
-    var messageKind = _detectMessageKindFromTypeName(work.MessageType);
+    // An event row is an event whatever its type name looks like: the dispatcher already chose its topic. Only a
+    // row that is not an event is classified by its name, which re-routing an event by would send it to a command
+    // inbox no subscriber of the event reads
+    var messageKind = work.IsEvent ? MessageKind.Event : _detectMessageKindFromTypeName(work.MessageType);
 
     // For commands, ALWAYS route to shared inbox topic
     // This applies whether or not WithRouting() was explicitly called

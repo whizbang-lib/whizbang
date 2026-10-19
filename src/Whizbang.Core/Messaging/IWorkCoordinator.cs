@@ -3216,6 +3216,12 @@ public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrior
   public required Guid MessageId { get; init; }
 
   /// <summary>
+  /// True when the row is an event. The transport routes an event to the topic the dispatcher chose, whatever its
+  /// type name looks like; only a non-event row is classified by its name.
+  /// </summary>
+  public bool IsEvent { get; init; }
+
+  /// <summary>
   /// Destination to publish to (topic name).
   /// Null for local-only events that were stored but should not be transported.
   /// Transport publishing should be skipped when destination is null.
