@@ -9,8 +9,11 @@
 These `.sql` files are the **single source of truth**, embedded and shared verbatim by *both*
 runners — Dapper (`PostgresSchemaInitializer`) and EF Core (generated
 `EnsureWhizbangDatabaseInitializedAsync`). They run on **every startup** (SHA-256 hash-skip on
-unchanged); each runs in a **runner-managed transaction**. Pre-v1.0: **edit in place**, don't add a
-new file for a fix.
+unchanged); each runs in a **runner-managed transaction**. **Every change goes in a new migration**,
+fixes included: never edit a migration that has shipped, because a database that already ran a file
+never runs it again, so an edit reaches new databases only. CI refuses the edit (the
+`migrations.edited` review check). To change a function, add the next-numbered file that redefines it
+whole (rule 5).
 
 ## The rules, in one screen
 
