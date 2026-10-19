@@ -44,7 +44,6 @@ public class RuntimeReceptorLocalDispatchComponentTests {
 
   [Test]
   [Arguments(LifecycleStage.LocalImmediateInline)]
-  [Arguments(LifecycleStage.LocalImmediateDetached)]
   public async Task SendAsync_UnownedCommandWithOnlyARuntimeReceptor_HandlesItLocallyAndSendsAMarkedCopyAsync(LifecycleStage stage) {
     var outbox = new RecordingOutbox();
     await using var provider = _buildProvider(outbox);
@@ -105,7 +104,6 @@ public class RuntimeReceptorLocalDispatchComponentTests {
 
   [Test]
   [Arguments(LifecycleStage.LocalImmediateInline)]
-  [Arguments(LifecycleStage.LocalImmediateDetached)]
   public async Task LocalInvokeAsync_CommandWithOnlyARuntimeReceptor_HandlesItAsync(LifecycleStage stage) {
     await using var provider = _buildProvider(new RecordingOutbox());
     _registry(provider).Register(new RecordingRuntimeReceptor<UnownedRuntimeCommand>(), stage);

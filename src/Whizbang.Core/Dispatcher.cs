@@ -295,9 +295,8 @@ public abstract partial class Dispatcher(
 
   /// <summary>
   /// The local handler a RUNTIME registration provides: a receptor registered into
-  /// <see cref="IReceptorRegistry"/> at <see cref="LifecycleStage.LocalImmediateInline"/> or
-  /// <see cref="LifecycleStage.LocalImmediateDetached"/>, the stages a generated receptor without
-  /// <c>[FireAt]</c> handles local dispatch at. The framework registers its own receptors for its own
+  /// <see cref="IReceptorRegistry"/> at <see cref="LifecycleStage.LocalImmediateInline"/>, the stage a generated
+  /// receptor without <c>[FireAt]</c> handles local dispatch at (#1392). The framework registers its own receptors for its own
   /// message types this way, because the generator only sees the consuming assembly's syntax. Asked
   /// only after every generated lookup misses, so a compile-time receptor always wins; consulting the
   /// generated tables alone left these commands unhandled on every local path (#1385).
@@ -316,8 +315,7 @@ public abstract partial class Dispatcher(
     }
     // Only a receptor registered at runtime counts: the registry also lists source-generated receptors,
     // which the generated lookups already resolved (and which may not even be registered in the container)
-    var receptor = _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline))
-      ?? _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached));
+    var receptor = _firstRuntimeReceptor(_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline));
     if (receptor is null) {
       return null;
     }
@@ -445,7 +443,9 @@ public abstract partial class Dispatcher(
     return runtime;
   }
 
-  private static readonly LifecycleStage[] _localStages = [LifecycleStage.LocalImmediateInline, LifecycleStage.LocalImmediateDetached];
+  // The stage a local handler is registered at. LocalImmediateDetached is a background hook, started after the
+  // handler, never a handler the caller waits for (#1392).
+  private static readonly LifecycleStage[] _localStages = [LifecycleStage.LocalImmediateInline];
 
   /// <summary>
   /// Runs every receptor registered at runtime at a local stage for a published or cascaded message
@@ -972,6 +972,7 @@ public abstract partial class Dispatcher(
     // Process tags after successful receptor completion
     await _processTagsIfEnabledAsync(message, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(message, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
+    await _startLocalRunDetachedHooksAsync(message, eventType, registered, sourceEnvelope: null, copyId);
   }
 
   /// <summary>
@@ -1130,8 +1131,8 @@ public abstract partial class Dispatcher(
       return null;
     }
 
-    // The local handler with [AwaitPerspectiveSync], at either local stage: a receptor with no [FireAt]
-    // is registered at LocalImmediateDetached, so reading the inline stage alone missed it (#1410 follow-up)
+    // The local handler with [AwaitPerspectiveSync], at the local handler stage, where a receptor with no [FireAt]
+    // is registered too (#1410 follow-up, #1392)
     var syncReceptor = _localReceptorsFor(messageType).FirstOrDefault(r => r.SyncAttributes is { Count: > 0 });
     return syncReceptor is null ? null : await _awaitPerspectiveSyncForAsync(message, messageType, syncReceptor, ct).ConfigureAwait(false);
   }
@@ -3562,6 +3563,7 @@ public abstract partial class Dispatcher(
       await _processTagsIfEnabledAsync(message, messageType, cancellationToken).ConfigureAwait(false);
       await _invokeLocalRunPostLifecycleAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId, cancellationToken)
         .ConfigureAwait(false);
+      await _startLocalRunDetachedHooksAsync(message, messageType, localEnvelope ?? registered, sourceEnvelope, copyId).ConfigureAwait(false);
     } finally {
       if (registered is not null) {
         _envelopeRegistry!.Unregister(message);
@@ -3660,8 +3662,32 @@ public abstract partial class Dispatcher(
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:ALocalDispatch_ReturnsWithoutWaitingForImmediateDetachedAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Dispatcher/ImmediateDetachedOncePerDispatchComponentTests.cs:AnImmediateDetachedFailure_NeverReachesTheCallerAsync</tests>
   private ValueTask _invokeImmediateDetachedReceptorsAsync(IMessageEnvelope envelope, Type messageType) {
-    // Nothing to start without a registry or an ImmediateDetached receptor for this message type
-    if (_receptorRegistry is null || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached).Count == 0) {
+    return _startDetachedStagesAsync(envelope, messageType, _detachedAfterHandlerStages);
+  }
+
+  // The detached stages a send or local invoke starts after its handler: the LocalImmediateDetached hooks (#1392),
+  // then ImmediateDetached (#1393)
+  private static readonly LifecycleStage[] _detachedAfterHandlerStages = [LifecycleStage.LocalImmediateDetached, LifecycleStage.ImmediateDetached];
+  private static readonly LifecycleStage[] _localImmediateDetachedStage = [LifecycleStage.LocalImmediateDetached];
+
+  /// <summary>
+  /// Starts the LocalImmediateDetached hooks for a message a publish or cascade just handled in-process, after its
+  /// handlers, without waiting for them (#1392).
+  /// </summary>
+  private ValueTask _startLocalRunDetachedHooksAsync(object message, Type messageType, IMessageEnvelope? envelope,
+      IMessageEnvelope? sourceEnvelope, MessageId? storedId) {
+    if (_receptorRegistry is null || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached).Count == 0) {
+      return ValueTask.CompletedTask;
+    }
+    envelope ??= _createLocalRunEnvelope(message,
+      sourceEnvelope is null ? _cascadeContextFactory.NewRoot() : _cascadeContextFactory.FromEnvelope(sourceEnvelope),
+      storedId, stampMessage: false);
+    return _startDetachedStagesAsync(envelope, messageType, _localImmediateDetachedStage);
+  }
+
+  private ValueTask _startDetachedStagesAsync(IMessageEnvelope envelope, Type messageType, LifecycleStage[] stages) {
+    // Nothing to start without a registry or a receptor at one of the stages for this message type
+    if (_receptorRegistry is null || !Array.Exists(stages, stage => _receptorRegistry.GetReceptorsFor(messageType, stage).Count > 0)) {
       return ValueTask.CompletedTask;
     }
 
@@ -3669,11 +3695,11 @@ public abstract partial class Dispatcher(
     // caller's security context, flows into the background task with the execution context.
     LocalDispatchAdmission.Mark();
     // Not the caller's token: that call has returned by the time the stage runs, and a detached stage outlives it
-    _ = _runImmediateDetachedAsync(envelope);
+    _ = _runDetachedStagesAsync(envelope, stages);
     return ValueTask.CompletedTask;
   }
 
-  private Task _runImmediateDetachedAsync(IMessageEnvelope envelope) =>
+  private Task _runDetachedStagesAsync(IMessageEnvelope envelope, LifecycleStage[] stages) =>
     Task.Run(async () => {
       try {
         // Dispatcher is a singleton: the scoped IReceptorInvoker comes from a scope of the stage's own
@@ -3681,15 +3707,24 @@ public abstract partial class Dispatcher(
         if (scope.ServiceProvider.GetService<IReceptorInvoker>() is not { } scopedInvoker) {
           return;
         }
-        var context = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateDetached,
-          MessageSource = MessageSource.Local
-        };
-        await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached, context, CancellationToken.None).ConfigureAwait(false);
+        foreach (var stage in stages) {
+          var context = new LifecycleExecutionContext { CurrentStage = stage, MessageSource = MessageSource.Local };
+          await _invokeDetachedStageAsync(scopedInvoker, envelope, stage, context).ConfigureAwait(false);
+        }
       } catch (Exception ex) {
-        Log.ImmediateDetachedFailed(DispatcherLogger, ex, envelope.MessageId.Value);
+        Log.DetachedStageFailed(DispatcherLogger, ex, LifecycleStage.ImmediateDetached, envelope.MessageId.Value);
       }
     }, CancellationToken.None);
+
+  // One stage's failure is logged and does not stop the next stage
+  private async Task _invokeDetachedStageAsync(IReceptorInvoker invoker, IMessageEnvelope envelope, LifecycleStage stage,
+      LifecycleExecutionContext context) {
+    try {
+      await invoker.InvokeAsync(envelope, stage, context, CancellationToken.None).ConfigureAwait(false);
+    } catch (Exception ex) {
+      Log.DetachedStageFailed(DispatcherLogger, ex, stage, envelope.MessageId.Value);
+    }
+  }
 
   /// <summary>
   /// Invokes PostLifecycle lifecycle receptors for the dispatched message.
@@ -3764,7 +3799,9 @@ public abstract partial class Dispatcher(
   /// Used to bypass fast paths when ImmediateDetached processing is needed.
   /// </summary>
   private bool _hasImmediateDetachedReceptors(Type messageType) {
-    return _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached).Count > 0;
+    return _receptorRegistry is not null
+      && (_receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.ImmediateDetached).Count > 0
+        || _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateDetached).Count > 0);
   }
 
   /// <summary>
@@ -4395,7 +4432,7 @@ public abstract partial class Dispatcher(
     }
 
     var now = DateTimeOffset.UtcNow;
-    foreach (var receptor in _receptorRegistry.GetReceptorsFor(eventType, LifecycleStage.LocalImmediateDetached)) {
+    foreach (var receptor in _receptorRegistry.GetReceptorsFor(eventType, LifecycleStage.LocalImmediateInline)) {
       await dedupStore.RecordInvocationAsync(envelope, new ReceptorInvocationRecord {
         ReceptorId = receptor.ReceptorId,
         Stage = LifecycleStage.LocalImmediateInline,
@@ -5470,6 +5507,7 @@ public abstract partial class Dispatcher(
     }
     await _processTagsIfEnabledAsync(eventData, eventType, cancellationToken);
     await _invokeLocalRunPostLifecycleAsync(eventData, eventType, registered, sourceEnvelope: null, copyId, cancellationToken);
+    await _startLocalRunDetachedHooksAsync(eventData, eventType, registered, sourceEnvelope: null, copyId);
     return DeliveryReceipt.Delivered(MessageId.New(), eventType.Name, correlationId: null, causationId: null,
       streamId: _streamIdExtractor?.ExtractStreamId(eventData, eventType));
   }
@@ -6500,7 +6538,7 @@ public abstract partial class Dispatcher(
     [LoggerMessage(
       EventId = 8,
       Level = LogLevel.Error,
-      Message = "An ImmediateDetached receptor failed for message {MessageId}. The stage is detached, so the dispatch was not failed.")]
-    public static partial void ImmediateDetachedFailed(ILogger logger, Exception exception, Guid messageId);
+      Message = "A {Stage} receptor failed for message {MessageId}. The stage is detached, so the dispatch was not failed.")]
+    public static partial void DetachedStageFailed(ILogger logger, Exception exception, LifecycleStage stage, Guid messageId);
   }
 }

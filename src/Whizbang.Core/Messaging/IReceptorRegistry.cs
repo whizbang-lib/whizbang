@@ -17,14 +17,14 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <list type="bullet">
 /// <item><description>Receptors WITH [FireAt(X)] are registered at stage X only</description></item>
-/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached, never at an outbox stage</description></item>
+/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached, never at an outbox stage</description></item>
 /// </list>
 /// <para>
 /// Runtime registration via <see cref="Register{TMessage}(IReceptor{TMessage}, LifecycleStage)"/> wires the
 /// framework's own receptors for its own message types, which the generator cannot see, and lets
 /// integration tests register receptors after hosts start. A runtime registration at
-/// <see cref="LifecycleStage.LocalImmediateInline"/> or <see cref="LifecycleStage.LocalImmediateDetached"/>
-/// is the message's local handler when no generated receptor exists. Runtime-registered receptors
+/// <see cref="LifecycleStage.LocalImmediateInline"/> is the message's local handler when no generated receptor
+/// exists; one at <see cref="LifecycleStage.LocalImmediateDetached"/> is a hook started after the handler (#1392). Runtime-registered receptors
 /// are invoked through the same <see cref="IReceptorInvoker"/> pipeline as compile-time receptors,
 /// ensuring full security context propagation and event cascading.
 /// </para>

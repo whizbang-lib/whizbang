@@ -58,19 +58,17 @@ public sealed record ReceptorInfo(
   public bool IsVoid => ResponseType is null;
 
   /// <summary>
-  /// True if receptor has no [FireAt] attributes (should default to ImmediateDetached).
+  /// True if receptor has no [FireAt] attributes (registered at the default stages, LocalImmediateInline and PostInboxDetached).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
 
   /// <summary>
   /// True if local dispatch (SendAsync, SendManyAsync, LocalInvokeAsync) invokes this receptor as the
-  /// message's handler: it has no [FireAt], or it declares LocalImmediateInline or LocalImmediateDetached,
-  /// the stages local dispatch fires. A receptor declared only at other stages is a lifecycle hook.
+  /// message's handler: it has no [FireAt], or it declares LocalImmediateInline, the stage the caller waits for.
+  /// A receptor declared only at other stages, LocalImmediateDetached included, is a lifecycle hook (#1392).
   /// </summary>
   public bool FiresOnLocalDispatch => HasDefaultStage
-    || LifecycleStages.Any(static stage =>
-      stage.EndsWith(".LocalImmediateInline", System.StringComparison.Ordinal)
-      || stage.EndsWith(".LocalImmediateDetached", System.StringComparison.Ordinal));
+    || LifecycleStages.Any(static stage => stage.EndsWith(".LocalImmediateInline", System.StringComparison.Ordinal));
 
   /// <summary>
   /// True if receptor has a [DefaultRouting] attribute.

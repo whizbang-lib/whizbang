@@ -2569,7 +2569,7 @@ public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, Failu
     await Assert.That(dispatcher).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
 
     // Concrete types use regular PublishToOutboxAsync
-    await Assert.That(dispatcher).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)message");
+    await Assert.That(dispatcher).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)(object)message");
   }
 
   #endregion

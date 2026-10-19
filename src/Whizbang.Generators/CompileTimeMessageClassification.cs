@@ -145,7 +145,7 @@ public static class CompileTimeMessageClassification {
 
   /// <summary>
   /// A receptor with no [FireAt] is a direct inbox handler that fires at PostInboxDetached/
-  /// PostInboxInline by default (transport path) or LocalImmediateDetached (local path).
+  /// PostInboxInline by default (transport path) or LocalImmediateInline (local path).
   /// One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
   /// Receptors at PreInbox/PostInbox stages are NOT inbox handlers — they're lifecycle hooks.
   /// Receptors with no stages OR with stages unrelated to PreInbox/PostInbox count as inbox handlers.

@@ -111,6 +111,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invoke ran only the first receptor for a command while a publish ran them all. Now every entry runs them all,
   in `[ReceptorPriority]` order. When a caller asks for a result and several receptors return one, the earliest
   answers and the others' results cascade. **Upgrade:** a command with two receptors now runs both.
+- **Breaking (lifecycle): the default local stage is `LocalImmediateInline`, and `LocalImmediateDetached` is a
+  background hook (#1392).** A receptor with no `[FireAt]` was registered at `LocalImmediateDetached` but awaited by
+  the caller, which is Inline behavior; it is now registered at `LocalImmediateInline`, with no change in how it runs.
+  A receptor declared `[FireAt(LocalImmediateDetached)]` now runs in its own scope after the handler, whenever this
+  service handles the message in-process, and nobody waits for it; its exception is logged. **Upgrade:** a receptor
+  that used `[FireAt(LocalImmediateDetached)]` as its message's only handler no longer handles it; remove the
+  attribute or declare `LocalImmediateInline`. A runtime registration at `LocalImmediateDetached` is likewise a hook.
+- **Breaking (lifecycle): `ImmediateDetached` is never waited for (#1393).** Local dispatch awaited it and a receptor
+  exception reached the caller, and an inbox message with no `PostInboxDetached` receptor ran it inline, so its
+  exception failed the message. It now runs in its own scope on every entry point, and a failure is logged. Tests that
+  count its invocations wait for a signal rather than reading the count when the dispatch returns.
 - **Breaking (dispatch): a returned value no receptor handles fails the call (#1418).** A value a receptor
   returns that is neither a command nor an event, and has no receptor of its own type, now goes to the
   receptors of an interface or base type it implements, as a mediator would, in this assembly, other
@@ -239,6 +250,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A receptor's top-level `Route.X(...)` result lost its route (#1405).** `return Route.Local(evt);` cascaded
+  the event with the default route; only a route inside a tuple was kept. Fixed with the dispatch policy work, and now
+  covered on every entry by a test against the generated dispatcher.
 - **A send or publish handled locally never fired PostLifecycle (#1413).** PostLifecycle now fires once per
   handling service on every local run. When the event is stored and a perspective on this service applies
   it, the perspective worker fires it after the apply instead, so it still fires once.
