@@ -120,6 +120,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`whizbang migrate` CLI** — Marten/Wolverine migration analyzers + transformers (JSONB LINQ,
   global-using rewrites, package-ref upgrades); PgBouncer-compatible schema initialization; the
   `ExtractMessageRegistry` MSBuild target shipped via NuGet.
+- **Table statistics cover every framework and perspective table, on both Postgres drivers (#1488).** The
+  `Whizbang.TableStatistics` meter reported sizes and bloat for a fixed list of seven tables, so the event body
+  store, deduplication, dead letters and every perspective table were invisible, and a Dapper host reported nothing
+  at all. Every `wh_` table in the service's schema is now found in the catalog on each refresh (partitioned tables
+  once, with their partitions summed), and two gauges are added: `whizbang.table.component_bytes` (tags
+  `table_name`, `component` = `heap`, `toast`, `indexes`, adding up to `whizbang.table.estimated_bytes`) and
+  `whizbang.table.live_rows`. All of it comes from one catalog statement per refresh. Cardinality is capped by
+  `Whizbang:TableStatistics:MaxTrackedTables` (default 500); past it the smallest tables are summed under
+  `table_name="other"`. A table missing from a refresh stops reporting instead of keeping its last value, and
+  `TableStatisticsCollector.CycleCompleted` is public. **Upgrade:** `PostgresTableStatisticsProvider` moved from
+  `Whizbang.Data.EFCore.Postgres` to `Whizbang.Data.Postgres.Observability`; a host that constructs it directly
+  changes the namespace. Dashboards that sum `estimated_bytes` across tables will see the new tables' bytes.
 - **API hygiene** — a `SyncMode` enum + `LocalInvokeAndSyncAsync(msg, SyncMode, ct)` overload; the old
   timeout-based overloads are now `[Obsolete]`.
 

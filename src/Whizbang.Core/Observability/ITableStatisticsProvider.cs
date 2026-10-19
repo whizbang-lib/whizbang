@@ -38,6 +38,35 @@ public interface ITableStatisticsProvider {
     Task.FromResult<IReadOnlyDictionary<string, double>>(new Dictionary<string, double>());
 
   /// <summary>
+  /// Returns, per table, what its size is made of and how many rows it holds, from one catalog read.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// One reading answers the size, the split of that size into heap, TOAST and indexes, the live row
+  /// count and the bloat ratio for every table, so a refresh costs one catalog statement however many
+  /// tables the schema holds. A provider that implements this is asked for nothing else about tables
+  /// on a refresh: the sizes and bloat ratios are taken from it.
+  /// </para>
+  /// <para>
+  /// The number of tables answered is bounded by the provider. Tables past its cap, smallest first,
+  /// are summed under <see cref="TableStatisticsOptions.OTHER_TABLES"/>, so the totals are preserved
+  /// while the number of series is not allowed to grow with the schema.
+  /// </para>
+  /// <para>
+  /// Defaults to empty, which tells the collector to ask the older per-reading methods instead, so a
+  /// provider written before this existed keeps reporting exactly what it reported.
+  /// </para>
+  /// </remarks>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The storage reading per table name, or empty where the provider does not offer one.</returns>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderWithoutTheMeasuredReadings_AnswersEmptyRatherThanFailingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetTableStorageAsync_SplitsEachTableIntoHeapToastAndIndexesAsync</tests>
+  Task<IReadOnlyDictionary<string, TableStorageStatistics>> GetTableStorageAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, TableStorageStatistics>>(
+      new Dictionary<string, TableStorageStatistics>());
+
+  /// <summary>
   /// Returns, per table, how much reading has been done by sequential scan rather than by index.
   /// </summary>
   /// <remarks>
@@ -108,3 +137,33 @@ public readonly record struct ExpensivePredicate(
 /// <docs>operations/observability/metrics#table-statistics</docs>
 public readonly record struct TableScanStatistics(
     long SequentialScans, long SequentialRowsRead, long IndexScans);
+
+/// <summary>
+/// What one table's size is made of, and how many rows it holds.
+/// </summary>
+/// <remarks>
+/// The three byte components add up to <see cref="TotalBytes"/>, which is the size
+/// <c>whizbang.table.estimated_bytes</c> reports, so a dashboard can show the split without the total
+/// changing meaning.
+/// </remarks>
+/// <param name="HeapBytes">The table's own pages: the rows stored inline, plus its free space and visibility maps.</param>
+/// <param name="ToastBytes">
+/// Values too large to store inline (large JSON documents, long strings), kept in the table's TOAST
+/// relation together with that relation's index.
+/// </param>
+/// <param name="IndexBytes">Every index on the table.</param>
+/// <param name="LiveRows">
+/// The planner's estimate of the rows the table holds, refreshed by every <c>ANALYZE</c> and
+/// <c>VACUUM</c>, which autovacuum runs on its own.
+/// </param>
+/// <param name="BloatRatio">
+/// Heap bytes per live row over the width those rows should need, or null where the table is too
+/// small for the ratio to mean anything. See <see cref="ITableStatisticsProvider.GetTableBloatRatiosAsync"/>.
+/// </param>
+/// <docs>operations/observability/metrics#table-statistics</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsStorageTests.cs:TotalBytes_IsTheSumOfTheThreeComponentsAsync</tests>
+public readonly record struct TableStorageStatistics(
+    long HeapBytes, long ToastBytes, long IndexBytes, long LiveRows, double? BloatRatio) {
+  /// <summary>The table's whole size on disk: heap, TOAST and indexes together.</summary>
+  public long TotalBytes => HeapBytes + ToastBytes + IndexBytes;
+}

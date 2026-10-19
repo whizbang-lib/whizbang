@@ -17,6 +17,7 @@ using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.MultiStream;
+using Whizbang.Data.Postgres.Observability;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -233,6 +234,7 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
+    _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -391,6 +393,7 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
+    _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -490,6 +493,16 @@ public static class ServiceCollectionExtensions {
 
     return services;
   }
+
+  /// <summary>
+  /// Table statistics for the <c>Whizbang.TableStatistics</c> meter, the provider and collector the EF Core driver
+  /// registers, read through the connection's search path, which is where the Dapper stores' tables are.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsTableStatisticsAsync</tests>
+  private static void _addTableStatistics(IServiceCollection services, string connectionString) =>
+    services.AddWhizbangTableStatistics((_, options) => new PostgresTableStatisticsProvider(
+      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables));
 
   /// <summary>
   /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's
