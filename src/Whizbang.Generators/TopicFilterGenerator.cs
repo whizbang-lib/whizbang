@@ -23,7 +23,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_GeneratesGetAllFiltersMethod_ForDiagnosticsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_UsesAssemblySpecificNamespace_AvoidingConflictsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_ReportsErrorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_EmitsNoMappingForItAsync</tests>
 /// Discovers ICommand implementations with TopicFilter attributes
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.
