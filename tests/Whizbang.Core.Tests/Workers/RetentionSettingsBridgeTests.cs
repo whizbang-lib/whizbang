@@ -157,7 +157,7 @@ public class RetentionSettingsBridgeTests {
 
   [Test]
   public async Task DebugModeIn_WithNoDebugEntry_IsNullAsync() {
-    var settings = new[] { new RetentionSetting("dedup_retention_days", "3", "integer", "x") };
+    RetentionSetting[] settings = [new RetentionSetting("dedup_retention_days", "3", "integer", "x")];
 
     await Assert.That(RetentionSettingsBridge.DebugModeIn(settings)).IsNull()
       .Because("absent is not false: reading it as false would switch debug retention off on an engine that was never asked");

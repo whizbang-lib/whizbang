@@ -238,7 +238,7 @@ public class MaintenanceWorkerRetentionSyncTests {
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.DebugSyncs).IsEquivalentTo(new[] { debugMode })
+    await Assert.That(coord.DebugSyncs).IsEquivalentTo([debugMode])
       .Because("the default implementation hands debug_mode to the older method, so an engine written against it keeps "
              + "its debug retention instead of silently losing it");
   }

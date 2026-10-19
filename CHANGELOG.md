@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-rewind are not skipped.
 - **Throughput** — drain mode (per-perspective event filtering with full lifecycle), a bulk-import
   throughput path, and throughput instrumentation (gate hold-duration histograms, WorkCoordinator metrics).
+- **Retention windows from configuration** (#1487): every retention window the maintenance sweep reads from
+  `wh_settings` is now an option, set like any other: `Whizbang:Workers:Maintenance:Retention` (deduplication,
+  stuck inbox, recovered dead letters, abandoned streams, instance-eviction tombstones, orphaned perspective
+  events, collective-ordering heads) and `Whizbang:Ephemeral` (`RewindGraceSeconds`, `PointerPrune`). Each
+  maintenance cycle publishes the options you set before the sweep runs; an option left unset leaves the stored
+  value alone, a negative value fails startup naming the key, and a failed write is logged without failing the
+  cycle. The Dapper engine now also publishes `debug_mode`, which it never did.
 
 #### Context, identity & serialization
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
