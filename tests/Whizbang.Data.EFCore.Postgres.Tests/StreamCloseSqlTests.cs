@@ -506,14 +506,14 @@ public class StreamCloseSqlTests : EFCoreTestBase {
   private static async Task<long> _countAsync(NpgsqlConnection connection, string sql, Guid id) {
     await using var c = connection.CreateCommand();
     c.CommandText = sql;
-    c.Parameters.AddWithValue("id", id);
+    c.Parameters.AddWithValue(nameof(id), id);
     return (long)(await c.ExecuteScalarAsync())!;
   }
 
   private static async Task _executeAsync(NpgsqlConnection connection, string sql, Guid id) {
     await using var c = connection.CreateCommand();
     c.CommandText = sql;
-    c.Parameters.AddWithValue("id", id);
+    c.Parameters.AddWithValue(nameof(id), id);
     await c.ExecuteNonQueryAsync();
   }
 
