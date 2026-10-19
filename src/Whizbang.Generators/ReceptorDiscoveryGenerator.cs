@@ -302,6 +302,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
 
       var messageTypeSymbol = found.TypeArguments[0];
+      var notInjectable = _likelyNotInjectableParameter(classSymbol);
       // 2-arg interfaces have a response type; 1-arg are void receptors
 #pragma warning disable RS0030 // local format keeps UseSpecialTypes and EscapeKeywordIdentifiers, which the shared FullyQualifiedWithNullability lacks
       var responseType = argCount == 2
@@ -323,9 +324,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
           IsIdempotent: isIdempotent,
           SuppressesRegistration: _suppressesRegistration(classSymbol),
-          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol),
+          LikelyNotInjectableParameter: notInjectable?.Description,
           IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol),
-          Priority: _receptorPriority(classSymbol)
+          Priority: _receptorPriority(classSymbol),
+          NotInjectableLocation: notInjectable?.Location
       );
     }
 
@@ -638,7 +640,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// is left alone, because guessing more aggressively would warn on legitimate code and train people
   /// to ignore the warning.
   /// </remarks>
-  private static string? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
+  private static (string Description, Location? Location)? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
     // Widest accessible constructor is the one the container would choose.
     IMethodSymbol? candidate = null;
     foreach (var ctor in classSymbol.InstanceConstructors) {
@@ -670,7 +672,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           or SpecialType.System_Decimal;
 
       if (isDelegate || isBarePrimitive) {
-        return parameter.Name + "|" + TypeNameUtilities.Display(type);
+        return (parameter.Name + "|" + TypeNameUtilities.Display(type), parameter.Locations.FirstOrDefault());
       }
     }
 
@@ -1159,7 +1161,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ReceptorLikelyNotInjectable,
-          Location.None,
+          receptor.NotInjectableLocation,
           TypeNameUtilities.GetSimpleName(receptor.ClassName),
           parts[0],
           parts[1]

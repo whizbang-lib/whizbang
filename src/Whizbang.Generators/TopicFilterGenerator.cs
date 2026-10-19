@@ -115,7 +115,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     foreach (var attr in topicFilterAttrs) {
       var filterString = _extractFilterString(attr);
       if (filterString is not null) {
-        filters.Add(new TopicFilterInfo(commandType, filterString));
+        filters.Add(new TopicFilterInfo(commandType, filterString, attr.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation()));
       }
     }
 
@@ -194,7 +194,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     foreach (var filter in filters) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TopicFilterDiscovered,
-          Location.None,
+          filter.Location,
           TypeNameUtilities.GetSimpleName(filter.CommandType),
           filter.Filter
       ));

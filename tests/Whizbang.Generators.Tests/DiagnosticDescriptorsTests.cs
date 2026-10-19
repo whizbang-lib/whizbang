@@ -23,7 +23,6 @@ public class DiagnosticDescriptorsTests {
     var descriptors = new[] {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
-      DiagnosticDescriptors.InvalidReceptor,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
       DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
@@ -33,16 +32,11 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
-      DiagnosticDescriptors.WhizbangIdDiscovered,
       DiagnosticDescriptors.WhizbangIdMustBePartial,
       DiagnosticDescriptors.TopicFilterDiscovered,
-      DiagnosticDescriptors.EnumFilterNoDescription,
       DiagnosticDescriptors.WhizbangIdDuplicateName,
       DiagnosticDescriptors.TopicFilterOnNonCommand,
       DiagnosticDescriptors.NoTopicFiltersFound,
-      DiagnosticDescriptors.PublicApiMissingTests,
-      DiagnosticDescriptors.InvalidTestReference,
-      DiagnosticDescriptors.TestLinkDiscovered,
       DiagnosticDescriptors.FailedToLoadDocsMap,
       DiagnosticDescriptors.FailedToLoadTestsMap
     };
@@ -61,7 +55,6 @@ public class DiagnosticDescriptorsTests {
     var descriptors = new[] {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
-      DiagnosticDescriptors.InvalidReceptor,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
       DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
@@ -71,16 +64,11 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
-      DiagnosticDescriptors.WhizbangIdDiscovered,
       DiagnosticDescriptors.WhizbangIdMustBePartial,
       DiagnosticDescriptors.TopicFilterDiscovered,
-      DiagnosticDescriptors.EnumFilterNoDescription,
       DiagnosticDescriptors.WhizbangIdDuplicateName,
       DiagnosticDescriptors.TopicFilterOnNonCommand,
       DiagnosticDescriptors.NoTopicFiltersFound,
-      DiagnosticDescriptors.PublicApiMissingTests,
-      DiagnosticDescriptors.InvalidTestReference,
-      DiagnosticDescriptors.TestLinkDiscovered,
       DiagnosticDescriptors.FailedToLoadDocsMap,
       DiagnosticDescriptors.FailedToLoadTestsMap
     };
@@ -97,7 +85,6 @@ public class DiagnosticDescriptorsTests {
     var descriptors = new[] {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
-      DiagnosticDescriptors.InvalidReceptor,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
       DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
@@ -107,16 +94,11 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
-      DiagnosticDescriptors.WhizbangIdDiscovered,
       DiagnosticDescriptors.WhizbangIdMustBePartial,
       DiagnosticDescriptors.TopicFilterDiscovered,
-      DiagnosticDescriptors.EnumFilterNoDescription,
       DiagnosticDescriptors.WhizbangIdDuplicateName,
       DiagnosticDescriptors.TopicFilterOnNonCommand,
       DiagnosticDescriptors.NoTopicFiltersFound,
-      DiagnosticDescriptors.PublicApiMissingTests,
-      DiagnosticDescriptors.InvalidTestReference,
-      DiagnosticDescriptors.TestLinkDiscovered,
       DiagnosticDescriptors.FailedToLoadDocsMap,
       DiagnosticDescriptors.FailedToLoadTestsMap
     };
@@ -133,7 +115,6 @@ public class DiagnosticDescriptorsTests {
     var descriptors = new[] {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
-      DiagnosticDescriptors.InvalidReceptor,
       DiagnosticDescriptors.CommandStreamIdDiscovered,
       DiagnosticDescriptors.StreamIdMustBeGuid,
       DiagnosticDescriptors.MultipleStreamIdAttributes,
@@ -143,16 +124,11 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
-      DiagnosticDescriptors.WhizbangIdDiscovered,
       DiagnosticDescriptors.WhizbangIdMustBePartial,
       DiagnosticDescriptors.TopicFilterDiscovered,
-      DiagnosticDescriptors.EnumFilterNoDescription,
       DiagnosticDescriptors.WhizbangIdDuplicateName,
       DiagnosticDescriptors.TopicFilterOnNonCommand,
       DiagnosticDescriptors.NoTopicFiltersFound,
-      DiagnosticDescriptors.PublicApiMissingTests,
-      DiagnosticDescriptors.InvalidTestReference,
-      DiagnosticDescriptors.TestLinkDiscovered,
       DiagnosticDescriptors.FailedToLoadDocsMap,
       DiagnosticDescriptors.FailedToLoadTestsMap
     };
@@ -175,13 +151,17 @@ public class DiagnosticDescriptorsTests {
   }
 
   [Test]
-  public async Task InvalidReceptor_HasErrorSeverityAsync() {
-    // Arrange & Act
-    var descriptor = DiagnosticDescriptors.InvalidReceptor;
+  public async Task RetiredDiagnosticIds_AreNeverDeclaredAgainAsync() {
+    // #1427: an ID retired because nothing reported it keeps no meaning, so a suppression or a search for it
+    // can never match a different diagnostic. Reads every descriptor the generators declare (all are public).
+    var declared = typeof(DiagnosticDescriptors).Assembly.GetTypes()
+      .SelectMany(t => t.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+      .Where(f => f.FieldType == typeof(DiagnosticDescriptor))
+      .Select(f => ((DiagnosticDescriptor)f.GetValue(null)!).Id)
+      .ToHashSet();
 
-    // Assert
-    await Assert.That(descriptor.Id).IsEqualTo("WHIZ003");
-    await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Where(declared.Contains).ToArray()).IsEmpty();
+    await Assert.That(DiagnosticDescriptors.RETIRED_IDS.Length).IsEqualTo(9);
   }
 
   [Test]

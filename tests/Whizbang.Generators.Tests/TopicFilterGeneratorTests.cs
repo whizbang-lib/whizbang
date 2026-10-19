@@ -331,7 +331,37 @@ public record CreateOrderCommand : ICommand {
   }
 
   [Test]
-  public async Task Generator_WithFilterOnNonCommand_ReportsErrorAsync() {
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task Generator_ReportsEachDiscoveredFilterAtItsAttributeAsync() {
+    const string source = """
+using Whizbang.Core;
+
+namespace TestNamespace;
+
+[TopicFilter("orders.created")]
+public record CreateOrder : ICommand;
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
+
+    // #1429: WHIZ022 sits on the attribute it reports, so it can be suppressed there
+    var whiz022 = result.Diagnostics.Single(d => d.Id == "WHIZ022");
+    var text = await whiz022.Location.SourceTree!.GetTextAsync();
+    await Assert.That(text.ToString(whiz022.Location.SourceSpan)).IsEqualTo("TopicFilter(\"orders.created\")");
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresAssemblyFiles()]
+  public async Task Generator_ReportsNoFiltersFoundWithoutALocationAsync() {
+    var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>("namespace TestNamespace; public class Nothing { }");
+
+    // WHIZ026 concerns the whole compilation, so it has no declaration to sit on
+    var whiz026 = result.Diagnostics.Single(d => d.Id == "WHIZ026");
+    await Assert.That(whiz026.Location).IsEqualTo(Location.None);
+  }
+
+  [Test]
+  public async Task Generator_WithFilterOnNonCommand_EmitsNoMappingForItAsync() {
     // Arrange
     const string source = """
 
@@ -348,13 +378,12 @@ public record NotACommand {  // Missing ICommand
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
 
-    // Assert - Should not generate mapping for non-ICommand type
+    // Assert - Should not generate mapping for non-ICommand type. The ignored attribute itself is reported
+    // where it is written, by TopicFilterTargetAnalyzer (WHIZ025, #1427), not by this generator
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "TopicFilterRegistry.g.cs");
     if (registrySource != null) {
       await Assert.That(registrySource).DoesNotContain("NotACommand");
     }
-
-    // No errors expected - just silently ignore non-ICommand types
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
     await Assert.That(errors).IsEmpty();
   }
