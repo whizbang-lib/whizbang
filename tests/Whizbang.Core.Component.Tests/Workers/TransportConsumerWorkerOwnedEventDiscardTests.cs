@@ -85,7 +85,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedEvent_ThisServiceDeferredToItsDelivery_IsNotDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE, localDeferred: true);
@@ -93,12 +96,14 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     try {
       await worker.SimulateMessageAsync(envelope, _ownedEventType);
     } catch {
-      // Processing may throw after the discard check; only the inbox write is asserted
+      // Processing may fail after the echo check; only that check is asserted
     }
 
     await worker.StopAsync();
-    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
-      .Because("a copy whose local handling was deferred to its delivery is handled here when it arrives");
+
+    // A copy whose local handling was deferred to its delivery is handled here when it arrives, so the echo
+    // check must let it through
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   /// <summary>
