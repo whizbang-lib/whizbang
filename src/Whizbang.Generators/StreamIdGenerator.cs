@@ -115,7 +115,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: streamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
       );
     }
 
@@ -172,7 +173,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: streamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
       );
     }
 
@@ -208,7 +210,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
             IsPropertyValueType: property.Type.IsValueType,
             HasGenerate: hasGenerate,
             OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+            PropertyLocation: LocationUtilities.FirstOrNone(property)
         );
       }
     }
@@ -319,7 +322,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: commandStreamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(commandStreamIdProperty)
       );
     }
 
@@ -355,7 +359,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
             IsPropertyValueType: property.Type.IsValueType,
             HasGenerate: hasGenerate,
             OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+            PropertyLocation: LocationUtilities.FirstOrNone(property)
         );
       }
     }
@@ -454,7 +459,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
         var simpleName = info.EventType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
       }
     }
 
@@ -462,7 +467,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
         var simpleName = info.CommandType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
       }
     }
   }

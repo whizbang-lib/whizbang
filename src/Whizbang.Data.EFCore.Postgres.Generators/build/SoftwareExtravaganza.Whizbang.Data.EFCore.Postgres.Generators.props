@@ -1,0 +1,10 @@
+<Project>
+  <!-- The table-naming properties the EF Core generators read. Without these declarations a project's setting never
+       reaches the generator and the default always applies (#1426; BuildPropertyVisibilityTests finds each read in
+       the source). The Exclude keeps one item per name when the core generators package declares them as well. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangMaxIdentifierLength" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangStripTableNameSuffixes" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangTableNameSuffixesToStrip" Exclude="@(CompilerVisibleProperty)" />
+  </ItemGroup>
+</Project>

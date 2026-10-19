@@ -9,9 +9,12 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <!-- Configuration binding uses the interceptor-based source generator, so the
-         BindConfiguration/Bind calls below compile to typed property assignments — the
-         zero-reflection rule holds without hand-written per-key binders. -->
-    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+         BindConfiguration/Bind calls below compile to typed property assignments: the
+         zero-reflection rule holds without hand-written per-key binders. The mutation build
+         turns it off (WhizbangMutationBuild, set by scripts/mutation/run-mutation-tests.ps1):
+         Stryker mutates the generator's in-memory output, which its file exclusions cannot
+         reach, and then cannot compile (#1444). That build is never packed or shipped. -->
+    <EnableConfigurationBindingGenerator Condition="'$(WhizbangMutationBuild)' != 'true'">true</EnableConfigurationBindingGenerator>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <!-- Emit source-generated files to disk for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>

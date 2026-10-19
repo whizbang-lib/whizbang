@@ -210,6 +210,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A scope event's scope could be overwritten or narrowed before the row was written (#1432).** A later message in
+  the same batch replaced it, the model's `[InheritScope(OnCreate)]` filtered it (dropping the principals the event
+  shared the row with), and `IPerspectiveScopeFor.ApplyScope` was given the last message's scope as the current one.
+  The runner now writes the scope the event set, unfiltered, and gives `ApplyScope` the row's stored scope.
+  `ScopeInheritance.Resolve` takes that scope in place of its `scopeEventChanged` flag.
+- **A lens or perspective that inherits its interface from an abstract base was never registered (#1482).**
+- **A generic message type broke the consumer's build (#1481).** The generators emitted the open type into generated
+  code. They now skip it, and WHIZ015 warns at the type that generic message types are not supported.
+- **The message registry was never enriched with docs URLs or tests (#1428).** The docs and tests maps were read
+  case-sensitively against their camelCase keys.
+- **Five build properties had no effect when set in a project (#1426):** `WhizbangMaxIdentifierLength`,
+  `WhizbangStripTableNameSuffixes`, `WhizbangTableNameSuffixesToStrip`, `WhizbangGuidInterceptionEnabled` and
+  `WhizbangQueryComposingAttributes`. The generator packages now declare them compiler-visible.
+- **Build diagnostics can be suppressed where they appear (#1429).** Twenty were reported with no location (or an
+  external-file one); they are now reported at the declaration they are about.
+- **Build diagnostic messages said things the analyzers do not do (#1428).** Among them: WHIZ104 now finds
+  `System.DateTime.UtcNow`, WHIZ102 no longer doubles WHIZ103 on an `HttpClient` call, WHIZ811 is silenced by the
+  `[PolymorphicDiscriminator]` it suggests, and WHIZ900 covers every Inline stage and `WaitForAppliedAsync`.
+- **Mutation testing never completed (#1444).**
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator

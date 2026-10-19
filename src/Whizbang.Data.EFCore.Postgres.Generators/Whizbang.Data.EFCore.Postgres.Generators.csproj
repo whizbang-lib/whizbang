@@ -78,6 +78,12 @@
     <EmbeddedResource Include="..\Whizbang.Data.Postgres\Migrations\*.sql" Link="Templates\Migrations\%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!-- Pack the MSBuild props for NuGet consumers (build/ for direct, buildTransitive/ for transitive) -->
+  <ItemGroup>
+    <None Include="build\SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators.props" Pack="true" PackagePath="build\SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators.props" />
+    <None Include="build\SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators.props" Pack="true" PackagePath="buildTransitive\SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators.props" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
   <!-- Note: Cannot reference Whizbang.Core directly due to TFM incompatibility -->
   <!-- (netstandard2.0 vs net10.0). Generator uses fully qualified type names instead. -->
 

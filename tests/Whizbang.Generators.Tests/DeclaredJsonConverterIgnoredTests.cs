@@ -81,6 +81,8 @@ public class DeclaredJsonConverterIgnoredTests {
     await Assert.That(message).Contains("Version")
       .Because("the author needs to know which value they declared it on");
     await Assert.That(message).Contains("LegacyVersionConverter");
+    await Assert.That(DiagnosticSourceText.Of(reported[0])).IsEqualTo("Version")
+      .Because("it is reported at the property that declares the converter (#1429)");
     await Assert.That(message).Contains("StoredForm")
       .Because("a warning that does not name the supported alternative leaves the author stuck");
   }

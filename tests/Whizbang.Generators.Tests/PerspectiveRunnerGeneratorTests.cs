@@ -2731,7 +2731,7 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
-    await Assert.That(runnerSource).Contains("scopeChanged = true");
+    await Assert.That(runnerSource).Contains("scopeEventScope = ");
     await Assert.That(runnerSource).Contains("forceUpdateScope");
   }
 
@@ -2779,7 +2779,7 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IPerspectiveScopeFor");
     await Assert.That(runnerSource).Contains("ApplyScope");
-    await Assert.That(runnerSource).Contains("scopeChanged = true");
+    await Assert.That(runnerSource).Contains("scopeEventScope = ");
   }
 
   [Test]
@@ -2818,7 +2818,7 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("IScopeEvent scopeEvent");
-    await Assert.That(runnerSource).Contains("lastScope = proposedScope");
+    await Assert.That(runnerSource).Contains("scopeEventScope = proposedScope");
     await Assert.That(runnerSource).DoesNotContain("ApplyScope");
   }
 

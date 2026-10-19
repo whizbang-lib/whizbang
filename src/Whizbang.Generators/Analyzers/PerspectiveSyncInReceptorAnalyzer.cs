@@ -11,7 +11,7 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators.Analyzers;
 
 /// <summary>
-/// Roslyn analyzer that reports WHIZ900 when WaitForStreamAsync or WaitAsync is called
+/// Roslyn analyzer that reports WHIZ900 when WaitForStreamAsync, WaitAsync or WaitForAppliedAsync is called
 /// inside a receptor that fires at an Inline lifecycle stage.
 /// </summary>
 /// <remarks>
@@ -36,22 +36,17 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
   private const string SYNC_RECEPTOR_INTERFACE_PREFIX = "Whizbang.Core.ISyncReceptor<";
   private const string FIRE_AT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
 
-  private static readonly string[] _dangerousMethods = ["WaitForStreamAsync", "WaitAsync"];
+  // The awaiter methods that wait for a perspective to apply. IsCaughtUpAsync checks without waiting, so it cannot
+  // deadlock and is not one of them.
+  private static readonly string[] _dangerousMethods = ["WaitForStreamAsync", "WaitAsync", "WaitForAppliedAsync"];
+
+  // An Inline stage is one whose name ends in "Inline": every such LifecycleStage member is awaited by whoever fires
+  // it. Read from the name rather than kept as a list, which named stages that do not exist and missed the
+  // destruction stages (#1428).
+  private const string INLINE_SUFFIX = "Inline";
 
   /// <summary>
-  /// Inline lifecycle stages that will deadlock if WaitForStreamAsync/WaitAsync is called.
-  /// </summary>
-  private static readonly string[] _inlineStageNames = [
-    "ImmediateInline", "LocalImmediateInline",
-    "PreDistributeInline", "DistributeInline", "PostDistributeInline",
-    "PreOutboxInline", "PostOutboxInline",
-    "PreInboxInline", "PostInboxInline",
-    "PrePerspectiveInline", "PostPerspectiveInline", "PostAllPerspectivesInline",
-    "PostLifecycleInline"
-  ];
-
-  /// <summary>
-  /// Default stages for receptors without [FireAt] — all are Inline.
+  /// Default stages for receptors without [FireAt]: all are Inline, because the caller awaits them.
   /// </summary>
   private static readonly string[] _defaultStageNames = [
     "LocalImmediateInline", "PreOutboxInline", "PostInboxInline"
@@ -161,7 +156,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     }
 
     // Filter to only Inline stages
-    var inlineOnly = fireAtStages.Where(s => _inlineStageNames.Contains(s)).ToArray();
+    var inlineOnly = fireAtStages.Where(s => s.EndsWith(INLINE_SUFFIX, System.StringComparison.Ordinal)).ToArray();
     return (inlineOnly, false);
   }
 }

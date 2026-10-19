@@ -99,7 +99,8 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     // A "user interface" is one that:
     // 1. Is NOT a Whizbang interface itself (doesn't start with Whizbang.Core)
     // 2. Has ILensQuery or IPerspectiveFor in its AllInterfaces hierarchy
-    var userInterface = classSymbol.Interfaces.FirstOrDefault(i => _isUserInterfaceExtendingWhizbang(i));
+    var interfaces = _registrableInterfaces(classSymbol);
+    var userInterface = interfaces.FirstOrDefault(i => _isUserInterfaceExtendingWhizbang(i));
 
     if (userInterface is not null) {
       // User-defined interface pattern - register against user interface
@@ -114,7 +115,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Pattern 2: Direct implementation of ILensQuery<T> or IPerspectiveFor<T>
-    var directWhizbangInterface = classSymbol.Interfaces.FirstOrDefault(i => _isDirectWhizbangInterface(i));
+    var directWhizbangInterface = interfaces.FirstOrDefault(i => _isDirectWhizbangInterface(i));
 
     if (directWhizbangInterface is not null) {
       // Direct implementation pattern - register against the Whizbang interface
@@ -129,6 +130,21 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// The interfaces a class is registered against: its own, then those it inherits from abstract base classes.
+  /// </summary>
+  /// <remarks>
+  /// An abstract base is never registered itself, so a lens or perspective interface it declares would otherwise
+  /// reach no registration at all (#1431). A concrete base is registered on its own, so its interfaces stay with it.
+  /// </remarks>
+  private static List<INamedTypeSymbol> _registrableInterfaces(INamedTypeSymbol classSymbol) {
+    var interfaces = new List<INamedTypeSymbol>(classSymbol.Interfaces);
+    for (var baseType = classSymbol.BaseType; baseType is { IsAbstract: true }; baseType = baseType.BaseType) {
+      interfaces.AddRange(baseType.Interfaces);
+    }
+    return interfaces;
   }
 
   /// <summary>
