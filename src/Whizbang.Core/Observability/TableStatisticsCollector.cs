@@ -38,14 +38,19 @@ public sealed partial class TableStatisticsCollector(
   private const int COLLECTION_INTERVAL_SECONDS = 30;
 
   /// <summary>
-  /// Raised once every collection cycle, AFTER all three metric caches have been written.
+  /// Raised once every collection cycle, after every metric cache has been written.
   /// </summary>
   /// <remarks>
-  /// Exists so an observer can tell that a cycle's values have actually landed. Watching the
-  /// provider instead only proves the collector asked — the writes happen after the provider
-  /// returns, so anything keyed on the request races the update it is waiting for.
+  /// Exists so an observer can tell that a cycle's values have actually landed: a health check that
+  /// wants to know the statistics are current, or a test waiting for the first reading. Watching the
+  /// provider instead only proves the collector asked; the writes happen after the provider returns,
+  /// so anything keyed on the request races the update it is waiting for. Not raised for a cycle that
+  /// failed, which is logged instead.
   /// </remarks>
-  internal event Action? CycleCompleted;
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs:Collector_PublishesTableBloatRatioAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsTableStatisticsAsync</tests>
+  public event Action? CycleCompleted;
 
   /// <inheritdoc/>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {

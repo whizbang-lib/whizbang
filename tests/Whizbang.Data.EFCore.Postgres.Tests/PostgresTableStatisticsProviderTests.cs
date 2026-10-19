@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Postgres.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -15,18 +16,22 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Integration tests for <see cref="PostgresTableStatisticsProvider"/> against real PostgreSQL.
 /// Verifies pg_stat_user_tables and queue depth queries return correct data.
 /// </summary>
-/// <tests>src/Whizbang.Data.EFCore.Postgres/PostgresTableStatisticsProvider.cs</tests>
+/// <code-under-test>src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
 public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
+  private NpgsqlDataSource _dataSource = null!;
   private PostgresTableStatisticsProvider _provider = null!;
 
   [Before(Test)]
   public async Task TestSetupAsync() {
-    var dataSource = NpgsqlDataSource.Create(ConnectionString);
-    _provider = new PostgresTableStatisticsProvider(dataSource);
+    _dataSource = NpgsqlDataSource.Create(ConnectionString);
+    _provider = new PostgresTableStatisticsProvider(_dataSource);
     await Task.CompletedTask;
   }
+
+  [After(Test)]
+  public async Task TestTeardownAsync() => await _dataSource.DisposeAsync();
 
   [Test]
   public async Task GetEstimatedTableSizesAsync_ReturnsAllTrackedTablesAsync() {
@@ -48,12 +53,193 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     }
   }
 
+  // ==== #1488: every framework and perspective table, not a list of seven ====
+
   [Test]
-  public async Task GetEstimatedTableSizesAsync_FreshDatabase_HasSevenTablesAsync() {
+  public async Task GetEstimatedTableSizesAsync_ReportsEveryFrameworkAndPerspectiveTableAsync() {
+    // The event body store, the deduplication ledger and the dead letters are among the largest tables a
+    // service has, and perspective tables are the rest of its data. A hard-coded list of seven reported
+    // none of them, so growth in any of them was found by hand.
     var sizes = await _provider.GetEstimatedTableSizesAsync();
-    var count = sizes.Count;
-    await Assert.That(count).IsEqualTo(7)
-      .Because("Should return sizes for all 7 tracked infrastructure tables");
+    var catalog = await _scalarListAsync("""
+      SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition AND c.relname LIKE 'wh\_%'
+      """);
+
+    foreach (var table in new[] { "wh_event_body", "wh_message_deduplication", "wh_dead_letters" }) {
+      await Assert.That(sizes.ContainsKey(table)).IsTrue()
+        .Because($"{table} is a framework table, and every framework table is reported");
+    }
+    await Assert.That(catalog.Any(t => t.StartsWith("wh_per_", StringComparison.Ordinal))).IsTrue()
+      .Because("the test schema declares perspectives, so a perspective table must be there to find");
+    await Assert.That(sizes.Keys.Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(catalog.Order(StringComparer.Ordinal).ToList())
+      .Because("every wh_ table in the schema is reported by name, perspective tables included, and nothing else");
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_LeavesOutOtherTablesAndOtherSchemasAsync() {
+    await _runAsync(
+      "CREATE TABLE stats_not_framework (id int)",
+      // 'wh' then a letter: a pattern that left the underscore as a wildcard would take it.
+      "CREATE TABLE whatever_probe (id int)",
+      "CREATE VIEW wh_view_probe AS SELECT 1 AS one",
+      "CREATE SCHEMA stats_other_service",
+      "CREATE TABLE stats_other_service.wh_other_service_probe (id int)");
+
+    var storage = await _provider.GetTableStorageAsync();
+
+    await Assert.That(storage.ContainsKey("wh_event_store")).IsTrue();
+    await Assert.That(storage.ContainsKey("stats_not_framework")).IsFalse()
+      .Because("only tables named like the framework's are the framework's to report");
+    await Assert.That(storage.ContainsKey("whatever_probe")).IsFalse()
+      .Because("the underscore in wh_ is literal, not a single-character wildcard");
+    await Assert.That(storage.ContainsKey("wh_view_probe")).IsFalse()
+      .Because("a view holds no storage of its own");
+    await Assert.That(storage.ContainsKey("wh_other_service_probe")).IsFalse()
+      .Because("another schema is another service's tables, which that service reports");
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_PastTheCap_SumsTheSmallestUnderOtherAsync() {
+    // Five tables of five distinct sizes, autovacuum off so no free-space or visibility map appears
+    // between the two reads and moves a size under the comparison.
+    var rows = new[] { 0, 200, 2_000, 8_000, 20_000 };
+    var statements = new List<string> { "CREATE SCHEMA stats_cap" };
+    for (var i = 0; i < rows.Length; i++) {
+      statements.Add($"CREATE TABLE stats_cap.wh_cap_{i} (id int, label text) WITH (autovacuum_enabled = false)");
+      statements.Add($"INSERT INTO stats_cap.wh_cap_{i} SELECT g, repeat('x', 40) FROM generate_series(1, {rows[i]}) g");
+    }
+    statements.Add("ANALYZE");
+    await _runAsync([.. statements]);
+
+    var all = await new PostgresTableStatisticsProvider(_dataSource, "stats_cap").GetTableStorageAsync();
+    var capped = await new PostgresTableStatisticsProvider(_dataSource, "stats_cap", maxTrackedTables: 3).GetTableStorageAsync();
+
+    var largest = all.OrderByDescending(t => t.Value.TotalBytes).Take(3).Select(t => t.Key).ToList();
+    var folded = all.Keys.Except(largest).ToList();
+    await Assert.That(capped.Keys.Order(StringComparer.Ordinal).ToList())
+      .IsEquivalentTo(largest.Append(TableStatisticsOptions.OTHER_TABLES).Order(StringComparer.Ordinal).ToList())
+      .Because("the three largest keep their names and the two smallest are summed under one series");
+    await Assert.That(capped[TableStatisticsOptions.OTHER_TABLES].TotalBytes).IsEqualTo(folded.Sum(t => all[t].TotalBytes))
+      .Because("a summed series that lost bytes would make every total on a dashboard wrong");
+    await Assert.That(capped[TableStatisticsOptions.OTHER_TABLES].LiveRows).IsEqualTo(folded.Sum(t => all[t].LiveRows));
+    await Assert.That(capped.Values.Sum(t => t.TotalBytes)).IsEqualTo(all.Values.Sum(t => t.TotalBytes))
+      .Because("capping changes how many series there are, never what they add up to");
+    await Assert.That(capped[TableStatisticsOptions.OTHER_TABLES].BloatRatio).IsNull()
+      .Because("a ratio cannot be added, so the summed series carries none");
+
+    var cappedSizes = await new PostgresTableStatisticsProvider(_dataSource, "stats_cap", maxTrackedTables: 3).GetEstimatedTableSizesAsync();
+    await Assert.That(cappedSizes.Count).IsEqualTo(4)
+      .Because("estimated_bytes is capped the same way as the split it is the total of");
+  }
+
+  [Test]
+  public async Task Constructor_RefusesACapBelowOneAsync() {
+    await Assert.That(() => new PostgresTableStatisticsProvider(_dataSource, "public", maxTrackedTables: 0))
+      .Throws<ArgumentOutOfRangeException>()
+      .Because("a cap of zero would sum every table under 'other' and name none, which no one means");
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_SplitsEachTableIntoHeapToastAndIndexesAsync() {
+    // Documents well past the inline limit, built from hashes so compression cannot shrink them back
+    // under it: these are stored in the table's TOAST relation.
+    await _runAsync(
+      "CREATE SCHEMA stats_toast",
+      "CREATE TABLE stats_toast.wh_toast_probe (id int PRIMARY KEY, doc jsonb) WITH (autovacuum_enabled = false, toast.autovacuum_enabled = false)",
+      """
+      INSERT INTO stats_toast.wh_toast_probe
+      SELECT g, jsonb_build_object('blob', (SELECT string_agg(md5(g::text || ':' || i::text), '') FROM generate_series(1, 4000) i))
+      FROM generate_series(1, 20) g
+      """);
+
+    var storage = await new PostgresTableStatisticsProvider(_dataSource, "stats_toast").GetTableStorageAsync();
+    var probe = storage["wh_toast_probe"];
+    var total = await _scalarAsync("SELECT pg_total_relation_size('stats_toast.wh_toast_probe')");
+
+    await Assert.That(probe.ToastBytes).IsGreaterThan(probe.HeapBytes)
+      .Because("large documents live in TOAST, which is the storage only this split makes visible");
+    await Assert.That(probe.IndexBytes).IsGreaterThan(0L)
+      .Because("the primary key is an index, and indexes are their own component");
+    // Heap, TOAST heap, TOAST index and the primary key: one page of slack for each.
+    await Assert.That(Math.Abs(probe.TotalBytes - total)).IsLessThanOrEqualTo(4L * 8192)
+      .Because("the three components are the whole of the table's size, not an approximation of part of it");
+
+    var sizes = await new PostgresTableStatisticsProvider(_dataSource, "stats_toast").GetEstimatedTableSizesAsync();
+    await Assert.That(sizes["wh_toast_probe"]).IsEqualTo(probe.TotalBytes)
+      .Because("estimated_bytes and the component split come from one reading, so they agree exactly");
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_ReportsLiveRowsAsync() {
+    await _runAsync(
+      "CREATE SCHEMA stats_rows",
+      "CREATE TABLE stats_rows.wh_rows_analyzed (id int, label text)",
+      "INSERT INTO stats_rows.wh_rows_analyzed SELECT g, 'row-' || g FROM generate_series(1, 1234) g",
+      "ANALYZE stats_rows.wh_rows_analyzed");
+
+    var storage = await new PostgresTableStatisticsProvider(_dataSource, "stats_rows").GetTableStorageAsync();
+
+    await Assert.That(storage["wh_rows_analyzed"].LiveRows).IsEqualTo(1234L)
+      .Because("after ANALYZE the planner's row count is the table's row count");
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_ATableNeverAnalyzed_ReportsItsCountedRowsAsync() {
+    // Until a table is first analyzed or vacuumed its planner row count is -1, meaning unknown. Reporting
+    // that would read as a negative row count, and reporting zero would read as empty; the statistics
+    // the server keeps as rows are written answer instead. No index, because building one sets the count.
+    await using (var connection = await _dataSource.OpenConnectionAsync()) {
+      foreach (var sql in new[] {
+          "CREATE SCHEMA stats_unanalyzed",
+          "CREATE TABLE stats_unanalyzed.wh_rows_unanalyzed (id int, label text) WITH (autovacuum_enabled = false)",
+          "INSERT INTO stats_unanalyzed.wh_rows_unanalyzed SELECT g, 'row-' || g FROM generate_series(1, 321) g",
+          // The counts are flushed by the backend that wrote them, on its own schedule; force it.
+          "SELECT pg_stat_force_next_flush()" }) {
+        await using var cmd = new NpgsqlCommand(sql, connection);
+        await cmd.ExecuteNonQueryAsync();
+      }
+    }
+
+    var storage = await new PostgresTableStatisticsProvider(_dataSource, "stats_unanalyzed").GetTableStorageAsync();
+
+    await Assert.That(storage["wh_rows_unanalyzed"].LiveRows).IsEqualTo(321L);
+  }
+
+  [Test]
+  public async Task GetTableStorageAsync_APartitionedTable_IsReportedOnceWithItsPartitionsSummedAsync() {
+    await _runAsync(
+      "CREATE SCHEMA stats_part",
+      "CREATE TABLE stats_part.wh_part_probe (id int, label text) PARTITION BY RANGE (id)",
+      "CREATE TABLE stats_part.wh_part_probe_low PARTITION OF stats_part.wh_part_probe FOR VALUES FROM (0) TO (1000) WITH (autovacuum_enabled = false)",
+      "CREATE TABLE stats_part.wh_part_probe_high PARTITION OF stats_part.wh_part_probe FOR VALUES FROM (1000) TO (2000) WITH (autovacuum_enabled = false)",
+      "INSERT INTO stats_part.wh_part_probe SELECT g, 'row-' || g FROM generate_series(1, 1500) g",
+      "ANALYZE stats_part.wh_part_probe");
+
+    var storage = await new PostgresTableStatisticsProvider(_dataSource, "stats_part").GetTableStorageAsync();
+    var partitions = await _scalarAsync(
+      "SELECT pg_total_relation_size('stats_part.wh_part_probe_low') + pg_total_relation_size('stats_part.wh_part_probe_high')");
+
+    await Assert.That(storage.Keys.ToList()).IsEquivalentTo(new List<string> { "wh_part_probe" })
+      .Because("a partitioned table is one table to its owner; its partitions are how it is stored");
+    await Assert.That(storage["wh_part_probe"].TotalBytes).IsEqualTo(partitions)
+      .Because("the parent holds no rows itself, so its size is its partitions'");
+    await Assert.That(storage["wh_part_probe"].LiveRows).IsEqualTo(1500L);
+  }
+
+  [Test]
+  public async Task WithoutASchema_TheConnectionsCurrentSchemaIsReadAsync() {
+    // The Dapper driver's tables are wherever the connection's search path puts them.
+    var provider = new PostgresTableStatisticsProvider(_dataSource, schema: null);
+
+    var storage = await provider.GetTableStorageAsync();
+    var depths = await provider.GetQueueDepthsAsync();
+    var scans = await provider.GetTableScanStatisticsAsync();
+
+    await Assert.That(storage.ContainsKey("wh_event_store")).IsTrue();
+    await Assert.That(depths["outbox"]).IsEqualTo(0L);
+    await Assert.That(scans.ContainsKey("wh_event_store")).IsTrue()
+      .Because("the scan counters behind the query-exposure advisory are read from the same schema");
   }
 
   [Test]
@@ -173,6 +359,31 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await Assert.That(ratios["wh_outbox"]).IsLessThan(100)
       .Because("freshly written rows carry no dead tuples, so the heap should be near the width "
              + "its rows need; a value this large would mean raw bytes leaked out as a ratio");
+  }
+
+  private async Task _runAsync(params string[] statements) {
+    await using var connection = await _dataSource.OpenConnectionAsync();
+    foreach (var sql in statements) {
+      await using var cmd = new NpgsqlCommand(sql, connection);
+      await cmd.ExecuteNonQueryAsync();
+    }
+  }
+
+  private async Task<long> _scalarAsync(string sql) {
+    await using var connection = await _dataSource.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(sql, connection);
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  private async Task<List<string>> _scalarListAsync(string sql) {
+    var values = new List<string>();
+    await using var connection = await _dataSource.OpenConnectionAsync();
+    await using var cmd = new NpgsqlCommand(sql, connection);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      values.Add(reader.GetString(0));
+    }
+    return values;
   }
 
   /// <summary>

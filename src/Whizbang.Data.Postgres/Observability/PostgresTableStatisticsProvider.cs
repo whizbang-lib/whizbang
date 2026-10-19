@@ -3,25 +3,52 @@
 
 using Npgsql;
 using Whizbang.Core.Observability;
-using Whizbang.Data.EFCore.Postgres.Observability;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.Postgres.Observability;
 
 /// <summary>
-/// PostgreSQL implementation of <see cref="ITableStatisticsProvider"/>.
-/// Uses pg_stat_user_tables + pg_total_relation_size for table sizes
-/// and partial-index COUNT for queue depths. Zero table scans.
+/// PostgreSQL implementation of <see cref="ITableStatisticsProvider"/>, shared by both data drivers.
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs</tests>
-public sealed partial class PostgresTableStatisticsProvider(
-  NpgsqlDataSource dataSource,
-  string schema = "public") : ITableStatisticsProvider {
-
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs</tests>
+public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsProvider {
   private static readonly string[] _trackedTables = [
     "wh_inbox", "wh_outbox", "wh_event_store", "wh_active_streams",
     "wh_perspective_events", "wh_perspective_cursors", "wh_perspective_snapshots"
   ];
+
+  private readonly Func<CancellationToken, ValueTask<NpgsqlConnection>> _openConnectionAsync;
+  private readonly string? _schema;
+
+  /// <summary>Reads the statistics of the schema's tables through connections the caller opens.</summary>
+  /// <param name="openConnectionAsync">Opens a connection the provider disposes.</param>
+  /// <param name="schema">The schema, unquoted; null reads the connection's current schema.</param>
+  /// <param name="maxTrackedTables">The most tables reported by name; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.</param>
+  public PostgresTableStatisticsProvider(
+      Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnectionAsync,
+      string? schema = "public",
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES) {
+    ArgumentNullException.ThrowIfNull(openConnectionAsync);
+    _openConnectionAsync = openConnectionAsync;
+    _schema = schema;
+    _ = maxTrackedTables;
+  }
+
+  /// <summary>Reads the statistics of the schema's tables through a data source.</summary>
+  /// <param name="dataSource">The data source connections are opened from.</param>
+  /// <param name="schema">The schema, unquoted; null reads the connection's current schema.</param>
+  /// <param name="maxTrackedTables">The most tables reported by name; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.</param>
+  public PostgresTableStatisticsProvider(
+      NpgsqlDataSource dataSource,
+      string? schema = "public",
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES)
+    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables) {
+  }
+
+  /// <inheritdoc />
+  public Task<IReadOnlyDictionary<string, TableStorageStatistics>> GetTableStorageAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, TableStorageStatistics>>(new Dictionary<string, TableStorageStatistics>());
 
   /// <inheritdoc />
   /// <remarks>
@@ -45,7 +72,7 @@ public sealed partial class PostgresTableStatisticsProvider(
   public async Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, double>();
 
-    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var connection = await _openConnectionAsync(ct);
     await using var cmd = new NpgsqlCommand("""
       SELECT st.relname,
              (pg_relation_size(st.relid)::numeric / st.n_live_tup) / GREATEST(w.expected, 1)
@@ -60,7 +87,7 @@ public sealed partial class PostgresTableStatisticsProvider(
         AND st.n_live_tup > 1000
       """, connection);
 
-    cmd.Parameters.AddWithValue("schema", schema);
+    cmd.Parameters.AddWithValue("schema", _schema!);
     cmd.Parameters.AddWithValue("tables", _trackedTables);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -73,7 +100,7 @@ public sealed partial class PostgresTableStatisticsProvider(
   public async Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, long>();
 
-    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var connection = await _openConnectionAsync(ct);
     await using var cmd = new NpgsqlCommand("""
       SELECT relname, pg_total_relation_size(relid) as size_bytes
       FROM pg_stat_user_tables
@@ -81,7 +108,7 @@ public sealed partial class PostgresTableStatisticsProvider(
         AND relname = ANY(@tables)
       """, connection);
 
-    cmd.Parameters.AddWithValue("schema", schema);
+    cmd.Parameters.AddWithValue("schema", _schema!);
     cmd.Parameters.AddWithValue("tables", _trackedTables);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -95,13 +122,13 @@ public sealed partial class PostgresTableStatisticsProvider(
   public async Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, long>();
 
-    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var connection = await _openConnectionAsync(ct);
 
     // Schema-qualify table names for multi-schema deployments
     // 162: the inbox depth gauge counts unprocessed rows, and processed_at is work state.
-    var inboxTable = $"{schema}.wh_inbox_state";
-    var outboxTable = $"{schema}.wh_outbox";
-    var deadLettersTable = $"{schema}.wh_dead_letters";
+    var inboxTable = $"{_schema}.wh_inbox_state";
+    var outboxTable = $"{_schema}.wh_outbox";
+    var deadLettersTable = $"{_schema}.wh_dead_letters";
 
     // Dead letters are a queue like any other, sliced by status because the three
     // populations mean three different things to an operator: held is quarantine awaiting
@@ -139,7 +166,7 @@ public sealed partial class PostgresTableStatisticsProvider(
       CancellationToken ct = default) {
     var statistics = new Dictionary<string, TableScanStatistics>(StringComparer.Ordinal);
 
-    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var connection = await _openConnectionAsync(ct);
     await using var cmd = new NpgsqlCommand("""
       SELECT relname,
              COALESCE(seq_scan, 0) AS seq_scans,
@@ -149,7 +176,7 @@ public sealed partial class PostgresTableStatisticsProvider(
       WHERE schemaname = @schema
       """, connection);
 
-    cmd.Parameters.AddWithValue("schema", schema);
+    cmd.Parameters.AddWithValue("schema", _schema!);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
     while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
@@ -207,7 +234,7 @@ public sealed partial class PostgresTableStatisticsProvider(
       CancellationToken ct = default) {
     var byTable = new Dictionary<string, IReadOnlyList<ExpensivePredicate>>(StringComparer.Ordinal);
 
-    await using var connection = await dataSource.OpenConnectionAsync(ct);
+    await using var connection = await _openConnectionAsync(ct);
 
     try {
       await using var cmd = new NpgsqlCommand("""

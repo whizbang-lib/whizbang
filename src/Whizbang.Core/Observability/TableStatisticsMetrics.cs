@@ -84,6 +84,17 @@ public sealed class TableStatisticsMetrics {
   }
 
   /// <summary>
+  /// Updates the cached per-table storage split and live row counts. Called by
+  /// <see cref="TableStatisticsCollector"/>.
+  /// </summary>
+  /// <param name="storage">The latest reading, per table.</param>
+  public void UpdateTableStorage(IReadOnlyDictionary<string, TableStorageStatistics> storage) {
+    // RED scaffold: the gauges for the storage split arrive with the implementation.
+    _ = storage;
+    _ = _tableSizes.Count;
+  }
+
+  /// <summary>
   /// Test seam: reads back a published ratio. Observable gauges are only sampled by an active
   /// meter listener, so asserting on the cache is the direct way to prove the value was fed.
   /// </summary>

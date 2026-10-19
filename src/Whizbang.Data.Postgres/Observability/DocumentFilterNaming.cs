@@ -3,7 +3,7 @@
 
 using System.Text.RegularExpressions;
 
-namespace Whizbang.Data.EFCore.Postgres.Observability;
+namespace Whizbang.Data.Postgres.Observability;
 
 /// <summary>
 /// Names the document fields a statement filters on, in a form the database's statement statistics

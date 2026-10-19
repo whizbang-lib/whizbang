@@ -83,6 +83,10 @@ public class ConfigurationKeyManifestTests {
     services.AddWhizbangMessageSecurity();
     services.AddSystemEvents();
     services.AddWhizbangPinnedWorkerPool(_ => { });
+    // The table statistics settings are bound by the registration both data drivers call; the provider is
+    // the driver's and is never built here.
+    Whizbang.Core.Observability.TableStatisticsServiceCollectionExtensions.AddWhizbangTableStatistics(
+      services, (_, _) => throw new InvalidOperationException("the manifest harness builds no provider"));
     services.AddGraphQLServer().AddWhizbangStartupStatus();
 
     await using var provider = services.BuildServiceProvider();

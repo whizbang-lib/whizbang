@@ -3,6 +3,7 @@
 
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Whizbang.Data.Postgres.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres.Observability;
 

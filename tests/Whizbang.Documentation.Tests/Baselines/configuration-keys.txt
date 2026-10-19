@@ -290,6 +290,7 @@ Whizbang:SystemEvents:AuditShipMaxBatchCount
 Whizbang:SystemEvents:AuditShipMaxDelaySeconds
 Whizbang:SystemEvents:AuditShipSlideSeconds
 Whizbang:SystemEvents:LocalOnly
+Whizbang:TableStatistics:MaxTrackedTables
 Whizbang:Tags
 Whizbang:Tags:Coalesce
 Whizbang:Tags:Coalesce:*:Atomicity

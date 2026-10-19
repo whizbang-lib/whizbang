@@ -19,6 +19,7 @@ using Whizbang.Core.RunControl;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
+using Whizbang.Data.Postgres.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
