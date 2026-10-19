@@ -16,11 +16,23 @@
 --   row for the same (table_name, service_name) is renamed to the CLR key and reported as
 --   'renamed_key'. Body reproduced verbatim from 030 with that branch added (rule 5).
 --
--- Dependencies: 030 (reconcile_perspective_registry), 101/103 (sync_perspective_retention keys on clr_type_name)
+--   Issue #1483: each payload entry also names the perspective that folds the model
+--   ("PerspectiveName", the perspective's CLR type name, one entry per perspective). The reconcile records
+--   all of them for the model in wh_perspective_registry.perspective_names (column added in 112), which
+--   is how an eviction finds the cursors and snapshots its row leaves behind. A payload that names no
+--   perspective for the model leaves the recorded names as they are.
+--
+-- Dependencies: 030 (reconcile_perspective_registry), 101/103 (sync_perspective_retention keys on clr_type_name),
+--               112 (wh_perspective_registry.perspective_names)
 -- Objects: reconcile_perspective_registry
 
 SELECT __SCHEMA__.drop_all_overloads('reconcile_perspective_registry');
 
+-- <docs>fundamentals/perspectives/registry</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReconcilePerspectiveRegistryKeyAdoptionSqlTests.cs:Reconcile_ExistingDisplayStringKey_IsAdoptedNotDuplicatedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Reconcile_RecordsEveryPerspectiveOfTheModelAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Reconcile_PayloadWithoutPerspectiveNames_KeepsTheRecordedOnesAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EvictionCompanionCleanupSqlTests.cs:Reconcile_ChangedPerspectiveNames_ReplaceTheRecordedOnesAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.reconcile_perspective_registry(
   p_perspectives JSONB,
   p_service_name VARCHAR DEFAULT NULL
@@ -40,6 +52,7 @@ DECLARE
   v_old_table_name VARCHAR;
   v_old_schema_hash VARCHAR;
   v_adopted BOOLEAN;
+  v_perspective_names TEXT[];
 BEGIN
   -- Process each perspective in the array
   FOR v_perspective IN
@@ -51,6 +64,15 @@ BEGIN
       COALESCE(assoc->>'ServiceName', p_service_name) AS service_name
     FROM jsonb_array_elements(p_perspectives) AS assoc
   LOOP
+    -- 1483: every perspective that folds this model, from the whole payload (a model folded by two
+    -- perspectives arrives as two entries). NULL when the payload names none, which keeps what is recorded.
+    SELECT array_agg(DISTINCT e->>'PerspectiveName' ORDER BY e->>'PerspectiveName')
+      INTO v_perspective_names
+      FROM jsonb_array_elements(p_perspectives) AS e
+     WHERE e->>'ClrTypeName' = v_perspective.clr_type_name
+       AND COALESCE(e->>'ServiceName', p_service_name) = v_perspective.service_name
+       AND NULLIF(e->>'PerspectiveName', '') IS NOT NULL;
+
     -- Check if this CLR type already exists in the registry
     SELECT
       pr.table_name,
@@ -121,6 +143,7 @@ BEGIN
         table_name = v_perspective.table_name,
         schema_json = v_perspective.schema_json,
         schema_hash = v_perspective.schema_hash,
+        perspective_names = COALESCE(v_perspective_names, __SCHEMA__.wh_perspective_registry.perspective_names),
         updated_at = NOW()
       WHERE __SCHEMA__.wh_perspective_registry.clr_type_name = v_perspective.clr_type_name
         AND __SCHEMA__.wh_perspective_registry.service_name = v_perspective.service_name;
@@ -137,6 +160,7 @@ BEGIN
         schema_json,
         schema_hash,
         service_name,
+        perspective_names,
         created_at,
         updated_at
       ) VALUES (
@@ -145,6 +169,7 @@ BEGIN
         v_perspective.schema_json,
         v_perspective.schema_hash,
         v_perspective.service_name,
+        v_perspective_names,
         NOW(),
         NOW()
       );

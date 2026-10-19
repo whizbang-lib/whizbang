@@ -3789,7 +3789,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates perspective registry JSON for CLR type → table name tracking.
-  /// Used by reconcile_perspective_registry() function for schema drift detection.
+  /// Used by reconcile_perspective_registry() function for schema drift detection, and to record which
+  /// perspectives fold each model (one entry per perspective, issue #1483).
   /// </summary>
   /// <param name="perspectives">List of perspectives to register</param>
   /// <param name="serviceName">Assembly name for service identification</param>
@@ -3835,7 +3836,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
     sb.Append($"\"SchemaJson\":{schemaJson},");
     sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
-    sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\"");
+    sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\",");
+    // The perspective that folds this model, in the CLR form its cursors and snapshots are keyed by
+    // (TypeNameUtilities.BuildClrTypeName at discovery). One entry per perspective, so a model folded by
+    // two perspectives names both; the reconcile records them for the row-eviction cleanup (issue #1483).
+    sb.Append($"\"PerspectiveName\":\"{_escapeJsonString(perspective.PerspectiveClrTypeName)}\"");
     sb.Append('}');
   }
 
