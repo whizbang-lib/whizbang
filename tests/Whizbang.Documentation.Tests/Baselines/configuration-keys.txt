@@ -38,6 +38,7 @@ Whizbang:BodyOffload:PassiveSweepMaxBatchesPerCycle
 Whizbang:BodyOffload:ProviderName
 Whizbang:BodyOffload:RequireSealedBodies
 Whizbang:BodyOffload:SizeThresholdBytes
+Whizbang:Capabilities:ProbeOnStartup
 Whizbang:CircuitBreakers:*:CooldownBackoffMultiplier
 Whizbang:CircuitBreakers:*:FailureThreshold
 Whizbang:CircuitBreakers:*:InitialCooldownSeconds
@@ -174,7 +175,6 @@ Whizbang:Postgres:InitialRetryDelay
 Whizbang:Postgres:MaxInFlightCommands
 Whizbang:Postgres:MaxRetryDelay
 Whizbang:Postgres:RetryIndefinitely
-Whizbang:PostgresExtensions:ProbeOnStartup
 Whizbang:Redelivery:MaxBytesPerComposite
 Whizbang:Redelivery:MaxEventsPerRequest
 Whizbang:Redelivery:MaxInnerEventsPerComposite

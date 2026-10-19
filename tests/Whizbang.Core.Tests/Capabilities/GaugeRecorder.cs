@@ -3,7 +3,7 @@
 
 using System.Diagnostics.Metrics;
 
-namespace Whizbang.Core.Tests.PostgresExtensions;
+namespace Whizbang.Core.Tests.Capabilities;
 
 /// <summary>One observed series of a gauge: its value and its tags.</summary>
 internal sealed record GaugeSeries(int Value, IReadOnlyDictionary<string, object?> Tags);

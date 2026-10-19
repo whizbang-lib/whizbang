@@ -464,11 +464,11 @@ public static class ServiceCollectionExtensions {
       ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
 
   /// <summary>
-  /// Registers this driver's database for the extension probe: the capabilities singleton, its gauge and the
-  /// startup step that reports which extensions the database can use (#1498).
+  /// Registers this driver's database as a scope of the Postgres capability provider, which reports at
+  /// startup which extensions the database can use (#1498, #1513).
   /// </summary>
   private static void _addExtensionProbe(IServiceCollection services, string connectionString) =>
-    services.AddWhizbangPostgresExtensionProbe(ProbeDatabaseName(connectionString), (_, ct) => OpenConnectionAsync(connectionString, ct));
+    services.AddWhizbangPostgresCapabilities(ProbeDatabaseName(connectionString), (_, ct) => OpenConnectionAsync(connectionString, ct));
 
   /// <summary>Opens a connection the caller disposes.</summary>
   internal static async ValueTask<Npgsql.NpgsqlConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken) {

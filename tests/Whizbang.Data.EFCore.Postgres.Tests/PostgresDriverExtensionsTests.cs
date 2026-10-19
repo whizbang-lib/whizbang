@@ -120,30 +120,29 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(fallback).IsTypeOf<DbContextNotificationConnectionStringFallback>();
   }
 
-  // ── Postgres extension probe (#1498) ──────────────────────────────────────────
+  // ── Postgres extensions as capabilities (#1498, #1513) ──────────────────────────────────────────
 
   [Test]
-  public async Task Postgres_RegistersItsDatabaseForTheExtensionProbe_UnderItsConnectionStringNameAsync() {
+  public async Task Postgres_RegistersItsDatabaseAsACapabilityScope_UnderItsConnectionStringNameAsync() {
     await Whizbang.Testing.Containers.SharedPostgresContainer.InitializeAsync();
     var services = new ServiceCollection();
     services.AddLogging();
-    services.AddMetrics();
     services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
     await using var dataSource = NpgsqlDataSource.Create(Whizbang.Testing.Containers.SharedPostgresContainer.ConnectionString);
     services.AddSingleton(dataSource);
     _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>("orders-db").WithDriver.Postgres;
 
     await using var sp = services.BuildServiceProvider();
-    var capabilities = sp.GetRequiredService<IPostgresCapabilities>();
-    await capabilities.RefreshAsync(CancellationToken.None);
+    var registry = sp.GetRequiredService<Whizbang.Core.Capabilities.ICapabilityRegistry>();
+    await registry.RefreshAsync(CancellationToken.None);
 
-    var database = capabilities.Databases.Single();
-    await Assert.That(database.Database).IsEqualTo("orders-db")
+    await Assert.That(registry.Providers.Single().Scopes.Single()).IsEqualTo("orders-db")
       .Because("the same name keys the database's Whizbang:Postgres:<name> section");
-    await Assert.That(database.ProbeFailure).IsNull()
+    await Assert.That(registry.Statuses.All(s => s.Reason is null)).IsTrue()
       .Because("the probe opens its connection from the context's data source");
-    await Assert.That(capabilities.GetState("orders-db", "pg_squeeze")).IsEqualTo(PostgresExtensionState.Missing);
-    await Assert.That(sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<PostgresExtensionsStartupStep>().Count()).IsEqualTo(1);
+    await Assert.That(registry.GetState(new Whizbang.Core.Capabilities.CapabilityId(PostgresExtensionCatalog.PROVIDER, "pg_squeeze"), "orders-db"))
+      .IsEqualTo(Whizbang.Core.Capabilities.CapabilityState.Missing);
+    await Assert.That(sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<Whizbang.Core.Capabilities.CapabilitiesStartupStep>().Count()).IsEqualTo(1);
   }
 
   // ── Turnkey IClaimedEmissionStore registration ────────────────────────────────

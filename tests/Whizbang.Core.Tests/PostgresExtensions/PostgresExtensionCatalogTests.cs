@@ -140,29 +140,4 @@ public class PostgresExtensionCatalogTests {
 
     await Assert.That(remedy).Contains("probe");
   }
-
-  // ---- statuses ----
-
-  [Test]
-  [Arguments(PostgresExtensionState.Installed, true)]
-  [Arguments(PostgresExtensionState.Available, true)]
-  [Arguments(PostgresExtensionState.NotAllowlisted, false)]
-  [Arguments(PostgresExtensionState.NeedsPreload, false)]
-  [Arguments(PostgresExtensionState.NoPrivilege, false)]
-  [Arguments(PostgresExtensionState.Missing, false)]
-  [Arguments(PostgresExtensionState.Unknown, false)]
-  public async Task IsUsable_OnlyForInstalledAndAvailableAsync(PostgresExtensionState state, bool usable) {
-    await Assert.That(new PostgresExtensionStatus(_entry("vector"), state, null).IsUsable).IsEqualTo(usable);
-  }
-
-  [Test]
-  public async Task Unknown_GivesEveryCatalogEntryTheUnknownStateAndKeepsTheReasonAsync() {
-    var result = PostgresDatabaseExtensions.Unknown("orders-db", PostgresExtensionCatalog.BuiltIn, "unreachable");
-
-    await Assert.That(result.Database).IsEqualTo("orders-db");
-    await Assert.That(result.ProbeFailure).IsEqualTo("unreachable");
-    await Assert.That(result.Extensions.Select(e => e.Extension.Name))
-      .IsEquivalentTo(PostgresExtensionCatalog.BuiltIn.Select(e => e.Name));
-    await Assert.That(result.Extensions.All(e => e.State == PostgresExtensionState.Unknown && e.InstalledVersion is null)).IsTrue();
-  }
 }

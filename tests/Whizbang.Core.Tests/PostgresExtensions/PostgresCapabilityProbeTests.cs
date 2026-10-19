@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -231,42 +230,5 @@ public class PostgresCapabilityProbeTests {
       _row("pg_stat_statements") with { SharedPreloadLibraries = "pg_cron, PG_STAT_STATEMENTS" });
 
     await Assert.That(state).IsEqualTo(PostgresExtensionState.Available);
-  }
-
-  // ---- the probe never throws for a database it cannot reach ----
-
-  [Test]
-  public async Task ProbeAsync_ConnectionFails_EveryExtensionIsUnknownAsync() {
-    var target = new PostgresExtensionProbeTarget("orders-db",
-      _ => throw new NpgsqlException("connection refused"));
-
-    var result = await PostgresCapabilityProbe.ProbeAsync(target, PostgresExtensionCatalog.BuiltIn, CancellationToken.None);
-
-    await Assert.That(result.Database).IsEqualTo("orders-db");
-    await Assert.That(result.ProbeFailure).Contains("connection refused");
-    await Assert.That(result.Extensions.Count).IsEqualTo(PostgresExtensionCatalog.BuiltIn.Count);
-    await Assert.That(result.Extensions.All(e => e.State == PostgresExtensionState.Unknown)).IsTrue();
-  }
-
-  [Test]
-  public async Task ProbeAsync_ATimeoutThatIsNotTheCallersCancellation_IsUnknownAsync() {
-    var target = new PostgresExtensionProbeTarget("orders-db",
-      _ => throw new OperationCanceledException("command timed out"));
-
-    var result = await PostgresCapabilityProbe.ProbeAsync(target, PostgresExtensionCatalog.BuiltIn, CancellationToken.None);
-
-    await Assert.That(result.ProbeFailure).Contains("command timed out");
-  }
-
-  [Test]
-  public async Task ProbeAsync_TheCallersCancellation_PropagatesAsync() {
-    using var cts = new CancellationTokenSource();
-    await cts.CancelAsync();
-    var target = new PostgresExtensionProbeTarget("orders-db",
-      ct => throw new OperationCanceledException(ct));
-
-    await Assert.That(async () => await PostgresCapabilityProbe.ProbeAsync(target, PostgresExtensionCatalog.BuiltIn, cts.Token))
-      .Throws<OperationCanceledException>()
-      .Because("host shutdown is not a probe failure");
   }
 }

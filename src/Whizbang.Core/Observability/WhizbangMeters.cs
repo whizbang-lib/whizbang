@@ -56,6 +56,7 @@ public static class WhizbangMeters {
     StartupPipelineMetrics.METER_NAME,
     StreamIntegrityMetrics.METER_NAME,
     BacklogAgeMetrics.METER_NAME,
+    Whizbang.Core.Capabilities.CapabilityMetrics.METER_NAME,
     InstanceLivenessMetrics.METER_NAME,
     CompositeMetrics.METER_NAME,
     ProbeCadenceMetrics.METER_NAME,
@@ -70,7 +71,6 @@ public static class WhizbangMeters {
     // literal to the owning METER_NAME constant.
     "Whizbang.Sagas",                    // Whizbang.Sagas — SagaMetrics
     "Whizbang.Postgres.Notifications",   // Whizbang.Data.Postgres — NotifyMetrics
-    "Whizbang.Postgres",                 // Whizbang.Data.Postgres: PostgresExtensionMetrics
   ];
 
   /// <summary>

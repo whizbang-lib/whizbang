@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Core.Capabilities;
+
 namespace Whizbang.Data.Postgres;
 
 /// <summary>
@@ -64,13 +66,19 @@ public sealed record PostgresExtensionInfo(
 /// <para>
 /// The catalog is the one place an extension's purpose and prerequisites are written down, so the
 /// startup report, the gauge and (in later work) the configuration checks all describe an extension
-/// the same way. <see cref="PostgresCapabilities"/> takes a catalog of its own, so a package can probe
-/// for an extension the built-in list does not name.
+/// the same way. Each entry becomes a provider-independent <see cref="CapabilityDescriptor"/>
+/// (<see cref="Describe"/>), so the capability registry, its verdict and its gauge treat Postgres
+/// extensions like any other capability.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/postgres-extensions#catalog</docs>
 /// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresExtensionCatalogTests.cs</tests>
 public static class PostgresExtensionCatalog {
+#pragma warning disable CA1707
+  /// <summary>The provider name every Postgres extension's <see cref="CapabilityId"/> carries.</summary>
+  public const string PROVIDER = "postgres";
+#pragma warning restore CA1707
+
   private const PostgresExtensionPrerequisites ALLOWLIST = PostgresExtensionPrerequisites.Allowlist;
   private const PostgresExtensionPrerequisites PRELOAD =
     PostgresExtensionPrerequisites.Allowlist | PostgresExtensionPrerequisites.SharedPreloadLibraries;
@@ -99,13 +107,50 @@ public static class PostgresExtensionCatalog {
   ];
 
   /// <summary>
+  /// The provider-independent descriptor of <paramref name="extension"/>: its purpose, features, whether
+  /// the library may provision it, its prerequisites as text, and the fix for each problem state, taken
+  /// from the Postgres state that maps onto it.
+  /// </summary>
+  /// <param name="extension">The catalog entry.</param>
+  /// <returns>The descriptor, identified as <c>postgres/&lt;name&gt;</c>.</returns>
+  public static CapabilityDescriptor Describe(PostgresExtensionInfo extension) {
+    ArgumentNullException.ThrowIfNull(extension);
+    var prerequisites = new List<string>();
+    if (extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.Allowlist)) {
+      prerequisites.Add("named in a managed server's extension allowlist");
+    }
+    if (extension.NeedsPreload) {
+      prerequisites.Add($"{extension.Name} in shared_preload_libraries");
+    }
+    if (extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.LogicalWalLevel)) {
+      prerequisites.Add("wal_level = logical");
+    }
+    if (extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.ClientBinary)) {
+      prerequisites.Add($"the {extension.Name} client program");
+    }
+    return new CapabilityDescriptor(
+      new CapabilityId(PROVIDER, extension.Name),
+      extension.Enables,
+      extension.Features,
+      extension.LibraryMayCreate,
+      prerequisites,
+      new Dictionary<CapabilityState, string> {
+        [CapabilityState.NotPermitted] = Remedy(extension, PostgresExtensionState.NotAllowlisted),
+        [CapabilityState.NeedsServerChange] = Remedy(extension, PostgresExtensionState.NeedsPreload),
+        [CapabilityState.NoPrivilege] = Remedy(extension, PostgresExtensionState.NoPrivilege),
+        [CapabilityState.Missing] = Remedy(extension, PostgresExtensionState.Missing),
+        [CapabilityState.Unknown] = Remedy(extension, PostgresExtensionState.Unknown),
+      });
+  }
+
+  /// <summary>
   /// What an operator does about <paramref name="extension"/> in <paramref name="state"/>, as one
   /// sentence for a log line or an error message.
   /// </summary>
   /// <param name="extension">The catalog entry.</param>
   /// <param name="state">Its state on some database.</param>
   /// <returns>The fix, or <c>none</c> for a usable state.</returns>
-  public static string Remedy(PostgresExtensionInfo extension, PostgresExtensionState state) {
+  internal static string Remedy(PostgresExtensionInfo extension, PostgresExtensionState state) {
     ArgumentNullException.ThrowIfNull(extension);
     var name = extension.Name;
     return state switch {

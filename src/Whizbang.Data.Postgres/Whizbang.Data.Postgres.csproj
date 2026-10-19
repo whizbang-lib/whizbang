@@ -13,9 +13,6 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
-    <!-- The configuration binder source generator compiles Bind calls on a literal section to typed
-         assignments (PostgresExtensionsOptions), so no reflection reaches the AOT path. -->
-    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
   </PropertyGroup>
 
   <ItemGroup>

@@ -3,6 +3,7 @@
 
 using System.Data.Common;
 using Npgsql;
+using Whizbang.Core.Capabilities;
 
 namespace Whizbang.Data.Postgres;
 
@@ -33,15 +34,6 @@ public readonly record struct PostgresExtensionProbeRow(
   bool CanCreateInDatabase,
   bool IsSuperuser);
 
-/// <summary>A database the probe reads, and how to open a connection to it.</summary>
-/// <param name="Database">The name it is reported under (the driver's name for it).</param>
-/// <param name="OpenConnectionAsync">Opens a connection the probe disposes.</param>
-/// <docs>operations/infrastructure/postgres-extensions</docs>
-/// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresCapabilitiesTests.cs</tests>
-public sealed record PostgresExtensionProbeTarget(
-  string Database,
-  Func<CancellationToken, ValueTask<NpgsqlConnection>> OpenConnectionAsync);
-
 /// <summary>
 /// Reads which catalog extensions a database can use, in one query, and derives each one's state.
 /// </summary>
@@ -59,13 +51,14 @@ public sealed record PostgresExtensionProbeTarget(
 /// would cost the whole probe. Hidden, it leaves only the extensions that need preloading Unknown.
 /// </para>
 /// <para>
-/// A database the probe cannot read (unreachable, refused, timed out) is answered with every extension
-/// <see cref="PostgresExtensionState.Unknown"/> and the reason, never a throw: what the server offers
-/// informs startup and must not be able to stop it. Only the caller's own cancellation propagates.
+/// The query throws when the database cannot be read (unreachable, refused, timed out); the capability
+/// registry turns that into Unknown with the reason, as it does for every provider, so the probe never
+/// stops startup.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/postgres-extensions#states</docs>
 /// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresCapabilityProbeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresCapabilityProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresCapabilityProbeIntegrationTests.cs</tests>
 public static class PostgresCapabilityProbe {
   /// <summary>The probe's one query; <c>@names</c> is the catalog's extension names, in order.</summary>
@@ -137,32 +130,24 @@ public static class PostgresCapabilityProbe {
   }
 
   /// <summary>
-  /// Probes one database. A database that cannot be read answers every extension
-  /// <see cref="PostgresExtensionState.Unknown"/>, with the reason; only the caller's cancellation throws.
+  /// Maps a Postgres state onto the generic capability state: Installed is Ready, Available is
+  /// Provisionable, NotAllowlisted is NotPermitted, NeedsPreload is NeedsServerChange; NoPrivilege, Missing
+  /// and Unknown keep their names.
   /// </summary>
-  /// <param name="target">The database.</param>
-  /// <param name="catalog">The extensions to read.</param>
-  /// <param name="cancellationToken">The caller's cancellation.</param>
-  /// <returns>One status per catalog entry.</returns>
-  public static async Task<PostgresDatabaseExtensions> ProbeAsync(
-      PostgresExtensionProbeTarget target, IReadOnlyList<PostgresExtensionInfo> catalog, CancellationToken cancellationToken) {
-    ArgumentNullException.ThrowIfNull(target);
-    ArgumentNullException.ThrowIfNull(catalog);
-    try {
-      var connection = await target.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-      await using (connection.ConfigureAwait(false)) {
-        var rows = await _readAsync(connection, catalog, cancellationToken).ConfigureAwait(false);
-        return new PostgresDatabaseExtensions(
-          target.Database,
-          [.. catalog.Select(e => new PostgresExtensionStatus(e, DeriveState(e, rows[e.Name]), rows[e.Name].InstalledVersion))],
-          ProbeFailure: null);
-      }
-    } catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested) {
-      return PostgresDatabaseExtensions.Unknown(target.Database, catalog, $"{ex.GetType().Name}: {ex.Message}");
-    }
-  }
+  /// <param name="state">The Postgres state.</param>
+  /// <returns>The generic state.</returns>
+  public static CapabilityState ToCapabilityState(PostgresExtensionState state) => state switch {
+    PostgresExtensionState.Installed => CapabilityState.Ready,
+    PostgresExtensionState.Available => CapabilityState.Provisionable,
+    PostgresExtensionState.NotAllowlisted => CapabilityState.NotPermitted,
+    PostgresExtensionState.NeedsPreload => CapabilityState.NeedsServerChange,
+    PostgresExtensionState.NoPrivilege => CapabilityState.NoPrivilege,
+    PostgresExtensionState.Missing => CapabilityState.Missing,
+    _ => CapabilityState.Unknown,
+  };
 
-  private static async Task<Dictionary<string, PostgresExtensionProbeRow>> _readAsync(
+  /// <summary>Runs the probe's query on an open connection: one row per catalog entry, by name. Throws on failure.</summary>
+  internal static async Task<Dictionary<string, PostgresExtensionProbeRow>> ReadAsync(
       NpgsqlConnection connection, IReadOnlyList<PostgresExtensionInfo> catalog, CancellationToken cancellationToken) {
     await using var command = connection.CreateCommand();
     command.CommandText = SQL;

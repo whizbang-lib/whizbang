@@ -7,8 +7,8 @@ namespace Whizbang.Data.Postgres;
 /// Whether an extension can be used on one database, and if not, what stands in the way.
 /// </summary>
 /// <remarks>
-/// <see cref="Installed"/> and <see cref="Available"/> are usable; every other state names the one
-/// thing to fix (see <see cref="PostgresExtensionCatalog.Remedy"/>). The states are checked in the
+/// The Postgres provider's own detail, kept in <c>CapabilityStatus.Detail</c> and mapped onto the generic
+/// <c>CapabilityState</c> by <see cref="PostgresCapabilityProbe.ToCapabilityState"/>. The states are checked in the
 /// order they are declared below <see cref="Available"/>, so an extension the server has no files
 /// for reads <see cref="Missing"/> however the allowlist is set.
 /// </remarks>
@@ -45,43 +45,4 @@ public enum PostgresExtensionState {
 
   /// <summary>The server has no files for it (<c>pg_available_extensions</c> does not list it).</summary>
   Missing,
-}
-
-/// <summary>One extension's state on one database.</summary>
-/// <param name="Extension">The catalog entry.</param>
-/// <param name="State">Its state.</param>
-/// <param name="InstalledVersion">The installed version, when it is in the database; otherwise null.</param>
-/// <docs>operations/infrastructure/postgres-extensions#states</docs>
-/// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresExtensionCatalogTests.cs</tests>
-public sealed record PostgresExtensionStatus(
-  PostgresExtensionInfo Extension,
-  PostgresExtensionState State,
-  string? InstalledVersion) {
-  /// <summary>Whether the extension can be used: <see cref="PostgresExtensionState.Installed"/> or <see cref="PostgresExtensionState.Available"/>.</summary>
-  public bool IsUsable => State is PostgresExtensionState.Installed or PostgresExtensionState.Available;
-}
-
-/// <summary>Every catalog extension's state on one database, as one probe read it.</summary>
-/// <param name="Database">The database's name, as its driver registered it.</param>
-/// <param name="Extensions">One status per catalog entry, in catalog order.</param>
-/// <param name="ProbeFailure">Why the probe could not read this database, or null when it did.</param>
-/// <docs>operations/infrastructure/postgres-extensions#states</docs>
-/// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresExtensionCatalogTests.cs</tests>
-public sealed record PostgresDatabaseExtensions(
-  string Database,
-  IReadOnlyList<PostgresExtensionStatus> Extensions,
-  string? ProbeFailure) {
-  /// <summary>
-  /// The answer for a database the probe could not read: every catalog entry
-  /// <see cref="PostgresExtensionState.Unknown"/>, and the reason kept for the report.
-  /// </summary>
-  /// <param name="database">The database.</param>
-  /// <param name="catalog">The extensions to report.</param>
-  /// <param name="reason">Why the probe could not read it.</param>
-  /// <returns>The answer.</returns>
-  public static PostgresDatabaseExtensions Unknown(
-      string database, IReadOnlyList<PostgresExtensionInfo> catalog, string reason) {
-    ArgumentNullException.ThrowIfNull(catalog);
-    return new(database, [.. catalog.Select(e => new PostgresExtensionStatus(e, PostgresExtensionState.Unknown, null))], reason);
-  }
 }
