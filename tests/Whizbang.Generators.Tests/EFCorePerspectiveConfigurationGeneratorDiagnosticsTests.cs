@@ -17,6 +17,54 @@ namespace Whizbang.Generators.Tests;
 /// <tests>src/Whizbang.Data.EFCore.Postgres.Generators/EFCorePerspectiveConfigurationGenerator.cs</tests>
 /// <tests>src/Whizbang.Data.EFCore.Postgres.Generators/Templates/EFCoreConfigurationTemplate.cs</tests>
 public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
+  // The names the generator derives, computed here so each test sits exactly where it claims: a table is
+  // "wh_per_" plus the model name in snake case (a lowercase name is unchanged and strips no suffix), and an
+  // index is "ix_{table}_{column}". Postgres allows 63 bytes (#1431).
+  private const string TABLE_PREFIX = "wh_per_";
+  private const string INDEX_PREFIX = "ix_";
+  private const int LIMIT = 63;
+
+  // A lowercase identifier of exactly the given length; its snake case is itself.
+  private static string _name(int length) => "z" + new string('q', length - 1);
+
+  private static string _indexedFieldSource(string model, string column, bool unique) => $$"""
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record {{model}} {
+        public string Name { get; init; } = "";
+
+        {{(unique ? "[PhysicalField(Unique = true)]" : "[PhysicalField]\n        [Indexed]")}}
+        public string {{column}} { get; init; } = "";
+      }
+
+      public class TestPerspective(IPerspectiveStore<{{model}}> store) : IPerspectiveFor<{{model}}, ProductCreated> {
+        public {{model}} Apply({{model}} currentData, ProductCreated @event) => currentData;
+      }
+
+      public record ProductCreated : IEvent;
+      """;
+
+  private static string _modelSource(string model) => $$"""
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record {{model}}(string Name);
+
+      public class TestPerspective(IPerspectiveStore<{{model}}> store) : IPerspectiveFor<{{model}}, ProductCreated> {
+        public {{model}} Apply({{model}} currentData, ProductCreated @event) => currentData;
+      }
+
+      public record ProductCreated : IEvent;
+      """;
+
+  private static string[] _limitIds(GeneratorResult result) =>
+    [.. result.Diagnostics.Select(static d => d.Id).Where(static id => id is "WHIZ820" or "WHIZ821" or "WHIZ822").Order(StringComparer.Ordinal)];
+
   /// <summary>
   /// RED TEST: Generated code should implement IWhizbangDiscoveryDiagnostics interface.
   /// This ensures consumers can use a consistent API across all generators.
@@ -603,54 +651,30 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   }
 
   /// <summary>
-  /// Test that WHIZ822 error is emitted when index name exceeds 63 bytes.
-  /// Index name format: ix_{table_name}_{column_name}
+  /// WHIZ822, and only WHIZ822, when the table and column names are each within the limit but the index name
+  /// built from them is not. Index name format: ix_{table_name}_{column_name}.
   /// </summary>
   [Test]
   public async Task Generator_WithLongIndexName_EmitsWHIZ822ErrorAsync() {
-    // Arrange - Create a model with long table name and indexed physical field
-    // The combination should create an index name > 63 bytes
-    // ix_ (3) + table_name + _ (1) + column_name
-    const string source = """
+    // ix_ (3) + wh_per_order (12) + _ (1) + a 48-byte column = 64 bytes: one over.
+    var column = _name(LIMIT - INDEX_PREFIX.Length - "wh_per_order".Length - 1 + 1);
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(_indexedFieldSource("order", column, unique: false));
 
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
+    await Assert.That(_limitIds(result)).IsEquivalentTo(["WHIZ822"]);
+    var whiz822 = result.Diagnostics.Single(d => d.Id == "WHIZ822");
+    await Assert.That(whiz822.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
+    await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains($"ix_wh_per_order_{column}");
+    await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains("(64 bytes)");
+  }
 
-      namespace TestApp;
+  /// <summary>An index name of exactly 63 bytes is within the limit: no WHIZ822.</summary>
+  [Test]
+  public async Task Generator_WithExactly63ByteIndexName_DoesNotEmitWHIZ822ErrorAsync() {
+    var column = _name(LIMIT - INDEX_PREFIX.Length - "wh_per_order".Length - 1);
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(_indexedFieldSource("order", column, unique: false));
 
-      public record LongModelNameForTableThatWillCauseIndexNameOverflow {
-        public string Name { get; init; } = "";
-
-        [PhysicalField]
-        [Indexed]
-        public string SomeReasonablyLongPropertyNameForColumn { get; init; } = "";
-      }
-
-      public class TestPerspective(IPerspectiveStore<LongModelNameForTableThatWillCauseIndexNameOverflow> store)
-        : IPerspectiveFor<LongModelNameForTableThatWillCauseIndexNameOverflow, ProductCreated> {
-        public LongModelNameForTableThatWillCauseIndexNameOverflow Apply(LongModelNameForTableThatWillCauseIndexNameOverflow currentData, ProductCreated @event) => currentData;
-      }
-
-      public record ProductCreated : IEvent;
-    
-""";
-
-    // Act
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
-
-    // Assert - WHIZ822 diagnostic should be emitted (or WHIZ820 if table name itself exceeds)
-    var whiz822 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ822");
-    var whiz820 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ820");
-
-    // Either WHIZ822 (index) or WHIZ820 (table) should be emitted
-    await Assert.That(whiz822 != null || whiz820 != null).IsTrue();
-
-    // If WHIZ822 was emitted, verify its content
-    if (whiz822 != null) {
-      await Assert.That(whiz822.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
-      await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains("Index");
-      await Assert.That(whiz822.GetMessage(CultureInfo.InvariantCulture)).Contains("exceeds");
-    }
+    await Assert.That($"ix_wh_per_order_{column}".Length).IsEqualTo(LIMIT);
+    await Assert.That(_limitIds(result)).IsEmpty();
   }
 
   /// <summary>
@@ -692,38 +716,28 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   }
 
   /// <summary>
-  /// Test that table name at exactly 63 bytes does not emit WHIZ820.
+  /// A table name of exactly 63 bytes does not emit WHIZ820, and one byte more does.
   /// </summary>
   [Test]
   public async Task Generator_WithExactly63ByteTableName_DoesNotEmitWHIZ820ErrorAsync() {
-    // Arrange - Create a model that generates exactly 63 bytes
-    // wh_per_ (7 bytes) + remaining (56 bytes) = 63 bytes total
-    // Need a model name that in snake_case gives 56 bytes
-    // "ExactlyFiftySixBytesModelNameHere" → "exactly_fifty_six_bytes_model_name_here"
-    // Let's calculate: e_x_a_c_t_l_y_f_i_f_t_y_s_i_x_b_y_t_e_s_m_o_d_e_l (varies)
-    // This is hard to calculate exactly, so we use a name that should be close
-    const string source = @"
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
+    var model = _name(LIMIT - TABLE_PREFIX.Length);
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(_modelSource(model));
+    var generated = result.GeneratedSources.First(s => s.HintName == "WhizbangModelBuilderExtensions.g.cs").SourceText.ToString();
 
-      namespace TestApp;
+    await Assert.That((TABLE_PREFIX + model).Length).IsEqualTo(LIMIT);
+    await Assert.That(generated).Contains($"\"{TABLE_PREFIX}{model}\"")
+      .Because("the test is only at the boundary if the generator derives the table name it computes");
+    await Assert.That(_limitIds(result)).IsEmpty();
+  }
 
-      public record ShortModel(string Name);
+  /// <summary>A table name of 64 bytes emits WHIZ820.</summary>
+  [Test]
+  public async Task Generator_With64ByteTableName_EmitsWHIZ820ErrorAsync() {
+    var model = _name(LIMIT - TABLE_PREFIX.Length + 1);
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(_modelSource(model));
 
-      public class TestPerspective(IPerspectiveStore<ShortModel> store)
-        : IPerspectiveFor<ShortModel, ProductCreated> {
-        public ShortModel Apply(ShortModel currentData, ProductCreated @event) => currentData;
-      }
-
-      public record ProductCreated : IEvent;
-    ";
-
-    // Act
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
-
-    // Assert - Short model name should not emit WHIZ820
-    var whiz820 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ820");
-    await Assert.That(whiz820).IsNull();
+    await Assert.That(_limitIds(result)).IsEquivalentTo(["WHIZ820"]);
+    await Assert.That(result.Diagnostics.Single(d => d.Id == "WHIZ820").GetMessage(CultureInfo.InvariantCulture)).Contains("(64 bytes)");
   }
 
   /// <summary>
@@ -777,43 +791,15 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   }
 
   /// <summary>
-  /// Test that unique physical fields also validate index name length (WHIZ822).
+  /// A unique physical field's index is validated too: WHIZ822, and only WHIZ822, for a unique field whose
+  /// column fits but whose index name does not.
   /// </summary>
   [Test]
   public async Task Generator_WithLongUniqueFieldIndexName_EmitsWHIZ822ErrorAsync() {
-    // Arrange - Create a model with a unique physical field (unique fields create indexes too)
-    const string source = """
+    var column = _name(LIMIT - INDEX_PREFIX.Length - "wh_per_order".Length - 1 + 1);
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(_indexedFieldSource("order", column, unique: true));
 
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-
-      namespace TestApp;
-
-      public record ModelWithLongUniqueField {
-        public string Name { get; init; } = "";
-
-        [PhysicalField(Unique = true)]
-        public string VeryLongUniquePropertyNameThatCombinedWithTableNameExceedsLimit { get; init; } = "";
-      }
-
-      public class TestPerspective(IPerspectiveStore<ModelWithLongUniqueField> store)
-        : IPerspectiveFor<ModelWithLongUniqueField, ProductCreated> {
-        public ModelWithLongUniqueField Apply(ModelWithLongUniqueField currentData, ProductCreated @event) => currentData;
-      }
-
-      public record ProductCreated : IEvent;
-    
-""";
-
-    // Act
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
-
-    // Assert - WHIZ821 or WHIZ822 should be emitted
-    var whiz821 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ821");
-    var whiz822 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ822");
-
-    // At least one of these should be emitted (column or index name too long)
-    await Assert.That(whiz821 != null || whiz822 != null).IsTrue();
+    await Assert.That(_limitIds(result)).IsEquivalentTo(["WHIZ822"]);
   }
 
   #endregion

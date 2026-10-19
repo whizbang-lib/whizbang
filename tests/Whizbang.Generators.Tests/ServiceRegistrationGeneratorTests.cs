@@ -161,8 +161,8 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    // Should register concrete child
-    await Assert.That(code).Contains("OrderLens");
+    // Should register concrete child. The full registration, not the bare name, which "IOrderLens" also contains (#1431).
+    await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
     // But NOT the abstract base
     await Assert.That(code).DoesNotContain("BaseLens");
   }
