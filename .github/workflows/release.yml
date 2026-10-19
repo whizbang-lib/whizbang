@@ -407,6 +407,8 @@ jobs:
 
   release:
     name: Publish · Tag and draft the GitHub release
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
     needs: [check-release, approve, locate-tested-packages]
     runs-on: ubuntu-latest
     permissions:
@@ -655,9 +657,6 @@ jobs:
       source-ref: main
       source-label: main
       version: ${{ needs.check-release.outputs.version }}
-    secrets:
-      RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
-      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
   # ============================================================================
   # Notifications - comprehensive failure detection

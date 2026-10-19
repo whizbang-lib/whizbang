@@ -58,7 +58,7 @@ public class InheritScopeAnalyzerCoverageTests {
   /// being mistaken for [InheritScope]. If the attribute-name scan (InheritScopeAnalyzer.cs:73-79)
   /// stopped short instead of running to the end of a non-matching attribute list, a class whose
   /// [InheritScope] was declared anywhere but first would silently escape both WHIZ170 and
-  /// WHIZ171 — the false negative this analyzer exists to prevent, letting a misconfigured
+  /// WHIZ171: the false negative this analyzer exists to prevent, letting a misconfigured
   /// perspective read across a scope boundary without ever being flagged at build time.
   /// </summary>
   [Test]

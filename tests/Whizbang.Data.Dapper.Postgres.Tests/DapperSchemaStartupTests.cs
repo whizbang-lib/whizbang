@@ -32,6 +32,11 @@ public class DapperSchemaStartupTests {
     new("StartupProbe", $"CREATE TABLE IF NOT EXISTS {TABLE} (id uuid PRIMARY KEY, data jsonb NOT NULL);"),
   ];
 
+  // pg_locks is cluster-wide and every test runs on the shared container, so an unfiltered count also
+  // sees other tests' waiters; an advisory lock belongs to one database, and each test has its own.
+  private const string WAITING_ADVISORY_LOCKS =
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())";
+
   private PerTestDatabase _database;
 
   [Before(Test)]
@@ -171,7 +176,7 @@ public class DapperSchemaStartupTests {
 
     await Assert.That(async () => await acquire).Throws<OperationCanceledException>();
     await Assert.That(await holder.ExecuteScalarAsync<long>(
-      "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held)).IsEqualTo(0L)
+      WAITING_ADVISORY_LOCKS, transaction: held)).IsEqualTo(0L)
       .Because("a canceled wait gives its connection back instead of staying queued for the lock");
   }
 
@@ -181,13 +186,13 @@ public class DapperSchemaStartupTests {
   /// for, bounded so a wait that never queues fails here instead of hanging the test.
   /// </summary>
   private static async Task _waitUntilAdvisoryWaitersAsync(NpgsqlConnection holder, NpgsqlTransaction held, long expected) {
-    var deadline = DateTime.UtcNow.AddSeconds(30);
+    var deadline = DateTime.UtcNow.AddSeconds(30); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     while (await holder.ExecuteScalarAsync<long>(
-        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted", transaction: held) != expected) {
-      if (DateTime.UtcNow > deadline) {
+        WAITING_ADVISORY_LOCKS, transaction: held) != expected) {
+      if (DateTime.UtcNow > deadline) { // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
         throw new TimeoutException($"The schema lock wait never queued: expected {expected} waiting advisory lock request(s).");
       }
-      await Task.Delay(20);
+      await Task.Delay(20); // review-checks:allow: Postgres has no notification for a lock wait starting; a bounded read of pg_locks
     }
   }
 

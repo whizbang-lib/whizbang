@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 
@@ -55,6 +56,35 @@ public sealed class TgEnvelopeEventReceptor(IEnvelopeRegistry registry) : IRecep
     TangentialProbe.Saw("envelope", message.Id, registry.TryGetEnvelope(message)?.MessageId.ToString());
     return ValueTask.CompletedTask;
   }
+}
+
+/// <summary>An event whose dispatch stamps its sent time and correlation onto it, as a consumer's base event declares.</summary>
+public sealed class TgStampedEvent : IEvent {
+  [StreamId]
+  public Guid Id { get; init; }
+
+  [PopulateTimestamp(TimestampKind.SentAt)]
+  public DateTimeOffset SentAt { get; set; }
+
+  [PopulateFromIdentifier(IdentifierKind.CorrelationId)]
+  public string? CorrelationId { get; set; }
+}
+
+public sealed class TgStampedEventReceptor(IEnvelopeRegistry registry) : IReceptor<TgStampedEvent> {
+  public ValueTask HandleAsync(TgStampedEvent message, CancellationToken cancellationToken = default) {
+    TangentialProbe.Saw("sentAt", message.Id, message.SentAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+    TangentialProbe.Saw("correlation", message.Id, message.CorrelationId);
+    TangentialProbe.Saw("envelopeId", message.Id, registry.TryGetEnvelope(message)?.MessageId.Value.ToString());
+    return ValueTask.CompletedTask;
+  }
+}
+
+/// <summary>A command whose receptor returns a stamped event, so the event cascades from the result.</summary>
+public record TgStampingCommand(Guid Id) : ICommand;
+
+public sealed class TgStampingCommandReceptor : IReceptor<TgStampingCommand, TgStampedEvent> {
+  public ValueTask<TgStampedEvent> HandleAsync(TgStampingCommand message, CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult(new TgStampedEvent { Id = message.Id });
 }
 
 /// <summary>An event whose stream id the dispatcher generates when it is empty.</summary>

@@ -12,7 +12,9 @@
       1. reads those blocks, only from comments the workflow's bot posted;
       2. skips a block checked against an older commit than the pull request's head, and says so;
       3. finds your pending review on the pull request, or starts one;
-      4. puts each finding on its line when the line is in the diff, and the rest in the review summary;
+      4. puts each finding on its line when the line is in the diff, and the rest in file-level threads
+         (on the finding's file, or pinned to the first changed file), which must be resolved before
+         merge as line comments must; only when the diff can't be read do they go in the review summary;
       5. marks each comment with its finding, so running it again adds only what is new.
 
     It never submits the review. Open the pull request, add your own comments, and submit it as
@@ -98,6 +100,19 @@ function Get-PullRequestState {
   }
 }
 
+function Add-ReviewThreads {
+  <# .SYNOPSIS Adds each planned thread to a pending review: on its line, or on its file. #>
+  param([Parameter(Mandatory)][string]$ReviewId, [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Threads)
+  foreach ($t in $Threads) {
+    $in = if ($t.SubjectType -eq 'FILE') {
+      @{ pullRequestReviewId = $ReviewId; path = $t.Path; subjectType = 'FILE'; body = $t.Body }
+    } else {
+      @{ pullRequestReviewId = $ReviewId; path = $t.Path; line = $t.Line; side = 'RIGHT'; body = $t.Body }
+    }
+    [void](Invoke-GraphQl -Query 'mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id}}}' -Variables @{ input = $in })
+  }
+}
+
 $script:SummaryHeader = 'Findings from the PR checks that are not on a line of this diff:'
 
 function Invoke-PrReviewDraft {
@@ -122,25 +137,25 @@ function Invoke-PrReviewDraft {
 
   $items = ($plan.Summary | ForEach-Object { $_.Body }) -join "`n"
   $toPaste = $false
-  $target = "PR #$PullRequest ($($plan.Threads.Count) line comment(s), $($plan.Summary.Count) summary item(s))"
+  $lineThreads = @($plan.Threads | Where-Object SubjectType -EQ 'LINE')
+  $fileThreads = @($plan.Threads | Where-Object SubjectType -EQ 'FILE')
+  $target = "PR #$PullRequest ($($lineThreads.Count) line comment(s), $($fileThreads.Count) file comment(s), $($plan.Summary.Count) summary item(s))"
 
   if ($null -eq $state.PendingReview) {
     if (-not $PSCmdlet.ShouldProcess($target, 'Start a pending review')) { return }
     $in = @{
       pullRequestId = $state.NodeId
       commitOID     = $state.HeadSha
-      threads       = @($plan.Threads | ForEach-Object { @{ path = $_.Path; line = $_.Line; side = 'RIGHT'; body = $_.Body } })
+      threads       = @($lineThreads | ForEach-Object { @{ path = $_.Path; line = $_.Line; side = 'RIGHT'; body = $_.Body } })
     }
     if ($items) { $in.body = "$script:SummaryHeader`n`n$items" }
-    [void](Invoke-GraphQl -Query 'mutation($input:AddPullRequestReviewInput!){addPullRequestReview(input:$input){pullRequestReview{id}}}' -Variables @{ input = $in })
+    $created = Invoke-GraphQl -Query 'mutation($input:AddPullRequestReviewInput!){addPullRequestReview(input:$input){pullRequestReview{id}}}' -Variables @{ input = $in }
+    # A new review's threads take a line, so the file-level ones are added to it once it exists.
+    if ($fileThreads.Count -gt 0) { Add-ReviewThreads -ReviewId $created.data.addPullRequestReview.pullRequestReview.id -Threads $fileThreads }
   } else {
     if (-not $PSCmdlet.ShouldProcess($target, 'Add to your pending review')) { return }
+    Add-ReviewThreads -ReviewId $state.PendingReview.Id -Threads $plan.Threads
     $reviewId = $state.PendingReview.Id
-    foreach ($t in $plan.Threads) {
-      [void](Invoke-GraphQl -Query 'mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id}}}' -Variables @{
-          input = @{ pullRequestReviewId = $reviewId; path = $t.Path; line = $t.Line; side = 'RIGHT'; body = $t.Body }
-        })
-    }
     $toPaste = $items -and -not $state.PendingReview.Body
     if ($toPaste) {
       # GitHub refuses to edit the body of a pending review that has none, which is how a review started
@@ -158,7 +173,7 @@ function Invoke-PrReviewDraft {
   }
 
   $summaryNote = if ($toPaste) { "$($plan.Summary.Count) summary item(s) to paste" } else { "$($plan.Summary.Count) summary item(s)" }
-  Write-Host "Drafted $($plan.Threads.Count) line comment(s) and $summaryNote on PR #$PullRequest; $($plan.AlreadyDrafted) were already in your draft."
+  Write-Host "Drafted $($lineThreads.Count) line comment(s), $($fileThreads.Count) file comment(s) and $summaryNote on PR #$PullRequest; $($plan.AlreadyDrafted) were already in your draft."
   Write-Host "Nothing is submitted. Review and submit: $($state.Url)/files"
 }
 

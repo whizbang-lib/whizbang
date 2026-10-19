@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -40,6 +41,15 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution {
       _ran.GetOrAdd((service, id), static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
   }
 
+  /// <summary>The sent time and correlation each stamped message's handler saw, keyed by message id (#1455).</summary>
+  public static class StampProbe {
+    private static readonly ConcurrentDictionary<Guid, (DateTimeOffset SentAt, string? CorrelationId, Guid? EnvelopeId)> _seen = new();
+
+    public static void Saw(Guid id, DateTimeOffset sentAt, string? correlationId, Guid? envelopeId) => _seen[id] = (sentAt, correlationId, envelopeId);
+
+    public static (DateTimeOffset SentAt, string? CorrelationId, Guid? EnvelopeId)? Seen(Guid id) => _seen.TryGetValue(id, out var seen) ? seen : null;
+  }
+
   /// <summary>A message the runtime-registered counting handler can key by id.</summary>
   public interface IDxIdentified {
     Guid Id { get; }
@@ -67,6 +77,14 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Owned {
   }
 
   public sealed record DxOwnedUnhandledCommand(Guid Id) : ICommand;
+
+  /// <summary>An owned command whose receptor returns a stamped event, so the event cascades from the result.</summary>
+  public sealed record DxStampingCommand(Guid Id) : ICommand;
+
+  public sealed class DxStampingCommandReceptor : IReceptor<DxStampingCommand, Upstream.DxStampedEvent> {
+    public ValueTask<Upstream.DxStampedEvent> HandleAsync(DxStampingCommand message, CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(new Upstream.DxStampedEvent { Id = message.Id });
+  }
 
   /// <summary>
   /// A cause whose handler returns its effect on the same stream, routed as the cause says: the effect
@@ -125,6 +143,43 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.DispatchExecution.Upstream {
   }
 
   public sealed record DxEvent([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>An event whose dispatch stamps its sent time and correlation onto it, as a consumer's base event declares.</summary>
+  public sealed class DxStampedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PopulateTimestamp(TimestampKind.SentAt)]
+    public DateTimeOffset SentAt { get; set; }
+
+    [PopulateFromIdentifier(IdentifierKind.CorrelationId)]
+    public string? CorrelationId { get; set; }
+  }
+
+  public sealed class DxStampedEventReceptor(IEnvelopeRegistry registry) : IReceptor<DxStampedEvent> {
+    public ValueTask HandleAsync(DxStampedEvent message, CancellationToken cancellationToken = default) {
+      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId, registry.TryGetEnvelope(message)?.MessageId.Value);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>A stamped command another service owns that the sender also handles.</summary>
+  public sealed class DxStampedCommand : ICommand {
+    public Guid Id { get; init; }
+
+    [PopulateTimestamp(TimestampKind.SentAt)]
+    public DateTimeOffset SentAt { get; set; }
+
+    [PopulateFromIdentifier(IdentifierKind.CorrelationId)]
+    public string? CorrelationId { get; set; }
+  }
+
+  public sealed class DxStampedCommandReceptor(IEnvelopeRegistry registry) : IReceptor<DxStampedCommand> {
+    public ValueTask HandleAsync(DxStampedCommand message, CancellationToken cancellationToken = default) {
+      StampProbe.Saw(message.Id, message.SentAt, message.CorrelationId, registry.TryGetEnvelope(message)?.MessageId.Value);
+      return ValueTask.CompletedTask;
+    }
+  }
 
   public sealed class DxEventReceptor : IReceptor<DxEvent> {
     public ValueTask HandleAsync(DxEvent message, CancellationToken cancellationToken = default) {

@@ -563,8 +563,10 @@ public static class ServiceCollectionExtensions {
   /// <para>
   /// This method uses the decorator pattern to wrap an existing IEventStore with:
   /// <list type="number">
-  /// <item><see cref="Messaging.SecurityContextEventStoreDecorator"/> - propagates security context</item>
-  /// <item><see cref="Messaging.SyncTrackingEventStoreDecorator"/> - tracks events for sync</item>
+  /// <item><see cref="Messaging.SyncTrackingEventStoreDecorator"/> - tracks events for sync, innermost, so it tracks
+  /// the id of the envelope the store writes (#1465)</item>
+  /// <item><see cref="Messaging.SecurityContextEventStoreDecorator"/> - turns a message into an envelope carrying the
+  /// ambient security context</item>
   /// <item><see cref="Messaging.AppendAndWaitEventStoreDecorator"/> - enables AppendAndWaitAsync</item>
   /// </list>
   /// </para>
@@ -623,26 +625,27 @@ public static class ServiceCollectionExtensions {
             ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
             : (Messaging.IEventStore)holder.Instance;
 
-        // Layer 1: SecurityContext (propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
-
-        // Layer 2: SyncTracking (tracks events for perspective sync)
+        // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees
+        // the envelope SecurityContext builds for a message and tracks the id the store writes (#1465)
         var scopedTracker = sp.GetRequiredService<IScopedEventTracker>();
         var envelopeRegistry = sp.GetRequiredService<Observability.IEnvelopeRegistry>();
         var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
         var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
-            withSecurityContext,
+            innerStore,
             scopedTracker,
             envelopeRegistry,
             syncEventTracker,
             typeRegistry);
 
+        // Layer 2: SecurityContext (turns a message into an envelope carrying the ambient security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(withSyncTracking);
+
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
         var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
-            withSyncTracking,
+            withSecurityContext,
             syncAwaiter,
             eventCompletionAwaiter,
             scopedTracker);
@@ -674,24 +677,25 @@ public static class ServiceCollectionExtensions {
             ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
             : (Messaging.IEventStore)holder.Instance;
 
-        // Layer 1: SecurityContext (propagates security context)
-        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(innerStore);
-
-        // Layer 2: SyncTracking (tracks events for perspective sync)
+        // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees
+        // the envelope SecurityContext builds for a message and tracks the id the store writes (#1465)
         var syncEventTracker = sp.GetRequiredService<ISyncEventTracker>();
         var typeRegistry = sp.GetRequiredService<ITrackedEventTypeRegistry>();
         var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
-            withSecurityContext,
+            innerStore,
             tracker: NullScopedEventTracker.Instance, // a singleton store cannot hold a request-scoped tracker
             sp.GetRequiredService<Observability.IEnvelopeRegistry>(),
             syncEventTracker,
             typeRegistry);
 
+        // Layer 2: SecurityContext (turns a message into an envelope carrying the ambient security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(withSyncTracking);
+
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
         var eventCompletionAwaiter = sp.GetRequiredService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
-            withSyncTracking,
+            withSecurityContext,
             syncAwaiter,
             eventCompletionAwaiter,
             scopedEventTracker: AmbientScopedEventTracker.Instance); // waits on the caller's ambient scope, when one exists

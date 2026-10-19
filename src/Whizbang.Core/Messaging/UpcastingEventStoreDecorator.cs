@@ -22,8 +22,8 @@ namespace Whizbang.Core.Messaging;
 /// <code>
 /// IEventStore
 /// └─ AppendAndWaitEventStoreDecorator
-///    └─ SyncTrackingEventStoreDecorator
-///       └─ SecurityContextEventStoreDecorator
+///    └─ SecurityContextEventStoreDecorator
+///       └─ SyncTrackingEventStoreDecorator
 ///          └─ UpcastingEventStoreDecorator   (this — transforms on read)
 ///             └─ Base IEventStore (e.g. EFCoreEventStore)
 /// </code>

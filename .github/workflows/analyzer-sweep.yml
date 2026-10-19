@@ -78,6 +78,7 @@ jobs:
 
       - name: Apply fixes, one diagnostic at a time
         env:
+          GH_TOKEN: ${{ github.token }}
           PROJECT: ${{ inputs.project }}
           DIAGS: ${{ inputs.diagnostics }}
           BRANCH: ${{ inputs.branch }}
@@ -139,7 +140,9 @@ jobs:
               # Without this the loop keeps going and every later push fails the same way, which is
               # the same "work completed but discarded" failure the per-rule commit exists to prevent.
               for attempt in 1 2 3; do
-                if git push -q origin HEAD:"$BRANCH" 2>/dev/null; then
+                # Through the API, not git push, so GitHub signs the commit (the rulesets require it);
+                # a non-fast-forward is refused the same way, so the rebase below still applies.
+                if pwsh -NoProfile -File .github/scripts/Publish-SignedCommit.ps1 -Repository "$GITHUB_REPOSITORY" -Branch "$BRANCH" >/dev/null 2>&1; then
                   echo "pushed $n fixes for $d"
                   break
                 fi
@@ -200,6 +203,7 @@ jobs:
 
       - name: Commit and push
         env:
+          GH_TOKEN: ${{ github.token }}
           PROJECT: ${{ inputs.project }}
           DIAGS: ${{ inputs.diagnostics }}
           BRANCH: ${{ inputs.branch }}
@@ -223,7 +227,9 @@ jobs:
           Diagnostics: $DIAGS
 
           Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
-          git push origin HEAD:"$BRANCH"
+          # Published through the API, not git push, so GitHub signs the commits: the rulesets require
+          # signed commits (.github/scripts/Publish-SignedCommit.ps1).
+          pwsh -NoProfile -File .github/scripts/Publish-SignedCommit.ps1 -Repository "$GITHUB_REPOSITORY" -Branch "$BRANCH"
 
       - name: Summary
         if: always()

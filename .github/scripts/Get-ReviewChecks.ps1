@@ -34,7 +34,11 @@ param(
   # The pull request's title, whose Conventional Commit type decides what the change must contain.
   [string]$Title = '',
   # The labels of the issues the pull request closes (a fix closes one labeled bug).
-  [string[]]$ClosingIssueLabels = @()
+  [string[]]$ClosingIssueLabels = @(),
+  # The pull request's own labels, comma-separated (docs:not-needed).
+  [string[]]$Labels = @(),
+  # The docs-site pull requests found for it, as Get-DocsPullRequests.ps1 prints them.
+  [string]$DocsPullRequestsJson = '[]'
 )
 
 Set-StrictMode -Version Latest
@@ -63,12 +67,15 @@ if ($null -eq $body) { $body = '' }
 
 # The workflow passes the labels as one comma-separated value.
 $labels = @($ClosingIssueLabels | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$prLabels = @($Labels | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$docs = @(($DocsPullRequestsJson | ConvertFrom-Json) | Where-Object { $_ } |
+    ForEach-Object { [pscustomobject]@{ Number = [int]$_.number; State = [string]$_.state; ReferencesThis = [bool]$_.referencesThis } })
 
 $findings = @(
   ConvertTo-DcoFindings -Verdict $verdict -BaseRef $BaseRef
   Find-PullRequestFindings -Body $body -ClosingIssueCount $ClosingIssueCount -BaseRef $BaseRef -HeadRef $HeadRef -AuthorIsBot:$AuthorIsBot
   Find-PullRequestTypeFindings -Title $Title -Body $body -ChangedPaths @(Get-DiffFiles -DiffText $diff | ForEach-Object Path) `
-    -ClosingIssueLabels $labels -BaseRef $BaseRef -HeadRef $HeadRef -AuthorIsBot:$AuthorIsBot
+    -ClosingIssueLabels $labels -Labels $prLabels -DocsPullRequests $docs -BaseRef $BaseRef -HeadRef $HeadRef -AuthorIsBot:$AuthorIsBot
   Find-DiffFindings -DiffText $diff -IgnorePaths $ignore
 )
 

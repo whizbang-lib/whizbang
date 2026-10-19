@@ -253,7 +253,7 @@ dotnet add package SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres
 ## Quality
 
 <!-- auto:quality -->
-- **Tests:** 31,000+ across unit, generator, integration and transport suites, run on every pull request.
+- **Tests:** 32,000+ across unit, generator, integration and transport suites, run on every pull request.
 - **Coverage:** 99.8% of library lines; every pull request must cover all of its new lines and add no
   SonarCloud findings.
 <!-- /auto:quality -->
@@ -263,7 +263,9 @@ Dispatch is designed to stay allocation-free on the in-process path; the benchma
 
 ## Contributing and support
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and send changes.
+- **Want to contribute a change?** Start with an issue: every pull request implements an issue a
+  maintainer has marked `accepted`. [How a change gets in](CONTRIBUTING.md#how-a-change-gets-in) is
+  the short version; [CONTRIBUTING.md](CONTRIBUTING.md) covers building, testing and sending changes.
 - [SECURITY.md](SECURITY.md) to report a vulnerability privately, and to verify a release.
 - [Discussions](https://github.com/whizbang-lib/whizbang/discussions) for questions and ideas;
   [Issues](https://github.com/whizbang-lib/whizbang/issues) for bugs.

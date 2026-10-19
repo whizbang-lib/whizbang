@@ -1,0 +1,66 @@
+name: Settings drift
+
+run-name: "Security · Settings drift check"
+
+# Rulesets, Actions settings, environments and access can be loosened by an admin, or by a stolen admin
+# session, and nothing in the repository would notice (#1468). This reads them weekly and compares them with
+# the committed baseline, .github/settings-baseline.json: a difference opens (or updates) one issue labeled
+# security and fails the run; a run that finds none closes that issue. An intended change is a pull request
+# that updates the baseline, which CODEOWNERS gives to build-admins. .github/scripts/Test-SettingsDrift.ps1
+# has the rules, tested by "Test · Pipeline scripts".
+on:
+  schedule:
+    - cron: '41 12 * * 1'   # Mondays, 08:41 EDT
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: settings-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Compare the security settings with the baseline
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466).
+    environment: release-app
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write   # the drift issue; every settings read goes through the app's read-only token
+    steps:
+      - name: Mint a read-only release app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Read only: GITHUB_TOKEN cannot read rulesets' bypass actors, Actions settings, teams or the
+          # organization's settings, and nothing here writes with the app.
+          permission-administration: read
+          permission-environments: read
+          permission-members: read
+          permission-organization-administration: read
+
+      - name: Checkout develop
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Read the live settings
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: ./.github/scripts/Test-SettingsDrift.ps1 -Mode Capture -OutFile "$env:RUNNER_TEMP/live-settings.json"
+
+      - name: Compare with the baseline and report
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./.github/scripts/Test-SettingsDrift.ps1 -Mode Check
+          -LivePath "$env:RUNNER_TEMP/live-settings.json"
+          -RunUrl "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
