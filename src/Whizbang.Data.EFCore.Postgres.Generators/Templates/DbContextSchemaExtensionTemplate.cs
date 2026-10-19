@@ -1956,7 +1956,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     CancellationToken cancellationToken) {
 
     // Perspective metadata JSON embedded by source generator
-    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"..."}]
+    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"...","PerspectiveName":"..."}]
     const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
 
     if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {

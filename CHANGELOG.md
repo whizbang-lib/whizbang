@@ -75,6 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-rewind are not skipped.
 - **Throughput** — drain mode (per-perspective event filtering with full lifecycle), a bulk-import
   throughput path, and throughput instrumentation (gate hold-duration histograms, WorkCoordinator metrics).
+- **Retention windows from configuration** (#1487): every retention window the maintenance sweep reads from
+  `wh_settings` is now an option, set like any other: `Whizbang:Workers:Maintenance:Retention` (deduplication,
+  stuck inbox, recovered dead letters, abandoned streams, instance-eviction tombstones, orphaned perspective
+  events, collective-ordering heads) and `Whizbang:Ephemeral` (`RewindGraceSeconds`, `PointerPrune`). Each
+  maintenance cycle publishes the options you set before the sweep runs; an option left unset leaves the stored
+  value alone, a negative value fails startup naming the key, and a failed write is logged without failing the
+  cycle. The Dapper engine now also publishes `debug_mode`, which it never did.
 
 #### Context, identity & serialization
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
@@ -224,6 +231,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **Evicting a perspective row left its cursor and every snapshot behind, and a row evicted by a cap or a
+  stream-group cascade came back holding only the newest event (#1483).** An eviction now reclaims storage
+  only: for each perspective of the evicted model, the row's cursor and every snapshot but the latest are
+  removed with it, on every eviction path (row TTL, row cap, stream-group cascade, stamped expiry) and both
+  drivers (migration 211). The next event on the stream rebuilds the whole row from that snapshot plus the
+  later history, for any perspective whose rows can be evicted (`PerspectiveRowEviction.CanEvict`), not only
+  row-TTL ones. An ephemeral perspective rebuilds from a surviving snapshot; with none it starts the row
+  fresh and logs a warning. Perspectives on the same stream that fold another model are untouched. The EF
+  Core registry payload now names each model's perspectives (`wh_perspective_registry.perspective_names`),
+  recorded at the next startup; until then an eviction removes the row alone.
+- **A scope event's scope could be overwritten or narrowed before the row was written (#1432).** A later message in
+  the same batch replaced it, the model's `[InheritScope(OnCreate)]` filtered it (dropping the principals the event
+  shared the row with), and `IPerspectiveScopeFor.ApplyScope` was given the last message's scope as the current one.
+  The runner now writes the scope the event set, unfiltered, and gives `ApplyScope` the row's stored scope.
+  `ScopeInheritance.Resolve` takes that scope in place of its `scopeEventChanged` flag.
+- **A lens or perspective that inherits its interface from an abstract base was never registered (#1482).**
+- **A generic message type broke the consumer's build (#1481).** The generators emitted the open type into generated
+  code. They now skip it, and WHIZ015 warns at the type that generic message types are not supported.
+- **The message registry was never enriched with docs URLs or tests (#1428).** The docs and tests maps were read
+  case-sensitively against their camelCase keys.
+- **Five build properties had no effect when set in a project (#1426):** `WhizbangMaxIdentifierLength`,
+  `WhizbangStripTableNameSuffixes`, `WhizbangTableNameSuffixesToStrip`, `WhizbangGuidInterceptionEnabled` and
+  `WhizbangQueryComposingAttributes`. The generator packages now declare them compiler-visible.
+- **Build diagnostics can be suppressed where they appear (#1429).** Twenty were reported with no location (or an
+  external-file one); they are now reported at the declaration they are about.
+- **Build diagnostic messages said things the analyzers do not do (#1428).** Among them: WHIZ104 now finds
+  `System.DateTime.UtcNow`, WHIZ102 no longer doubles WHIZ103 on an `HttpClient` call, WHIZ811 is silenced by the
+  `[PolymorphicDiscriminator]` it suggests, and WHIZ900 covers every Inline stage and `WaitForAppliedAsync`.
+- **Mutation testing never completed (#1444).**
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator

@@ -50,14 +50,14 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor DirectMintedCompositeConstruction = new(
     id: "WHIZ150",
     title: "Minted composite constructed outside the mint",
-    messageFormat: "'{0}' is a minted composite — construct it inside a composite-factory builder "
+    messageFormat: "'{0}' is a minted composite: construct it inside a composite-factory builder "
       + "(CompositeMintRequest<T>.BuildComposite via IEventMint.Composites, or a coalesce binding's "
       + "CompositeFactory) so the mint enforces grouping, count caps, and byte budgets",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
     isEnabledByDefault: true,
     description: "Minted composite families (CompositeEventBase subclasses) are wire-only bundles whose "
-      + "splitting invariants — same group key ⇔ same destination, sender-side count cap, byte budget — "
+      + "splitting invariants (same group key ⇔ same destination, sender-side count cap, byte budget) "
       + "are enforced by ICompositeFactory at mint time. A directly-constructed composite bypasses all of "
       + "them: it can mix destinations, exceed broker message-size limits, or blow the receiver's "
       + "expansion cap.");

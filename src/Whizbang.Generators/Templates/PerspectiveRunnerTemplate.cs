@@ -359,29 +359,41 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
-      // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
-      // missing row is ambiguous — a brand-new stream OR a reaped row whose stream just woke.
-      // A Sourced row is the fold of ALL its events, so applying only this batch onto a fresh
-      // model would silently build a corrupt partial row. Probe the log for pre-batch history OF
-      // THE EVENT TYPES THIS PERSPECTIVE FOLDS: that means reaped-and-woken — re-fold via the
-      // rewind CORE (snapshot floor + tail; the incoming events are already stored, so the
-      // replay includes them). The probe is perspective-aware on purpose (issue #696): a stream
-      // shared by several contracts holds history this perspective never folded, and "any
-      // earlier event" read that as a reaped row on every first contact. The core variant is
-      // required because RunAsync already holds the apply lock the public RewindAndRunAsync
-      // acquires. Ephemeral perspectives are excluded (rebuild refused; snapshot-floor
-      // semantics govern them) and non-TTL perspectives never reap, so neither ever probes.
-      if (!_isEphemeralPerspective
-          && global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(__MODEL_TYPE_NAME__)) >= 0
-          && events.Count > 0
+      // Resurrection-on-wake (perspective row retention, issue #1483): for a perspective whose rows
+      // can be evicted (a row TTL, a row cap, or a stream-group membership the cascade evicts through)
+      // a missing row is ambiguous: a brand-new stream OR an evicted row whose stream just woke. The row
+      // is the fold of ALL its events, so applying only this batch onto a fresh model would silently
+      // build a partial row nothing ever repairs. Probe the log for pre-batch history OF THE EVENT TYPES
+      // THIS PERSPECTIVE FOLDS: that means evicted-and-woken. The probe is perspective-aware on purpose
+      // (issue #696): a stream shared by several contracts holds history this perspective never folded,
+      // and "any earlier event" read that as an evicted row on every first contact. A perspective whose
+      // rows nothing can evict never probes, so it pays nothing.
+      //
+      // The rebuild is the rewind CORE (latest snapshot + the events after it; the incoming events are
+      // already stored, so the replay includes them). The eviction kept exactly that snapshot. The core
+      // variant is required because RunAsync already holds the apply lock the public RewindAndRunAsync
+      // acquires. An ephemeral perspective's history before its snapshot is reaped, so it rebuilds only
+      // from a snapshot floor; with none, nothing can rebuild the row and it starts fresh from this
+      // batch, with a warning, because the earlier state is gone.
+      if (events.Count > 0
+          && global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
           && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
-        _logger.LogInformation(
-            "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
+        if (!_isEphemeralPerspective
+            || await _hasSnapshotFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken)) {
+          _logger.LogInformation(
+              "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history: resurrecting via re-fold",
+              streamId,
+              perspectiveName
+          );
+          return await _rewindAndRunCoreAsync(
+              streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
+        }
+        _logger.LogWarning(
+            "Row for stream {StreamId} in {PerspectiveName} was evicted and its ephemeral history is reaped with no snapshot to restore from; starting it fresh from event {EventId}",
             streamId,
-            perspectiveName
+            perspectiveName,
+            events[0].MessageId.Value
         );
-        return await _rewindAndRunCoreAsync(
-            streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
       }
 
       // Purge stays purged (issue #1027). A missing row is otherwise a new stream; when the stream carries a
@@ -542,7 +554,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var resurrected = false;  // An Apply returned Resurrect while the stream was purged
     var purgedEventsSkipped = 0;  // Events skipped because the stream was purged
     PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
-    var scopeChanged = false;  // Track if an IScopeEvent changed scope (forces scope UPDATE)
+    PerspectiveScope? scopeEventScope = null;  // The scope an IScopeEvent set; forces a scope UPDATE (#1432)
 
     try {
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event, and not again
@@ -825,7 +837,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
           // The model's [InheritScope] decides the scope: OnCreate and Always fields on a new row, the Always
           // fields merged into the row's stored scope on an existing one (#1425).
-          var scopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeChanged);
+          var scopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
           // The store says whether the row was written: its ordering guard can refuse a write quietly, and a row it
           // left untouched is not a changed row (#1342).
           rowChanged = await SaveModelAndCheckpointAsync(
@@ -989,7 +1001,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 await _eventStore.GetCommitSequenceAsync(lastSuccessfulEventId.Value, cancellationToken),
                 processedEvents,
                 rebuilding);
-            var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeChanged);
+            var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
             await SaveModelAndCheckpointAsync(
                 streamId,
                 updatedModel,
@@ -1195,9 +1207,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PerspectiveScope? lastScope,
       global::Whizbang.Core.Perspectives.PerspectiveApplyRead applyRead,
       bool rowExists,
-      bool scopeChanged)
+      PerspectiveScope? scopeEventScope)
     => global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-        lastScope, applyRead.Scope, rowExists, _inheritScopeOnCreate, _inheritScopeAlways, scopeChanged);
+        lastScope, applyRead.Scope, rowExists, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope);
 
   /// <summary>
   /// Saves the model atomically.
@@ -1261,6 +1273,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       );
     }
     #endregion
+  }
+
+  /// <summary>
+  /// True when a snapshot of this stream is placed before <paramref name="beforeEventId"/> in stream order:
+  /// the floor an ephemeral perspective's evicted row can be rebuilt from (issue #1483). It is the same
+  /// lookup the rewind core makes, so "a floor exists" here means the rewind will restore from it.
+  /// </summary>
+  private async Task<bool> _hasSnapshotFloorAsync(
+      Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken cancellationToken) {
+    if (_snapshotStore is null) {
+      return false;
+    }
+    var floor = await _snapshotStore.GetLatestSnapshotBeforeEventInStreamOrderAsync(
+        streamId, perspectiveName, beforeEventId, cancellationToken);
+    return floor.HasValue;
   }
 
   public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
@@ -1679,7 +1706,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
             // its scope (Always fields catch up on the next live apply).
             global::Whizbang.Core.Lenses.ScopeInheritance.Resolve(
-                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventChanged: false).Scope);
+                lastScope, rowScope: null, rowExists: false, _inheritScopeOnCreate, _inheritScopeAlways, scopeEventScope: null).Scope);
         if (rowChanged && resurrected && startedPurged) {
           await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
         }

@@ -245,6 +245,33 @@ public interface IWorkCoordinator {
     => Task.CompletedTask;
 
   /// <summary>
+  /// Publishes the host's database-side settings (debug retention and every configured retention window) to the
+  /// store in one write, where the maintenance sweep reads them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Called once per maintenance cycle, before the sweep, with what
+  /// <see cref="Whizbang.Core.Workers.RetentionSettingsBridge.SettingsFor"/> returns: <c>debug_mode</c> always, and
+  /// each retention option that is set. An option left unset is absent, so the stored value stands.
+  /// </para>
+  /// <para>
+  /// The default hands the <c>debug_mode</c> entry to <see cref="SyncDebugRetentionSettingAsync"/> and ignores the
+  /// rest, so an engine that implements only that method keeps its debug retention. Engines with a settings table
+  /// override this to write every entry.
+  /// </para>
+  /// </remarks>
+  /// <param name="settings">The settings to write, each key at most once.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the settings are stored.</returns>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:AnEngineThatOnlySyncsDebugMode_StillReceivesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:TheDefaultSync_WithNoDebugEntry_DoesNothingAsync</tests>
+  Task SyncRetentionSettingsAsync(IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default)
+    => Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeIn(settings) is bool debugMode
+      ? SyncDebugRetentionSettingAsync(debugMode, cancellationToken)
+      : Task.CompletedTask;
+
+  /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
