@@ -3996,8 +3996,11 @@ public abstract partial class Dispatcher(
   /// <see cref="IClaimedEmissionStore.TryClaimAsync"/> with
   /// <see cref="PublishAsync{TEvent}(TEvent)"/>: the first caller to claim the
   /// key emits the event and returns <c>true</c>; concurrent callers with the
-  /// same key no-op and return <c>false</c>.
+  /// same key no-op and return <c>false</c>. A publish that fails gives its claim
+  /// back, so a retry can publish (#1414); the publish runs under the caller's token.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PublishThrowsOutsideATransaction_ReleasesTheClaimSoARetryPublishesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherPublishOnceTests.cs:PublishOnceAsync_PassesTheCallersTokenToThePublishAsync</tests>
   /// <docs>fundamentals/dispatcher/publish-once</docs>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -4032,7 +4035,20 @@ public abstract partial class Dispatcher(
 
     _dispatcherMetrics?.PublishOnceClaimsWon.Add(1,
       new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName));
-    await PublishAsync(eventData).ConfigureAwait(false);
+    try {
+      // The publish runs under the caller's token (#1414)
+      await PublishAsync(eventData, new DispatchOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+    } catch (Exception publishFailure) {
+      // A claim kept after its publish failed makes every retry a duplicate, so the event would never be
+      // published. Inside a transaction the rollback undoes the claim too; outside one it is given back
+      // here (#1414). The release is not canceled with the publish: it must run to give the key back.
+      try {
+        await claimStore.ReleaseAsync(claimKey, CancellationToken.None).ConfigureAwait(false);
+      } catch (Exception releaseFailure) {
+        throw new AggregateException(publishFailure, releaseFailure);
+      }
+      throw;
+    }
     return true;
   }
 
