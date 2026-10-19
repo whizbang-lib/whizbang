@@ -210,6 +210,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A published composite never reached another service (0.2623.0 regression).** Its outbox copy was routed to
+  its owner's command destination, because a composite is not an `IEvent`, so only the publishing service got it
+  and discarded it as its own echo. Nothing failed or logged. A composite now goes to the topic its inner events
+  share, wherever the composite type is declared.
+- **A composite written any way other than a single publish was not expanded here.** `PublishManyAsync` and a
+  composite returned by a receptor now expand an owned composite locally, as a publish does; a returned composite
+  is no longer refused as an owned command nothing handles.
+- **A scheduled composite expanded at publish.** Its inner events were stored and handled before its time. It now
+  expands when it is delivered.
+- **A scheduled owned event was discarded when it came back.** The transport consumer dropped the publisher's own
+  deferred copy as an echo, so the publisher never handled its scheduled event. A copy marked as deferred to its
+  delivery now passes the echo check.
+- **A message that is not an event, routed to the event store only, vanished.** Its row had no destination and was
+  not stored. It is now refused with `DispatchRejectedException` (`NotAnEventCannotBeStoreOnly`); one that also runs
+  here keeps its local run.
+- **The transport re-routed an event to a command inbox by its type name.** An event in a `Commands` namespace or
+  named `...Command` went to a command inbox no subscriber of the event reads. An event row now keeps the topic the
+  dispatcher chose.
+- **PreOutbox receptors never fired for an owned composite.** It was filtered as an owned command; it is filtered
+  as an event.
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator
