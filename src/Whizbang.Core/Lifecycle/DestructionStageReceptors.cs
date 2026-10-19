@@ -24,7 +24,7 @@ namespace Whizbang.Core.Lifecycle;
 /// Inline receptor fails the destruction exactly as a throwing destruction hook does.</para>
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerDestructionStageTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/DestructionStageReceptorComponentTests.cs</tests>
 public static partial class DestructionStageReceptors {
   private static readonly LifecycleStage[] _stages = [
     LifecycleStage.PreDestructionDetached, LifecycleStage.PreDestructionInline,
