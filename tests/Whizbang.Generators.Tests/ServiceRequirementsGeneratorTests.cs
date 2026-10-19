@@ -662,6 +662,89 @@ public class ServiceRequirementsGeneratorTests {
       "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),],[typeof(global::TestApp.IOtherWorker),typeof(global::TestApp.IWorker),])");
   }
 
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryHostedServiceRecordsIHostedServiceForWhatItsFactoryResolvesAsync() {
+    // The constructor needs no service, so only the factory names one: the requirement comes from
+    // the factory scan, and that scan must record IHostedService for the same reason the
+    // type-based scan does.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public sealed class Worker {
+        public Worker(string name) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddHostedService<Worker>(sp => new Worker(sp.GetRequiredService<IClock>().ToString()!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),],[typeof(global::Microsoft.Extensions.Hosting.IHostedService),])")
+      .Because("the factory descriptor says IHostedService and nothing about Worker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryServiceTypeThatDoesNotBindRecordsNoFactoryServiceTypeAsync() {
+    // A service type the compilation cannot resolve has no name the manifest could emit, so the
+    // implementation is still recorded, without a factory service type.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public sealed class Worker {
+        public Worker(IClock clock) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<IUndeclaredWorker, Worker>(sp => new Worker(null!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Worker),[typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).DoesNotContain("IUndeclaredWorker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task APrivateFactoryServiceTypeIsNotRecordedAsync() {
+    // The generated manifest cannot name a private nested type, so a factory registration under
+    // one records the implementation without a factory service type.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IClock { }
+      public sealed class Host {
+        private interface IPrivateWorker { }
+        public sealed class Worker : IPrivateWorker {
+          public Worker(IClock clock) { }
+        }
+        public static IServiceCollection AddThing(IServiceCollection services) {
+          services.AddSingleton<IPrivateWorker, Worker>(sp => new Worker(null!));
+          return services;
+        }
+      }
+      """;
+
+    var generated = _flatten(GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source));
+
+    await Assert.That(generated).Contains(
+      "ServiceRequirement(typeof(global::TestApp.Host.Worker),[typeof(global::TestApp.IClock),]),");
+    await Assert.That(generated).DoesNotContain("IPrivateWorker");
+  }
+
   private static string _flatten(Microsoft.CodeAnalysis.GeneratorDriverRunResult result) =>
     string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source))
       .Replace(" ", "", StringComparison.Ordinal)
