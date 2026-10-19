@@ -72,6 +72,9 @@ public class ConfigurationKeyManifestTests {
     services.AddWhizbangPostgresNotifications();
     // A database named by the placeholder records its section as a consumer-chosen name.
     services.AddWhizbangPostgresOptionsBinding(ConfigurationKeyRecorder.PLACEHOLDER);
+    // Both Postgres drivers register their database for the extension probe; the recording never opens it.
+    services.AddWhizbangPostgresExtensionProbe(ConfigurationKeyRecorder.PLACEHOLDER,
+      (_, _) => throw new InvalidOperationException("the manifest never opens a connection"));
     services.AddWhizbangAspNet();
     services.AddWhizbangSagas();
     services.AddWhizbangScope();

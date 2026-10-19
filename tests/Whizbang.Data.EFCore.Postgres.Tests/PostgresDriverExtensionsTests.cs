@@ -120,6 +120,32 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(fallback).IsTypeOf<DbContextNotificationConnectionStringFallback>();
   }
 
+  // ── Postgres extension probe (#1498) ──────────────────────────────────────────
+
+  [Test]
+  public async Task Postgres_RegistersItsDatabaseForTheExtensionProbe_UnderItsConnectionStringNameAsync() {
+    await Whizbang.Testing.Containers.SharedPostgresContainer.InitializeAsync();
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddMetrics();
+    services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("TestDb"));
+    await using var dataSource = NpgsqlDataSource.Create(Whizbang.Testing.Containers.SharedPostgresContainer.ConnectionString);
+    services.AddSingleton(dataSource);
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<PostgresTestDbContext>("orders-db").WithDriver.Postgres;
+
+    await using var sp = services.BuildServiceProvider();
+    var capabilities = sp.GetRequiredService<IPostgresCapabilities>();
+    await capabilities.RefreshAsync(CancellationToken.None);
+
+    var database = capabilities.Databases.Single();
+    await Assert.That(database.Database).IsEqualTo("orders-db")
+      .Because("the same name keys the database's Whizbang:Postgres:<name> section");
+    await Assert.That(database.ProbeFailure).IsNull()
+      .Because("the probe opens its connection from the context's data source");
+    await Assert.That(capabilities.GetState("orders-db", "pg_squeeze")).IsEqualTo(PostgresExtensionState.Missing);
+    await Assert.That(sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<PostgresExtensionsStartupStep>().Count()).IsEqualTo(1);
+  }
+
   // ── Turnkey IClaimedEmissionStore registration ────────────────────────────────
 
   [Test]

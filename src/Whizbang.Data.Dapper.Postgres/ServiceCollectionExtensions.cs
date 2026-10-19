@@ -146,6 +146,9 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
 
+    // TURNKEY: which Postgres extensions this database can use, probed and reported at startup.
+    _addExtensionProbe(services, connectionString);
+
     // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
     // it fills promoted columns for rows an instance still on the previous release wrote with the value only
     // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
@@ -290,6 +293,9 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: which Postgres extensions this database can use, probed and reported at startup.
+    _addExtensionProbe(services, connectionString);
 
     // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
     // it fills promoted columns for rows an instance still on the previous release wrote with the value only
@@ -443,6 +449,26 @@ public static class ServiceCollectionExtensions {
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
   }
+
+  /// <summary>
+  /// The name the extension probe reports this driver's database under: the database its connection string
+  /// names, since this driver has no connection-string name of its own, or the default name when the string
+  /// names none.
+  /// </summary>
+  /// <param name="connectionString">The service's database.</param>
+  /// <returns>The name.</returns>
+  /// <docs>operations/infrastructure/postgres-extensions#startup-report</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresCapabilityProbeIntegrationTests.cs:TheDapperDriver_FallsBackToTheDefaultNameWhenTheStringNamesNoDatabaseAsync</tests>
+  internal static string ProbeDatabaseName(string connectionString) =>
+    new Npgsql.NpgsqlConnectionStringBuilder(connectionString).Database
+      ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+
+  /// <summary>
+  /// Registers this driver's database for the extension probe: the capabilities singleton, its gauge and the
+  /// startup step that reports which extensions the database can use (#1498).
+  /// </summary>
+  private static void _addExtensionProbe(IServiceCollection services, string connectionString) =>
+    services.AddWhizbangPostgresExtensionProbe(ProbeDatabaseName(connectionString), (_, ct) => OpenConnectionAsync(connectionString, ct));
 
   /// <summary>Opens a connection the caller disposes.</summary>
   internal static async ValueTask<Npgsql.NpgsqlConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken) {

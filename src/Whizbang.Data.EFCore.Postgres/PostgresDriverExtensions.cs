@@ -416,6 +416,10 @@ public static class PostgresDriverExtensions {
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.
         selector.Services.AddWhizbangPostgresOptionsBinding(connectionStringName, legacyConnectionStringName);
+        // TURNKEY: which Postgres extensions this database can use, probed and reported at startup, under the
+        // same name. The data source is resolved when the probe runs, after the schema is ready, not here.
+        selector.Services.AddWhizbangPostgresExtensionProbe(connectionStringName,
+          (sp, ct) => sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(ct));
         selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
           if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
             options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(

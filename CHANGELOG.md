@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   will be retried), on both Postgres drivers.
 - **`ISchemaInitializationRunner` and `AddWhizbangSchemaInitialization()`** — one schema initializer runs every
   driver's registered runner in order, then opens the schema-ready gate.
+- **Postgres extension capabilities** (#1498): both Postgres drivers probe each database at startup for the
+  extensions the library can use (`vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`,
+  `pg_stat_statements`, `pg_cron`) and give each one state: Installed, Available, NotAllowlisted,
+  NeedsPreload, NoPrivilege, Missing or Unknown. One Information block per database lists the usable ones and
+  what each enables; the rest are listed at Debug with the fix. The answer is available as the
+  `IPostgresCapabilities` singleton and as the `whizbang.postgres.extension.state` gauge on the new
+  `Whizbang.Postgres` meter (in `WhizbangMeters.All`). The probe runs after the migration step, never blocks
+  readiness, and reads an unreachable database as Unknown rather than failing.
+  `Whizbang:PostgresExtensions:ProbeOnStartup` (default `true`) turns it off.
 
 #### Messaging & delivery
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the
