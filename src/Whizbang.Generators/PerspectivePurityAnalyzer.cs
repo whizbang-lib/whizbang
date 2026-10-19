@@ -29,7 +29,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor ApplyMethodIsAsync = new(
       id: "WHIZ100",
       title: "Apply method must be synchronous",
-      messageFormat: "Apply method '{0}' returns Task but must be synchronous for purity. Change return type from 'Task<{1}>' to '{1}'.",
+      messageFormat: "Apply method '{0}' returns '{2}' but must be synchronous for purity. Change the return type to '{1}'.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -107,7 +107,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor CollectiveApplyUsesCollectiveQuery = new(
       id: "WHIZ106",
       title: "Collective apply must not query other perspectives at apply time",
-      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>() — an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
+      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>(), an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -172,7 +172,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
           ApplyMethodIsAsync,
           methodDeclaration.Identifier.GetLocation(),
           methodSymbol.Name,
-          modelType ?? "TModel"
+          modelType ?? "TModel",
+          TypeNameUtilities.MinimallyQualified(methodSymbol.ReturnType)
       );
       context.ReportDiagnostic(diagnostic);
     }

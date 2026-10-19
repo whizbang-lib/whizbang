@@ -19,7 +19,7 @@ internal static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor PerspectiveModelDictionaryProperty = new(
       id: "WHIZ810",
       title: "Perspective model contains Dictionary property",
-      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use List<{4}> with Key/Value properties instead.",
+      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use a List of a class with Key ({2}) and Value ({3}) properties instead.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,

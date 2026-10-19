@@ -35,7 +35,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
     id: "WHIZ140",
     title: "Perspective shares stream event types with a group but joins none",
     messageFormat: "Perspective '{0}' applies event type(s) also feeding stream-group member(s) ({1}), "
-      + "but joins no group — its rows will linger after siblings evict. Join the group, or mark "
+      + "but joins no group, so its rows will linger after siblings evict. Join the group, or mark "
       + "[StreamGroupIsolated] to state the exclusion is deliberate.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
@@ -52,7 +52,7 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor InertGroup = new(
     id: "WHIZ141",
     title: "Stream group has no announcing member with a row evictor",
-    messageFormat: "Stream group '{0}' has no announcing member with [RowTtl] or [RowCap] — nothing "
+    messageFormat: "Stream group '{0}' has no announcing member with [RowTtl] or [RowCap], so nothing "
       + "ever triggers its cascade. Give at least one announcing member a real evictor.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
