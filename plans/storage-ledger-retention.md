@@ -170,6 +170,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
   `PgPartman` carrying `[RequiresPostgresExtension("pg_partman", Feature = "Partition management")]`
   from WS-8. Explicitly choosing it with the extension missing fails at startup; `Auto` uses
   pg_partman when the capability probe reports it usable, otherwise the built-in manager.
+  WS-8 slice 8 provisions the extension and runs `partman.create_parent` on conversion and
+  `partman.run_maintenance` from the maintenance worker each cycle; its verdict line names this
+  setting.
 - **RED tests.** Partitions exist `ahead` intervals forward after a cycle; a partition entirely
   past the window is dropped and one straddling it is kept; a duplicate message id within the window
   is still rejected after conversion; conversion is resumable; the drop takes no lock that blocks

@@ -1,7 +1,9 @@
-# Postgres extension capabilities (WS-8)
+# External capabilities, Postgres extensions first (WS-8)
 
-One startup answer to "which Postgres extensions can Whizbang use here, and what do they give me?",
-plus a hard stop when an operator explicitly asked for a feature the server cannot provide. The
+One repeatable pattern for everything Whizbang depends on outside its own process: detect it,
+provision and manage it where allowed, verify it, and report it the same way every time. Postgres
+extensions are the first provider (issue #1498); the pattern itself is issue #1513, and it is built
+so other database engines, broker plugins and third-party packages follow it unchanged. The
 bloat work (`storage-bloat.md`, online rewrite through pg_squeeze) and the ledger-retention work
 (the optional pg_partman setting) both depend on it, so it lands first.
 
@@ -31,178 +33,177 @@ What the code does today:
 
 There is no catalog, no startup report and no fail-fast path.
 
+## Responsibilities
+
+| Who | Does |
+|---|---|
+| Operator (server level) | Allows the extension on the server: the managed-server allowlist, `shared_preload_libraries` and the restart it needs, the pg_repack client program where that run mode is used. Whizbang cannot do these. |
+| Whizbang (database level) | Everything after that: detect it, `CREATE EXTENSION`, `ALTER EXTENSION ... UPDATE`, run what the extension offers from its own workers, and report the result. |
+
+Whizbang still detects and uses an extension an operator created by hand, including when
+provisioning is switched off.
+
 ## Goal
 
-1. Every extension Whizbang can use is probed once per database at startup and given one state.
-2. One informational log block lists the usable extensions and what each enables.
-3. A feature the operator **explicitly** configured, whose extension is not usable, stops startup
-   with a message naming the feature, the setting key, the extension's state and the fix.
-4. A feature left on its default degrades with a warning, as pg_trgm does today.
-5. Requirements are declared as metadata on configuration entries, read without reflection, so a
-   third-party package can declare its own the same way.
-6. Unknown `Whizbang:*` configuration keys produce a startup warning.
+1. Every capability Whizbang can use is probed once per scope at startup (for Postgres, per
+   database) and given one generic state.
+2. Required capabilities are provisioned and kept current by one runner, unless the operator
+   switched provisioning off globally, per provider or per capability.
+3. Startup prints **one verdict line per required capability**: enabled (created, already present
+   or upgraded, with the version) or the issue and its fix, naming **every feature that requires it
+   and the setting that turned the feature on**.
+4. A feature the operator **explicitly** configured, whose capability is not usable, stops startup.
+   A feature on by default degrades with a warning, as pg_trgm does today.
+5. Requirements are declared as metadata on configuration entries and schema attributes, read
+   without reflection, so a third-party package declares its own the same way.
+6. Unknown `Whizbang:*` configuration keys produce a startup warning (defect 8).
 
-## Design
+## Design: the capability pattern (#1513)
 
-### Catalog
+Every external dependency is a **capability** identified by `(provider, name)`, for example
+`postgres/pg_squeeze`. The same seven pieces apply to every provider; core
+(`src/Whizbang.Core/Capabilities/`) holds the generic parts and never references a provider package.
 
-A static, built-in list in `Whizbang.Data.Postgres` (new `PostgresExtensionCatalog.cs`).
-
-| Extension | Enables | Whizbang may create it | Extra prerequisites |
+| # | Piece | Generic (core) | Postgres provider |
 |---|---|---|---|
-| vector | vector fields and their indexes | yes | none |
-| pg_trgm | substring (trigram) indexes | yes | none |
-| pg_squeeze | online table rewrite (`storage-bloat.md`, C1) | yes | `shared_preload_libraries`, logical `wal_level` |
-| pg_partman | optional partition manager; Whizbang has a built-in fallback | yes | none (its background worker is optional) |
-| pg_repack | detection and runbook only | no | a client binary run outside the process |
-| pgstattuple | exact bloat measurement, otherwise estimated | yes | none |
-| pg_stat_statements | diagnostics, expensive-predicate advice | yes | `shared_preload_libraries` |
-| pg_cron | optional in-database scheduling | no (lives in one database) | `shared_preload_libraries` |
+| 1 | Descriptor | `CapabilityDescriptor`: purpose, features, provisionable, prerequisites, fix per state | `PostgresExtensionCatalog` |
+| 2 | Probe | `ICapabilityProvider.ProbeAsync(scope)`, `ICapabilityRegistry` aggregates providers; a throwing probe reads Unknown | one catalog query per database |
+| 3 | Requirements | `[RequiresCapability(provider, name, Feature = ...)]`, collected by a source generator into a registry via module initializer; runtime seam `ICapabilityRequirementSource` | shorthand `[RequiresPostgresExtension("pg_squeeze")]`; vector columns and trigram indexes found in the schema |
+| 4 | Activation | explicit (key set, or value differs from the declared default) vs implicit (a default turned the feature on) | n/a |
+| 5 | Provisioning | one runner: Ready with newer version → upgrade; Provisionable → provision; re-probe; record the outcome | `CREATE EXTENSION` / `ALTER EXTENSION UPDATE` under the schema lock |
+| 6 | Verdict | one line per required capability, same format for every provider; explicit issue fails start from a hosted service after the probe | fix text names the allowlist, preload and restart |
+| 7 | Telemetry and health | gauge `whizbang.capability.state` on meter `Whizbang.Capabilities` (tags `provider`, `capability`, `scope`, `state`, `required`); health entry per provider | scope = database |
 
-### Probe and states
+### Generic states
 
-One query per database: extensions are per database, while the allowlist and preload list are per
-server. It reads `pg_extension`, `pg_available_extensions`, `current_setting('azure.extensions', true)`
-(NULL when the setting does not exist) and `current_setting('shared_preload_libraries')`.
+| State | Meaning | Postgres detail it maps from |
+|---|---|---|
+| Ready | installed or enabled and usable | Installed (and preloaded where needed) |
+| Provisionable | absent, and Whizbang may provision it | Available |
+| NotPermitted | the platform blocks it | NotAllowlisted |
+| NeedsServerChange | needs operator action at the server | NeedsPreload |
+| NoPrivilege | the identity Whizbang uses cannot provision it | NoPrivilege |
+| Missing | not on this server at all | Missing |
+| Unknown | could not be determined (probe failed or disabled) | Unknown |
 
-| State | Meaning |
-|---|---|
-| Installed | present in `pg_extension`, and preloaded when the catalog says it must be |
-| Available | creatable: control files present, allowlisted (or no allowlist exists), preloaded if needed |
-| NotAllowlisted | control files present, but an allowlist exists and does not name it |
-| NeedsPreload | allowlisted or installed, but its library is not in `shared_preload_libraries` |
-| Missing | no control files on the server |
-| Unknown | the probe could not run (database unreachable, query refused) |
+The provider's own state is kept as the detail, so the log and gauge never lose it.
 
-The allowlist comparison is case-insensitive and trims whitespace (managed servers list names in
-upper case). The result is held in an `IPostgresCapabilities` singleton keyed by database, with a
-`Refresh` method the maintenance cycle may call.
+### Verdict format
 
-### Startup report and gauge
+```
+capability postgres/pg_squeeze (db orders): Ready, created 1.7.0. Required by: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze, explicit)
+capability postgres/pg_partman (db orders): NotPermitted. Fix: add PG_PARTMAN to azure.extensions. Required by: Partition management (Whizbang:Workers:Maintenance:Partitioning:Strategy = Auto, default); using the built-in manager
+```
 
-- One Information block per database: each usable extension and what it enables. Extensions that
-  are relevant but unusable are listed at Debug, except when a feature asked for them (then the
-  validation below decides).
-- `whizbang.postgres.extension.state`, an observable gauge with value 1 and tags `extension`,
-  `database`, `state`, on a new meter `Whizbang.Postgres`. It feeds `storage-telemetry.md`.
-
-### Requirement metadata (AOT-safe)
-
-- **Attribute.** `[RequiresPostgresExtension("pg_squeeze", Feature = "Online table rewrite")]` in
-  `Whizbang.Core.Configuration` (beside `WhizbangOptions`), so options classes in `Whizbang.Core`
-  can carry it without referencing a Postgres package. Valid on properties, enum members and
-  attribute classes (for `[VectorField]` and trigram `[Indexed]`).
-- **Read by a source generator, never by reflection.** A new `ConfigurationManifestGenerator` in
-  `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs` (syntax filter at `:87`,
-  manifest emitted per assembly at `:286-316`). It recognizes each
-  `ConfigurationBinder.Bind(configuration.GetSection("<literal>"), options)` call (the shape every
-  framework binding uses, for example `src/Whizbang.Core/Workers/WorkerPipelineExtensions.cs:789`),
-  walks the bound type's settable properties at compile time, and emits:
-  - the full key tree under that section (used by slice 8);
-  - one requirement record per attributed property or enum member: section path, property, the
-    triggering enum value if any, extension name, feature text.
-- **Registration.** The emitted class registers itself through `[ModuleInitializer]` into a
-  `ConfigurationManifestRegistry` built on `src/Whizbang.Core/Registry/AssemblyRegistry.cs`, the
-  existing multi-assembly pattern. A third party referencing the Whizbang packages gets the same
-  generator in its compilation, so attributing its own options is all it does.
-- **Schema attributes.** `EFCoreServiceRegistrationGenerator` already knows when vector fields or
-  trigram indexes exist (`hasVectorFields`, `JsonIndexInfo`). It emits an
-  `IExtensionRequirementProvider` registration listing them, so they enter the same check.
-- **Runtime seam.** `IExtensionRequirementProvider` (DI, enumerable) returns requirements that are
-  only known at run time. Third parties can implement it directly.
+Usable capabilities that nothing requires are listed once at Information; unusable ones nothing
+requires go to Debug.
 
 ### Validation rule
 
-| Setting | Extension usable | Outcome |
+| Activation | Capability usable | Outcome |
 |---|---|---|
 | explicit | yes | proceed |
-| explicit | no (known state) | **throw at startup** |
+| explicit | no (known state) | **throw at startup** with the verdict line |
 | explicit | Unknown | warn; the feature fails loudly when it runs |
-| default or `Auto` | yes | use it |
-| default or `Auto` | no | degrade with a warning, as pg_trgm does today |
+| implicit | yes | use it |
+| implicit | no | degrade with a warning |
 
-- **Explicit** means the configuration key exists (`IConfiguration.GetSection(key).Exists()`) or the
-  value differs from the declared default. Every extension-backed setting defaults to `Auto` (or
-  `false`), so "set in code" is caught by the value comparison without tracking call sites.
-- **Mechanism.** Validators are `IValidateOptions<T>`, so they compose with a host's own options
-  validation. They are run by a new startup `IHostedService` after the async probe, following
-  `src/Whizbang.Core/DependencyInjection/RegistrationValidationStartup.cs:36-50` (an
-  `IHostedService` whose `StartAsync` throws to fail host start). Not inside the startup pipeline:
-  `src/Whizbang.Core/Startup/StartupPipelineHosting.cs:87` states nothing inside it may stop the host.
-  Not `ValidateOnStart` alone: it runs before any async work, and `IOptions<T>` caches the first
-  result, so a pre-probe pass would be cached as success.
-- **Message template:** `Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy =
-  PgSqueeze) needs the pg_squeeze extension, which is NotAllowlisted on database '<name>'. Fix: add
-  PG_SQUEEZE to azure.extensions and to shared_preload_libraries, then restart the server.` The fix
-  text comes from the catalog entry and the state.
+The check runs in an `IHostedService` after the probe, following
+`src/Whizbang.Core/DependencyInjection/RegistrationValidationStartup.cs:36-50`. It cannot run inside
+the startup pipeline (`src/Whizbang.Core/Startup/StartupPipelineHosting.cs:87`: nothing inside it may
+stop the host) or through `ValidateOnStart` alone (it runs before the async probe, and `IOptions<T>`
+caches the first result).
 
-### Unknown configuration keys (defect 8)
+## Postgres extensions: how each is managed
 
-The configuration binder generator already emits a key set per bound type and honors
-`BinderOptions.ErrorOnUnknownConfiguration`. It cannot be used as is: it throws rather than warns,
-and the root `Whizbang` section is bound to `WhizbangOptions`
-(`WorkerPipelineExtensions.cs:915-925`), whose children are mostly other sections, so every
-section would read as unknown. The manifest above holds the whole tree instead. At startup, every
-leaf path under `Whizbang` (environment variables arrive with `:` already) that no manifest entry
-covers is logged as a warning, once. Dictionary-typed properties are wildcards (for example
-`Whizbang:PerspectiveRowRetention:Overrides:<Model>`). Sections read by hand, such as
-`Whizbang:DeadLetterRecovery` (`WorkerPipelineExtensions.cs:936`), are declared through an explicit
-manifest entry. An assembly-level `[RemovedConfigurationKey]` carries removed keys with a
-replacement hint, so the warning for `MaintenanceInterval` can name
-`Whizbang:Workers:Maintenance:IntervalMinutes`.
+| Extension | Enables | Whizbang provisions | How Whizbang runs it | Operator prerequisite |
+|---|---|---|---|---|
+| vector | vector fields and their indexes | yes | column types and indexes from the schema | allowlist |
+| pg_trgm | substring (trigram) indexes | yes | index DDL from the schema | allowlist |
+| pg_squeeze | online table rewrite (`storage-bloat.md`) | yes | the table rewriter calls `squeeze.squeeze_table(schema, table)` from the maintenance worker | allowlist, `shared_preload_libraries`, logical `wal_level`, restart |
+| pg_partman | partition management (`storage-ledger-retention.md`) | yes | `partman.create_parent` when a ledger is converted; `partman.run_maintenance` from the maintenance worker each cycle | allowlist (its background worker is not used) |
+| pg_repack | table rewrite without a long lock | yes (the extension) | either the `pg_repack` client run **in process** by the maintenance duty holder, or an **external job** that runs the same work from the queue | allowlist; the client program on `PATH` or at a configured path (in-process mode) |
+| pgstattuple | exact bloat measurement | yes | read by table statistics when Ready; otherwise estimated | allowlist |
+| pg_stat_statements | expensive-predicate advice | yes | read by the index advisor when Ready | `shared_preload_libraries` |
+| pg_cron | not used | no | detection only | n/a |
+
+**pg_repack run modes.** `InProcess`: the instance holding the maintainer duty runs the client
+against the queued tables inside the idle window, with the connection's credentials passed through
+the environment (never on the command line). `External`: Whizbang only queues and reports; a
+separate job (a container or scheduled task built from the same package's command-line helper)
+claims the queue and runs the client. Both read the same `pending_table_rewrites` queue and clear
+a request only after the re-measure improves.
 
 ## Configuration keys
 
-`Whizbang:Postgres` is not used: its children are database names
-(`src/Whizbang.Data.Postgres/PostgresOptionsPostConfigure.cs:33-36`).
-
 | Key | Environment variable | Default | Meaning |
 |---|---|---|---|
-| `Whizbang:PostgresExtensions:Policies:<extension>` | `Whizbang__PostgresExtensions__Policies__pg_trgm` | `Auto` | `Auto`, `Required` (explicit: throw if unusable) or `Disabled` (never create or use) |
-| `Whizbang:PostgresExtensions:ProbeOnStartup` | `Whizbang__PostgresExtensions__ProbeOnStartup` | `true` | `false` skips the probe; every state is Unknown |
+| `Whizbang:Capabilities:ProbeOnStartup` | `Whizbang__Capabilities__ProbeOnStartup` | `true` | `false` skips the probe; every state reads Unknown |
+| `Whizbang:Capabilities:AutoProvision` | `Whizbang__Capabilities__AutoProvision` | `true` | global switch for create and upgrade |
+| `Whizbang:Capabilities:<provider>:AutoProvision` | `Whizbang__Capabilities__postgres__AutoProvision` | inherits | per provider |
+| `Whizbang:Capabilities:<provider>:<name>:AutoProvision` | `Whizbang__Capabilities__postgres__pg_squeeze__AutoProvision` | inherits | per capability |
+| `Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode` | `Whizbang__Workers__Maintenance__TableRewrite__PgRepack__Mode` | `InProcess` | `InProcess` or `External` |
+| `Whizbang:Workers:Maintenance:TableRewrite:PgRepack:ClientPath` | `Whizbang__Workers__Maintenance__TableRewrite__PgRepack__ClientPath` | `pg_repack` (from `PATH`) | client program for `InProcess` |
 | `Whizbang:Configuration:UnknownKeys` | `Whizbang__Configuration__UnknownKeys` | `Warn` | `Warn`, `Throw` or `Ignore` |
+
+Feature keys that activate a capability live with their feature:
+`Whizbang:Workers:Maintenance:TableRewriteStrategy` (`storage-bloat.md`) and
+`Whizbang:Workers:Maintenance:Partitioning:Strategy` (`storage-ledger-retention.md`).
+`Whizbang:Postgres` is not used for any of this: its children are database names
+(`src/Whizbang.Data.Postgres/PostgresOptionsPostConfigure.cs:33-36`).
 
 ## Slices
 
 Each slice is one red-then-green increment and its own commit.
 
-1. **Catalog, probe, states.** New `PostgresExtensionCatalog.cs`, `PostgresCapabilityProbe.cs`,
-   `IPostgresCapabilities` in `src/Whizbang.Data.Postgres/`.
-   RED: state derivation as a pure function over a probe row, one test per state, plus allowlist
-   parsing (upper case, spaces, empty, absent setting means no allowlist). Integration test on the
-   shared container (`src/Whizbang.Testing/Containers/SharedPostgresContainer.cs:254` preloads only
-   pg_stat_statements): vector Available, pg_stat_statements Installed after create, pg_squeeze
-   Missing, nothing NotAllowlisted. Unreachable database gives Unknown, never a throw.
-   Docs: new `operations/infrastructure/postgres-extensions.md`.
-2. **Startup report and gauge.** RED: the log block lists exactly the usable extensions with their
-   purpose; the gauge reports one series per extension and database. Docs: the new page, and
-   `operations/observability/metrics.md` (new `Whizbang.Postgres` section).
-3. **Attribute, manifest generator, registry.** RED: generator tests beside
-   `tests/Whizbang.Generators.Tests/ServiceRequirementsGeneratorTests.cs`: an attributed property, an
-   attributed enum member, a nested section, a dictionary wildcard, a private type (skipped), a
-   second assembly registering through the module initializer. Docs: new page, "Declaring a
-   requirement" section; `operations/configuration/configuration-reference.md` (policy keys).
-4. **Validation and fail-fast.** RED, in the component test project: explicit plus NotAllowlisted
-   fails host start with the full message; explicit plus Unknown warns and starts; `Auto` plus
-   Missing warns and starts; `Disabled` never probes the create path. Docs: new page, "When startup
-   stops".
-5. **pg_trgm onto the catalog.** `OptionalExtensionBlocks.ApplyAsync` consults the capability
-   before trying `CREATE EXTENSION`; the refusal classification stays as the fallback. A
-   `Required` policy turns today's skip into the startup error. RED: extend
-   `tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/OptionalExtensionBlocksTests.cs`. Docs:
-   `fundamentals/perspectives/perspective-indexes.md`.
-6. **pgvector onto the catalog.** The three generated sites call one runtime helper instead of
-   inline SQL. Vector fields are required by construction (the column type cannot exist without the
-   extension), so a refusal becomes the catalog's explanatory error. RED: generator snapshot tests
-   for the emitted call; integration test for the message. Docs:
-   `fundamentals/perspectives/vector-fields.md`.
-7. **Existing readers.** `GetExpensivePredicatesAsync` checks the capability instead of catching
-   every `PostgresException`. RED: Installed reads; NeedsPreload returns empty without a query.
-8. **Unknown keys (defect 8).** Startup warning from the manifest, `[RemovedConfigurationKey]` for
-   `Whizbang:WorkCoordinator:MaintenanceInterval`. RED: a removed key warns with its replacement;
-   a typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
-   `operations/configuration/configuration-reference.md`, section "Every key on this page is one the
-   library reads".
+1. **Pattern core, Postgres provider, probe, report, gauge.** DONE in PR #1510 (issue #1511):
+   `src/Whizbang.Core/Capabilities/` (id, descriptor, generic states, provider and registry,
+   `Capabilities` startup step after `Migrate`, `Whizbang.Capabilities` meter), the Postgres catalog
+   and probe in `src/Whizbang.Data.Postgres/`, `Whizbang:Capabilities:ProbeOnStartup`. Docs:
+   `operations/infrastructure/capabilities.md` and the Postgres provider page.
+2. **Requirement attribute, manifest generator, registry.** `[RequiresCapability]` and
+   `[RequiresPostgresExtension]` in core; a `ConfigurationManifestGenerator` in
+   `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs`, recognizing each literal
+   `GetSection("<key>")` binding and emitting the key tree plus one requirement per attributed
+   property or enum member, registered through `[ModuleInitializer]`. RED: generator tests for an
+   attributed property, an enum member, a nested section, a dictionary wildcard, a private type
+   (skipped) and a second assembly. Docs: "Declaring a requirement" on the capabilities page.
+3. **Activation and the verdict.** Explicit vs implicit from configuration; the verdict line per
+   required capability naming each feature and its key; the `required` gauge tag; the health entry.
+   RED: one test per row of the validation table, including the exact line text.
+4. **Provisioning runner and `AutoProvision`.** Generic runner with the three-level switch; the
+   Postgres actions (`CREATE EXTENSION`, `ALTER EXTENSION UPDATE`) under the schema lock, outcome
+   created / present / upgraded. RED: provisioning off still detects an operator-created extension;
+   per-capability `false` overrides global `true`; an upgrade is recorded; NoPrivilege is reported,
+   never thrown, on an implicit requirement. Docs: configuration reference (`Whizbang:Capabilities`).
+5. **pg_trgm onto the pattern.** `OptionalExtensionBlocks.ApplyAsync` consults the capability before
+   `CREATE EXTENSION`; the refusal classification stays as the fallback. RED: extend
+   `OptionalExtensionBlocksTests.cs`. Docs: `fundamentals/perspectives/perspective-indexes.md`.
+6. **pgvector onto the pattern.** The three generated sites in
+   `EFCoreServiceRegistrationGenerator.cs` call one runtime helper instead of inline SQL; vector
+   columns become a runtime requirement source (always explicit: the column cannot exist without
+   the extension). RED: generator snapshot tests for the emitted call; integration test for the
+   verdict on refusal. Docs: `fundamentals/perspectives/vector-fields.md`.
+7. **pg_squeeze managed.** Requirement on `TableRewriteStrategy.PgSqueeze`; provisioning; the
+   rewriter strategy itself is `storage-bloat.md` slice 3. RED: explicit PgSqueeze on a server
+   without preload fails start with the preload fix text.
+8. **pg_partman managed.** Requirement on `PartitionManagementStrategy.PgPartman`; `create_parent`
+   on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
+   `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back
+   to the built-in manager and says so in the verdict.
+9. **pg_repack managed, both run modes.** The client program becomes a probed prerequisite (found on
+   `PATH` or at `ClientPath`, version read with `--version`). `InProcess` runs it from the maintainer
+   duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
+   no client fails an explicit requirement and degrades an implicit one; external mode never starts a
+   process; credentials never appear in the process arguments. Docs: the storage-maintenance page.
+10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
+    instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
+    without a query.
+11. **Unknown keys (defect 8).** Startup warning from the manifest; `[RemovedConfigurationKey]` for
+    `Whizbang:WorkCoordinator:MaintenanceInterval` naming
+    `Whizbang:Workers:Maintenance:IntervalMinutes`. RED: a removed key warns with its replacement; a
+    typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
+    configuration reference.
 
 ## Engineering standards
 
@@ -213,24 +214,26 @@ Each slice is one red-then-green increment and its own commit.
 - Generator rules: sealed value-type records, syntactic filter first
   (`src/Whizbang.Generators/ai-docs/performance-principles.md`).
 - Public types carry `<docs>` and `<tests>` tags (`ai-docs/documentation-maintenance.md`).
-- No migration is expected. If one is needed, it follows
-  `src/Whizbang.Data.Postgres/Migrations/README.md` (schema-qualify, idempotent, constants from
-  `constants.txt`, `<docs>`/`<tests>` on every function).
-- `Lint-MigrationSql.ps1` and `dotnet format` before the PR.
+- Any SQL change goes in a **new** migration (CI blocks edits to existing ones) and follows
+  `src/Whizbang.Data.Postgres/Migrations/README.md`.
+- pg_squeeze and pg_partman integration tests need a mirrored CI image with the extensions
+  (`ai-docs/ci-image-mirror.md`).
 
 ## Verification
 
-- Against the managed development server: the report shows vector, pg_trgm, pg_stat_statements
-  and pg_cron as usable and the three non-allowlisted extensions as NotAllowlisted.
-- Setting `TableRewriteStrategy=PgSqueeze` there stops startup with the fix text; removing it
-  starts normally.
+- On a managed server where pg_squeeze, pg_repack and pg_partman are installed but not allowlisted:
+  the verdict shows vector, pg_trgm, pg_stat_statements as Ready and the three as NotPermitted, each
+  naming the features and keys that need it.
+- After the operator allowlists and preloads pg_squeeze and restarts, the next start reports
+  `postgres/pg_squeeze: Ready, created` with no other change; with
+  `Whizbang:Capabilities:postgres:pg_squeeze:AutoProvision=false` it reports Provisionable and the
+  fix instead.
+- Setting `TableRewriteStrategy=PgSqueeze` on a server without it stops startup with the fix text.
 - A deployment still carrying `MaintenanceInterval` logs one warning naming the replacement.
 
 ## Open questions
 
-- Add a seventh state, NoPrivilege (allowlisted but this role cannot create it; `42501` today)?
-  The probe can tell from `pg_available_extension_versions.trusted` and the database `CREATE`
-  privilege.
 - Should Unknown plus explicit throw after a bounded retry, rather than warn?
-- `Whizbang.Postgres` as a new meter, or the existing `Whizbang.TableStatistics`?
 - Does `Throw` for unknown keys belong in 1.0, or only `Warn`?
+- The `Capabilities` startup step runs after `Migrate`; a provider that needs no schema may want an
+  earlier dependency.
