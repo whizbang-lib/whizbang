@@ -185,7 +185,7 @@ public class OwnedCompositePublishComponentTests {
     var streamId = Guid.CreateVersion7();
 
     await dispatcher.PublishAsync(new CpWorkflowComposite { StreamId = streamId, Inner = [new CpStepApproved(streamId)] },
-      new DispatchOptions { ScheduledFor = DateTimeOffset.UtcNow.AddHours(1) });
+      new DispatchOptions { ScheduledFor = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero) });
 
     await Assert.That(CompositeProbe.HandledCount(streamId, nameof(CpStepApproved))).IsEqualTo(0)
       .Because("a scheduled composite's events are handled when it is delivered");
