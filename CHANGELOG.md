@@ -305,6 +305,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run before the ephemeral reap removes a message, and `PostDestruction*` after, with the envelopes loaded
   before the reap. A throwing inline pre-destruction receptor holds the batch for a retry, as a throwing destruction hook
   does.
+- **Closing a stream failed whenever a perspective cursor pointed into the truncated range, and left snapshots a
+  rewind could no longer replay from (#1486).** `CloseStreamAsync` now moves such a cursor onto the first event
+  that survives the close, removes every snapshot that needs a truncated event (keeping a moved perspective's
+  current-state snapshot), and removes processed work rows and lapsed destruction holds for the truncated
+  events. Deduplication entries are kept so a redelivered copy is still turned away. Two new statuses refuse a
+  close instead of losing data: `held` (an active destruction hold covers an event in the range) and
+  `cursor_behind` (a perspective in the range has not yet applied the first surviving event). Same behavior on
+  the EF Core and Dapper schemas.
 - **Evicting a perspective row left its cursor and every snapshot behind, and a row evicted by a cap or a
   stream-group cascade came back holding only the newest event (#1483).** An eviction now reclaims storage
   only: for each perspective of the evicted model, the row's cursor and every snapshot but the latest are

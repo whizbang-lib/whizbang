@@ -1923,10 +1923,12 @@ public interface IWorkCoordinator {
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
-  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
-  /// <c>unsupported</c>) plus the number of events truncated.
+  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
+  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>closed</c>, every
+  /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
+  /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
   Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamCloseResult("unsupported", 0));
@@ -2649,10 +2651,12 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 /// <summary>
 /// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
 /// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
-/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
+/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>held</c> = an
+/// active destruction hold covers an event in the range | <c>cursor_behind</c> = a perspective whose cursor is in
+/// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
 /// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
 public sealed record StreamCloseResult(string Status, long EventsTruncated);
 
 /// <summary>
