@@ -38,6 +38,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
@@ -86,7 +87,8 @@ public sealed class HousekeepingCoordinator {
     ProceedUnmeasured,
 
     /// <summary>
-    /// Allowed through after being deferred too many times consecutively. The service never went
+    /// Allowed through after being deferred for <see cref="Settings.MaxDeferral"/> (or, as a legacy
+    /// fallback, <see cref="Settings.MaxConsecutiveDeferrals"/> times). The service never went
     /// quiet, which is worth an operator's attention in its own right.
     /// </summary>
     ProceedDeferralLimit,
@@ -109,12 +111,65 @@ public sealed class HousekeepingCoordinator {
   }
 
   /// <summary>Tuning for <see cref="HousekeepingCoordinator"/>.</summary>
+  /// <remarks>
+  /// <para>
+  /// The forced-pass ceiling has one precedence: an explicitly set <see cref="MaxDeferral"/> governs;
+  /// without it, an explicitly set <see cref="MaxConsecutiveDeferrals"/> keeps its legacy count
+  /// behavior; with neither, the default one-hour <see cref="MaxDeferral"/> governs.
+  /// </para>
+  /// <para>
+  /// "Set" means the setter ran: an object initializer, or the configuration binder finding the key.
+  /// The binder assigns only the keys present in the section, so an empty section is not a choice of
+  /// the count.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/housekeeping-arbitration#precedence-over-the-legacy-count</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs</tests>
   public sealed class Settings {
+    private int _maxConsecutiveDeferrals = 6;
+    private bool _maxConsecutiveDeferralsSet;
+    private TimeSpan _maxDeferral = TimeSpan.FromHours(1);
+    private bool _maxDeferralSet;
+
     /// <summary>
-    /// Consecutive deferrals tolerated before a sweep is forced through (default 6). At the default
-    /// maintenance cadence that is an hour of sustained busyness before cleanup runs regardless.
+    /// Legacy fallback: deferred requests tolerated before a pass is forced through (default 6).
+    /// Consulted only when it is set and <see cref="MaxDeferral"/> is not, because a count of ticks
+    /// is really the count times each activity's tick and moves whenever the tick does.
     /// </summary>
-    public int MaxConsecutiveDeferrals { get; set; } = 6;
+    /// <docs>operations/workers/housekeeping-arbitration#precedence-over-the-legacy-count</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:WithOnlyTheCountConfigured_TheCountStillGovernsAsync</tests>
+    public int MaxConsecutiveDeferrals {
+      get => _maxConsecutiveDeferrals;
+      set {
+        _maxConsecutiveDeferrals = value;
+        _maxConsecutiveDeferralsSet = true;
+      }
+    }
+
+    /// <summary>
+    /// The longest an activity can be held back by the idle gate (default one hour, bound from
+    /// <c>Whizbang:Housekeeping:MaxDeferral</c>). Once this much time has passed since the first
+    /// deferral of the current run of deferrals, the next request is forced through as
+    /// <see cref="Verdict.ProceedDeferralLimit"/>. Must be positive.
+    /// </summary>
+    /// <remarks>
+    /// Measured on the coordinator's <see cref="TimeProvider"/>, per activity, and re-armed when a
+    /// pass completes. Takes precedence over <see cref="MaxConsecutiveDeferrals"/>.
+    /// </remarks>
+    /// <docs>operations/workers/housekeeping-arbitration#tick-idle-gate-and-forced-ceiling</docs>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AShortTick_DoesNotForceTheSweepBeforeMaxDeferralAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:TheSweepIsNotForcedOneMomentBeforeMaxDeferral_AndIsForcedAtItAsync</tests>
+    /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+    public TimeSpan MaxDeferral {
+      get => _maxDeferral;
+      set {
+        _maxDeferral = value;
+        _maxDeferralSet = true;
+      }
+    }
+
+    /// <summary>Whether the legacy count, rather than <see cref="MaxDeferral"/>, decides the forced pass.</summary>
+    internal bool CeilingIsCount => _maxConsecutiveDeferralsSet && !_maxDeferralSet;
 
     /// <summary>
     /// How long the service must read settled CONTINUOUSLY before a sweep is admitted (default two
@@ -142,8 +197,20 @@ public sealed class HousekeepingCoordinator {
   private bool _dlqRunning;
   private bool _integrityRunning;
   private bool _maintenanceRunning;
-  private int _consecutiveDeferrals;
-  private int _recoveryDeferrals;
+  private readonly DeferralBudget _maintenanceDeferrals = new();
+  private readonly DeferralBudget _recoveryDeferrals = new();
+
+  // One activity's run of consecutive deferrals: how many, and when the first one happened. Both
+  // re-arm only when a pass of that activity actually completes.
+  private sealed class DeferralBudget {
+    public int Count { get; set; }
+    public DateTimeOffset? FirstDeferredAt { get; set; }
+
+    public void Reset() {
+      Count = 0;
+      FirstDeferredAt = null;
+    }
+  }
 
   // When the service most recently STARTED reading settled, or null while it reads unsettled. Every
   // unsettled reading clears it, so the dwell measures an unbroken run of settled readings rather
@@ -167,7 +234,21 @@ public sealed class HousekeepingCoordinator {
   /// <summary>Initializes a new instance with metrics.</summary>
   /// <param name="settings">Tuning.</param>
   /// <param name="metrics">Optional observability; null records nothing.</param>
-  public HousekeepingCoordinator(Settings settings, Observability.HousekeepingMetrics? metrics) : this(settings) {
+  public HousekeepingCoordinator(Settings settings, Observability.HousekeepingMetrics? metrics)
+    : this(settings, metrics, timeProvider: null) { }
+
+  /// <summary>
+  /// Initializes a new instance with metrics and the clock the settled dwell and the deferral
+  /// ceiling are measured on. This is the constructor container registration uses.
+  /// </summary>
+  /// <param name="settings">Tuning.</param>
+  /// <param name="metrics">Optional observability; null records nothing.</param>
+  /// <param name="timeProvider">The clock; null uses <see cref="TimeProvider.System"/>.</param>
+  /// <docs>operations/workers/housekeeping-arbitration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:AForcedPassByTime_IsCountedAsADeferralLimitVerdictAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
+  public HousekeepingCoordinator(Settings settings, Observability.HousekeepingMetrics? metrics, TimeProvider? timeProvider)
+    : this(settings, timeProvider ?? TimeProvider.System) {
     _metrics = metrics;
   }
 
@@ -212,8 +293,8 @@ public sealed class HousekeepingCoordinator {
     // Quiescent, not merely settled (167). Settled is the signal that ADMITS the idle drain, so a
     // sweep gated on it would start at the moment the drain does and compete with it for the same
     // backends -- the very pile-up the gate exists to prevent. Maintenance is the one caller that
-    // can afford to queue behind the idle band, because MaxConsecutiveDeferrals already bounds how
-    // long it will wait before forcing a pass through anyway.
+    // can afford to queue behind the idle band, because the deferral ceiling (MaxDeferral) already
+    // bounds how long it will wait before forcing a pass through anyway.
     if (!backlog.IsQuiescent) {
       _settledSince = null;
       return;
@@ -301,14 +382,14 @@ public sealed class HousekeepingCoordinator {
       // they spend and which slot they take, so they share one admission rule rather than two
       // copies of it that can drift.
       if (activity == Activity.DeadLetterRecovery) {
-        var recovery = _admitWhenQuiet(backlog, ref _recoveryDeferrals);
+        var recovery = _admitWhenQuiet(backlog, _recoveryDeferrals);
         if (recovery.Granted) {
           _dlqRunning = true;
         }
         return recovery;
       }
 
-      var maintenance = _admitWhenQuiet(backlog, ref _consecutiveDeferrals);
+      var maintenance = _admitWhenQuiet(backlog, _maintenanceDeferrals);
       if (maintenance.Granted) {
         _maintenanceRunning = true;
       }
@@ -327,8 +408,10 @@ public sealed class HousekeepingCoordinator {
   /// 20,000 due dead letters behind a service whose backlog never touched zero. The forced pass is
   /// reported distinctly, because "this service never went quiet" is worth an operator's attention
   /// on its own. The budget re-arms on End, so this is a trickle under load, never an open gate.
+  /// The ceiling is <see cref="Settings.MaxDeferral"/> measured from the first deferral, or the
+  /// legacy count when only that is configured (see <see cref="Settings"/> for the precedence).
   /// </remarks>
-  private Decision _admitWhenQuiet(ServiceBacklog? backlog, ref int deferrals) {
+  private Decision _admitWhenQuiet(ServiceBacklog? backlog, DeferralBudget deferrals) {
     if (backlog is null) {
       return new Decision(true, Verdict.ProceedUnmeasured);
     }
@@ -345,8 +428,13 @@ public sealed class HousekeepingCoordinator {
       return new Decision(true, Verdict.Proceed);
     }
 
-    deferrals++;
-    return deferrals > _settings.MaxConsecutiveDeferrals
+    var now = _timeProvider.GetUtcNow();
+    deferrals.Count++;
+    var firstDeferredAt = deferrals.FirstDeferredAt ??= now;
+    var ceilingReached = _settings.CeilingIsCount
+      ? deferrals.Count > _settings.MaxConsecutiveDeferrals
+      : now - firstDeferredAt >= _settings.MaxDeferral;
+    return ceilingReached
       ? new Decision(true, Verdict.ProceedDeferralLimit)
       : new Decision(false, reason);
   }
@@ -417,7 +505,7 @@ public sealed class HousekeepingCoordinator {
         _dlqRunning = false;
         // Mirror of maintenance below: a recovery pass that actually ran re-arms the budget, so
         // the forced-through branch cannot re-open every cycle on a service that stays busy.
-        _recoveryDeferrals = 0;
+        _recoveryDeferrals.Reset();
         return;
       }
 
@@ -430,7 +518,7 @@ public sealed class HousekeepingCoordinator {
         _maintenanceRunning = false;
         // Reset only on a sweep that actually ran. Resetting on a stray release would let the
         // forced-through branch re-arm every cycle, which is the un-gated behavior it bounds.
-        _consecutiveDeferrals = 0;
+        _maintenanceDeferrals.Reset();
       }
     }
   }
