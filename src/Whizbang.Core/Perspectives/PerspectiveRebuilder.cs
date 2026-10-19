@@ -179,6 +179,29 @@ public sealed partial class PerspectiveRebuilder(
   /// Takes its own scope. The catch in <c>_rebuildCoreAsync</c> runs after that method's scope is disposed, and
   /// the failure event has to go out from there too.
   /// </remarks>
+  // A stream of a multi-stream run logs nothing of its own; the run reports once, when it completes
+  private void _logRebuildStarting(bool partOfRun, RebuildMode mode, string perspectiveName, int streamCount, bool cursorPersistence) {
+    if (!partOfRun) {
+      LogRebuildStarting(logger, mode, perspectiveName, streamCount, cursorPersistence);
+    }
+  }
+
+  private void _logRebuildCompleted(bool partOfRun, RebuildMode mode, string perspectiveName, int streams, long elapsedMs) {
+    if (!partOfRun) {
+      LogRebuildCompleted(logger, mode, perspectiveName, streams, elapsedMs);
+    }
+  }
+
+  // The row digest for a rebuild of named streams, with why there is none; a stream of a run takes none
+  private (IPerspectiveRowDigest? Digester, string? Unavailable) _digesterFor(
+      IServiceProvider sp, RebuildMode mode, string perspectiveName, bool partOfRun) {
+    if (partOfRun) {
+      return (null, null);
+    }
+    var digester = mode == RebuildMode.SelectedStreams ? sp.GetService<IPerspectiveRowDigest>() : null;
+    return (digester, _digestAbsence(mode, digester, perspectiveName));
+  }
+
   private async Task _emitAsync<TEvent>(TEvent rebuildEvent, bool partOfRun = false) where TEvent : IEvent {
     // One stream of a multi-stream run announces nothing of its own: the run reports once, when it completes
     if (partOfRun) {
@@ -253,9 +276,7 @@ public sealed partial class PerspectiveRebuilder(
         LogBlueGreenInPlace(logger, perspectiveName);
       }
 
-      if (!partOfRun) {
-        LogRebuildStarting(logger, mode, perspectiveName, streamIds.Count, completer != null);
-      }
+      _logRebuildStarting(partOfRun, mode, perspectiveName, streamIds.Count, completer != null);
       await _emitAsync(new PerspectiveRebuildStarted(
           rebuildStreamId, perspectiveName, mode, streamIds.Count, DateTimeOffset.UtcNow, origin), partOfRun);
 
@@ -263,8 +284,7 @@ public sealed partial class PerspectiveRebuilder(
       // proportion to the repair; a whole-perspective rebuild would have to hash the table it is about to
       // replace. Taken after the state-based guard has filtered the list, so it describes the rows actually
       // replayed rather than the rows asked for.
-      var digester = mode == RebuildMode.SelectedStreams && !partOfRun ? sp.GetService<IPerspectiveRowDigest>() : null;
-      var digestUnavailable = partOfRun ? null : _digestAbsence(mode, digester, perspectiveName);
+      var (digester, digestUnavailable) = _digesterFor(sp, mode, perspectiveName, partOfRun);
       var (digestBefore, digestBeforeFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);
@@ -308,9 +328,7 @@ public sealed partial class PerspectiveRebuilder(
           StreamsRefused = run.StreamsRefused,
         };
       }
-      if (!partOfRun) {
-        LogRebuildCompleted(logger, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
-      }
+      _logRebuildCompleted(partOfRun, mode, perspectiveName, run.StreamsProcessed, sw.ElapsedMilliseconds);
       var (digestAfter, digestAfterFailure) = digester is null
           ? (null, null)
           : await _digestOrNullAsync(digester, perspectiveName, streamIds, ct);

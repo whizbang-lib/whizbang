@@ -57,6 +57,37 @@ public class RebuildPerspectiveStreamsHandlerTests {
       .Because("a rebuilder that cannot list a perspective's streams says so, and the rebuild then runs where it was received");
   }
 
+  /// <summary>
+  /// A rebuilder written before runs rebuilt their streams quietly still works one: the default forwards to its own
+  /// rebuild of that one stream, under the run's origin.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamOfRunAsync_OnARebuilderThatPredatesIt_RebuildsThatOneStreamAsync() {
+    var rebuilder = new PredatingRebuilder();
+
+    var result = await ((IPerspectiveRebuilder)rebuilder).RebuildStreamOfRunAsync("Test.Perspective", _stream, _origin, CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(rebuilder.Calls.Single()).IsEqualTo(("Test.Perspective", _stream, _origin));
+  }
+
+  /// <summary>Implements only what the interface required before <c>RebuildStreamOfRunAsync</c>.</summary>
+  private sealed class PredatingRebuilder : IPerspectiveRebuilder {
+    public List<(string Perspective, Guid Stream, RebuildOrigin Origin)> Calls { get; } = [];
+
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, RebuildOrigin origin, CancellationToken ct = default) {
+      foreach (var stream in streamIds) {
+        Calls.Add((perspectiveName, stream, origin));
+      }
+      return Task.FromResult(new RebuildResult(perspectiveName, 1, 1, TimeSpan.Zero, Success: true, Error: null));
+    }
+
+    public Task<RebuildResult> RebuildStreamsAsync(string perspectiveName, IEnumerable<Guid> streamIds, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<RebuildResult> RebuildBlueGreenAsync(string perspectiveName, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<RebuildResult> RebuildInPlaceAsync(string perspectiveName, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<RebuildStatus?> GetRebuildStatusAsync(string perspectiveName, CancellationToken ct = default) => throw new NotSupportedException();
+  }
+
   private sealed class StreamRecordingRebuilder : IPerspectiveRebuilder {
     public List<(string Perspective, Guid Stream, RebuildOrigin Origin)> Calls { get; } = [];
 

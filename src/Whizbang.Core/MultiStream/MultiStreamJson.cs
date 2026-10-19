@@ -28,13 +28,12 @@ internal static class MultiStreamJson {
   /// not removed, so a command whose stream list is required still reads back.
   /// </summary>
   internal static string SerializeWithoutStreams<T>(T value) where T : IMultiStreamCommand {
-    var node = JsonSerializer.SerializeToNode(value, TypeInfo<T>());
-    if (node is JsonObject json) {
-      foreach (var name in json.Select(property => property.Key).Where(_namesTheStreamList).ToList()) {
-        json[name] = new JsonArray();
-      }
+    // A command serializes as an object; the intake refuses a null one before it gets here
+    var json = JsonSerializer.SerializeToNode(value, TypeInfo<T>())!.AsObject();
+    foreach (var name in json.Select(property => property.Key).Where(_namesTheStreamList).ToList()) {
+      json[name] = new JsonArray();
     }
-    return node?.ToJsonString() ?? "null";
+    return json.ToJsonString();
   }
 
   // The command's stream list, under whatever naming policy the options apply (StreamIds, streamIds, stream_ids)

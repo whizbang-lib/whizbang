@@ -276,7 +276,8 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
 
     public bool NamesStreams => Include is not null || _exclude is not null;
 
-    public int NamedCount => Include?.Length ?? _exclude?.Count ?? 0;
+    // Read only when NamesStreams, so one of the two lists is there
+    public int NamedCount => Include?.Length ?? _exclude!.Count;
 
     public async Task<IReadOnlyList<Guid>?> ForAsync(IPerspectiveRebuilder rebuilder, string perspectiveName, CancellationToken cancellationToken) {
       if (Include is not null || _exclude is null) {

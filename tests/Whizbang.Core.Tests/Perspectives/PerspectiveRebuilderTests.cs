@@ -611,7 +611,7 @@ public class PerspectiveRebuilderTests {
       await Assert.That(coord.ReconciledScopes).Count().IsEqualTo(1);
       await Assert.That(coord.ReconciledScopes[0]).IsNotNull()
         .Because("a rebuild of named streams scopes its reconcile to them");
-      await Assert.That(coord.ReconciledScopes[0]!).IsEquivalentTo([stream]);
+      await Assert.That(coord.ReconciledScopes[0]).IsEquivalentTo([stream]);
     } finally {
       PerspectiveStreamGroupRegistry.Clear();
     }

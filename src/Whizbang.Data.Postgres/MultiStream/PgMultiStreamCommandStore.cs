@@ -95,15 +95,15 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
         }
         rows.Add((runId, reader.GetGuid(1), reader.GetString(2), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt32(5)));
       }
-      foreach (var row in rows) {
+      foreach (var (runId, streamId, commandType, scope, attempt) in rows) {
         items.Add(new MultiStreamWorkItem(
-          RunId: row.RunId,
-          StreamId: row.StreamId,
-          CommandType: row.CommandType,
+          RunId: runId,
+          StreamId: streamId,
+          CommandType: commandType,
           // Every run's first row carries its payload, so the lookup always finds it
-          Payload: payloads[row.RunId],
-          Scope: row.Scope,
-          Attempt: row.Attempt));
+          Payload: payloads[runId],
+          Scope: scope,
+          Attempt: attempt));
       }
     }
     return items;
