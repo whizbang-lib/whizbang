@@ -74,9 +74,27 @@ public sealed partial class MaintenanceWorker(
     LogStopped(_logger);
   }
 
+  /// <summary>
+  /// Whether this instance runs the sweep: always, unless role assignment manages the maintainer duty, in
+  /// which case only on its holder (#1377).
+  /// </summary>
+  private static bool _isThisInstancesTurn(IServiceProvider services) =>
+    services.GetService<Startup.DutyHolderWorker>() is not { } holder
+    || !holder.Roles.Contains(Startup.StartupDuties.MAINTAINER, StringComparer.Ordinal)
+    || holder.Holds(Startup.StartupDuties.MAINTAINER);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
+  private static partial void LogSkippedNotMaintainer(ILogger logger);
+
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
+    // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
+    // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
+    if (!_isThisInstancesTurn(sp)) {
+      LogSkippedNotMaintainer(_logger);
+      return;
+    }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
     if (_housekeeping is null) {
