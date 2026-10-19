@@ -160,4 +160,49 @@ public class DiagnosticMessageWordingTests {
     await Assert.That(message).Contains("Key");
     await Assert.That(message).Contains("Value");
   }
+
+  private const string PERSPECTIVE_PREFIX = """
+      using System;
+      using System.Net.Http;
+      using System.Threading.Tasks;
+      using Whizbang.Core.Perspectives;
+      namespace Shop;
+      public record Order { public DateTimeOffset At { get; init; } }
+      public record OrderPlaced;
+      """;
+
+  /// <summary>WHIZ104 finds a clock read however it is written, and names the one it found.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("System.DateTime.UtcNow", "DateTime.UtcNow")]
+  [Arguments("global::System.DateTimeOffset.Now", "DateTimeOffset.Now")]
+  [Arguments("DateTimeOffset.UtcNow", "DateTimeOffset.UtcNow")]
+  public async Task Whiz104_FindsAQualifiedClockRead_AndNamesItAsync(string expression, string named) {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(PERSPECTIVE_PREFIX + $$"""
+      public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {
+        public Order Apply(Order current, OrderPlaced @event) => current with { At = {{expression}} };
+      }
+      """);
+
+    var whiz104 = diagnostics.Where(d => d.Id == "WHIZ104").ToList();
+    await Assert.That(whiz104).Count().IsEqualTo(1);
+    await Assert.That(_message(whiz104[0])).Contains($"uses {named}");
+  }
+
+  /// <summary>An HttpClient call is an HTTP call (WHIZ103), not also a database call (WHIZ102).</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Whiz102_AnHttpClientCall_IsReportedOnlyAsHttpAsync() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(PERSPECTIVE_PREFIX + """
+      public class OrderPerspective : IPerspectiveFor<Order, OrderPlaced> {
+        private static readonly HttpClient _http = new();
+        public Order Apply(Order current, OrderPlaced @event) {
+          _ = _http.GetStringAsync("https://example.test/").Result;
+          return current;
+        }
+      }
+      """);
+
+    await Assert.That(diagnostics.Where(d => d.Id is "WHIZ102" or "WHIZ103").Select(d => d.Id)).IsEquivalentTo(["WHIZ103"]);
+  }
 }
