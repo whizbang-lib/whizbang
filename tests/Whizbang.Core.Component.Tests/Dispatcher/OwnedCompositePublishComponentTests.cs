@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Component.Tests.CompositePublish.Bundles;
+using Whizbang.Core.Component.Tests.CompositePublish.Foreign;
 using Whizbang.Core.Component.Tests.CompositePublish.Owned;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Dispatch;
@@ -103,6 +104,68 @@ public class OwnedCompositePublishComponentTests {
     var destinations = outbox.QueuedOf(typeof(CpBundleComposite)).Select(m => m.Destination).ToList();
     await Assert.That(destinations).IsEquivalentTo([eventTopic])
       .Because("a bundle travels to the topic its events' subscribers listen on");
+  }
+
+  /// <summary>
+  /// A composite whose events go to different topics, or that carries none, has no single events' topic, so its own
+  /// type decides where it goes.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task ACompositeWithNoSingleEventsTopic_GoesToItsOwnTopicAsync(bool empty) {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var streamId = Guid.CreateVersion7();
+    // An event of the composite's own namespace shows that namespace's topic
+    await dispatcher.PublishAsync(new CpBundleNote(streamId));
+    var ownTopic = outbox.QueuedOf(typeof(CpBundleNote)).Single(m => m.Destination is not null).Destination;
+
+    await dispatcher.PublishAsync(new CpBundleComposite {
+      StreamId = streamId,
+      Inner = empty ? [] : [new CpStepAssigned(streamId), new CpBundleNote(streamId)],
+    });
+
+    var destinations = outbox.QueuedOf(typeof(CpBundleComposite)).Select(m => m.Destination).ToList();
+    await Assert.That(destinations).IsEquivalentTo([ownTopic])
+      .Because(empty ? "a composite with no events goes where its own type routes" : "events bound for different topics leave the composite's own type to decide");
+  }
+
+  /// <summary>A composite this service does not own is expanded by the services that own it, not here.</summary>
+  [Test]
+  public async Task ACompositeThisServiceDoesNotOwn_IsNotExpandedHereAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var streamId = Guid.CreateVersion7();
+
+    await dispatcher.PublishAsync(new CpForeignComposite { StreamId = streamId, Inner = [new CpStepApproved(streamId)] });
+
+    await Assert.That(CompositeProbe.HandledCount(streamId, nameof(CpStepApproved))).IsEqualTo(0)
+      .Because("only an owned composite is expanded at publish");
+    await Assert.That(outbox.QueuedOf(typeof(CpStepApproved)).Count).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// A composite routed Local keeps its local run, which expands it and stores its events; the store write for the
+  /// composite itself, which the store would not take, is dropped rather than refused.
+  /// </summary>
+  [Test]
+  public async Task AnOwnedCompositeRoutedLocal_IsExpandedHere_AndNotRefusedAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var streamId = Guid.CreateVersion7();
+
+    await dispatcher.PublishAsync(Route.Local(new CpWorkflowComposite { StreamId = streamId, Inner = [new CpStepApproved(streamId)] }));
+
+    await Assert.That(CompositeProbe.HandledCount(streamId, nameof(CpStepApproved))).IsEqualTo(1)
+      .Because("Route.Local runs the composite here, which expands it");
+    await Assert.That(outbox.QueuedOf(typeof(CpStepApproved)).Count(m => m.Destination is null)).IsEqualTo(1)
+      .Because("its event is stored");
+    await Assert.That(outbox.QueuedOf(typeof(CpWorkflowComposite)).Count).IsEqualTo(0)
+      .Because("the composite itself is neither stored nor sent on a Local route");
   }
 
   public enum CompositeEntry {
