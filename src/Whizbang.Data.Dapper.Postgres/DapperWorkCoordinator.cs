@@ -639,6 +639,30 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <summary>
+  /// Publishes debug retention and every configured retention window into <c>wh_settings</c> in one statement,
+  /// where the maintenance sweep reads them. The same statement the EF Core coordinator runs.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRetentionSettingsSyncTests.cs</tests>
+  public async Task SyncRetentionSettingsAsync(
+      IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(settings);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    await Whizbang.Data.Postgres.RetentionSettingsWriter.WriteAsync(__scope.Connection, "wh_settings", settings, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <summary>
+  /// Publishes the host's debug-retention option into <c>wh_settings</c>. This engine used to inherit the no-op
+  /// default, so debug retention marked rows the next sweep deleted.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperRetentionSettingsSyncTests.cs:TheOlderDebugOnlySync_NowWritesOnThisEngineAsync</tests>
+  public Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken cancellationToken = default)
+    => SyncRetentionSettingsAsync([Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeSetting(debugMode)], cancellationToken);
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;

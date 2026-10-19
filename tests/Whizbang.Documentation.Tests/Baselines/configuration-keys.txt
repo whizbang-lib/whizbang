@@ -107,7 +107,11 @@ Whizbang:DebuggerAwareClock:FrozenThreshold
 Whizbang:DebuggerAwareClock:Mode
 Whizbang:DebuggerAwareClock:SamplingInterval
 Whizbang:DisableGuidTracking
+Whizbang:Ephemeral:PointerPrune:Enabled
+Whizbang:Ephemeral:PointerPrune:IntervalDays
+Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
+Whizbang:Ephemeral:RewindGraceSeconds
 Whizbang:Guardrails:EnableChaosHooks
 Whizbang:Guardrails:OnDoubleFire
 Whizbang:Guardrails:PersistInvocations
@@ -508,6 +512,13 @@ Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
+Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
+Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
+Whizbang:Workers:Maintenance:Retention:DeduplicationDays
+Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours
+Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours
+Whizbang:Workers:Maintenance:Retention:RecoveredDeadLetterDays
+Whizbang:Workers:Maintenance:Retention:StuckInboxDays
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes
 Whizbang:Workers:Maintenance:RowCascadeDrainLimit
 Whizbang:Workers:Maintenance:RowGuardCollectLimit

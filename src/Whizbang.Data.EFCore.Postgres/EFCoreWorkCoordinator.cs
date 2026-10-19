@@ -242,41 +242,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// sweep reads it.
   /// </summary>
   /// <remarks>
-  /// The sweep already guards its purge on <c>debug_mode</c>, but nothing wrote that row — so the
+  /// The sweep already guards its purge on <c>debug_mode</c>, but nothing wrote that row, so the
   /// documented option marked rows in process and the sweep deleted them anyway on its next pass.
-  /// Both values are written: leaving a stale true would disable the purge permanently.
+  /// Both values are written: leaving a stale true would disable the purge permanently. Written by the
+  /// same statement as <see cref="SyncRetentionSettingsAsync"/>, which is what the maintenance cycle calls.
   /// </remarks>
   /// <param name="debugMode">Whether completed rows should be retained.</param>
   /// <param name="cancellationToken">Cancellation.</param>
   /// <returns>A task that completes when the setting is stored.</returns>
-  public async Task SyncDebugRetentionSettingAsync(
-      bool debugMode, CancellationToken cancellationToken = default) {
+  public Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken cancellationToken = default)
+    => SyncRetentionSettingsAsync([Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeSetting(debugMode)], cancellationToken);
+
+  /// <inheritdoc />
+  /// <summary>
+  /// Publishes debug retention and every configured retention window into <c>wh_settings</c> in one statement,
+  /// where the maintenance sweep reads them.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RetentionSettingsSyncSqlTests.cs</tests>
+  public async Task SyncRetentionSettingsAsync(
+      IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(settings);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var settings = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
+    var table = BuildSchemaQualifiedName(schema, SETTINGS_TABLE);
 
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    var conn = scope.Connection;
-    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-#pragma warning disable S2077
-    // value_type is NOT NULL and updated_at records when the host last published its option, so a
-    // stale value is visible rather than indistinguishable from a fresh one.
-    cmd.CommandText = $@"
-      INSERT INTO {settings} (setting_key, setting_value, value_type, description, updated_at, updated_by)
-      VALUES (@k, @v, 'boolean', 'Retain completed messages for debugging; published from WorkCoordinatorOptions.DebugMode', NOW(), 'whizbang')
-      ON CONFLICT (setting_key) DO UPDATE
-        SET setting_value = EXCLUDED.setting_value,
-            value_type    = EXCLUDED.value_type,
-            updated_at    = NOW(),
-            updated_by    = EXCLUDED.updated_by";
-#pragma warning restore S2077
-    var pk = cmd.CreateParameter(); pk.ParameterName = "k";
-    pk.Value = Whizbang.Core.Workers.DebugRetentionBridge.SettingKey;
-    cmd.Parameters.Add(pk);
-    var pv = cmd.CreateParameter(); pv.ParameterName = "v";
-    pv.Value = Whizbang.Core.Workers.DebugRetentionBridge.SettingValueFor(debugMode);
-    cmd.Parameters.Add(pv);
-    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    await Whizbang.Data.Postgres.RetentionSettingsWriter.WriteAsync(scope.Connection, table, settings, cancellationToken)
+      .ConfigureAwait(false);
   }
 
   public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
