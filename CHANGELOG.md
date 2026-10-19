@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   will be retried), on both Postgres drivers.
 - **`ISchemaInitializationRunner` and `AddWhizbangSchemaInitialization()`** — one schema initializer runs every
   driver's registered runner in order, then opens the schema-ready gate.
+- **Capabilities: one pattern for external dependencies** (#1511, #1513, #1498): every external dependency the
+  library can use is a capability, identified by provider and name (`postgres/pg_squeeze`), described once
+  (purpose, features, whether the library may provision it, prerequisites, the fix per state) and probed per
+  scope with one generic state: Ready, Provisionable, NotPermitted, NeedsServerChange, NoPrivilege, Missing or
+  Unknown, with the provider's own detail kept beside it. `ICapabilityProvider` is the extension point for
+  any package; `ICapabilityRegistry` aggregates every provider. After the migration step, and without
+  blocking readiness, the library probes every provider and writes one verdict per provider and scope:
+  the usable capabilities with their purpose at Information, the rest at Debug with the fix. A provider
+  that cannot probe a scope reads Unknown with a warning and never stops startup. Gauge
+  `whizbang.capability.state` (tags provider, capability, scope, state) on the new `Whizbang.Capabilities`
+  meter, in `WhizbangMeters.All`. `Whizbang:Capabilities:ProbeOnStartup` (default `true`) turns the probe off.
+  Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
+  scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
+  `pg_cron`.
 
 #### Messaging & delivery
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the

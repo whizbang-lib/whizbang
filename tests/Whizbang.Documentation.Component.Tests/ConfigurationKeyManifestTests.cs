@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Health;
 using Whizbang.Core.Offloads;
 using Whizbang.Core.Routing;
@@ -72,6 +73,8 @@ public class ConfigurationKeyManifestTests {
     services.AddWhizbangPostgresNotifications();
     // A database named by the placeholder records its section as a consumer-chosen name.
     services.AddWhizbangPostgresOptionsBinding(ConfigurationKeyRecorder.PLACEHOLDER);
+    // Every capability provider (both Postgres drivers register one) goes through the capability registry.
+    services.AddWhizbangCapabilities();
     services.AddWhizbangAspNet();
     services.AddWhizbangSagas();
     services.AddWhizbangScope();
