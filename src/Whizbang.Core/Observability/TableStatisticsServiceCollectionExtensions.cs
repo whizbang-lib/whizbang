@@ -47,7 +47,7 @@ public static class TableStatisticsServiceCollectionExtensions {
       return new ConfigureOptions<TableStatisticsOptions>(options => {
         if (configuration is not null) {
 #pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-          ConfigurationBinder.Bind(configuration.GetSection("Whizbang:TableStatistics"), options);
+          configuration.GetSection("Whizbang:TableStatistics").Bind(options);
 #pragma warning restore IL2026
         }
       });

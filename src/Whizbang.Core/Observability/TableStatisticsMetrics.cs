@@ -19,6 +19,8 @@ public sealed class TableStatisticsMetrics {
   public const string METER_NAME = "Whizbang.TableStatistics";
 #pragma warning restore CA1707
 
+  private const string TABLE_NAME_TAG = "table_name";
+
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
   private readonly ConcurrentDictionary<string, double> _tableBloat = new();
@@ -31,7 +33,7 @@ public sealed class TableStatisticsMetrics {
     meter.CreateObservableGauge(
       "whizbang.table.estimated_bytes",
       observeValues: () => _tableSizes.Select(kv =>
-        new Measurement<long>(kv.Value, new KeyValuePair<string, object?>("table_name", kv.Key))),
+        new Measurement<long>(kv.Value, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
       unit: "bytes",
       description: "Estimated disk size per table from database catalog");
 
@@ -52,7 +54,7 @@ public sealed class TableStatisticsMetrics {
     meter.CreateObservableGauge(
       "whizbang.table.bloat_ratio",
       observeValues: () => _tableBloat.Select(kv =>
-        new Measurement<double>(kv.Value, new KeyValuePair<string, object?>("table_name", kv.Key))),
+        new Measurement<double>(kv.Value, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
       unit: "ratio",
       description: "Heap bytes per live row divided by the expected row width — 1.0 is lean");
 
@@ -69,7 +71,7 @@ public sealed class TableStatisticsMetrics {
     meter.CreateObservableGauge(
       "whizbang.table.live_rows",
       observeValues: () => _tableStorage.Select(kv =>
-        new Measurement<long>(kv.Value.LiveRows, new KeyValuePair<string, object?>("table_name", kv.Key))),
+        new Measurement<long>(kv.Value.LiveRows, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
       unit: "rows",
       description: "Estimated live rows per table from the planner statistics");
   }
@@ -82,7 +84,7 @@ public sealed class TableStatisticsMetrics {
 
   private static Measurement<long> _component(long bytes, string table, string component) =>
     new(bytes,
-      new KeyValuePair<string, object?>("table_name", table),
+      new KeyValuePair<string, object?>(TABLE_NAME_TAG, table),
       new KeyValuePair<string, object?>("component", component));
 
   /// <summary>

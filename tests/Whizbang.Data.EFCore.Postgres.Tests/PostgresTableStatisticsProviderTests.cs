@@ -220,7 +220,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     var partitions = await _scalarAsync(
       "SELECT pg_total_relation_size('stats_part.wh_part_probe_low') + pg_total_relation_size('stats_part.wh_part_probe_high')");
 
-    await Assert.That(storage.Keys.ToList()).IsEquivalentTo(new List<string> { "wh_part_probe" })
+    await Assert.That(storage.Keys.ToList()).IsEquivalentTo((List<string>)["wh_part_probe"])
       .Because("a partitioned table is one table to its owner; its partitions are how it is stored");
     await Assert.That(storage["wh_part_probe"].TotalBytes).IsEqualTo(partitions)
       .Because("the parent holds no rows itself, so its size is its partitions'");
