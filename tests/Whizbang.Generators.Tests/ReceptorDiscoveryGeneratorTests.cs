@@ -1099,11 +1099,13 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should register at LocalImmediateDetached + PostInboxDetached (default stages)
+    // Assert - Should register at LocalImmediateInline + PostInboxDetached (default stages): the local
+    // caller waits for its handler, so the default local stage is Inline (#1392)
     // PreOutbox removed from defaults — opt-in via [FireAt(PreOutboxDetached)]
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
-    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateInline");
+    await Assert.That(registry).DoesNotContain("LifecycleStage.LocalImmediateDetached");
     await Assert.That(registry).Contains("LifecycleStage.PostInboxDetached");
   }
 
@@ -1201,14 +1203,13 @@ public class FireAtReceptor : IReceptor<SomeEvent> {
   }
 
   /// <summary>
-  /// A void receptor declared at a LOCAL stage (LocalImmediateInline / LocalImmediateDetached) runs
-  /// whenever this service handles the message in-process (#1400). Nothing fires the local stages through
-  /// the receptor invoker, so the publish and cascade fan-out must run it, unguarded, like a default one.
+  /// A void receptor declared at LocalImmediateInline runs whenever this service handles the message
+  /// in-process (#1400), so the publish and cascade fan-out run it, unguarded, like a default one.
+  /// LocalImmediateDetached is a background hook since #1392, fired through the registry, never awaited here.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
   [Arguments("LocalImmediateInline")]
-  [Arguments("LocalImmediateDetached")]
   public async Task Generator_PublishAndCascade_RunVoidReceptorsDeclaredAtALocalStageAsync(string stage) {
     var source = $@"
 using System.Threading;
@@ -1342,19 +1343,14 @@ public class HookVoidSyncHandler : ISyncReceptor<HookVoidSyncCommand> {
   }
 
   /// <summary>
-  /// A receptor declared at a local-dispatch stage IS the local handler: LocalImmediateInline and
-  /// LocalImmediateDetached are the stages local dispatch fires, so the send lookups must keep it.
-  /// Only hooks at other stages are left out.
+  /// A receptor declared at LocalImmediateInline IS the local handler, so the send lookups must keep it.
+  /// Hooks at other stages, LocalImmediateDetached included since #1392, are left out.
   /// </summary>
   [Test]
   [Arguments("LocalImmediateInline", "GetReceptorInvoker<TResult>(object message, Type messageType)", "ResultCommand")]
   [Arguments("LocalImmediateInline", "GetVoidReceptorInvoker(object message, Type messageType)", "VoidCommand")]
   [Arguments("LocalImmediateInline", "GetSyncReceptorInvoker<TResult>(object message, Type messageType)", "SyncCommand")]
   [Arguments("LocalImmediateInline", "GetVoidSyncReceptorInvoker(object message, Type messageType)", "VoidSyncCommand")]
-  [Arguments("LocalImmediateDetached", "GetReceptorInvoker<TResult>(object message, Type messageType)", "ResultCommand")]
-  [Arguments("LocalImmediateDetached", "GetVoidReceptorInvoker(object message, Type messageType)", "VoidCommand")]
-  [Arguments("LocalImmediateDetached", "GetSyncReceptorInvoker<TResult>(object message, Type messageType)", "SyncCommand")]
-  [Arguments("LocalImmediateDetached", "GetVoidSyncReceptorInvoker(object message, Type messageType)", "VoidSyncCommand")]
   [RequiresAssemblyFiles()]
   public async Task Generator_SendLookups_KeepReceptorsDeclaredAtALocalDispatchStageAsync(string stage, string lookupSignature, string command) {
     var source = $$"""
@@ -1404,6 +1400,55 @@ public class VoidSyncHandler : ISyncReceptor<VoidSyncCommand> {
 
     await Assert.That(content[start..end]).Contains($"MyApp.Receptors.{command}")
       .Because($"a receptor declared at {stage} is the local handler a send invokes");
+  }
+
+  /// <summary>
+  /// #1392: a receptor declared at LocalImmediateDetached is a background hook. It stays registered at that stage,
+  /// where the dispatcher starts it after the handler without waiting, and is never a handler the send lookups or
+  /// the publish fan-out await.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_LocalImmediateDetachedReceptor_IsRegisteredAtItsStage_AndNeverAwaitedAsAHandlerAsync() {
+    const string source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record ShipCommand : ICommand;
+public record ShippedEvent : IEvent;
+
+public class ShipHandler : IReceptor<ShipCommand> {
+  public ValueTask HandleAsync(ShipCommand message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.LocalImmediateDetached)]
+public class ShipBackgroundHook : IReceptor<ShipCommand> {
+  public ValueTask HandleAsync(ShipCommand message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.LocalImmediateDetached)]
+public class ShippedBackgroundHook : IReceptor<ShippedEvent> {
+  public ValueTask HandleAsync(ShippedEvent message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs")!;
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs")!;
+
+    await Assert.That(registry).Contains("LifecycleStage.LocalImmediateDetached")
+      .Because("the hook is registered at its stage, where the dispatcher starts it in the background");
+    var sendStart = dispatcher.IndexOf("GetVoidReceptorInvoker(object message, Type messageType)", StringComparison.Ordinal);
+    var sendEnd = dispatcher.IndexOf("protected override", sendStart + 1, StringComparison.Ordinal);
+    await Assert.That(dispatcher[sendStart..sendEnd]).Contains("ShipHandler");
+    await Assert.That(dispatcher[sendStart..sendEnd]).DoesNotContain("ShipBackgroundHook")
+      .Because("a send awaits the handler, never a detached hook");
+    await Assert.That(dispatcher).DoesNotContain("ShippedBackgroundHook")
+      .Because("an event whose only local receptor is a detached hook has no handler for the publish fan-out to await");
   }
 
   /// <summary>
