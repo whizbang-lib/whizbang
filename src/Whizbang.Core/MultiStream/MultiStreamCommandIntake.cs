@@ -41,7 +41,7 @@ public sealed partial class MultiStreamCommandIntake<TCommand>(
     var run = new MultiStreamRun(
       message.RunId,
       MultiStreamCommandNames.Of(typeof(TCommand)),
-      MultiStreamJson.Serialize(message),
+      MultiStreamJson.SerializeWithoutStreams(message),
       streams,
       MultiStreamScope.Capture(ScopeContextAccessor.CurrentContext));
     if (await _store.RecordRunAsync(run, cancellationToken).ConfigureAwait(false)) {

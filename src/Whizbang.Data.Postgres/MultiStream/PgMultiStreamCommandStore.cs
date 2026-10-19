@@ -83,12 +83,20 @@ public sealed class PgMultiStreamCommandStore : IMultiStreamCommandStore {
       cmd.Parameters.Add(new NpgsqlParameter("epoch", NpgsqlDbType.Bigint) { Value = (object?)claim.Assignment?.Epoch ?? DBNull.Value });
       cmd.Parameters.Add(new NpgsqlParameter("revision", NpgsqlDbType.Bigint) { Value = (object?)claim.Assignment?.Revision ?? DBNull.Value });
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      // The claim returns the run's payload on every row; it is read once per run, so a batch holds one copy of each
+      // run's payload however many of its streams it claimed
+      var payloads = new Dictionary<Guid, string>();
       while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var runId = reader.GetGuid(0);
+        if (!payloads.TryGetValue(runId, out var payload)) {
+          payload = reader.GetString(3);
+          payloads[runId] = payload;
+        }
         items.Add(new MultiStreamWorkItem(
-          RunId: reader.GetGuid(0),
+          RunId: runId,
           StreamId: reader.GetGuid(1),
           CommandType: reader.GetString(2),
-          Payload: reader.GetString(3),
+          Payload: payload,
           Scope: reader.IsDBNull(4) ? null : reader.GetString(4),
           Attempt: reader.GetInt32(5)));
       }

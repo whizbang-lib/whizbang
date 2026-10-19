@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using Whizbang.Core.Serialization;
 
@@ -19,6 +20,27 @@ internal static class MultiStreamJson {
   internal static JsonTypeInfo<T> TypeInfo<T>() => (JsonTypeInfo<T>)_currentOptions().GetTypeInfo(typeof(T));
 
   internal static string Serialize<T>(T value) => JsonSerializer.Serialize(value, TypeInfo<T>());
+
+  /// <summary>
+  /// Serializes a multi-stream command with its stream list emptied. The streams are recorded one per row and each
+  /// stream's handler is given its stream id, so the payload every stream reads back must not carry them: a payload
+  /// listing them all was read once per stream, and a run's cost grew with the square of its stream count. Emptied,
+  /// not removed, so a command whose stream list is required still reads back.
+  /// </summary>
+  internal static string SerializeWithoutStreams<T>(T value) where T : IMultiStreamCommand {
+    var node = JsonSerializer.SerializeToNode(value, TypeInfo<T>());
+    if (node is JsonObject json) {
+      foreach (var name in json.Select(property => property.Key).Where(_namesTheStreamList).ToList()) {
+        json[name] = new JsonArray();
+      }
+    }
+    return node?.ToJsonString() ?? "null";
+  }
+
+  // The command's stream list, under whatever naming policy the options apply (StreamIds, streamIds, stream_ids)
+  private static bool _namesTheStreamList(string jsonName) =>
+    string.Equals(jsonName.Replace("_", "", StringComparison.Ordinal).Replace("-", "", StringComparison.Ordinal),
+      nameof(IMultiStreamCommand.StreamIds), StringComparison.OrdinalIgnoreCase);
 
   internal static T? Deserialize<T>(string json) => JsonSerializer.Deserialize(json, TypeInfo<T>());
 

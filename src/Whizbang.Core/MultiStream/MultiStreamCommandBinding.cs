@@ -21,10 +21,26 @@ public sealed class MultiStreamCommandBinding<TCommand> : IMultiStreamCommandBin
   /// <inheritdoc/>
   public async ValueTask InvokeAsync(IServiceProvider services, string payload, Guid streamId, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(services);
-    var command = MultiStreamJson.Deserialize<TCommand>(payload)
-      ?? throw new InvalidOperationException($"The stored payload of a {CommandType} run reads back as nothing; the stream cannot be worked.");
+    var command = _readBack(payload);
     var handler = services.GetRequiredService<IMultiStreamCommandHandler<TCommand>>();
     await handler.HandleStreamAsync(command, streamId, cancellationToken).ConfigureAwait(false);
+  }
+
+  // The last payload read back and its command. The streams of a run share its payload, so a run is read back once,
+  // not once per stream; a payload read per stream made a large run's cost grow with its stream count.
+  private sealed record ReadBack(string Payload, TCommand Command);
+
+  private ReadBack? _lastReadBack;
+
+  private TCommand _readBack(string payload) {
+    var last = Volatile.Read(ref _lastReadBack);
+    if (last is not null && (ReferenceEquals(last.Payload, payload) || string.Equals(last.Payload, payload, StringComparison.Ordinal))) {
+      return last.Command;
+    }
+    var command = MultiStreamJson.Deserialize<TCommand>(payload)
+      ?? throw new InvalidOperationException($"The stored payload of a {CommandType} run reads back as nothing; the stream cannot be worked.");
+    Volatile.Write(ref _lastReadBack, new ReadBack(payload, command));
+    return command;
   }
 
   /// <inheritdoc/>
