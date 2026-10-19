@@ -80,12 +80,12 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodUsesDateTime = new(
       id: "WHIZ104",
-      title: "Apply method should use event timestamps instead of DateTime.UtcNow",
-      messageFormat: "Apply method '{0}' uses DateTime.UtcNow which is non-deterministic. Use event timestamps instead for purity.",
+      title: "Apply method should use event timestamps instead of reading the clock",
+      messageFormat: "Apply method '{0}' uses {1} which is non-deterministic. Use event timestamps instead for purity.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Perspective Apply methods should be deterministic. Use timestamps from the event instead of DateTime.UtcNow."
+      description: "Perspective Apply methods should be deterministic. Use timestamps from the event instead of DateTime.Now, DateTime.UtcNow, DateTimeOffset.Now or DateTimeOffset.UtcNow."
   );
 
   /// <summary>
@@ -213,12 +213,13 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 5: Warn about DateTime.UtcNow usage
-    var dateTimeCalls = _findDateTimeNowCalls(methodDeclaration);
-    foreach (var call in dateTimeCalls) {
+    var dateTimeCalls = _findDateTimeNowCalls(methodDeclaration, context.SemanticModel);
+    foreach (var (call, clockRead) in dateTimeCalls) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodUsesDateTime,
           call.GetLocation(),
-          methodSymbol.Name
+          methodSymbol.Name,
+          clockRead
       );
       context.ReportDiagnostic(diagnostic);
     }
@@ -366,7 +367,11 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
-        // Check for common database operation patterns
+        // Check for common database operation patterns. An HTTP type's Get/Post methods match the name heuristic,
+        // but they are HTTP calls, reported once as WHIZ103 (#1428).
+        if (_isHttpType(containingType)) {
+          continue;
+        }
         if (containingType.Contains("DbContext") ||
             containingType.Contains("DbSet") ||
             containingType.Contains("IPerspectiveStore") ||
@@ -400,8 +405,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         var methodName = methodSymbol.Name;
 
         // Check for HTTP operation patterns
-        if (containingType.Contains("HttpClient") ||
-            containingType.Contains("HttpMessageInvoker") ||
+        if (_isHttpType(containingType) ||
             (methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http")) ||
             (methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http")) ||
             (methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http")) ||
@@ -412,16 +416,20 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
   }
 
-  private static IEnumerable<MemberAccessExpressionSyntax> _findDateTimeNowCalls(
-      MethodDeclarationSyntax methodDeclaration) {
+  private static bool _isHttpType(string containingType) =>
+      containingType.Contains("HttpClient") || containingType.Contains("HttpMessageInvoker");
 
-    return methodDeclaration.DescendantNodes()
-        .OfType<MemberAccessExpressionSyntax>()
-        .Where(m => {
-          var expr = m.Expression.ToString();
-          var name = m.Name.ToString();
-          return (expr == "DateTime" || expr == "DateTimeOffset") &&
-                 (name == "Now" || name == "UtcNow");
-        });
+  /// <summary>
+  /// The clock reads in the method, found by the property they bind to rather than how they are spelled, so
+  /// <c>System.DateTime.UtcNow</c> and <c>global::System.DateTimeOffset.Now</c> are found too (#1428).
+  /// </summary>
+  private static IEnumerable<(MemberAccessExpressionSyntax Call, string ClockRead)> _findDateTimeNowCalls(
+      MethodDeclarationSyntax methodDeclaration, SemanticModel semanticModel) {
+    foreach (var access in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
+      if (semanticModel.GetSymbolInfo(access).Symbol is IPropertySymbol { IsStatic: true, Name: "Now" or "UtcNow" } property
+          && TypeNameUtilities.DisplayOrEmpty(property.ContainingType) is "System.DateTime" or "System.DateTimeOffset") {
+        yield return (access, $"{property.ContainingType.Name}.{property.Name}");
+      }
+    }
   }
 }
