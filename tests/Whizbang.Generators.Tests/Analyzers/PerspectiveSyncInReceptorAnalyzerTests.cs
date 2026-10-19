@@ -393,4 +393,89 @@ public class PerspectiveSyncInReceptorAnalyzerTests {
     await Assert.That(message).Contains("TwoArgReceptor");
     await Assert.That(message).Contains("WaitForStreamAsync");
   }
+
+  // ========================================
+  // WHIZ900: stages and wait methods (#1428)
+  // ========================================
+
+  private static string _receptor(string fireAt, string call) => $$"""
+      using System;
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+      using Whizbang.Core.Messaging;
+      using Whizbang.Core.Perspectives.Sync;
+
+      namespace TestApp;
+
+      public class MyEvent : IEvent { }
+
+      {{fireAt}}
+      public class WaitingReceptor : IReceptor<MyEvent> {
+        private readonly IPerspectiveSyncAwaiter _awaiter;
+        public WaitingReceptor(IPerspectiveSyncAwaiter awaiter) => _awaiter = awaiter;
+
+        public async ValueTask HandleAsync(MyEvent message, CancellationToken ct) {
+          {{call}};
+        }
+      }
+      """;
+
+  private const string WAIT_FOR_STREAM = "await _awaiter.WaitForStreamAsync(typeof(object), Guid.NewGuid(), null, TimeSpan.FromSeconds(5), null, ct)";
+
+  /// <summary>A destruction Inline stage waits on the caller like every other Inline stage, so it is reported.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("PreDestructionInline")]
+  [Arguments("PostDestructionInline")]
+  public async Task Analyzer_DestructionInlineStage_ReportsWhiz900Async(string stage) {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveSyncInReceptorAnalyzer>(
+      _receptor($"[FireAt(LifecycleStage.{stage})]", WAIT_FOR_STREAM));
+
+    var whiz900 = diagnostics.Where(d => d.Id == "WHIZ900").ToList();
+    await Assert.That(whiz900).Count().IsEqualTo(1);
+    await Assert.That(whiz900[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains($"stage '{stage}'");
+  }
+
+  /// <summary>Every Inline stage the enum declares is treated as Inline: the list is the enum, not a copy of it.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_EveryDeclaredInlineStage_ReportsWhiz900Async() {
+    var inlineStages = Enum.GetNames<Whizbang.Core.Messaging.LifecycleStage>()
+      .Where(static n => n.EndsWith("Inline", StringComparison.Ordinal)).ToList();
+    var missed = new List<string>();
+    foreach (var stage in inlineStages) {
+      var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveSyncInReceptorAnalyzer>(
+        _receptor($"[FireAt(LifecycleStage.{stage})]", WAIT_FOR_STREAM));
+      if (!diagnostics.Any(d => d.Id == "WHIZ900")) {
+        missed.Add(stage);
+      }
+    }
+
+    await Assert.That(inlineStages.Count).IsGreaterThan(10);
+    await Assert.That(missed).IsEmpty();
+  }
+
+  /// <summary>WaitForAppliedAsync waits like WaitForStreamAsync, so it is reported too.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_WaitForAppliedAsyncInInlineReceptor_ReportsWhiz900Async() {
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveSyncInReceptorAnalyzer>(
+      _receptor("[FireAt(LifecycleStage.PostInboxInline)]", "await _awaiter.WaitForAppliedAsync(typeof(object), Guid.NewGuid(), TimeSpan.FromSeconds(5), ct)"));
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ900")).IsEqualTo(1);
+  }
+
+  /// <summary>IsCaughtUpAsync checks without waiting, so it cannot deadlock and is not reported.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Analyzer_IsCaughtUpAsyncInInlineReceptor_NoDiagnosticAsync() {
+    var source = _receptor("[FireAt(LifecycleStage.PostInboxInline)]",
+      "_ = await _awaiter.IsCaughtUpAsync(typeof(object), null!, ct)");
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveSyncInReceptorAnalyzer>(source);
+
+    await Assert.That(AnalyzerTestHelper.CreateCompilationWithFrameworkReferences(source).GetDiagnostics()
+      .Where(static d => d.Severity == DiagnosticSeverity.Error)).IsEmpty().Because("the call must bind to be examined");
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ900")).IsEmpty();
+  }
 }
