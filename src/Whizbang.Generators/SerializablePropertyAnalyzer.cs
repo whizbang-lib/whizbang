@@ -60,14 +60,14 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
     var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
 
     // Check properties recursively
-    _checkPropertiesRecursively(context, typeSymbol, typeSymbol, null, visited);
+    _checkPropertiesRecursively(context, typeSymbol, null, typeSymbol.Name, visited);
   }
 
   private static void _checkPropertiesRecursively(
       SymbolAnalysisContext context,
-      INamedTypeSymbol rootType,
       INamedTypeSymbol currentType,
       IPropertySymbol? parentProperty,
+      string path,
       HashSet<INamedTypeSymbol> visited) {
     if (!visited.Add(currentType)) {
       return; // Already checked - prevent infinite loops
@@ -80,13 +80,13 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
 
       // Check for non-serializable types
       if (_isObjectType(propType)) {
-        _reportDiagnostic(context, property, rootType, currentType, parentProperty, "object",
+        _reportDiagnostic(context, property, currentType, parentProperty, path, "object",
             DiagnosticDescriptors.NonSerializablePropertyObject);
       } else if (_isDynamicType(propType)) {
-        _reportDiagnostic(context, property, rootType, currentType, parentProperty, "dynamic",
+        _reportDiagnostic(context, property, currentType, parentProperty, path, "dynamic",
             DiagnosticDescriptors.NonSerializablePropertyDynamic);
       } else if (_isNonSerializableInterface(propType)) {
-        _reportDiagnostic(context, property, rootType, currentType, parentProperty, TypeNameUtilities.Display(propType),
+        _reportDiagnostic(context, property, currentType, parentProperty, path, TypeNameUtilities.Display(propType),
             DiagnosticDescriptors.NonSerializablePropertyInterface);
       }
 
@@ -94,7 +94,8 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
       var elementType = _getElementType(propType);
       if (elementType is INamedTypeSymbol namedElementType &&
           !_isPrimitiveOrFrameworkType(namedElementType)) {
-        _checkPropertiesRecursively(context, rootType, namedElementType, property, visited);
+        // The path from the root to the nested type, so a finding at any depth names how it is reached (#1428).
+        _checkPropertiesRecursively(context, namedElementType, property, path + "." + property.Name, visited);
       }
     }
   }
@@ -102,9 +103,9 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private static void _reportDiagnostic(
       SymbolAnalysisContext context,
       IPropertySymbol property,
-      INamedTypeSymbol rootType,
       INamedTypeSymbol currentType,
       IPropertySymbol? parentProperty,
+      string path,
       string typeName,
       DiagnosticDescriptor descriptor) {
     // A nested type issue is one found below the root. The walk passes a parent property exactly when it
@@ -117,8 +118,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
           DiagnosticDescriptors.NonSerializableNestedProperty,
           location,
           currentType.Name,           // Nested type name
-          rootType.Name,              // Root type name
-          parentProperty.Name,        // Property on root that references nested type
+          path,                       // Path from the root type to the nested type (Root.Prop.Prop)
           property.Name,              // Property on nested type with issue
           typeName                    // The problematic type
       );

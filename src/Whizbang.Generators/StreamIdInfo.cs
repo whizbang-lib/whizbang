@@ -22,7 +22,8 @@ public sealed record StreamIdInfo(
     bool IsPropertyValueType,
     bool HasGenerate = false,
     bool OnlyIfEmpty = false,
-    bool IsPropertyInitOnly = false
+    bool IsPropertyInitOnly = false,
+    Location? PropertyLocation = null
 );
 
 /// <summary>
@@ -54,5 +55,6 @@ public sealed record CommandStreamIdInfo(
     bool IsPropertyValueType,
     bool HasGenerate = false,
     bool OnlyIfEmpty = false,
-    bool IsPropertyInitOnly = false
+    bool IsPropertyInitOnly = false,
+    Location? PropertyLocation = null
 );

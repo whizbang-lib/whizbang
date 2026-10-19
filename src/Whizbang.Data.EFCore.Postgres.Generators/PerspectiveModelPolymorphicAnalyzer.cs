@@ -116,9 +116,12 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     var elementType = _getCollectionElementType(propType);
     var typeToCheck = elementType ?? propType;
 
-    // Check if this property type is polymorphic (abstract or has [JsonPolymorphic])
+    // Check if this property type is polymorphic (abstract or has [JsonPolymorphic]). A type that already has the
+    // [PolymorphicDiscriminator] property the diagnostic suggests has done what it asks, so it is not reported (#1428).
     if (_isPolymorphicType(typeToCheck)) {
-      _reportPolymorphicDiagnostic(context, member, containingType, typeToCheck);
+      if (!_hasPolymorphicDiscriminator(containingType)) {
+        _reportPolymorphicDiagnostic(context, member, containingType, typeToCheck);
+      }
       return;
     }
 
@@ -212,6 +215,13 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// Checks if a type is polymorphic (abstract or has [JsonPolymorphic] attribute).
   /// </summary>
+  private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
+
+  /// <summary>True when the type declares a property marked [PolymorphicDiscriminator].</summary>
+  private static bool _hasPolymorphicDiscriminator(INamedTypeSymbol type) =>
+    type.GetMembers().OfType<IPropertySymbol>()
+      .Any(static p => p.GetAttributes().Any(static a => TypeNameUtilities.IsNamed(a.AttributeClass, POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE)));
+
   private static bool _isPolymorphicType(INamedTypeSymbol type) {
     // Check if type is abstract
     if (type.IsAbstract && type.TypeKind == TypeKind.Class) {

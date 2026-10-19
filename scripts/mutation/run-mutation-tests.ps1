@@ -170,6 +170,11 @@ Write-Host ""
 
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
+# Stryker compiles the project itself and would mutate the configuration-binding generator's in-memory output,
+# which no "mutate" exclusion can match, and then fail to compile (#1444). WhizbangMutationBuild turns that generator
+# off for this build only; MSBuild reads the environment variable as a property.
+$previousMutationBuild = $env:WhizbangMutationBuild
+$env:WhizbangMutationBuild = 'true'
 Push-Location $testProjectDir
 try {
     & dotnet stryker @strykerArgs
@@ -177,6 +182,7 @@ try {
 }
 finally {
     Pop-Location
+    $env:WhizbangMutationBuild = $previousMutationBuild
 }
 
 $stopwatch.Stop()

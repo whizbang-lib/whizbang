@@ -713,7 +713,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       foreach (var declared in perspective.DeclaredConverters) {
         ctx.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.PerspectiveModelJsonConverterIgnored,
-            Location.None,
+            declared.Location,
             declared.PropertyName,
             declared.ValueTypeName,
             declared.ConverterTypeName));
@@ -760,7 +760,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         found.Add(new DeclaredConverterInfo(
           property.Name,
           TypeNameUtilities.FullyQualified(type),
-          TypeNameUtilities.FullyQualified(converter)));
+          TypeNameUtilities.FullyQualified(converter),
+          LocationUtilities.FirstOrNone(property)));
         continue;
       }
 
@@ -3614,7 +3615,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelTypeName: TypeNameUtilities.FullyQualified(migration.TypeArguments[0]),
         Problem: problem,
         Order: order ?? 0,
-        OrderStated: stated);
+        OrderStated: stated,
+        Location: LocationUtilities.FirstOrNone(symbol));
   }
 
   /// <summary>
@@ -3675,7 +3677,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         var descriptor = problem.Id == StoredFormDiscovery.INSIDE_COLLECTION
           ? DiagnosticDescriptors.StoredFormInsideCollection
           : DiagnosticDescriptors.StoredFormCannotBeGenerated;
-        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, problem.Subject, problem.Reason));
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, problem.Location, problem.Subject, problem.Reason));
       }
     }
 
@@ -3684,7 +3686,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var reason = custom.Problem
         ?? (models.Contains(custom.ModelTypeName) ? null : $"{custom.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "")} is not the model of any perspective");
       if (reason is not null) {
-        context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationNeverRuns, Location.None, custom.DisplayName, reason));
+        context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationNeverRuns, custom.Location, custom.DisplayName, reason));
       }
     }
 
@@ -3698,7 +3700,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       .ThenBy(g => g.Key.Order);
     foreach (var group in shared) {
       var names = string.Join(", ", group.OrderBy(m => m.ClassName, StringComparer.Ordinal).Select(m => m.DisplayName));
-      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationOrderShared, Location.None,
+      // Reported at the first of the classes, in the order the message names them.
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.StoredFormMigrationOrderShared,
+        group.OrderBy(m => m.ClassName, StringComparer.Ordinal).First().Location,
         names, group.Key.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, ""), group.Key.Order));
     }
   }
@@ -4043,13 +4047,15 @@ internal sealed record PerspectiveModelCandidate(
 /// <param name="Problem">Why it cannot be created, or <see langword="null"/> when it can.</param>
 /// <param name="Order">The <c>Order</c> it states, read at build time; 0 when it states none or has a problem.</param>
 /// <param name="OrderStated">Whether the class implements <c>Order</c> itself rather than taking the default.</param>
+/// <param name="Location">The class declaration; WHIZ831 and WHIZ833 are reported there (#1429).</param>
 internal sealed record StoredFormMigrationClassInfo(
     string ClassName,
     string DisplayName,
     string ModelTypeName,
     string? Problem,
     int Order = 0,
-    bool OrderStated = false);
+    bool OrderStated = false,
+    Location? Location = null);
 
 /// <summary>
 /// Information about a discovered multi-model ILensQuery constructor parameter.
