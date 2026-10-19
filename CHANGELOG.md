@@ -131,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1427).** `WHIZ006`, `WHIZ025`, `WHIZ801`, `WHIZ802` and `WHIZ805` are reported by analyzers. `WHIZ003`,
   `WHIZ005`, `WHIZ020`, `WHIZ023`, `WHIZ042`, `WHIZ050`, `WHIZ051`, `WHIZ052`, `WHIZ057` and `WHIZ803` are
   retired and will never be reused; any property type may be a stream id, so `WHIZ005` described no rule.
-  `WHIZ014`, `WHIZ022` and `WHIZ026` now point at the offending declaration. **Upgrade:** remove
+  `WHIZ014` and `WHIZ022` now point at the offending declaration. **Upgrade:** remove
   suppressions of the retired IDs.
 - **Breaking (scope inheritance): `[InheritScope]` is applied the way it is documented, and checked where it takes
   effect.** Creation records ownership: a new perspective row copies every scope field from the message that created
