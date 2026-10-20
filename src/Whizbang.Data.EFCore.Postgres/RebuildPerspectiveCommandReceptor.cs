@@ -74,10 +74,9 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
       return;
     }
 
-    var streamFilter = await _resolveStreamFilterAsync(message, sp, cancellationToken);
-    if (streamFilter is not null) {
-      LogStreamFilterApplied(logger, streamFilter.Count,
-          message.IncludeStreamIds is { Length: > 0 } ? "Include" : "Exclude");
+    var selection = new StreamSelection(message, sp);
+    if (selection.NamesStreams) {
+      LogStreamFilterApplied(logger, selection.NamedCount, selection.Include is not null ? "Include" : "Exclude");
     }
 
     // "Selected streams, none named" is refused, never widened. It is almost always a caller that
@@ -86,7 +85,7 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     // table swap where a swapper is configured. A whole-perspective rebuild is asked for by its
     // own mode. Refused once for the request rather than once per perspective, because the mode
     // and the filter belong to the command, not to any one perspective (#1356).
-    if (message.Mode == RebuildMode.SelectedStreams && streamFilter is null) {
+    if (message.Mode == RebuildMode.SelectedStreams && !selection.NamesStreams) {
       LogSelectedStreamsWithoutStreamIds(logger, perspectiveNames.Length);
       return;
     }
@@ -108,6 +107,7 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     var routing = new RebuildRouting(routeToOwners ? store : null, queue, sp, origin, message.RequestId);
     foreach (var perspectiveName in perspectiveNames) {
       cancellationToken.ThrowIfCancellationRequested();
+      var streamFilter = await selection.ForAsync(rebuilder, perspectiveName, cancellationToken);
       await _rebuildPerspectiveAsync(rebuilder, perspectiveName, message.Mode, streamFilter, routing, cancellationToken);
     }
   }
@@ -258,31 +258,52 @@ public sealed partial class RebuildPerspectiveCommandReceptor(
     return registeredNames;
   }
 
-  private static async Task<IReadOnlyList<Guid>?> _resolveStreamFilterAsync(
-      RebuildPerspectiveCommand message, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
-    var include = message.IncludeStreamIds;
-    var exclude = message.ExcludeStreamIds;
+  /// <summary>
+  /// The streams a rebuild command names: the caller's own list, or each perspective's own streams less the excluded
+  /// ones. An exclusion used to be taken from every distinct stream in the event store, whatever events it held, and
+  /// recorded as a run for every perspective, so most of each run's streams were rebuilds with nothing to do and the
+  /// list held every stream id in memory twice. The whole store is listed only for a rebuilder that cannot list a
+  /// perspective's streams, and then once per command.
+  /// </summary>
+  private sealed class StreamSelection(RebuildPerspectiveCommand message, IServiceProvider services) {
+    private List<Guid>? _everyStream;
 
-    if (include is { Length: > 0 }) {
-      return include;
+    public Guid[]? Include { get; } = message.IncludeStreamIds is { Length: > 0 } include ? include : null;
+
+    private readonly HashSet<Guid>? _exclude = message.IncludeStreamIds is not { Length: > 0 } && message.ExcludeStreamIds is { Length: > 0 } exclude
+      ? [.. exclude]
+      : null;
+
+    public bool NamesStreams => Include is not null || _exclude is not null;
+
+    // Read only when NamesStreams, so one of the two lists is there
+    public int NamedCount => Include?.Length ?? _exclude!.Count;
+
+    public async Task<IReadOnlyList<Guid>?> ForAsync(IPerspectiveRebuilder rebuilder, string perspectiveName, CancellationToken cancellationToken) {
+      if (Include is not null || _exclude is null) {
+        return Include;
+      }
+      var streams = await rebuilder.ResolveStreamIdsAsync(perspectiveName, cancellationToken)
+        ?? await _everyStreamAsync(cancellationToken);
+      return [.. streams.Where(id => !_exclude.Contains(id))];
     }
 
-    if (exclude is { Length: > 0 }) {
-      var eventStoreQuery = scopedProvider.GetRequiredService<IEventStoreQuery>();
-      var allStreams = new List<Guid>();
-      var query = eventStoreQuery.Query.Select(e => e.StreamId).Distinct();
+    private async Task<IReadOnlyList<Guid>> _everyStreamAsync(CancellationToken cancellationToken) {
+      if (_everyStream is not null) {
+        return _everyStream;
+      }
+      var query = services.GetRequiredService<IEventStoreQuery>().Query.Select(e => e.StreamId).Distinct();
+      var everyStream = new List<Guid>();
       if (query is IAsyncEnumerable<Guid> asyncEnumerable) {
         await foreach (var id in asyncEnumerable.WithCancellation(cancellationToken)) {
-          allStreams.Add(id);
+          everyStream.Add(id);
         }
       } else {
-        allStreams.AddRange(query);
+        everyStream.AddRange(query);
       }
-      var excludeSet = new HashSet<Guid>(exclude);
-      return [.. allStreams.Where(id => !excludeSet.Contains(id))];
+      _everyStream = everyStream;
+      return everyStream;
     }
-
-    return null;
   }
 
   [LoggerMessage(Level = LogLevel.Information,

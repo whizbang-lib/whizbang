@@ -28,7 +28,10 @@ public static class DispatchRules {
   /// <summary>A framework system command reaches every service, the sender included, on any call that is not local only.</summary>
   public static readonly DispatchRule SystemCommandBroadcasts = _systemCommandBroadcasts;
 
-  /// <summary>A command routed to the event store only is refused: commands are not stored.</summary>
+  /// <summary>
+  /// A command routed to the event store only is refused: commands are not stored. Nor is anything else that is
+  /// not an event: refused when the store is its only destination, its store write dropped when it also runs here.
+  /// </summary>
   public static readonly DispatchRule CommandCannotBeStoreOnly = _commandCannotBeStoreOnly;
 
   /// <summary>
@@ -117,10 +120,24 @@ public static class DispatchRules {
     };
   }
 
-  private static DispatchDecision _commandCannotBeStoreOnly(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) =>
-    situation.IsCommand && current.WriteEventStoreOnly
-      ? DispatchDecision.Rejected(DispatchRejection.CommandCannotBeStoreOnly, DispatchReason.CommandCannotBeStoreOnly)
-      : current;
+  private static DispatchDecision _commandCannotBeStoreOnly(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) {
+    if (!current.WriteEventStoreOnly) {
+      return current;
+    }
+    if (situation.IsCommand) {
+      return DispatchDecision.Rejected(DispatchRejection.CommandCannotBeStoreOnly, DispatchReason.CommandCannotBeStoreOnly);
+    }
+    if (situation.IsStorable) {
+      return current;
+    }
+    // Only an event is stored. A message that is not one and also runs here (a composite routed Local, whose
+    // expansion stores its events) keeps its local run and drops the store write it has nothing for. One whose
+    // only destination is the store is refused: its row was published to nowhere, skipped by the store, and
+    // vanished without a word.
+    return current.Local != LocalRun.None
+      ? current with { WriteEventStoreOnly = false }
+      : DispatchDecision.Rejected(DispatchRejection.NotAnEventCannotBeStoreOnly, DispatchReason.NotAnEventCannotBeStoreOnly);
+  }
 
   private static DispatchDecision _handlerRequired(in DispatchSituation situation, DispatchPolicy policy, in DispatchDecision current) {
     if (situation.HasLocalHandler) {

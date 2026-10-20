@@ -210,6 +210,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A multi-stream run over many streams ran its host out of memory.** A run stored the whole command, its stream ids
+  included, and every claimed stream read and parsed it again, so a run's cost grew with the square of its stream
+  count: an in-place rebuild over 127,288 streams parsed about 630 GB and OOMKilled its pods. A run's payload now
+  carries no stream ids (they are rows of the run, and each stream's handler is given its id), the claim sends each
+  run's payload once (migration 213), and a run's payload is read back once and shared by its streams. A run recorded
+  by an earlier release still works each of its streams.
+- **Each stream of a multi-stream rebuild did a whole rebuild's reporting.** Every stream published its own rebuild
+  Started, Progress and Completed events, computed two row digests and logged at Information, about 254,000 system
+  events for a 127,000-stream rebuild. A stream of a run now reports nothing of its own; the run announces its
+  completion once (`MultiStreamCommandCompleted`). `IPerspectiveRebuilder.RebuildStreamOfRunAsync` is the new entry.
+- **A rebuild of named streams reconciled the whole follower table.** The stream-group presence reconcile deleted
+  across every row of a follower perspective after each rebuild, so a multi-stream rebuild did that once per stream.
+  It is now scoped to the streams the rebuild replayed (`IWorkCoordinator.ReconcileFollowerPresenceAsync` overload).
+- **A rebuild that excludes streams listed every stream in the store.** It took every distinct stream in the event
+  store, whatever events it held, and recorded that list as a run for every perspective. It now takes each
+  perspective's own streams less the excluded ones, listing the whole store only for a rebuilder that cannot list a
+  perspective's streams, and then once per command.
+- **A coalesced audit composite had no size bound.** A batch of up to 500 audit singles, each carrying the original
+  message's body, became one message no broker accepts. `CoalescePolicyOptions.MaxBatchBytes` (default 192,000)
+  splits a batch by size as `MaxBatchCount` does by count.
+- **A published composite never reached another service (0.2623.0 regression).** Its outbox copy was routed to
+  its owner's command destination, because a composite is not an `IEvent`, so only the publishing service got it
+  and discarded it as its own echo. Nothing failed or logged. A composite now goes to the topic its inner events
+  share, wherever the composite type is declared.
+- **A composite written any way other than a single publish was not expanded here.** `PublishManyAsync` and a
+  composite returned by a receptor now expand an owned composite locally, as a publish does; a returned composite
+  is no longer refused as an owned command nothing handles.
+- **A scheduled composite expanded at publish.** Its inner events were stored and handled before its time. It now
+  expands when it is delivered.
+- **A scheduled owned event was discarded when it came back.** The transport consumer dropped the publisher's own
+  deferred copy as an echo, so the publisher never handled its scheduled event. A copy marked as deferred to its
+  delivery now passes the echo check.
+- **A message that is not an event, routed to the event store only, vanished.** Its row had no destination and was
+  not stored. It is now refused with `DispatchRejectedException` (`NotAnEventCannotBeStoreOnly`); one that also runs
+  here keeps its local run.
+- **The transport re-routed an event to a command inbox by its type name.** An event in a `Commands` namespace or
+  named `...Command` went to a command inbox no subscriber of the event reads. An event row now keeps the topic the
+  dispatcher chose.
+- **PreOutbox receptors never fired for an owned composite.** It was filtered as an owned command; it is filtered
+  as an event.
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator

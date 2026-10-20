@@ -204,6 +204,16 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
     await Assert.That(reconciled).IsEqualTo(0);
   }
 
+  // A rebuild whose named streams were all refused replays none, so the reconcile scoped to them has nothing to check
+  [Test]
+  public async Task ReconcileFollowerPresenceAsync_ScopedToNoStreams_ReconcilesNothingAsync() {
+    IWorkCoordinator coordinator = _coordinator();
+
+    var reconciled = await coordinator.ReconcileFollowerPresenceAsync("wh_per_followers", ["wh_per_leaders"], []);
+
+    await Assert.That(reconciled).IsEqualTo(0);
+  }
+
   [Test]
   public async Task RegisterConsumedTypesAsync_WithNoTypes_IssuesNoCommandAsync() {
     await using var db = CreateDbContext();
