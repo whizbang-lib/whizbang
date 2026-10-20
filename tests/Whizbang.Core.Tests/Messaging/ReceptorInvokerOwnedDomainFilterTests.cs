@@ -131,6 +131,21 @@ public class ReceptorInvokerOwnedDomainFilterTests {
   }
 
   [Test]
+  public async Task PreOutbox_OwnedComposite_FiresAsync() {
+    // An owned composite carries this service's own events out, so its PreOutbox receptors fire as an owned
+    // event's do. It is not an IEvent, and was skipped as if it were an owned command.
+    var (invoker, tracker) = _invoker<Shop.Orders.OrderBurst>(
+      LifecycleStage.PreOutboxInline, OWNED_DOMAIN);
+
+    await invoker.InvokeAsync(
+      _envelope(new Shop.Orders.OrderBurst()),
+      LifecycleStage.PreOutboxInline,
+      _context(LifecycleStage.PreOutboxInline));
+
+    await Assert.That(tracker.Count).IsEqualTo(1);
+  }
+
+  [Test]
   public async Task PreOutbox_ForeignCommand_FiresAsync() {
     // A command addressed to another service is this service's own outbound work.
     var (invoker, tracker) = _invoker<Billing.Invoices.IssueInvoice>(

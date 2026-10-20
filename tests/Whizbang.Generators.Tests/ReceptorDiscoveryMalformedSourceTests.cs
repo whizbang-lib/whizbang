@@ -113,7 +113,7 @@ public class ReceptorDiscoveryMalformedSourceTests {
     // Skipped means "falls back to the default stages", not "the receptor disappears" — a receptor
     // dropped mid-keystroke would stop firing everywhere until the line is finished.
     await Assert.That(_emitted(result, "ReceptorRegistry.g.cs"))
-      .Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
+      .Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline")
       .Because("an unreadable [FireAt] leaves the receptor registered at the default stages");
   }
 
@@ -346,7 +346,7 @@ public class ReceptorDiscoveryMalformedSourceTests {
     await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(ROUTING_OVERRIDE);
     await Assert.That(_emitted(result, "Dispatcher.g.cs")).DoesNotContain(PUBLISHER_WAIT);
     await Assert.That(_emitted(result, "ReceptorRegistry.g.cs"))
-      .Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
+      .Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline")
       .Because("and the receptor still fires at the default stages while the author finishes typing");
   }
 }

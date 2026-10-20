@@ -80,6 +80,22 @@ public class RebuildCommandRoutingTests {
     await Assert.That(rebuilder.Rebuilds).IsEmpty();
   }
 
+  /// <summary>
+  /// A rebuild that excludes streams rebuilds each perspective's own streams minus the excluded ones. It used to list
+  /// every distinct stream in the event store, whatever events they held, and record that whole list as a run for every
+  /// perspective, so most of the runs' streams were no-op rebuilds and the list held millions of ids in memory twice.
+  /// </summary>
+  [Test]
+  public async Task Exclude_WithAStore_RecordsThePerspectivesOwnStreamsLessTheExcludedOnesAsync() {
+    var (receptor, rebuilder, store) = _receptor(resolvable: [_a, _b]);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand([PERSPECTIVE], RebuildMode.InPlace, ExcludeStreamIds: [_b]));
+
+    await Assert.That(store.Recorded.Single().StreamIds).IsEquivalentTo([_a])
+      .Because("the perspective's own streams, not every stream in the store, less the excluded one");
+    await Assert.That(rebuilder.Rebuilds).IsEmpty();
+  }
+
   [Test]
   public async Task InPlace_WhenTheRebuilderCannotListTheStreams_RebuildsHereAsBeforeAsync() {
     var (receptor, rebuilder, store) = _receptor(resolvable: null);

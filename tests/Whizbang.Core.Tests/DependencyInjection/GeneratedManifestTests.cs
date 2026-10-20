@@ -54,14 +54,29 @@ public class GeneratedManifestTests {
   }
 
   [Test]
-  public async Task ValidatingTheManifestAgainstAnEmptyCollectionReportsGapsAsync() {
+  public async Task ValidatingTheManifestAgainstAnEmptyCollectionReportsNothingAsync() {
     var services = new ServiceCollection();
+
+    // A requirement applies only to a type the composition registers. A collection registering
+    // nothing constructs nothing, so nothing it would construct can be missing a dependency.
+    var returned = services.ValidateWhizbangRegistrations(CoreManifest.All);
+
+    await Assert.That(returned).IsSameReferenceAs(services);
+  }
+
+  [Test]
+  public async Task ValidatingTheManifestAgainstItsOwnTypesReportsGapsAsync() {
+    var services = new ServiceCollection();
+    // Register every type the manifest names, and nothing else. Each one is now constructed by
+    // the composition, so every dependency the manifest records for it must be checked.
+    foreach (var requirement in CoreManifest.All) {
+      services.AddSingleton(requirement.ImplementationType, _ => new object());
+    }
 
     var ex = await Assert.That(() => services.ValidateWhizbangRegistrations(CoreManifest.All))
       .Throws<WhizbangRegistrationException>();
 
-    // Proves the manifest is actually exercised rather than merely present: against a collection
-    // registering nothing, every dependency it names must be reported missing.
+    // Proves the manifest is actually exercised rather than merely present.
     await Assert.That(ex!.Missing).IsNotEmpty();
   }
 }

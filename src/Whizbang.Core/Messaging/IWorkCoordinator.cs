@@ -1462,6 +1462,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0);
 
   /// <summary>
+  /// The presence reconcile scoped to the streams a rebuild just replayed: only their rows can have been resurrected,
+  /// so only they are checked. A rebuild of one stream reconciling the whole follower table made a run over many
+  /// streams cost streams times rows. Null scopes to the whole table. Default: the unscoped reconcile.
+  /// </summary>
+  /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
+  /// <param name="announcerTables">Its groups' announcer tables.</param>
+  /// <param name="streamIds">The streams rebuilt, or null for the whole table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> ReconcileFollowerPresenceAsync(
+    string followerTable,
+    IReadOnlyCollection<string> announcerTables,
+    IReadOnlyCollection<Guid>? streamIds,
+    CancellationToken cancellationToken = default) => ReconcileFollowerPresenceAsync(followerTable, announcerTables, cancellationToken);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
@@ -1923,10 +1940,12 @@ public interface IWorkCoordinator {
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
-  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
-  /// <c>unsupported</c>) plus the number of events truncated.
+  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
+  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>closed</c>, every
+  /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
+  /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
   Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamCloseResult("unsupported", 0));
@@ -2649,10 +2668,12 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 /// <summary>
 /// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
 /// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
-/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
+/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>held</c> = an
+/// active destruction hold covers an event in the range | <c>cursor_behind</c> = a perspective whose cursor is in
+/// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
 /// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
 public sealed record StreamCloseResult(string Status, long EventsTruncated);
 
 /// <summary>
@@ -3224,6 +3245,12 @@ public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrior
   /// Unique message ID.
   /// </summary>
   public required Guid MessageId { get; init; }
+
+  /// <summary>
+  /// True when the row is an event. The transport routes an event to the topic the dispatcher chose, whatever its
+  /// type name looks like; only a non-event row is classified by its name.
+  /// </summary>
+  public bool IsEvent { get; init; }
 
   /// <summary>
   /// Destination to publish to (topic name).

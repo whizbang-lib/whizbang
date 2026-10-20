@@ -265,6 +265,55 @@ public partial class OutboxDrainWorkerCoverageTests {
 
   // --- helpers ---
 
+  /// <summary>
+  /// The work a drained row publishes says whether the row is an event, so the transport routes an event by the
+  /// topic the dispatcher chose rather than by what its type name looks like.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task DrainedWork_CarriesWhetherTheRowIsAnEventAsync(bool isEvent) {
+    var streamId = (Guid)TrackedGuid.New();
+    var coord = new ConsumingCoordinator();
+    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.New(), streamId) with { IsEvent = isEvent }];
+    var drainChannel = new DrainChannel();
+    var publish = new PublishStrategy { TargetCount = 1 };
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var options = Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 50 });
+    var worker = new OutboxDrainWorker(
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: new ServiceInstanceProvider(),
+      drainChannel: drainChannel,
+      completionChannel: new CompletionChannel(),
+      failureChannel: new FailureChannel(),
+      schemaReadyGate: gate,
+      options: options,
+      jsonOptions: _jsonOpts,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      receptorRegistry: new PermissiveReceptorRegistryQuery(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* teardown */ }
+
+    await Assert.That(publish.Published.Single().IsEvent).IsEqualTo(isEvent)
+      .Because("the transport needs the row's kind to route an event to its topic");
+  }
+
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
   private static OutboxBatchRow _row(Guid messageId, Guid streamId, int attempts = 0) {

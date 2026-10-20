@@ -48,6 +48,41 @@ public class MultiStreamCommandIntakeTests {
       .Because("the stored payload is the command itself, so the handler on another instance sees what the caller sent");
   }
 
+  /// <summary>
+  /// The stored payload does not carry the stream ids: they are recorded one per row, and each stream's handler gets its
+  /// stream id as a parameter. A payload listing every stream was read and parsed once per stream, so a run cost grew
+  /// with the square of its stream count; a 127,288-stream rebuild read about 630 GB and ran its host out of memory.
+  /// </summary>
+  [Test]
+  public async Task HandleAsync_StoresAPayloadWhoseSizeDoesNotDependOnTheStreamCountAsync() {
+    var one = new RecordingMultiStreamStore();
+    var many = new RecordingMultiStreamStore();
+    var tenThousand = Enumerable.Range(1, 10_000).Select(i => new Guid(i, 0, 0, new byte[8])).ToArray();
+
+    await _intake(one).HandleAsync(_command(_streamA));
+    await _intake(many).HandleAsync(_command(tenThousand));
+
+    await Assert.That(many.Recorded[0].StreamIds.Count).IsEqualTo(10_000)
+      .Because("every stream is still recorded, one per row");
+    await Assert.That(many.Recorded[0].Payload.Length).IsEqualTo(one.Recorded[0].Payload.Length)
+      .Because("the payload is the command without its streams, the same size for one stream or ten thousand");
+  }
+
+  /// <summary>The payload stored without its streams still reads back into the command with everything else intact.</summary>
+  [Test]
+  public async Task HandleAsync_ThePayloadWithoutItsStreams_ReadsBackIntoTheCommandAsync() {
+    var store = new RecordingMultiStreamStore();
+
+    await _intake(store).HandleAsync(_command(_streamA, _streamB));
+
+    var typeInfo = (JsonTypeInfo<ProbeMultiStreamCommand>)JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(ProbeMultiStreamCommand));
+    var payload = JsonSerializer.Deserialize(store.Recorded[0].Payload, typeInfo)!;
+    await Assert.That(payload.RunId).IsEqualTo(_runId);
+    await Assert.That(payload.Label).IsEqualTo("label-1");
+    await Assert.That(payload.StreamIds).IsEmpty()
+      .Because("the streams are rows of the run, not part of the payload each stream reads");
+  }
+
   [Test]
   public async Task HandleAsync_AStreamNamedTwice_IsRecordedOnceInFirstOccurrenceOrderAsync() {
     var store = new RecordingMultiStreamStore();

@@ -63,19 +63,21 @@ chooses what happens to its rows for archived streams; all of it ships in 1.0.
 Each slice is one TDD increment (RED tests first, docs in the same PR). Docs paths are under
 `whizbang-lib.github.io/src/assets/docs/`; "new" means absent from `develop` today.
 
-### S1. Fix defect 4 in the truncate primitive
+### S1. Fix defect 4 in the truncate primitive (done, #1486)
 
-- **Change.** Edit `close_stream` in place in `093_OriginGeneration.sql` (pre-1.0 rule: edit, do not
-  add). Before the truncate, delete every `wh_perspective_snapshots` row for the stream with
-  `snapshot_version <= p_through_version`, and re-anchor every `wh_perspective_cursors` row whose
-  `last_event_id` falls in the range onto the first surviving event above the close point, marking
-  it as already consumed for perspectives that do not subscribe to it (the consumption gate has
-  already proved nothing below is unread). Correct the stale "no FK" header comment.
-- **RED tests** (`tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs`, plus a Dapper
-  twin): a close with a non-subscribing perspective's cursor in range succeeds; no snapshot at or
-  below the close point survives; a later rewind never selects a pre-close snapshot; the Dapper and
-  EF Core schemas reach the same outcome.
-- **Docs.** `v1.0.0/fundamentals/events/event-streams.md` (truncation section).
+- **Change (landed).** Migration `212_CloseStreamReanchorsCursorsAndSnapshots.sql` redefines `close_stream`
+  whole (editing `093` in place is no longer allowed; CI refuses edits to shipped migrations). Decisions:
+  - A cursor inside the range moves onto the boundary event (the first survivor above the close point).
+    When its perspective still has an unprocessed work row for that boundary event, the close is refused
+    with `cursor_behind`: the cursor is a read position, so moving it onto an unapplied event would skip it.
+  - Snapshots: kept when at or above the close point, or, for a perspective whose cursor is inside the range,
+    at or after that cursor's event (its exact current state). Everything else at or below the close point,
+    and a versionless snapshot on a truncated event, is removed.
+  - An active `wh_event_destruction_hold` on an event in the range refuses the close with `held`; lapsed holds
+    go with the events. Processed `wh_perspective_events` rows of the truncated events are removed.
+    `wh_message_deduplication` rows are kept (they turn a redelivered copy of a truncated event away).
+- **Tests.** `StreamCloseSqlTests` (EF Core, with the RESTRICT key) and `DapperStreamCloseCompanionTests`.
+- **Docs (pending, docs repo).** `v1.0.0/fundamentals/events/event-streams.md` (truncation section).
 
 ### S2. Rename the prefix truncate to free "close"
 
@@ -247,8 +249,9 @@ an arity change, header block, `COMMENT ON`, `debug_mode` guard on destructive w
 
 1. What identifies a stream's type? Candidates: the existing `wh_event_store.aggregate_type` column,
    the type of the stream's first event, or an explicit marker type registered with the policy.
-2. Cursor re-anchoring in S1 versus dropping the cursor for non-subscribing perspectives: which
-   keeps rewind correct for a perspective that later subscribes to the carry-forward event?
+2. ~~Cursor re-anchoring in S1 versus dropping the cursor?~~ Re-anchor (S1, #1486). Dropping the
+   cursor would make the next apply start from an empty position and the next rewind replay from an
+   empty model; the kept exact-floor snapshot is what keeps a later rewind correct.
 3. zstd needs a new dependency (no zstd codec in the base class library on the current target).
    Accept a managed port, or ship Brotli first?
 4. `Compact` has a vocabulary and no implementation (the `Compacted<T>` summary is unbuilt). Is a

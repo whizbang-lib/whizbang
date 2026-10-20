@@ -66,14 +66,55 @@ public class DispatcherPublishOnceTests {
         AttemptedKeys.Add(claimKey);
         // HashSet.Add returns true if the value was not already present —
         // matches the ON CONFLICT DO NOTHING returning-affected-rows contract.
-        return Task.FromResult(_claimed.Add(claimKey));
+        var won = _claimed.Add(claimKey);
+        if (won) {
+          RaiseClaimed();
+        }
+        return Task.FromResult(won);
       }
+    }
+
+    public List<string> ReleasedKeys { get; } = [];
+
+    /// <summary>Called right after a claim is won, before the publish runs.</summary>
+    public Action? OnClaimed { get; init; }
+
+    /// <summary>When set, giving a claim back fails.</summary>
+    public bool FailRelease { get; init; }
+
+    public Task<bool> ReleaseAsync(string claimKey, CancellationToken cancellationToken) {
+      if (FailRelease) {
+        throw new TimeoutException("the claim store is unreachable");
+      }
+      lock (_lock) {
+        ReleasedKeys.Add(claimKey);
+        return Task.FromResult(_claimed.Remove(claimKey));
+      }
+    }
+
+    internal void RaiseClaimed() => OnClaimed?.Invoke();
+  }
+
+  /// <summary>An event whose receptor fails while <see cref="SetFailNext"/> is set, then succeeds.</summary>
+  public record PublishOnceFailingEvent([property: StreamId] Guid StreamId) : IEvent;
+
+  private static int _failNext;
+  internal static void SetFailNext(bool fail) => Interlocked.Exchange(ref _failNext, fail ? 1 : 0);
+
+  public class PublishOnceFailingEventReceptor : IReceptor<PublishOnceFailingEvent> {
+    public ValueTask HandleAsync(PublishOnceFailingEvent message, CancellationToken cancellationToken = default) {
+      if (Interlocked.Exchange(ref _failNext, 0) == 1) {
+        throw new InvalidOperationException("the publish fails once");
+      }
+      Interlocked.Increment(ref _fireCount);
+      return ValueTask.CompletedTask;
     }
   }
 
   [Before(Test)]
   public Task ResetCounterAsync() {
     Interlocked.Exchange(ref _fireCount, 0);
+    SetFailNext(false);
     return Task.CompletedTask;
   }
 
@@ -94,6 +135,63 @@ public class DispatcherPublishOnceTests {
     await Assert.That(FireCount).IsEqualTo(1)
       .Because("Winning the claim must proceed to PublishAsync, which invokes the in-process receptor exactly once.");
     await Assert.That(store.AttemptedKeys).Contains("saga-completed:abc");
+  }
+
+  // ── A failed publish gives its claim back (#1414) ─────────────────────
+
+  [Test]
+  public async Task PublishOnceAsync_PublishThrowsOutsideATransaction_ReleasesTheClaimSoARetryPublishesAsync() {
+    var store = new InMemoryClaimedEmissionStore();
+    var dispatcher = _createDispatcher(store);
+    SetFailNext(true);
+
+    await Assert.That(async () => await dispatcher.PublishOnceAsync("order-shipped:1", new PublishOnceFailingEvent(Guid.NewGuid())))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("the publish's failure reaches the caller");
+    await Assert.That(store.ReleasedKeys).Contains("order-shipped:1")
+      .Because("a claim kept after its publish failed would make every retry a duplicate, so the event would never be published");
+
+    var retried = await dispatcher.PublishOnceAsync("order-shipped:1", new PublishOnceFailingEvent(Guid.NewGuid()));
+
+    await Assert.That(retried).IsTrue().Because("the released key can be claimed again");
+    await Assert.That(FireCount).IsEqualTo(1).Because("the retry publishes the event");
+  }
+
+  [Test]
+  public async Task PublishOnceAsync_PublishAndReleaseBothFail_SurfacesBothFailuresAsync() {
+    var store = new InMemoryClaimedEmissionStore { FailRelease = true };
+    var dispatcher = _createDispatcher(store);
+    SetFailNext(true);
+
+    var failure = await Assert.That(async () => await dispatcher.PublishOnceAsync("order-shipped:4", new PublishOnceFailingEvent(Guid.NewGuid())))
+      .ThrowsExactly<AggregateException>()
+      .Because("neither the publish's failure nor the release's is swallowed");
+    await Assert.That(failure!.InnerExceptions.Select(e => e.GetType().Name).ToArray())
+      .IsEquivalentTo([nameof(InvalidOperationException), nameof(TimeoutException)]);
+  }
+
+  [Test]
+  public async Task PublishOnceAsync_PublishSucceeds_KeepsTheClaimAsync() {
+    var store = new InMemoryClaimedEmissionStore();
+    var dispatcher = _createDispatcher(store);
+
+    await dispatcher.PublishOnceAsync("order-shipped:2", new PublishOnceTestEvent(Guid.NewGuid()));
+
+    await Assert.That(store.ReleasedKeys).IsEmpty().Because("only a failed publish gives its claim back");
+  }
+
+  [Test]
+  public async Task PublishOnceAsync_PassesTheCallersTokenToThePublishAsync() {
+    using var cts = new CancellationTokenSource();
+    // The token is canceled once the claim is won, so only a publish that observes the caller's token stops
+    var store = new InMemoryClaimedEmissionStore { OnClaimed = cts.Cancel };
+    var dispatcher = _createDispatcher(store);
+
+    await Assert.That(async () => await dispatcher.PublishOnceAsync("order-shipped:3", new PublishOnceTestEvent(Guid.NewGuid()), cts.Token))
+      .Throws<OperationCanceledException>()
+      .Because("the publish runs under the caller's token");
+    await Assert.That(FireCount).IsEqualTo(0).Because("a canceled publish runs no handler");
+    await Assert.That(store.ReleasedKeys).Contains("order-shipped:3").Because("a canceled publish published nothing, so its claim is given back");
   }
 
   // ── Second attempt with the same key is the no-op contract ───────────

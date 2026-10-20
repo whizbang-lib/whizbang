@@ -23,8 +23,6 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
   [
     DiagnosticDescriptors.GuidNewGuidUsage,
     DiagnosticDescriptors.GuidCreateVersion7Usage,
-    DiagnosticDescriptors.RawGuidWhereIdExpected
-,
   ];
 
   /// <inheritdoc/>
