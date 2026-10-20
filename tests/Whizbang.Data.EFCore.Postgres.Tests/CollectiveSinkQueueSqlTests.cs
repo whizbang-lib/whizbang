@@ -215,11 +215,22 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
       await analyze.ExecuteNonQueryAsync();
     }
 
-    await using var tx = await conn.BeginTransactionAsync();
-    var head = await _headAsync(conn, keyStream, [work[0], work[1]]);
+    // A connection of its own, unpooled: a backend's statistics not yet flushed include the setup's earlier
+    // statements, so only a fresh backend's transaction counts the head read and nothing else.
+    await using var measured = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString) { Pooling = false }.ConnectionString);
+    await measured.OpenAsync();
+    await using var tx = await measured.BeginTransactionAsync();
+    await using (var plan = measured.CreateCommand()) {
+      // On this small shared test table a scan costs less than an index walk, as it would not on a production-sized
+      // one. With scans and sorts priced out, the only way to stop early is an index in apply order: without one the
+      // planner reads and sorts every queued row, and the read count below fails.
+      plan.CommandText = "SET LOCAL enable_seqscan = off; SET LOCAL enable_sort = off";
+      await plan.ExecuteNonQueryAsync();
+    }
+    var head = await _headAsync(measured, keyStream, [work[0], work[1]]);
     long rowsRead;
     long seqScans;
-    await using (var stats = conn.CreateCommand()) {
+    await using (var stats = measured.CreateCommand()) {
       // This transaction's own reads of the work table: deterministic, and nothing else's.
       stats.CommandText = """
         SELECT COALESCE(t.idx_tup_fetch, 0) + COALESCE(t.seq_tup_read, 0), COALESCE(t.seq_scan, 0)
@@ -235,7 +246,7 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
 
     await Assert.That(head.Count).IsEqualTo(3);
     await Assert.That(seqScans).IsEqualTo(0)
-      .Because("The queue is walked on its index, in order, never scanned.");
+      .Because("The queue is walked on an index, in order, not scanned.");
     await Assert.That(rowsRead).IsLessThan(queued / 4)
       .Because($"A run holding the head of a {queued}-row queue reads a handful of rows, not the queue.");
   }
