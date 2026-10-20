@@ -124,7 +124,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
-  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.PersistedRow)]
   public record UserIsTyping : IEvent {
     public string ConversationId { get; init; } = "";
   }
@@ -162,7 +162,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
-  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.PersistedRow)]
   public record UserIsTyping : IEvent {
     public string ConversationId { get; init; } = "";
   }
@@ -227,7 +227,7 @@ namespace TestNamespace {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveRunnerGenerator_NonTtlRowPerspective_DoesNotRegisterRowTtlAsync() {
-    // A WhenConsumed/InMemory ephemeral perspective is NOT TtlRow — its rows never expire, so no registration.
+    // A WhenConsumed ephemeral perspective with a persisted row is NOT TtlRow: its rows never expire, so no registration.
     const string source = """
 
 using Whizbang.Core;
@@ -235,7 +235,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
-  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+  [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.PersistedRow)]
   public record UserIsTyping : IEvent {
     public string ConversationId { get; init; } = "";
   }

@@ -157,6 +157,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (configuration): `MessageProcessingOptions.InboxBatchSize`, `InboxBatchSlideMs` and
+  `InboxBatchMaxWaitMs` are removed (#1536).** Nothing read them: inbox batching is configured on
+  `SlidingWindowInboxOptions`, so tuning them changed nothing. **Upgrade:** set
+  `Whizbang:Workers:InboxBatch:MaxSize`, `SlidingWindow` and `MaxWait` instead. The startup configuration check
+  names those keys for a deployment that still sets the old ones under `MessageProcessing`.
+- **Breaking (ephemeral events): `TransientStorage.InMemory` is removed (#1538).** It was never acted on: the
+  read model was a persisted row either way, and a model held in one instance's memory would be lost whenever its
+  stream moved. Whether an ephemeral event can stay local and in memory is open as #1549. **Upgrade:** remove
+  `Storage = TransientStorage.InMemory`; the default, `PersistedRow`, is what those types already got.
 - **Breaking (dispatch): every local receptor for a message runs, on every call (#1412).** A send or a local
   invoke ran only the first receptor for a command while a publish ran them all. Now every entry runs them all,
   in `[ReceptorPriority]` order. When a caller asks for a result and several receptors return one, the earliest
