@@ -6,7 +6,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Configuration options for transport-level batch message collection.
 /// Controls how the transport collects messages before flushing them
-/// as a batch to the inbox via <c>process_work_batch</c>.
+/// as a batch to the inbox via <c>store_inbox_messages</c>.
 /// </summary>
 /// <remarks>
 /// <para>

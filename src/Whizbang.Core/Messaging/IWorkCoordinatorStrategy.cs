@@ -114,7 +114,7 @@ public interface IWorkCoordinatorStrategy {
 /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
 public enum WorkCoordinatorStrategy {
   /// <summary>
-  /// Immediate strategy - calls process_work_batch immediately for each operation.
+  /// Immediate strategy - flushes queued work to the database immediately for each operation.
   /// Lowest latency, highest database load.
   /// </summary>
   Immediate,

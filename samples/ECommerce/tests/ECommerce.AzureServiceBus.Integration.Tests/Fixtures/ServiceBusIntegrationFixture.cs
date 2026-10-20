@@ -212,7 +212,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     _bffHost = _createBffHost(_connectionString, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
-    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
+    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call claim_work and the other work-coordinator functions
     Console.WriteLine("[ServiceBusFixture] Initializing database schema...");
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();

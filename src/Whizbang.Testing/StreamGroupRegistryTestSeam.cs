@@ -10,7 +10,7 @@ namespace Whizbang.Testing;
 /// process-wide, so tests that populate the registry directly must be able to clear it without
 /// widening the production surface.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 public static class StreamGroupRegistryTestSeam {
   /// <summary>Removes every registered membership.</summary>
   public static void Clear() => PerspectiveStreamGroupRegistry.Clear();

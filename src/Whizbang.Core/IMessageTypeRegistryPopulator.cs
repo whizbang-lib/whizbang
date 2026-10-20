@@ -18,7 +18,7 @@ namespace Whizbang.Core;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public interface IMessageTypeRegistryPopulator {
   /// <summary>
   /// Reconciles the registry with the catalog. Safe to call on every startup.

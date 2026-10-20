@@ -6,7 +6,7 @@ using System.Diagnostics.Metrics;
 namespace Whizbang.Core.Observability;
 
 /// <summary>
-/// Metrics for the work coordination pipeline: process_work_batch, flush, publisher worker.
+/// Metrics for the work coordination pipeline: flush, handler commits, publisher worker, maintenance, gate.
 /// Meter name: Whizbang.WorkCoordinator
 /// </summary>
 /// <docs>operations/observability/metrics</docs>
@@ -20,7 +20,11 @@ public sealed class WorkCoordinatorMetrics {
 
   // Timing
 
-  /// <summary>Time executing process_work_batch SQL.</summary>
+  /// <summary>
+  /// Not recorded by the framework. It timed the single work-batch SQL call, which was split into
+  /// focused functions (claim, store, complete); no caller records it since. Kept registered so
+  /// dashboards that query it keep resolving.
+  /// </summary>
   public Histogram<double> ProcessBatchDuration { get; }
 
   /// <summary>Total FlushAsync time including lifecycle.</summary>
@@ -28,7 +32,11 @@ public sealed class WorkCoordinatorMetrics {
 
   // Batch composition (IN)
 
-  /// <summary>Outbox messages sent to process_work_batch.</summary>
+  /// <summary>
+  /// Not recorded by the framework. It counted the outbox messages handed to the single work-batch
+  /// SQL call; outbox messages are now stored by <c>store_outbox_messages</c> during a flush, which
+  /// does not record this instrument.
+  /// </summary>
   public Histogram<int> BatchOutboxMessages { get; }
 
   /// <summary>Inbox messages sent.</summary>
@@ -53,7 +61,10 @@ public sealed class WorkCoordinatorMetrics {
 
   // Counters
 
-  /// <summary>Total process_work_batch calls.</summary>
+  /// <summary>
+  /// Not recorded by the framework. It counted calls to the single work-batch SQL call, which no
+  /// longer exists; the focused functions that replaced it do not record this counter.
+  /// </summary>
   public PassiveCounter<long> ProcessBatchCalls { get; }
 
   /// <summary>SQL errors.</summary>
@@ -131,10 +142,13 @@ public sealed class WorkCoordinatorMetrics {
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 
-    ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");
+    // The process_batch.* and batch.* instrument names are kept as they are although the SQL call they
+    // were named for is gone: renaming an instrument breaks every dashboard and alert built on it, so only
+    // the descriptions were corrected to say what each records today (#1463).
+    ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Not recorded: the single work-batch SQL call it timed was split into focused functions");
     FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");
 
-    BatchOutboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Outbox messages sent to process_work_batch");
+    BatchOutboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Not recorded: outbox messages handed to the single work-batch SQL call, which was split into focused functions");
     BatchInboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.inbox_messages", description: "Inbox messages sent");
     BatchCompletions = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.completions", description: "Completions sent");
     BatchFailures = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.failures", description: "Failures sent");
@@ -143,7 +157,7 @@ public sealed class WorkCoordinatorMetrics {
     ReturnedInboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
     ReturnedPerspectiveWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
 
-    ProcessBatchCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
+    ProcessBatchCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Not recorded: calls to the single work-batch SQL call, which was split into focused functions");
     ProcessBatchErrors = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
     CommitHandlerFallbacks = meter.CreatePassiveCounter<long>(
       "whizbang.work_coordinator.commit_handler.fallbacks",

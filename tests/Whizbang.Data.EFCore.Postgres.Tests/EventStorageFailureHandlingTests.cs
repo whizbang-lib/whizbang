@@ -9,8 +9,8 @@ using Whizbang.Data.EFCore.Postgres;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Tests for C# layer handling of event storage failures from process_work_batch.
-/// Verifies error detection, logging, and graceful degradation.
+/// Tests that the <c>WorkBatchRow</c> DTO carries event storage failure details (its error columns),
+/// which the since-removed process_work_batch function reported. The tests check the DTO shape only.
 /// </summary>
 [Category("Shard2")]
 public class EventStorageFailureHandlingTests {

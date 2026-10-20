@@ -12,17 +12,17 @@ using Whizbang.Generators.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Roslyn analyzer for the ephemeral virality rules (WHIZ130-139). Ephemeral is <em>viral</em>: a
+/// Roslyn analyzer for the ephemeral virality rules (WHIZ130 and WHIZ134). Ephemeral is <em>viral</em>: a
 /// perspective fed by an ephemeral event is authoritative state, not a rebuildable cache. Nobody in the
-/// industry <em>enforces</em> that — Whizbang does, safe-by-construction at build time. Each diagnostic
+/// industry <em>enforces</em> that; Whizbang does, safe by construction at build time. Each diagnostic
 /// is an ordinary <see cref="DiagnosticAnalyzer"/> diagnostic, so it surfaces in both the IDE (squiggle)
 /// and the compiler build (<c>dotnet build</c>).
 /// </summary>
 /// <remarks>
-/// Compile-time guards: <c>WHIZ130</c> (mixed-mode Apply) and <c>WHIZ134</c> (ambiguous composition) —
-/// both statically resolvable from type symbols. <c>WHIZ131</c> (rebuild/rewind targets a runtime string
-/// perspective name), <c>WHIZ133</c> (a stream is a runtime id), and <c>WHIZ132</c> (re-emit dataflow)
-/// aren't statically resolvable, so their enforcement is the runtime guard rather than this analyzer.
+/// Compile-time guards: <c>WHIZ130</c> (mixed-mode Apply) and <c>WHIZ134</c> (ambiguous composition),
+/// both statically resolvable from type symbols. A rebuild or rewind that names a perspective by a runtime
+/// string, a stream given as a runtime id, and re-emit dataflow are not statically resolvable, so they are
+/// enforced by the runtime guard rather than by a diagnostic here.
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -40,6 +40,8 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   /// A Warning (not error): the right first signal for an opt-in feature, backstopped by the runtime
   /// guard; escalate via <c>.editorconfig</c> / <c>TreatWarningsAsErrors</c>.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz130</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralAnalyzerTests.cs:PerspectiveMixesEphemeralAndSourcedApply_ReportsWHIZ130WarningAsync</tests>
   public static readonly DiagnosticDescriptor MixedModePerspective = new(
     id: "WHIZ130",
     title: "Perspective mixes ephemeral and Sourced Apply methods",
@@ -58,6 +60,8 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   /// <c>[Ephemeral]</c> on the type. Error (not warning): the generator would otherwise pick one silently,
   /// so the type's runtime behaviour would be order-dependent.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz134</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralAnalyzerTests.cs:TwoConflictingProfiles_ReportsWHIZ134ErrorAsync</tests>
   public static readonly DiagnosticDescriptor AmbiguousComposition = new(
     id: "WHIZ134",
     title: "Ambiguous ephemeral composition",

@@ -715,9 +715,9 @@ public class ClaimWorkerAttemptAccountingTests {
   [Test]
   [Timeout(30000)]
   public async Task PerspectiveOnly_DoesNotClaimAsync(CancellationToken testToken) {
-    // In this mode the legacy publisher owns claiming. ClaimWorker doing its own claim_work would
-    // race process_work_batch and lease orphan rows before it sees them, breaking the event-store
-    // auto-create chain -- so the worker must park, not poll.
+    // In this mode another poller owns claiming, so ClaimWorker must park, not poll: a second
+    // claim_work caller would lease orphan rows before the owning poller sees them. (The mode was
+    // added for the legacy publisher and its process_work_batch call, both since removed.)
     //
     // The control worker runs first so the negative below cannot pass merely because the fixture
     // never drove a claim.
@@ -744,7 +744,7 @@ public class ClaimWorkerAttemptAccountingTests {
     }
 
     await Assert.That(parked.CallCount).IsEqualTo(0)
-      .Because("claiming here races process_work_batch and leases orphan rows before it sees "
+      .Because("claiming here races the owning poller and leases orphan rows before it sees "
              + "them; the mode exists to keep exactly one poller");
   }
 

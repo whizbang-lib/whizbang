@@ -605,7 +605,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Registers message associations for perspective auto-checkpoint creation.
-  /// Maps event types to perspectives so process_work_batch can auto-create checkpoint rows.
+  /// Maps event types to perspectives so the event-store chain (_emit_event_store_chain) creates perspective events for them.
   /// Uses generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator.
   /// CRITICAL: Each service has its own schema, so we must register associations using the correct DbContext.
   /// InventoryDbContext (schema="inventory") for InventoryWorker associations.
@@ -1060,10 +1060,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, jsonOptions);
 
-      // 2. Queue for atomic deduplication via process_work_batch
+      // 2. Queue for atomic deduplication via store_inbox_messages
       strategy.QueueInboxMessage(newInboxMessage);
 
-      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
+      // 3. Flush - calls store_inbox_messages with atomic INSERT ... ON CONFLICT DO NOTHING
       var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.None, ct);
 
       // 4. Check if work was returned - empty means duplicate (already processed)
@@ -1077,18 +1077,17 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       Console.WriteLine($"[InMemoryFixture] Message {envelope.MessageId} written to inbox for {host.Services.GetRequiredService<IServiceInstanceProvider>().ServiceName}");
 
       // 5. CRITICAL: Process inbox work - dispatch to handlers (InventoryWorker) or mark events (BFF)
-      // process_work_batch automatically:
-      // - Stores events from inbox (Phase 4.5B) if is_event=true
-      // - Creates perspective events (Phase 4.6)
-      // - Creates perspective cursors (Phase 4.7)
+      // claim_work (run by ClaimWorker) stores inbox events with is_event=true in the event store and
+      // creates their perspective events (_emit_event_store_chain_for_inbox); perspective cursors are
+      // created by update_perspective_cursors when a perspective run completes.
       await orderedProcessor.ProcessInboxWorkAsync(
         myWork,
         processor: async (work) => {
           // Deserialize event from work item
           var @event = _deserializeEvent(work, jsonOptions);
 
-          // Mark as EventStored - process_work_batch will store it and create perspective cursors
-          // The is_event flag (set in _serializeToNewInboxMessage) tells process_work_batch to store it
+          // Mark as EventStored - claim_work's inbox chain stores it in the event store
+          // The is_event flag (set in _serializeToNewInboxMessage) tells that chain to store it
           if (@event is IEvent) {
             return MessageProcessingStatus.EventStored;
           }

@@ -3942,7 +3942,7 @@ public abstract partial class Dispatcher(
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
       _autoGenerateStreamIdIfNeeded(eventData, eventType);
 
-      // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
+      // Create MessageId once - used for the outbox row and, for an event, as its event store event_id (store_outbox_messages -> _emit_event_store_chain)
       var messageId = MessageId.New();
 
       // Extract stream ID early — needed for both sync tracking and delivery receipt

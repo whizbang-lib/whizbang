@@ -44,7 +44,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// 1. Fast path: bulk-query existing per-object hashes to detect changes without acquiring a lock
   /// 2. Slow path: acquire transaction-level advisory lock, re-check hashes, run only changed phases
   /// 3. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.) - generated at runtime from C# definitions
-  /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch) with hash tracking
+  /// 4. Executes PostgreSQL migrations (creates functions like claim_work) with hash tracking
   /// 5. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
   /// 6. Adds composite PK and FK constraints
   /// 7. Registers perspective associations (populates wh_message_associations for event routing)

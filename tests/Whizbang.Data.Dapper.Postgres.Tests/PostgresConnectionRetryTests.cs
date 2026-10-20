@@ -258,7 +258,7 @@ public class PostgresConnectionRetryTests {
     await using var connection = new Npgsql.NpgsqlConnection(connectionString);
     await connection.OpenAsync();
 
-    // Phase H step 3 replaced process_work_batch with claim_work as the canonical
+    // Phase H step 3 replaced process_work_batch (since removed) with claim_work as the canonical
     // "migrations done" function signal — _isSchemaReadyAsync polls for claim_work.
     const string createTablesSql = @"
       CREATE TABLE wh_inbox (id SERIAL PRIMARY KEY);

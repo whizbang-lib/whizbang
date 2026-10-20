@@ -30,7 +30,7 @@ namespace Whizbang.Generators.CodeFixes;
 /// Supports "Fix all in solution" via Roslyn's standard batch fixer.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 [ExportCodeFixProvider(LanguageNames.CSharp, Name = nameof(PinnedIdCodeFixProvider)), Shared]
 public class PinnedIdCodeFixProvider : CodeFixProvider {
   private const string WHIZ110 = "WHIZ110";

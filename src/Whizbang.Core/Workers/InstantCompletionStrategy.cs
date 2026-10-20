@@ -9,13 +9,14 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Instant completion strategy that reports completions immediately to the coordinator.
-/// This strategy calls ProcessWorkBatchAsync immediately when completions/failures occur,
+/// This strategy calls <see cref="IWorkCoordinator.ReportPerspectiveCompletionAsync"/> or
+/// <see cref="IWorkCoordinator.ReportPerspectiveFailureAsync"/> immediately when completions/failures occur,
 /// trading reduced database batching for immediate consistency.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This strategy is recommended for test environments where immediate consistency is required.
-/// Each completion/failure triggers a separate ProcessWorkBatchAsync call, which may increase
+/// Each completion/failure triggers a separate coordinator call, which may increase
 /// database load in high-throughput scenarios.
 /// </para>
 /// <para>

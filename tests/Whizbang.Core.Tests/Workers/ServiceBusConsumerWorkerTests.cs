@@ -21,7 +21,8 @@ namespace Whizbang.Core.Tests.Workers;
 public static class ServiceBusConsumerWorkerTests {
   // NOTE: Previous tests for inline perspective invocation have been removed.
   // The architecture changed - perspectives are now processed asynchronously via PerspectiveWorker
-  // using checkpoints created by process_work_batch, not inline during message handling.
+  // using cursors kept by the perspective completion path (update_perspective_cursors), not inline
+  // during message handling.
   // See ServiceBusConsumerWorker.cs:134-137 for architecture details.
 
 }

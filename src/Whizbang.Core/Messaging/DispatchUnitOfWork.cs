@@ -8,7 +8,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Tracks a unit of work originating from Dispatcher.PublishAsync or Dispatcher.SendAsync.
-/// Contains messages queued together for a single process_work_batch call.
+/// Contains messages queued together for a single flush.
 /// Unit ID is time-ordered (UUIDv7) for chronological processing.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>

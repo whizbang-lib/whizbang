@@ -208,8 +208,9 @@ __PHYSICAL_FIELD_CONFIGS__
     }
 
     // Register shared work channel writer as singleton
-    // Shared between ScopedWorkCoordinatorStrategy (writer) and WorkCoordinatorPublisherWorker (reader)
-    // Enables immediate processing of work returned from process_work_batch
+    // Shared between ClaimWorker (writes claimed outbox work, and wakes when a strategy flush signals
+    // new work) and OutboxPublishWorker (reader)
+    // Enables immediate processing of work returned from claim_work
     if (!services.Any(sd => sd.ServiceType == typeof(global::Whizbang.Core.Messaging.IWorkChannelWriter))) {
       services.AddSingleton<global::Whizbang.Core.Messaging.IWorkChannelWriter, global::Whizbang.Core.Messaging.WorkChannelWriter>();
     }

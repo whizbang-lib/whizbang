@@ -139,7 +139,7 @@ static file class WhizbangInfrastructureModel {
       entity.Property(e => e.OriginServiceId).HasColumnName("origin_service_id");
       entity.Property(e => e.OriginCommitSequence).HasColumnName("origin_commit_sequence");
 
-      entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in process_work_batch
+      entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in _emit_event_store_chain
       entity.HasIndex(e => new { e.AggregateId, e.Version }).IsUnique();
       entity.HasIndex(e => e.StreamId);
       entity.HasIndex(e => e.CreatedAt);

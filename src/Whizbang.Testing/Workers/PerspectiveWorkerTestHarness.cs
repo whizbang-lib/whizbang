@@ -15,7 +15,7 @@ namespace Whizbang.Testing.Workers;
 /// </summary>
 /// <remarks>
 /// Pair with <see cref="WorkCoordinatorPumpAdapter"/> when you have a fake IWorkCoordinator
-/// that returns work via ProcessWorkBatchAsync — the adapter pumps that work through the
+/// that returns work via ClaimWorkAsync; the adapter pumps that work through the
 /// harness channel, simulating what ClaimWorker does in production.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>

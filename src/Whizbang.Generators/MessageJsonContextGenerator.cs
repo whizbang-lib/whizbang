@@ -732,16 +732,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Report that generator is running
     context.ReportDiagnostic(Diagnostic.Create(
-        new DiagnosticDescriptor(
-            "WHIZ099",
-            "MessageJsonContextGenerator Running",
-            "MessageJsonContextGenerator invoked for assembly '{0}' with {1} message type(s)",
-            "Whizbang.SourceGeneration",
-            DiagnosticSeverity.Info,
-            true,
-            "Reports that the generator ran and how many message types it found. It is reported without a location "
-            + "because it is about the whole compilation, not one declaration; turn it off for a project in "
-            + ".globalconfig or NoWarn."),
+        DiagnosticDescriptors.MessageJsonContextRunning,
         Location.None,
         compilation.AssemblyName ?? "Unknown",
         messages.Length

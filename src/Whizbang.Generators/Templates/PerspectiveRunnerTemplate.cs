@@ -1229,8 +1229,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// Saves the model atomically.
   /// This is the ONLY place where database writes occur (unit of work pattern).
   /// Checkpoint persistence happens through the return value of RunAsync - the
-  /// PerspectiveWorker collects checkpoint completions and reports them to
-  /// ProcessWorkBatchAsync, which persists them via complete_perspective_cursor_work SQL function.
+  /// PerspectiveWorker collects checkpoint completions and hands them to
+  /// PerspectiveCompletionFlushWorker, which persists them via IWorkCoordinator.CompletePerspectiveAsync
+  /// (the complete_perspective SQL function).
   /// </summary>
   /// <returns>
   /// Whether the row was written. False when the store's ordering guard refused the write, which leaves the row
@@ -1264,7 +1265,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     #region UPSERT_CALL
     // Upsert model (insert or update) onto the row version the apply read (Unchecked writes unconditionally)
-    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
+    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> PerspectiveCompletionFlushWorker
     if (scope != null) {
       return await _perspectiveStore.TryUpsertAsync(
           streamId,
