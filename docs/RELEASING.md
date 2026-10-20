@@ -695,6 +695,39 @@ and publishes nothing.
 
 ---
 
+## Public API baseline
+
+Every library package is compared with the **last stable release** when it is packed (#1439): .NET package
+validation (`EnablePackageValidation`, set in `Directory.Build.targets`) downloads that version from nuget.org
+and fails the pack on any change that breaks binary or source compatibility, such as a removed or changed public
+member or a dropped target framework. Analyzer and generator packages ship no library to compare, and the
+command-line tools are not an API, so they are not checked. The check runs wherever packing does, so a pull
+request that breaks the API fails its `Pack` job.
+
+**An intended break is recorded, not avoided.** Pre-1.0 every release is a new minor, so breaking changes are
+allowed, but each one is written down where a reviewer sees it. Regenerate the project's suppression file and
+commit it with the change:
+
+```bash
+dotnet pack src/<Project>/<Project>.csproj -c Release -p:WhizbangApiCheck=true -p:Version=1.0.0-local \
+  -p:ApiCompatGenerateSuppressionFile=true
+```
+
+The check runs on CI by itself; locally `WhizbangApiCheck=true` turns it on, and `Version` must be above the
+baseline, because the placeholder version in `Directory.Build.props` is lower than any release and would be
+reported as an assembly identity change (`CP0003`) in every package.
+
+That writes `src/<Project>/CompatibilitySuppressions.xml`, one entry per break (`CP0002` member removed,
+`CP0006` member added to an interface, and so on). The diff of that file is the API review. A suppression for
+a break nobody meant to make is the signal to fix the code instead.
+
+**After each stable release, move the baseline.** Set `PackageValidationBaselineVersion` in
+`Directory.Build.targets` to the version just released, and delete every `CompatibilitySuppressions.xml`: the
+breaks they recorded are now in the baseline. Do it in one pull request into `develop` right after the
+release. Until then, packs still compare with the previous stable and the old suppressions keep applying,
+so nothing fails; the PR only stops them from piling up. From 1.0 a break needs a new major as well as a
+suppression.
+
 ## Gotchas & invariants (for future edits)
 
 - **Never** make the printed/preview version differ from what publishes. If you change one version

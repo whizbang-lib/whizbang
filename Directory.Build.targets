@@ -126,4 +126,20 @@
            Condition="'$(WhizbangTestType)' != '' AND !$([System.String]::new(';$(WhizbangKnownTestTypes);').Contains(';$(WhizbangTestType);'))"
            Text="$(MSBuildProjectName) declares &lt;WhizbangTestType&gt;$(WhizbangTestType)&lt;/WhizbangTestType&gt;, which no test runner knows, so its tests would never run. Use one of: $(WhizbangKnownTestTypes), or add the type to every reader (docs/TEST-PROJECTS.md, &quot;Adding a test type&quot;)." />
   </Target>
+
+  <!-- Public API compatibility (#1439). Packing a library compares it with the last stable release on
+       nuget.org and fails on any change that breaks binary or source compatibility (a removed or changed
+       public member, a narrowed framework), unless the break is recorded as intended in the project's
+       CompatibilitySuppressions.xml, which a pull request then shows a reviewer. Set here, not in
+       Directory.Build.props, because IncludeBuildOutput and PackAsTool are set in the project file:
+       analyzer and generator packages ship no library to compare, and the command-line tools are not
+       an API. After each stable release, move the baseline to it and delete the suppression files
+       (docs/RELEASING.md, "Public API baseline"). Pre-1.0 every release is a minor, so a break is
+       allowed; it is the record that matters. On CI only, or when WhizbangApiCheck is true: a local
+       pack carries the placeholder version from Directory.Build.props, lower than any release, and
+       the check would report that as an assembly identity change (CP0003) in every package. -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(IncludeBuildOutput)' != 'false' and '$(PackAsTool)' != 'true' and ('$(CI)' == 'true' or '$(WhizbangApiCheck)' == 'true')">
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselineVersion>0.2623.1</PackageValidationBaselineVersion>
+  </PropertyGroup>
 </Project>
