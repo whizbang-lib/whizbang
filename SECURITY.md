@@ -92,6 +92,18 @@ It succeeds only for a tag created by this repository's release workflows and no
 own "Verified" badge does not check Sigstore signatures, so the tag shows as unverified on github.com; use
 the command above. Tags created before signing was introduced (#1438) are unsigned.
 
+**What a package depends on** is listed in its software bill of materials: each GitHub release attaches
+`<package id>.X.Y.Z.cdx.json` beside every package, a [CycloneDX](https://cyclonedx.org/) SBOM naming every
+NuGet dependency the package brings (direct and transitive, with version, license and hash) and the other
+Whizbang packages it depends on. The SBOMs are subjects of the same signed provenance as the packages, so
+one you downloaded is verified the same way:
+
+```bash
+gh attestation verify SoftwareExtravaganza.Whizbang.Core.X.Y.Z.cdx.json --repo whizbang-lib/whizbang
+```
+
+Releases from before SBOMs were introduced (#1440) do not carry them.
+
 ## Security Assurance
 
 What Whizbang protects, its threat model and trust boundaries, and what an application can and cannot

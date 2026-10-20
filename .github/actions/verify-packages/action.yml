@@ -1,8 +1,9 @@
 name: Verify NuGet packages
 description: >-
   Fails unless a directory holds EXACTLY the packages in .github/nuget-packages.txt, each at EXACTLY
-  the given version: nothing missing, nothing extra, no second version. Every pack and publish path
-  runs this, so the shipped set is defined in one place.
+  the given version: nothing missing, nothing extra, no second version, and each with its software bill
+  of materials (<id>.<version>.cdx.json, #1440). Every pack and publish path runs this, so the shipped
+  set is defined in one place.
 
 inputs:
   path:
@@ -12,6 +13,12 @@ inputs:
   version:
     description: The one version every package must carry
     required: true
+  sbom:
+    description: >-
+      'required' fails a package without its SBOM; 'optional' only warns. Optional is for promoting a build
+      packed before SBOMs existed (a hotfix of a release from before #1440).
+    required: false
+    default: required
 
 runs:
   using: composite
@@ -21,6 +28,7 @@ runs:
       env:
         PKG_DIR: ${{ inputs.path }}
         VERSION: ${{ inputs.version }}
+        SBOM: ${{ inputs.sbom }}
         LIST: ${{ github.action_path }}/../../nuget-packages.txt
       run: |
         set -euo pipefail
@@ -34,6 +42,14 @@ runs:
             echo "::error::$id $VERSION is missing"
             PROBLEMS=$((PROBLEMS + 1))
           fi
+          if [ ! -f "$PKG_DIR/$id.$VERSION.cdx.json" ]; then
+            if [ "$SBOM" = optional ]; then
+              echo "::warning::$id $VERSION has no SBOM; it was packed before SBOMs were generated"
+            else
+              echo "::error::$id $VERSION has no SBOM ($id.$VERSION.cdx.json; the package-sbom action writes it)"
+              PROBLEMS=$((PROBLEMS + 1))
+            fi
+          fi
         done
         # Anything else in the directory is a package the list does not know about, or a second
         # version of one it does: either way the publish would not be the set we mean to ship.
@@ -45,6 +61,17 @@ runs:
           done
           if [ "$known" = false ]; then
             echo "::error::Unexpected package $name (add it to .github/nuget-packages.txt if it now ships)"
+            PROBLEMS=$((PROBLEMS + 1))
+          fi
+        done
+        for f in "$PKG_DIR"/*.cdx.json; do
+          name=$(basename "$f")
+          known=false
+          for id in "${EXPECTED[@]}"; do
+            [ "$name" = "$id.$VERSION.cdx.json" ] && known=true && break
+          done
+          if [ "$known" = false ]; then
+            echo "::error::Unexpected SBOM $name, for no package in this set"
             PROBLEMS=$((PROBLEMS + 1))
           fi
         done
