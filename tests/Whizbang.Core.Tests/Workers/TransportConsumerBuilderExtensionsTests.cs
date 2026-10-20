@@ -221,9 +221,9 @@ public class TransportConsumerBuilderExtensionsTests {
              + "contributor surface resolves");
   }
 
-  // WorkCoordinatorPublisherWorker was deleted in Phase H step 3 — its responsibilities
-  // (outbox/inbox drain, claim, heartbeat, completion flushes) are now distributed across
-  // OutboxDrainWorker / InboxDrainWorker / ClaimWorker / HeartbeatWorker / *FlushWorker.
+  // WorkCoordinatorPublisherWorker was deleted in Phase H step 3. Its responsibilities
+  // (outbox/inbox drain and dispatch, claim, heartbeat, completion flushes) are now distributed across
+  // OutboxDrainWorker / InboxDrainWorker / InboxDispatchWorker / ClaimWorker / HeartbeatWorker / *FlushWorker.
   // Develop's test ("AddTransportConsumer_RegistersWorkCoordinatorPublisherWorkerAsHostedService")
   // was dropped during the merge — it asserted registration of a class that no longer exists.
 

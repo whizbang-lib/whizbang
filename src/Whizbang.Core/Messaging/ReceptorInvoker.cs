@@ -388,7 +388,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
   /// <summary>
   /// Cross-worker dedup: prevents the same message+stage from being processed twice (e.g.
-  /// TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox). For
+  /// TransportConsumerWorker and InboxDispatchWorker both firing PostInbox). For
   /// perspective-scoped stages the dedup key also includes context.PerspectiveType so each of
   /// N perspectives gets its own claim. Returns false when the stage was already claimed so the
   /// caller can short-circuit.

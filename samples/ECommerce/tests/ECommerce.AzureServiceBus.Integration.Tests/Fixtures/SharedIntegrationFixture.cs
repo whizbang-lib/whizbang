@@ -275,7 +275,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -304,7 +303,7 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
     builder.Services.AddSingleton(consumerOptions);
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -422,7 +421,6 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     // Register perspective runners for AOT-compatible lookup (replaces reflection)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -438,7 +436,7 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -611,7 +609,7 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for both InventoryWorker and BFF work processing to become idle.
-  /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
+  /// Tracks OutboxPublishWorker, OutboxDrainWorker, InboxDrainWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
   /// Uses event callbacks to efficiently detect when all event processing is complete.
   /// Falls back to timeout if idle state is not reached within the specified time.
   /// </summary>

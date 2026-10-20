@@ -31,11 +31,9 @@ namespace Whizbang.Core.Workers;
 /// inbox channel in that order. <see cref="InboxDispatchWorker"/> reads sequentially.
 /// </para>
 /// <para>
-/// <strong>Default disabled.</strong> The legacy <c>ClaimWorker</c> still populates
-/// <see cref="IInboxChannelWriter"/> directly from <see cref="WorkBatch.InboxWork"/>; if this
-/// drainer is also enabled while <c>claim_work</c> still projects inbox bodies, every inbox row
-/// would be enqueued twice (double dispatch). Step 5d will flip the default and drop the inbox
-/// projection together.
+/// <strong>Enabled by default</strong> (<see cref="InboxDrainWorkerOptions.Enabled"/>). <c>claim_work</c>
+/// returns only the inbox stream ids, so this drainer is the only source of inbox work for
+/// <see cref="InboxDispatchWorker"/>; disabling it stops inbox dispatch.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>

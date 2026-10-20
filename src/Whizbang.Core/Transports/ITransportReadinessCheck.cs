@@ -8,9 +8,10 @@ namespace Whizbang.Core.Transports;
 /// Implementations can check connectivity, health, or other readiness criteria.
 /// </summary>
 /// <remarks>
-/// <para>This interface is used by the WorkCoordinatorPublisherWorker to determine if messages
-/// should be published or buffered. When a transport is not ready, messages are kept in
-/// the outbox with renewed leases until the transport becomes available.</para>
+/// <para>This interface is consulted (through <c>TransportPublishStrategy.IsReadyAsync</c>) by
+/// <c>OutboxPublishWorker</c> to determine if messages should be published or buffered. The default
+/// publisher, <c>OutboxDrainWorker</c>, does not consult it yet (#1558).
+/// When a transport is not ready, messages are kept in the outbox with renewed leases until the transport becomes available.</para>
 ///
 /// <para>Examples of readiness checks:
 /// - Azure Service Bus: Check if namespace is accessible

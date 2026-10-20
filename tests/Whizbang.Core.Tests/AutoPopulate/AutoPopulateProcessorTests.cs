@@ -543,7 +543,7 @@ public class AutoPopulateProcessorTests {
 
   [Test]
   public async Task AutoPopulateProcessor_ProcessAutoPopulate_QueuedAtTimestamp_ReturnsNullAndSkipsAsync() {
-    // Arrange - QueuedAt timestamps are set later by WorkCoordinatorPublisherWorker, not here
+    // Arrange - QueuedAt timestamps are not set by AutoPopulateProcessor
     var processor = new AutoPopulateProcessor();
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),

@@ -73,7 +73,7 @@ Worker → caches messages in memory, only fetches what's new
 This affects:
 - `process_work_batch` return contract (Phase 7)
 - `WorkBatchRow` / `WorkBatch` C# types
-- `WorkCoordinatorPublisherWorker` (outbox processing)
+- The outbox worker (now `ClaimWorker` for claiming and `OutboxDrainWorker` for publishing)
 - `PerspectiveWorker` (perspective processing)
 - `TransportConsumerWorker` (inbox processing — already partially separated)
 - `IWorkCoordinator` interface (new fetch methods)

@@ -665,7 +665,7 @@ public interface IWorkCoordinator {
   /// <c>compute_partition(stream_id, partition_count)</c>. Idempotent.
   /// </summary>
   /// <remarks>
-  /// Called by <c>WorkCoordinatorPublisherWorker</c> on startup so a service that comes
+  /// Called by the database initializer on startup so a service that comes
   /// up under a new (or first-time-correct) <c>PartitionCount</c> immediately self-heals
   /// rows wedged by a partition-mismatch (observed in production). Returns
   /// the number of rows recomputed per table, which the worker logs at WARN if any are
@@ -2370,7 +2370,7 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
-  /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
+  /// and stuck inbox messages. Called periodically by MaintenanceWorker.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Results for each maintenance task with row counts and durations.</returns>
