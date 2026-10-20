@@ -17,6 +17,15 @@ namespace Whizbang.Core.SystemEvents;
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
 public static class AuditEligibility {
 
+  /// <summary>
+  /// The <see cref="AuditEventAttribute"/> declared on <paramref name="eventType"/>, or null. The one place the
+  /// attribute is read, so every audit writer takes its reason and level from the same source as the decision.
+  /// </summary>
+  /// <param name="eventType">The event's CLR type.</param>
+  /// <returns>The attribute, or null when the type declares none.</returns>
+  internal static AuditEventAttribute? AttributeOf(Type eventType) =>
+    eventType.GetCustomAttributes(typeof(AuditEventAttribute), inherit: true).FirstOrDefault() as AuditEventAttribute;
+
   /// <summary>Decides whether this occurrence is audited, and how it should be labelled.</summary>
   /// <param name="payload">The event instance, or null when only the type is known.</param>
   /// <param name="eventType">The event's CLR type.</param>
@@ -33,9 +42,7 @@ public static class AuditEligibility {
       return AuditDecision.Skip;
     }
 
-    var attr = eventType
-      .GetCustomAttributes(typeof(AuditEventAttribute), inherit: true)
-      .FirstOrDefault() as AuditEventAttribute;
+    var attr = AttributeOf(eventType);
 
     var eligibleByType = mode == AuditMode.OptOut
       ? attr?.Exclude != true    // audit unless excluded

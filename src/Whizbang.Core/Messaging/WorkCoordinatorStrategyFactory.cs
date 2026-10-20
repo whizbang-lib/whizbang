@@ -67,7 +67,8 @@ public static class WorkCoordinatorStrategyFactory {
       inner, outboxBatch,
       sp.GetRequiredService<ILogger<StreamAffinityWorkCoordinatorStrategy>>(),
       systemEventOptions: sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
-      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>());
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>());
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
@@ -81,7 +82,8 @@ public static class WorkCoordinatorStrategyFactory {
       LifecycleMessageDeserializer = sp.GetRequiredService<ILifecycleMessageDeserializer>(),
       TracingOptions = sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       SystemEventOptions = sp.GetOptionsValue<Whizbang.Core.SystemEvents.SystemEventOptions>(),
-      CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
+      CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      AuditDecisionHook = sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -111,7 +113,8 @@ public static class WorkCoordinatorStrategyFactory {
       deferredChannel: sp.GetRequiredService<IDeferredOutboxChannel>(),
       systemEventOptions: sp.GetRequiredService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
       workChannelWriter: channelWriter,
-      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>()
     );
   }
 

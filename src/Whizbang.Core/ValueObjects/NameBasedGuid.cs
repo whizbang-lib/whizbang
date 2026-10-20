@@ -1,6 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Whizbang.Core.ValueObjects;
 
 /// <summary>
@@ -28,6 +31,21 @@ public static class NameBasedGuid {
   /// <returns>The RFC 4122 version 5 id.</returns>
   /// <exception cref="ArgumentNullException"><paramref name="name"/> is null.</exception>
   public static Guid V5(Guid namespaceId, string name) {
-    return Guid.Empty; // RED stub (#1485)
+    ArgumentNullException.ThrowIfNull(name);
+
+    var nameByteCount = Encoding.UTF8.GetByteCount(name);
+    var input = new byte[16 + nameByteCount];
+    namespaceId.TryWriteBytes(input, bigEndian: true, out _);
+    Encoding.UTF8.GetBytes(name, input.AsSpan(16));
+
+    Span<byte> hash = stackalloc byte[20];
+#pragma warning disable CA5350, S4790 // RFC 4122 version 5 mandates SHA-1; this derives an identity, it does not authenticate anything.
+    SHA1.HashData(input, hash);
+#pragma warning restore CA5350, S4790
+
+    var uuid = hash[..16];
+    uuid[6] = (byte)((uuid[6] & 0x0F) | 0x50);   // version 5
+    uuid[8] = (byte)((uuid[8] & 0x3F) | 0x80);   // variant 10xx (RFC 4122)
+    return new Guid(uuid, bigEndian: true);
   }
 }

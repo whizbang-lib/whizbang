@@ -38,7 +38,7 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   private readonly Microsoft.Extensions.Logging.ILogger _logger =
     logger;
   private readonly Whizbang.Core.Tags.CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
-  internal Whizbang.Core.SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
+  private readonly Whizbang.Core.SystemEvents.IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
 
   /// <inheritdoc />
   /// <remarks>
@@ -72,7 +72,7 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     await _outboxBatch.AppendAsync(message, cancellationToken).ConfigureAwait(false);
 
     if (message.IsEvent && _systemEventOptions?.EventAuditEnabled == true) {
-      var auditMessage = Whizbang.Core.SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _systemEventOptions, _logger);
+      var auditMessage = Whizbang.Core.SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _systemEventOptions, _logger, _auditDecisionHook);
       if (auditMessage != null) {
         auditMessage = _coalesceResolver?.ApplyCoalescePolicy(auditMessage) ?? auditMessage;
         await _outboxBatch.AppendAsync(auditMessage, cancellationToken).ConfigureAwait(false);

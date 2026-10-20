@@ -290,6 +290,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **Audit records were missing the event they audit, its stream position and its causation, and ignored the
+  audit decision hook on the main path (#1485).** Every `EventAudited` writer (the outbox audit path, the event
+  store decorator and `SystemEventEmitter`) now sets `OriginalEventId`, `CausationId`, `AuditReason` and
+  `AuditLevel`; the outbox path's `OriginalStreamPosition` is the audited event's stored version (it was always
+  0), filled in when the record is stored with or after its event (a record written before its event, which the
+  per-stream outbox batcher can do, keeps 0). The decorator's message overload now stores the event under the id
+  the record names. A registered `IAuditDecisionHook` now vetoes and names records on every path, and
+  `SystemEventEmitter` honors `AuditMode.OptIn` and takes an optional hook.
+  **Behavior changes:** audit records sent through the outbox now travel on one stream per tenant (the audit
+  ledger, `AuditLedger.StreamFor(tenant)` = UUIDv5 of the tenant under UUIDv5("sys-audit")) instead of one
+  stream per record, and a coalesced bundle of them rides the same stream; this pins a tenant's audit publishing
+  to one stream (one owner, ordered, and one session per tenant on a session-enabled transport). A receiving
+  service still stores each record on its own stream (the record's id), so perspectives over `EventAudited`
+  keep one row per record. The event store decorator's records are now transport-only, like the outbox path's:
+  the origin no longer writes them to its own event store, so a perspective over `EventAudited` in the
+  producing service itself sees no records from that path. Applies migration 216.
 - **A receptor's top-level `Route.X(...)` result lost its route (#1405).** `return Route.Local(evt);` cascaded
   the event with the default route; only a route inside a tuple was kept. Fixed with the dispatch policy work, and now
   covered on every entry by a test against the generated dispatcher.

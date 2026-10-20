@@ -71,7 +71,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.CoalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.CoalesceResolver, dependencies?.AuditDecisionHook);
 
   private bool _disposed;
 

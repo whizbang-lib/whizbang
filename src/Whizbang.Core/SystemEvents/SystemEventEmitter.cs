@@ -34,6 +34,9 @@ namespace Whizbang.Core.SystemEvents;
 /// </remarks>
 /// <param name="options">System event configuration options.</param>
 /// <param name="systemEventStore">Event store for persisting system events.</param>
+/// <param name="instanceProvider">Names the instance that writes each record.</param>
+/// <param name="logger">Logger for serialization fallbacks.</param>
+/// <param name="auditDecisionHook">The registered audit decision hook; null leaves the decision to the attribute.</param>
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore,
@@ -49,7 +52,9 @@ public sealed class SystemEventEmitter(
   // Optional by design: a service with no telemetry identity wired must still produce audit
   // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
-  internal IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
+
+  // Optional: without one, the attribute alone decides, exactly as before hooks existed.
+  private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -67,10 +72,13 @@ public sealed class SystemEventEmitter(
       return;
     }
 
-    // Check if this event type should be excluded from audit
-    if (ShouldExcludeFromAudit(typeof(TEvent))) {
+    // One place decides, shared with the other audit writers: the attribute and the mode gate the TYPE,
+    // the registered hook may veto or name the OCCURRENCE.
+    var decision = AuditEligibility.Decide(envelope.Payload, typeof(TEvent), _options.AuditMode, _auditDecisionHook);
+    if (!decision.ShouldAudit) {
       return;
     }
+    var attribute = AuditEligibility.AttributeOf(typeof(TEvent));
 
     // Extract scope from envelope - generic dictionary for flexibility
     var scopeContext = envelope.GetCurrentScope();
@@ -84,15 +92,21 @@ public sealed class SystemEventEmitter(
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
       Id = TrackedGuid.New(),
+      OriginalEventId = envelope.MessageId.Value,
       OriginalEventType = typeof(TEvent).Name,
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
       Timestamp = DateTimeOffset.UtcNow,
+      ActivityName = decision.Name,
+      ActivityDescription = decision.Description,
       // Store individual properties for backward compatibility
       TenantId = scopeContext?.Scope.TenantId,
       UserId = scopeContext?.Scope.UserId,
       CorrelationId = correlationId?.ToString(),
+      CausationId = envelope.GetCausationId()?.ToString(),
+      AuditReason = attribute?.Reason,
+      AuditLevel = attribute?.Level ?? Whizbang.Core.Audit.AuditLevel.Info,
       // Store full scope for generic access
       Scope = scope
     };

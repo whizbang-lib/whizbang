@@ -38,3 +38,10 @@ __CATEGORY_PERSPECTIVE__ = 'perspective'
 
 # The band a row nobody waits on is declared in: recovered, replayed, repaired and audit work (WorkPriority.BACKGROUND).
 __PRIORITY_BACKGROUND__ = 250
+
+# The audit record type (EventAudited) as the type-name part of a stored type name, and where its payload names the
+# event it audits and that event's stream position (216, #1485). Written as ARRAY[...] for the same reason as the
+# collective paths above.
+__AUDIT_RECORD_TYPE__ = 'Whizbang.Core.SystemEvents.EventAudited'
+__AUDIT_ORIGINAL_EVENT_ID_PATH__ = ARRAY['p','OriginalEventId']
+__AUDIT_ORIGINAL_STREAM_POSITION_PATH__ = ARRAY['p','OriginalStreamPosition']

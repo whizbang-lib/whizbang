@@ -57,8 +57,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
-  internal IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
+  private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver, auditDecisionHook);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.
