@@ -32,7 +32,19 @@ internal static class RemovedConfigurationKeys {
     ]),
     // Renamed when extension detection became the generic capability pattern.
     new("Whizbang:PostgresExtensions:ProbeOnStartup", ["Whizbang:Capabilities:ProbeOnStartup"]),
+    // Never read (#1536): inbox batching is configured under Whizbang:Workers:InboxBatch.
+    .. _inboxBatchSettings("AzureServiceBus"),
+    .. _inboxBatchSettings("RabbitMQ"),
   ];
+
+  private static RemovedConfigurationKey[] _inboxBatchSettings(string transport) {
+    var section = $"Whizbang:Transports:{transport}:MessageProcessing";
+    return [
+      new($"{section}:InboxBatchSize", ["Whizbang:Workers:InboxBatch:MaxSize"]),
+      new($"{section}:InboxBatchSlideMs", ["Whizbang:Workers:InboxBatch:SlidingWindow"]),
+      new($"{section}:InboxBatchMaxWaitMs", ["Whizbang:Workers:InboxBatch:MaxWait"]),
+    ];
+  }
 
   /// <summary>The removed-key entry for a configured key, ignoring case.</summary>
   /// <param name="key">The configured key.</param>

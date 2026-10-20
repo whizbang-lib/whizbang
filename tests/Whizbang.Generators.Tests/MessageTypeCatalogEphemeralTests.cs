@@ -31,14 +31,14 @@ public class MessageTypeCatalogEphemeralTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace MyApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public record UserIsTyping : IEvent;
 """);
 
     await Assert.That(code).Contains("typeof(global::MyApp.UserIsTyping)");
     await Assert.That(code).Contains("EphemeralInfo(");
     await Assert.That(code).Contains("Destruction.WhenConsumed");
-    await Assert.That(code).Contains("TransientStorage.InMemory");
+    await Assert.That(code).Contains("TransientStorage.TtlRow");
   }
 
   [Test]
@@ -47,10 +47,10 @@ public class MessageTypeCatalogEphemeralTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace MyApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory, RewindGraceSeconds = 120)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow, RewindGraceSeconds = 120)]
       public record BurstyPing : IEvent;
 """);
-    await Assert.That(code).Contains("TransientStorage.InMemory, 120, -1)")
+    await Assert.That(code).Contains("TransientStorage.TtlRow, 120, -1)")
       .Because("The per-type RewindGraceSeconds override is stamped as the third EphemeralInfo argument (TtlSeconds defaults to the fourth, -1).");
   }
 
@@ -60,10 +60,10 @@ public class MessageTypeCatalogEphemeralTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace MyApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public record UserIsTyping : IEvent;
 """);
-    await Assert.That(code).Contains("TransientStorage.InMemory, -1, -1)")
+    await Assert.That(code).Contains("TransientStorage.TtlRow, -1, -1)")
       .Because("With no override, RewindGraceSeconds and TtlSeconds both default to -1.");
   }
 
@@ -159,7 +159,7 @@ public class MessageTypeCatalogEphemeralTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace MyApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public interface IPresenceSignal : IEvent { }
       [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow)]
       public record PinnedPresence : IPresenceSignal;

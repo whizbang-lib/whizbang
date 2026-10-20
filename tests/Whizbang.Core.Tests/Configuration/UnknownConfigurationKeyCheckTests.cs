@@ -124,6 +124,28 @@ public sealed class UnknownConfigurationKeyCheckTests {
   }
 
   [Test]
+  [Arguments("AzureServiceBus")]
+  [Arguments("RabbitMQ")]
+  public async Task Removed_TransportInboxBatchSettings_NameTheInboxBatchKeysAsync(string transport) {
+    // #1536: MessageProcessing's three inbox batch settings were never read; inbox batching is configured
+    // under Whizbang:Workers:InboxBatch, so a deployment that still sets them is pointed there.
+    var section = $"Whizbang:Transports:{transport}:MessageProcessing";
+    (string Removed, string Replacement)[] expected = [
+      ($"{section}:InboxBatchSize", "Whizbang:Workers:InboxBatch:MaxSize"),
+      ($"{section}:InboxBatchSlideMs", "Whizbang:Workers:InboxBatch:SlidingWindow"),
+      ($"{section}:InboxBatchMaxWaitMs", "Whizbang:Workers:InboxBatch:MaxWait"),
+    ];
+
+    foreach (var (key, replacement) in expected) {
+      await Assert.That(KnownConfigurationKeys.Library.IsKnown(key)).IsFalse()
+        .Because($"nothing reads {key}, so the startup check must report it");
+      var removed = RemovedConfigurationKeys.Find(key);
+      await Assert.That(removed).IsNotNull();
+      await Assert.That(removed!.ReplacedBy).IsEquivalentTo([replacement]);
+    }
+  }
+
+  [Test]
   public async Task Removed_EveryReplacementIsAKeyTheLibraryReads_AndNoRemovedKeyIsAsync() {
     await Assert.That(RemovedConfigurationKeys.All).IsNotEmpty();
     foreach (var removed in RemovedConfigurationKeys.All) {

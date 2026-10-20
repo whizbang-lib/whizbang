@@ -2,7 +2,7 @@
 
 ## Problem
 
-When a developer hits a breakpoint, the CLR freezes ALL managed threads. The app's `WorkCoordinatorPublisherWorker` stops polling, heartbeats stop, leases expire, and after 5-10 minutes other instances steal the paused app's work — causing duplicate message processing.
+When a developer hits a breakpoint, the CLR freezes ALL managed threads. The app's `ClaimWorker` stops polling, `HeartbeatWorker` stops heartbeating, `LeaseRenewalWorker` stops renewing leases, leases expire, and after 5-10 minutes other instances steal the paused app's work, causing duplicate message processing.
 
 ## Solution: Load Developer's DLLs into the LSP
 
@@ -17,7 +17,7 @@ Whizbang LSP Process (RUNNING independently)
   ├─ Loads developer's bin/Debug/net10.0/*.dll
   ├─ Calls AddWhizbang() + AddRabbitMQTransport() etc.
   ├─ Builds PARTIAL service provider:
-  │   ✅ WorkCoordinatorPublisherWorker (heartbeat + lease renewal)
+  │   ✅ HeartbeatWorker + LeaseRenewalWorker (heartbeat + lease renewal)
   │   ✅ ITransport (RabbitMQ/ServiceBus connection keepalive)
   │   ✅ IServiceInstanceProvider (instance identity)
   │   ❌ TransportConsumerWorker (NO message processing)
@@ -31,7 +31,7 @@ Whizbang LSP Process (RUNNING independently)
 
 | Resource | Timeout | What Happens | LSP Handles? |
 |----------|---------|-------------|:---:|
-| Work coordinator leases (wh_outbox/wh_inbox) | 300s (5 min) | Other instances steal work | YES — WorkCoordinatorPublisherWorker renews |
+| Work coordinator leases (wh_outbox/wh_inbox) | 300s (5 min) | Other instances steal work | YES: LeaseRenewalWorker renews |
 | Instance heartbeat (wh_service_instances) | 600s (10 min) | Instance deleted, work released | YES — Worker updates heartbeat |
 | DB command timeout | 5s | Query canceled, retried | YES — Worker polls normally |
 | RabbitMQ connection heartbeat | Broker default | Connection drops, auto-recovery | YES — Transport in LSP keeps connection |
@@ -78,7 +78,7 @@ await host.StopAsync(ct);
 3. Find host builder — scan for `Program.cs` / `IHostBuilder` configuration
 4. Extract DI — call developer's `ConfigureServices` to populate `IServiceCollection`
 5. Filter services — remove `TransportConsumerWorker`, `PerspectiveWorker`, all `IReceptor<>` registrations
-6. Keep only — `WorkCoordinatorPublisherWorker`, `ITransport`, `IServiceInstanceProvider`, `IWorkCoordinator`
+6. Keep only: `HeartbeatWorker`, `LeaseRenewalWorker`, `ITransport`, `IServiceInstanceProvider`, `IWorkCoordinator`
 7. Build and run
 
 ### Service Filtering

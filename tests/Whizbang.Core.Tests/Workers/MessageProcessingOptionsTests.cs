@@ -23,29 +23,15 @@ public class MessageProcessingOptionsTests {
     // Assert — all defaults match documented values
     await Assert.That(options.MaxConcurrentMessages).IsEqualTo(40)
       .Because("Default leaves headroom in a 100-connection pool");
-    await Assert.That(options.InboxBatchSize).IsEqualTo(100)
-      .Because("Documented default batch size is 100");
-    await Assert.That(options.InboxBatchSlideMs).IsEqualTo(50)
-      .Because("Documented default sliding window is 50ms");
-    await Assert.That(options.InboxBatchMaxWaitMs).IsEqualTo(1000)
-      .Because("Documented default hard max is 1 second");
   }
 
   [Test]
   public async Task CustomValues_OverrideDefaultsAsync() {
     // Arrange & Act
-    var options = new MessageProcessingOptions {
-      MaxConcurrentMessages = 80,
-      InboxBatchSize = 50,
-      InboxBatchSlideMs = 100,
-      InboxBatchMaxWaitMs = 2000
-    };
+    var options = new MessageProcessingOptions { MaxConcurrentMessages = 80 };
 
     // Assert
     await Assert.That(options.MaxConcurrentMessages).IsEqualTo(80);
-    await Assert.That(options.InboxBatchSize).IsEqualTo(50);
-    await Assert.That(options.InboxBatchSlideMs).IsEqualTo(100);
-    await Assert.That(options.InboxBatchMaxWaitMs).IsEqualTo(2000);
   }
 
   [Test]

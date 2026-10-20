@@ -863,7 +863,7 @@ public class DispatcherTests {
     // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
     // because the dispatcher already invokes receptors directly via generated delegates.
     // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
-    // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
+    // OutboxDrainWorker / OutboxPublishWorker (PreOutbox), NOT by Dispatcher.
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(

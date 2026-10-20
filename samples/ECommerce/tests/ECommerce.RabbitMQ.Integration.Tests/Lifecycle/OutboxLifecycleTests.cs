@@ -19,7 +19,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// Tests run sequentially for reliable timing.
 /// </summary>
 /// <remarks>
-/// <para><strong>Hook Location</strong>: WorkCoordinatorPublisherWorker.cs, around ProcessOutboxWorkAsync()</para>
+/// <para><strong>Hook Location</strong>: OutboxDrainWorker.cs, around PublishOneAsync() and PublishBulkAsync()</para>
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PreOutboxInline - Before publishing to transport (blocking)</item>

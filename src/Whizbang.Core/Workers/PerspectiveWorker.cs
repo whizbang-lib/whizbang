@@ -3251,8 +3251,8 @@ public partial class PerspectiveWorker(
   /// rows — post-burst idle cycles leave completions stuck in "Sent" state
   /// until ResetStale resets them (5–60 min backoff), producing repeating
   /// "Perspective batch: completed=N" log entries that resend the same
-  /// completions indefinitely. Matches the bug fixed in
-  /// WorkCoordinatorPublisherWorker.</para>
+  /// completions indefinitely. Matches the bug fixed in the legacy
+  /// WorkCoordinatorPublisherWorker (since removed).</para>
   ///
   /// <para>Fix: acknowledge the local sent-count captured at submission time. The
   /// SQL's perspective_completions_processed is just
@@ -5918,9 +5918,7 @@ public class PerspectiveWorkerOptions {
   /// <summary>
   /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
   /// After this, the instance's message leases are released and its stream ownership no longer
-  /// blocks other instances from claiming fresh work. See
-  /// <see cref="WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds"/> for
-  /// the full rationale and tuning guidance.
+  /// blocks other instances from claiming fresh work.
   /// </summary>
   public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 

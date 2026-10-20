@@ -357,9 +357,6 @@ Whizbang:Transports:AzureServiceBus:MaxConcurrentSessions
 Whizbang:Transports:AzureServiceBus:MaxDeliveryAttempts
 Whizbang:Transports:AzureServiceBus:MaxRetryDelay
 Whizbang:Transports:AzureServiceBus:MessageProcessing
-Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchMaxWaitMs
-Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSize
-Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSlideMs
 Whizbang:Transports:AzureServiceBus:MessageProcessing:MaxConcurrentMessages
 Whizbang:Transports:AzureServiceBus:OpsRateWarningThresholdPerSecond
 Whizbang:Transports:AzureServiceBus:PrefetchCount
@@ -395,9 +392,6 @@ Whizbang:Transports:RabbitMQ:MaxChannels
 Whizbang:Transports:RabbitMQ:MaxDeliveryAttempts
 Whizbang:Transports:RabbitMQ:MaxRetryDelay
 Whizbang:Transports:RabbitMQ:MessageProcessing
-Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchMaxWaitMs
-Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchSize
-Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchSlideMs
 Whizbang:Transports:RabbitMQ:MessageProcessing:MaxConcurrentMessages
 Whizbang:Transports:RabbitMQ:PrefetchCount
 Whizbang:Transports:RabbitMQ:RetryIndefinitely

@@ -128,7 +128,7 @@ public class EphemeralAnalyzerTests {
     using Whizbang.Core;
     using Whizbang.Core.Attributes;
     namespace TestApp;
-    [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+    [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
     public interface IPresenceProfile : IEvent { }
     [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow)]
     public interface ISessionProfile : IEvent { }
@@ -156,7 +156,7 @@ public class EphemeralAnalyzerTests {
   public async Task ConflictingProfilesWithOwnOverride_NoWHIZ134Async() {
     // The type's own [Ephemeral] resolves the tie unambiguously (most-specific wins).
     const string source = PROFILES + """
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public record Resolved : IPresenceProfile, ISessionProfile;
       """;
 
@@ -172,9 +172,9 @@ public class EphemeralAnalyzerTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace TestApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public interface IProfileA : IEvent { }
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public interface IProfileB : IEvent { }
       public record Agree : IProfileA, IProfileB;
       """;
@@ -191,7 +191,7 @@ public class EphemeralAnalyzerTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace TestApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public interface IBaseProfile : IEvent { }
       [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow)]
       public interface IRefinedProfile : IBaseProfile { }

@@ -145,9 +145,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
     await cts.CancelAsync();
 
-    // Assert — NO inline processing. Processing deferred to WorkCoordinatorPublisherWorker.
+    // Assert: NO inline processing. Processing is deferred to ClaimWorker + InboxDispatchWorker.
     await Assert.That(workStrategy.InboxCompletionCount).IsEqualTo(0)
-      .Because("Batch handler should NOT process inline — processing is deferred to WorkCoordinatorPublisherWorker");
+      .Because("Batch handler should NOT process inline: processing is deferred to ClaimWorker and InboxDispatchWorker");
   }
 
   // ========================================

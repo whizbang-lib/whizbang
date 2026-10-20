@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>messaging/inbox-pattern</docs>
 /// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 public interface IInboxChannelWriter {
-  /// <summary>Gets the channel reader for consumers (WorkCoordinatorPublisherWorker).</summary>
+  /// <summary>Gets the channel reader for consumers (InboxDispatchWorker).</summary>
   ChannelReader<InboxWork> Reader { get; }
 
   /// <summary>Asynchronously writes inbox work to the channel.</summary>

@@ -192,7 +192,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),

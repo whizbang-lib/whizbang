@@ -480,7 +480,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -495,7 +495,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -649,7 +648,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -664,7 +663,6 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -1018,7 +1016,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for a message to be published via the outbox worker using the
-  /// <see cref="WorkCoordinatorPublisherWorker.OnOutboxMessagePublished"/> hook.
+  /// <see cref="OutboxDrainWorker.OnOutboxMessagePublished"/> and
+  /// <see cref="OutboxPublishWorker.OnOutboxMessagePublished"/> hooks.
   /// Deterministic — fires directly from the worker's processing loop.
   /// </summary>
   public async Task<Guid> WaitForOutboxPublishAsync(int timeoutMilliseconds = 30000) {

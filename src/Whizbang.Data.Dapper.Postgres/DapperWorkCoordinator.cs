@@ -815,6 +815,30 @@ public partial class DapperWorkCoordinator(
       command, _schema!, streamIds, messageTypeNames, cancellationToken);
   }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// State-based means the stream holds an event flagged <c>Ephemeral</c> (8) or <c>Compacted</c> (16): its log is
+  /// not a source of truth, so the rebuild and rewind guards refuse it (#1538).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperStateBasedStreamsTests.cs</tests>
+  public async Task<IReadOnlyCollection<Guid>> GetStateBasedStreamIdsAsync(
+      IReadOnlyList<Guid> streamIds,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      return [];
+    }
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var prefix = await _prefixAsync(__scope.Connection, cancellationToken);
+    var rows = await __scope.Connection.QueryAsync<Guid>(new CommandDefinition(
+      $"SELECT DISTINCT stream_id FROM {prefix}wh_event_store WHERE stream_id = ANY(@ids) AND (flags & 24) <> 0",
+      new { ids = streamIds as Guid[] ?? [.. streamIds] },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS,
+      cancellationToken: cancellationToken));
+    return [.. rows];
+  }
+
   private const string TYPE_NAME_MATCH = "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
   private const string DISCARD_PENDING_WHERE =
     "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " + TYPE_NAME_MATCH;

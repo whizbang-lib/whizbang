@@ -20,15 +20,16 @@ namespace Whizbang.Core.Attributes;
 /// covers base classes only, never interfaces).
 /// </para>
 /// <para>
-/// <strong>Enforced.</strong> The WHIZ130–139 analyzer band flags mixed-mode perspectives, illegal
-/// rebuild/rewind, ephemeral→Sourced laundering, mixed-mode streams, and ambiguous composition; a runtime
-/// guard backstops them.
+/// <strong>Enforced.</strong> WHIZ130 flags a perspective that applies both ephemeral and Sourced events, and
+/// WHIZ134 an ambiguous composition. Rebuilding or rewinding an ephemeral stream is refused at run time. Analyzers
+/// for a rebuild or rewind of an ephemeral-only perspective (#1544), ephemeral-to-Sourced laundering (#1545) and
+/// a stream that mixes the two modes (#1546) are planned.
 /// </para>
 /// </remarks>
 /// <example>
 /// <code>
-/// // Presence: perspective state may live in RAM (lost on rebalance) — a deliberate opt-in.
-/// [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+/// // Presence: the event self-destructs once consumed; its read model is a row that ages out.
+/// [Ephemeral(Destruction = Destruction.AfterTtl, TtlSeconds = 30, Storage = TransientStorage.TtlRow)]
 /// public sealed record UserIsTyping(Guid ConversationId, Guid UserId) : IEvent;
 /// </code>
 /// </example>
@@ -60,7 +61,8 @@ public sealed class EphemeralAttribute : Attribute {
   /// (filtered from reads) and then physically reaps once its age exceeds this window, regardless of
   /// consumption. Defaults to <c>-1</c>, meaning <em>no age-based expiry</em>; it is meaningful only when
   /// <see cref="Destruction"/> is <see cref="Destruction.AfterTtl"/> (a <see cref="Destruction.WhenConsumed"/>
-  /// event has no TTL — it self-destructs on consumption instead).
+  /// event has no TTL; it self-destructs on consumption instead). An <see cref="Destruction.AfterTtl"/> event
+  /// without a TTL is reaped as soon as it is consumed.
   /// </summary>
   public int TtlSeconds { get; init; } = -1;
 }
