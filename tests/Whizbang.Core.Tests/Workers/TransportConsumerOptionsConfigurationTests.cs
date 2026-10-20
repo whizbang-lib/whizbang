@@ -54,9 +54,6 @@ public class TransportConsumerOptionsConfigurationTests {
   public async Task RegisteredTransport_BindsEachConsumerSection_AndIgnoresOtherTransportsAsync() {
     var services = _services(_config(
       ($"{ASB}:MessageProcessing:MaxConcurrentMessages", "12"),
-      ($"{ASB}:MessageProcessing:InboxBatchSize", "250"),
-      ($"{ASB}:MessageProcessing:InboxBatchSlideMs", "75"),
-      ($"{ASB}:MessageProcessing:InboxBatchMaxWaitMs", "2000"),
       ($"{ASB}:Batch:BatchSize", "64"),
       ($"{ASB}:Batch:SlideMs", "30"),
       ($"{ASB}:Batch:MaxWaitMs", "500"),
@@ -77,9 +74,6 @@ public class TransportConsumerOptionsConfigurationTests {
     var resilience = provider.GetRequiredService<SubscriptionResilienceOptions>();
 
     await Assert.That(processing.MaxConcurrentMessages).IsEqualTo(12);
-    await Assert.That(processing.InboxBatchSize).IsEqualTo(250);
-    await Assert.That(processing.InboxBatchSlideMs).IsEqualTo(75);
-    await Assert.That(processing.InboxBatchMaxWaitMs).IsEqualTo(2000);
     await Assert.That(batch.BatchSize).IsEqualTo(64);
     await Assert.That(batch.SlideMs).IsEqualTo(30);
     await Assert.That(batch.MaxWaitMs).IsEqualTo(500);
@@ -125,17 +119,17 @@ public class TransportConsumerOptionsConfigurationTests {
 
   [Test]
   public async Task InstanceRegisteredInCode_KeepsItsValues_ConfigurationOverridesPerKeyAsync() {
-    var services = _services(_config(($"{ASB}:MessageProcessing:InboxBatchSize", "9")), "AzureServiceBus");
-    var codeSet = new MessageProcessingOptions { MaxConcurrentMessages = 7, InboxBatchSize = 5 };
+    var services = _services(_config(($"{ASB}:Batch:SlideMs", "9")), "AzureServiceBus");
+    var codeSet = new TransportBatchOptions { BatchSize = 7, SlideMs = 5 };
     services.AddSingleton(codeSet);
     _builder(services).AddTransportConsumer();
 
     await using var provider = services.BuildServiceProvider();
-    var processing = provider.GetRequiredService<MessageProcessingOptions>();
+    var batch = provider.GetRequiredService<TransportBatchOptions>();
 
-    await Assert.That(processing).IsSameReferenceAs(codeSet);
-    await Assert.That(processing.MaxConcurrentMessages).IsEqualTo(7);
-    await Assert.That(processing.InboxBatchSize).IsEqualTo(9);
+    await Assert.That(batch).IsSameReferenceAs(codeSet);
+    await Assert.That(batch.BatchSize).IsEqualTo(7);
+    await Assert.That(batch.SlideMs).IsEqualTo(9);
   }
 
   [Test]
