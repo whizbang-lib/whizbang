@@ -74,7 +74,7 @@ public class UnknownConfigurationKeyStartupValidatorTests {
       (MAINTENANCE_INTERVAL, "00:05:00"),
       ("Whizbang:Configuration:UnknownKeys", "Throw"));
 
-    var start = () => host.Validators[0].StartAsync(CancellationToken.None);
+    Task start() => host.Validators[0].StartAsync(CancellationToken.None);
 
     var thrown = await Assert.That(start).Throws<InvalidOperationException>();
     await Assert.That(thrown!.Message).Contains(MAINTENANCE_INTERVAL);

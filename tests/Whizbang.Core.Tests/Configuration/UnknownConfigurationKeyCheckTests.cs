@@ -103,7 +103,7 @@ public sealed class UnknownConfigurationKeyCheckTests {
 
   [Test]
   public async Task FromResource_AMissingResource_ThrowsNamingItAsync() {
-    var act = () => KnownConfigurationKeys.FromResource(typeof(KnownConfigurationKeys).Assembly, "no-such-resource.txt");
+    void act() => KnownConfigurationKeys.FromResource(typeof(KnownConfigurationKeys).Assembly, "no-such-resource.txt");
 
     var thrown = await Assert.That(act).Throws<InvalidOperationException>();
     await Assert.That(thrown!.Message).Contains("no-such-resource.txt");
@@ -207,7 +207,7 @@ public sealed class UnknownConfigurationKeyCheckTests {
       (MAINTENANCE_INTERVAL, "00:05:00"),
       ("Whizbang:Workers:Maintenance:IntervalMinute", "5"));
 
-    var act = () => UnknownConfigurationKeyCheck.Run(configuration, _known(), UnknownConfigurationKeyMode.Throw, logger);
+    void act() => UnknownConfigurationKeyCheck.Run(configuration, _known(), UnknownConfigurationKeyMode.Throw, logger);
 
     var thrown = await Assert.That(act).Throws<InvalidOperationException>();
     await Assert.That(thrown!.Message).Contains(MAINTENANCE_INTERVAL);
