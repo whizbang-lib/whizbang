@@ -298,6 +298,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `wh_perspective_forms` ledger (migration 153), on the migrator after the election; a date's index
   now casts through `bigint` and is renamed for it. Deploy a unit-changing release without a mixed
   fleet; the migrator warns about other releases still alive.
+- **Contributing: a pipeline change needs a build admin's approval of its latest commit, checked by CI
+  (#1479).** A pull request that changes the pipeline, the gates or the build inputs (the files
+  `.github/CODEOWNERS` assigns to build admins) now passes the required checks only when a build admin
+  opened it, or a build admin approved its latest commit; a commit pushed after the approval needs
+  approving again. The new `Gate · Pipeline owner` check enforces it, on the pull request and in the merge
+  queue, and runs again when a review is submitted or dismissed. It replaces the code owner review the
+  branch rules required, which a build admin's own pull request could never satisfy, so a build admin's
+  pipeline change now merges through the merge queue like any other change.
 
 ### Fixed
 - **The Dapper work coordinator ignored the configured schema (#1508).** Its statements used bare names resolved

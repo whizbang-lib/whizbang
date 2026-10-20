@@ -225,11 +225,17 @@ Describe 'The committed baseline' {
     @($Baseline.actions.selected.patterns_allowed) | Should -Be $listed
   }
 
-  It 'requires signed commits and code-owner review on develop and main' {
-    foreach ($name in @('Require PR for protected branches', 'Require PR for main branch')) {
+  # An author cannot approve their own pull request, so a code owner's review left a build admin's own
+  # pipeline change mergeable only by bypassing the rules and the merge queue. The Gate · Pipeline owner
+  # check (Test-PipelineOwner.ps1, in the CI result's needs) requires a build admin's approval instead (#1479).
+  It 'requires signed commits, and leaves pipeline approval to the pipeline-owner gate, on develop, main and release branches' {
+    foreach ($name in @('Require PR for protected branches', 'Require PR for main branch', 'Protect release branches')) {
       $rules = $Baseline.rulesets[$name].rules
       $rules.type | Should -Contain 'required_signatures'
-      (@($rules | Where-Object type -EQ 'pull_request')[0]).parameters.require_code_owner_review | Should -BeTrue
+      (@($rules | Where-Object type -EQ 'pull_request')[0]).parameters.require_code_owner_review | Should -BeFalse
     }
+    $ci = Get-Content -Raw (Join-Path $Root '.github' 'workflows' 'ci.yml')
+    $ci | Should -Match '(?m)^  pipeline-owner:\s*$'
+    $ci | Should -Match '(?m)^  ci-result:(?:\r?\n.*?)*?^    needs: \[[^\]]*\bpipeline-owner\b'
   }
 }

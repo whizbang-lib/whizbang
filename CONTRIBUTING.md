@@ -464,6 +464,9 @@ pull request, and every pull request is reviewed against the same standard.
   (a member excluded by the documented procedure in `ai-docs/coverage-exclusions.md` is not counted);
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
+- a change to the pipeline, the gates or the build inputs (the files `.github/CODEOWNERS` assigns to
+  `build-admins`) is approved by a build admin on its latest commit, unless a build admin opened it
+  (**Gate · Pipeline owner**; [GOVERNANCE.md](GOVERNANCE.md#roles));
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
   package versions;
 - the pull request closes an issue in this repository that was opened before it

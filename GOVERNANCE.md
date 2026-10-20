@@ -35,7 +35,7 @@ findings, CodeQL, and a Developer Certificate of Origin sign-off on every commit
 | **Release manager** | Cuts and ships releases by the documented flow ([docs/RELEASING.md](docs/RELEASING.md)); makes sure each stable release carries its signed provenance. | The maintainer |
 | **Security contact** | Receives private vulnerability reports, responds within 48 hours, coordinates the fix and the advisory, and credits the reporter unless they ask not to be named. | The maintainer |
 | **Code of Conduct enforcement** | Reviews reports, decides on action using the Covenant's enforcement guidelines, and keeps reporters' details private. | The maintainer |
-| **Build admin** | Owns the CI pipeline, the gates and the build inputs (`.github/CODEOWNERS`): a change to them merges only with a build admin's approval. Holds the Admin role. | [@philcarbone](https://github.com/philcarbone) |
+| **Build admin** | Owns the CI pipeline, the gates and the build inputs (`.github/CODEOWNERS`): a change to them by anyone else merges only with a build admin's approval of its latest commit, and a build admin's own change merges through the merge queue like any other. Holds the Admin role. | [@philcarbone](https://github.com/philcarbone) |
 | **Committer** | A trusted contributor with write access: pushes branches here, reviews, and re-runs checks. Their pull requests implement accepted issues like anyone's. Earned through consistently excellent pull requests, design and architecture decisions, documentation and communication, on the way to maintainer. | [@kdeenanauth](https://github.com/kdeenanauth), [@bijancamp](https://github.com/bijancamp) |
 | **Contributor** | Anyone who opens an issue, takes part in a discussion or sends a pull request. Follows [CONTRIBUTING.md](CONTRIBUTING.md) and the Code of Conduct, and signs off every commit. | Anyone |
 
@@ -46,13 +46,20 @@ On GitHub each role is an organization team, and the team grants a role on this 
 
 | Team | Repository role | What the automation lets it do |
 |---|---|---|
-| `build-admins` | Admin | Approve changes to the pipeline, gates and build inputs, which `.github/CODEOWNERS` assigns to it |
+| `build-admins` | Admin | Approve changes to the pipeline, gates and build inputs, which `.github/CODEOWNERS` assigns to it; their own such changes need no approval (`Gate · Pipeline owner`) |
 | `maintainers` | Maintain | Accept or decline issues (`/accept`, `/decline`; their own issues are accepted when opened), allow a late issue or no docs (`/late-issue`, `/docs-not-needed`); their own pull requests need an issue but not its acceptance |
 | `committers` | Write | Re-run checks (`/recheck`); their pull requests are never auto-closed |
 
 The automation reads the role, so adding or removing someone from a team is the whole change; nothing
 else needs to be kept in sync. Pipeline files are protected from everyone but build admins, maintainers
 included: changing how the project is built and gated is a separate trust from changing what it does.
+The required `Gate · Pipeline owner` check enforces it. A pull request that changes a file
+`.github/CODEOWNERS` assigns to `build-admins` passes only when its author holds the Admin role, or
+someone who holds it approved the pull request's latest commit; a commit pushed after the approval
+needs approving again. A build admin's own pipeline change therefore merges through the merge queue
+with no review, since GitHub never lets an author approve their own pull request, and the rulesets do
+not require a code owner's review for that reason. The check runs again when a review is submitted
+or dismissed, and in the merge queue.
 
 The settings that enforce all this (the rulesets, the Actions settings, the environments, who has which
 role, and the organization's two-factor and repository-creation settings) are recorded in
