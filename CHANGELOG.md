@@ -290,6 +290,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
+  format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
+  was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now
+  handled the same way as no snapshot: the row starts fresh from the incoming events and a warning names the
+  unreadable snapshot. The incoming events are always applied.
 - **A receptor's top-level `Route.X(...)` result lost its route (#1405).** `return Route.Local(evt);` cascaded
   the event with the default route; only a route inside a tuple was kept. Fixed with the dispatch policy work, and now
   covered on every entry by a test against the generated dispatcher.
