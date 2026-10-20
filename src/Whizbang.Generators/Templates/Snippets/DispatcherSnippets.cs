@@ -164,6 +164,52 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
+  /// Example method showing snippet structure for the local runner (#1412): for a message with two or more
+  /// local receptors, runs every one in priority order (the invocations arrive sorted) and returns the first
+  /// result the caller asked for, cascading every other result as a publish does.
+  /// </summary>
+  protected Func<object, IMessageEnvelope?, CancellationToken, Task<TAnswer?>>? LocalRunnerRoutingExample<TAnswer>(Type messageType, bool wantsAnswer) {
+    #region LOCAL_RUNNER_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      [System.Diagnostics.DebuggerStepThrough]
+      async Task<TAnswer?> RunLocalReceptors(object msg, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          if (sourceEnvelope is not null) {
+            await global::Whizbang.Core.Security.SecurityContextHelper.EstablishFullContextAsync(
+                sourceEnvelope,
+                scope.ServiceProvider,
+                cancellationToken);
+          } else {
+            // Establish message context from ambient AsyncLocal (ScopeContextAccessor), as a send does
+            global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          }
+
+          var typedMsg = (__MESSAGE_TYPE__)msg;
+          TAnswer? answer = default;
+          // A caller that takes no result leaves every result to cascade
+          var answered = !wantsAnswer;
+          // Every local receptor, in priority order (#1412)
+          __RECEPTOR_INVOCATIONS__
+          return answer;
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
+        }
+      }
+
+      return RunLocalReceptors;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for receptor registration.
   /// Uses keyed services to allow multiple handlers for the same message type.
   /// Also registers non-keyed for multi-handler resolution (GetServices in Publish/cascade).

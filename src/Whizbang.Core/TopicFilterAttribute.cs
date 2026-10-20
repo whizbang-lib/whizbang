@@ -14,7 +14,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleCommands_GeneratesAllMappingsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithNoFilters_GeneratesEmptyRegistryAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_ReportsErrorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_EmitsNoMappingForItAsync</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
 public class TopicFilterAttribute(string filter) : Attribute {
   /// <summary>

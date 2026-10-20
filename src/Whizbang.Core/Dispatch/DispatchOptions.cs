@@ -113,7 +113,9 @@ public sealed class DispatchOptions {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_PerspectiveWaitTimeout_Is30SecondsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:PerspectiveWaitTimeout_PropertySetter_WorksAsync</tests>
-  public TimeSpan PerspectiveWaitTimeout { get; set; } = TimeSpan.FromSeconds(30);
+  public TimeSpan PerspectiveWaitTimeout { get; set; } = _defaultPerspectiveWaitTimeout;
+
+  private static readonly TimeSpan _defaultPerspectiveWaitTimeout = TimeSpan.FromSeconds(30);
 
   /// <summary>
   /// Enables waiting for all perspectives to process cascaded events before returning.
@@ -252,6 +254,57 @@ public sealed class DispatchOptions {
   public DispatchOptions WithBatchFailure(BatchFailureMode batchFailure) {
     BatchFailure = batchFailure;
     return this;
+  }
+
+  /// <summary>
+  /// Refuses options that a default <see cref="IDispatcher"/> batch overload would lose (#1415). Those
+  /// defaults forward to the overload without options, so an implementation that does not override them
+  /// would drop the schedule, the token, the timeout or the failure mode without any sign. Options left at
+  /// their defaults pass; anything else throws, naming the first setting that would be lost.
+  /// </summary>
+  /// <param name="options">The caller's options.</param>
+  /// <param name="overload">The batch overload the caller used, for the message.</param>
+  /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+  /// <exception cref="NotSupportedException">The options carry a setting the default would drop.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseASettingTheyWouldDropAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDefaultInterfaceMethodTests.cs:BatchOverloadsWithOptions_ByDefault_RefuseNullOptionsAsync</tests>
+  internal static void ThrowIfABatchDefaultWouldDrop(DispatchOptions options, string overload) {
+    ArgumentNullException.ThrowIfNull(options);
+    if (options._firstSettingABatchDefaultWouldDrop() is { } setting) {
+      throw new NotSupportedException(
+        $"This IDispatcher does not override {overload}(messages, options), so its default forwards to the overload without options and would drop {setting}. Override the options overload, or leave {setting} at its default.");
+    }
+  }
+
+  private string? _firstSettingABatchDefaultWouldDrop() {
+    if (CancellationToken.CanBeCanceled) {
+      return nameof(CancellationToken);
+    }
+    if (Timeout is not null) {
+      return nameof(Timeout);
+    }
+    if (WaitForPerspectives) {
+      return nameof(WaitForPerspectives);
+    }
+    if (PerspectiveWaitTimeout != _defaultPerspectiveWaitTimeout) {
+      return nameof(PerspectiveWaitTimeout);
+    }
+    if (ScheduledFor is not null) {
+      return nameof(ScheduledFor);
+    }
+    if (Priority != Whizbang.Core.Priority.WorkPriority.UNDECLARED) {
+      return nameof(Priority);
+    }
+    if (MaxPayloadBytes is not null) {
+      return nameof(MaxPayloadBytes);
+    }
+    if (Policy is not null) {
+      return nameof(Policy);
+    }
+    if (Behaviors != DispatchBehaviors.None) {
+      return nameof(Behaviors);
+    }
+    return BatchFailure != BatchFailureMode.Stop ? nameof(BatchFailure) : null;
   }
 
   /// <summary>A copy of these options with another cancellation token (used to apply <see cref="Timeout"/>).</summary>

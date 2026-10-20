@@ -121,6 +121,25 @@ public class CoalesceShipWorkerTests {
     await Assert.That(allFolded.Count).IsEqualTo(allFolded.Distinct().Count());
   }
 
+  [Test]
+  public async Task RunOnce_PendingPayloadsLargerThanMaxBatchBytes_FoldsInChunksAsync() {
+    // 4 singles of about 100 KB with a 250 KB byte cap: a composite closes on the single that crosses the cap, so the
+    // batch ships as two composites (3 + 1), split by size and not only by count. Unbounded, large singles made one
+    // message no broker accepts.
+    var (worker, coordinator, _) = _build(configureBinding: c => {
+      c.SlideSeconds = 15;
+      c.MaxBatchBytes = 250_000;
+    });
+    coordinator.Stats = [_stats("record-digest", count: 4, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. Enumerable.Range(0, 4).Select(_ => _single("test-topic", payloadChars: 100_000))];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.CompletedFolds.Sum(f => f.FoldedIds.Count)).IsEqualTo(4);
+    await Assert.That(coordinator.CompletedFolds.Sum(f => f.Composites.Length)).IsEqualTo(2)
+      .Because("the batch splits once its payload crosses the byte cap, not only at the record count");
+  }
+
   #endregion
 
   #region Composite building
@@ -484,11 +503,11 @@ public class CoalesceShipWorkerTests {
   private static List<OutboxMessage> _singles(int count) =>
     [.. Enumerable.Range(0, count).Select(_ => _single("test-topic"))];
 
-  private static OutboxMessage _single(string destination, int priority = 0) {
+  private static OutboxMessage _single(string destination, int priority = 0, int payloadChars = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
       Priority = priority,
       MessageId = MessageId.New(),
-      Payload = JsonSerializer.SerializeToElement(new { record = "data" }),
+      Payload = JsonSerializer.SerializeToElement(new { record = payloadChars == 0 ? "data" : new string('x', payloadChars) }),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };

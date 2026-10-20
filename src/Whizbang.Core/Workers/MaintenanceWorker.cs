@@ -74,9 +74,27 @@ public sealed partial class MaintenanceWorker(
     LogStopped(_logger);
   }
 
+  /// <summary>
+  /// Whether this instance runs the sweep: always, unless role assignment manages the maintainer duty, in
+  /// which case only on its holder (#1377).
+  /// </summary>
+  private static bool _isThisInstancesTurn(IServiceProvider services) =>
+    services.GetService<Startup.DutyHolderWorker>() is not { } holder
+    || !holder.Roles.Contains(Startup.StartupDuties.MAINTAINER, StringComparer.Ordinal)
+    || holder.Holds(Startup.StartupDuties.MAINTAINER);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
+  private static partial void LogSkippedNotMaintainer(ILogger logger);
+
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
+    // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
+    // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
+    if (!_isThisInstancesTurn(sp)) {
+      LogSkippedNotMaintainer(_logger);
+      return;
+    }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
     if (_housekeeping is null) {
@@ -213,7 +231,7 @@ public sealed partial class MaintenanceWorker(
     // archive each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
     // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Returns the
     // targets so PostDestruction can fire after the delete. Inert without a registered hook.
-    var destructionTargets = await _runPreDestructionHooksAsync(coordinator, sp, ct);
+    var destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct);
 
     // Stream-integrity convergence gauges. Deliberately folded into THIS cycle rather than given
     // their own timer: a standalone collector would be one more background service acquiring a
@@ -268,7 +286,7 @@ public sealed partial class MaintenanceWorker(
       ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
     // E2 PostDestruction hooks — detached, after the reap committed.
-    await _firePostDestructionHooksAsync(sp, destructionTargets, ct);
+    await _firePostDestructionHooksAsync(sp, destruction, ct);
 
     // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
     // documented the table as periodically cleaned, but no production path ever called it, so the
@@ -783,19 +801,32 @@ public sealed partial class MaintenanceWorker(
   // are logged, never fatal (the retry policy lands in a later increment). Returns the targets so the
   // detached PostDestruction step can fire after the reap. The hook's Cancel/Defer decision is captured and
   // logged; ENFORCEMENT (holding the body / rescheduling) lands in the next increment via a SQL hold-gate.
-  private async Task<IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget>> _runPreDestructionHooksAsync(
+  /// <summary>The events about to be reaped this cycle, and those loaded for the destruction-stage receptors (#1381).</summary>
+  private sealed record DestructionBatch(
+      IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> Targets,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes) {
+    public static readonly DestructionBatch None = new([], []);
+  }
+
+  private async Task<DestructionBatch> _runPreDestructionHooksAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
-    if (hook is null) {
-      return [];
+    // The destruction-stage receptors run beside the hook (#1381); with neither, nothing is read
+    var stageTypes = Whizbang.Core.Lifecycle.DestructionStageReceptors.TypesWithReceptors(sp);
+    if (hook is null && stageTypes.Count == 0) {
+      return DestructionBatch.None;
     }
     var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
     if (targets.Count == 0) {
-      return targets;
+      return DestructionBatch.None;
     }
     // Batched: fire the hook ONCE for the whole set of about-to-reap events, then HONOR its decision.
     try {
-      var result = await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+      // Loaded before the delete: the Post stages run after the data is gone
+      var envelopes = await Whizbang.Core.Lifecycle.DestructionStageReceptors.LoadAsync(sp, targets, stageTypes, ct).ConfigureAwait(false);
+      var result = hook is null
+        ? Whizbang.Core.Lifecycle.DestructionResult.Proceed()
+        : await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
       LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
       if (result.Cancel || result.DeferUntil.HasValue) {
         // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
@@ -806,10 +837,12 @@ public sealed partial class MaintenanceWorker(
         }
         var until = result.DeferUntil ?? DateTimeOffset.MaxValue;
         await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
-        return [];
+        return DestructionBatch.None;
       }
-      // Proceed: no hold — the reap deletes the batch, and PostDestruction fires for it.
-      return targets;
+      // Proceed: the Pre stages run, then the reap deletes the batch and PostDestruction fires for it. A
+      // throwing Pre Inline receptor takes the failure path below, as a throwing hook does
+      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+      return new DestructionBatch(targets, envelopes);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -834,27 +867,27 @@ public sealed partial class MaintenanceWorker(
         _ => "held for retry",
       };
       LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
-      return [];
+      return DestructionBatch.None;
     }
   }
 
   // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,
   // after the reap committed. Failure is logged, never fatal.
-  private async Task _firePostDestructionHooksAsync(
-      IServiceProvider sp, IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, CancellationToken ct) {
-    if (targets.Count == 0) {
+  private async Task _firePostDestructionHooksAsync(IServiceProvider sp, DestructionBatch batch, CancellationToken ct) {
+    if (batch.Targets.Count == 0) {
       return;
     }
     var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
-    if (hook is null) {
-      return;
-    }
     try {
-      await hook.OnAfterDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+      if (hook is not null) {
+        await hook.OnAfterDestructionAsync(_destructionContext(batch.Targets), ct).ConfigureAwait(false);
+      }
+      // The Post stages get the envelopes loaded before the delete: the stored data is gone now (#1381)
+      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePostAsync(sp, batch.Envelopes, ct).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      LogPostDestructionFailed(_logger, ex, targets.Count);
+      LogPostDestructionFailed(_logger, ex, batch.Targets.Count);
     }
   }
 

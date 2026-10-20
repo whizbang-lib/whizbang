@@ -74,6 +74,14 @@ internal static class WhizbangVersionInfo
     <AdditionalFiles Include=".whizbang/pinned-type-ledger.json" />
   </ItemGroup>
   <ItemGroup>
+    <!-- #1490: the recorded configuration key manifest, embedded so the startup check of unknown
+         Whizbang:* keys reads the exact set the binders read, with no reflection. The file is
+         regenerated and locked by ConfigurationKeyManifestTests; the docs site checks against it too. -->
+    <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt"
+                      LogicalName="Whizbang.Core.Configuration.configuration-keys.txt"
+                      Link="Configuration/configuration-keys.txt" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Testing support: test assemblies that access internal members. The strong-name
          public key is attached by the ItemDefinitionGroup in Directory.Build.props. -->
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />

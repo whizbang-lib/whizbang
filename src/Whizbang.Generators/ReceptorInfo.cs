@@ -27,6 +27,8 @@ namespace Whizbang.Generators;
 /// <param name="SuppressesRegistration">True if the receptor class carries [SuppressReceptorRegistration], declaring that its owner constructs it by hand. Such a receptor is still discovered and still routed — only the DI registration is skipped, because its constructor takes arguments the container cannot supply. Registering one anyway leaves an un-constructible descriptor, and under container validation a single un-constructible descriptor aborts the ENTIRE service provider rather than just that receptor.</param>
 /// <param name="LikelyNotInjectableParameter">"name|type" of the first constructor parameter dependency injection is unlikely to supply (a delegate, or a bare primitive/string), or null when none. Carried as a STRING rather than a symbol so the record keeps value equality — incremental generator caching depends on it, and a Location or ISymbol would defeat that. Drives the WHIZ014 warning, which is suppressed when the receptor opts out of registration.</param>
 /// <param name="IsOnceAcrossServices">True if receptor class has [ReceptorOnceAcrossServices]. The receptor runs once for a message across every service that registers it, so the ReceptorInvoker guardrail skips it on a prior invocation recorded by any service rather than only by its own.</param>
+/// <param name="Priority">The receptor's [ReceptorPriority], or the middle default (500) when it declares none. Orders the receptors that run for one message (#1412); lower runs first.</param>
+/// <param name="NotInjectableLocation">Where the parameter <paramref name="LikelyNotInjectableParameter"/> names is declared, set only when that parameter is set, so WHIZ014 is reported at it (#1429). Only the rare receptor that reports carries a location, so it costs incremental caching nothing on every other receptor.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -43,27 +45,30 @@ public sealed record ReceptorInfo(
     bool IsIdempotent = false,
     bool SuppressesRegistration = false,
     string? LikelyNotInjectableParameter = null,
-    bool IsOnceAcrossServices = false
+    bool IsOnceAcrossServices = false,
+    int Priority = ReceptorInfo.DEFAULT_PRIORITY,
+    Microsoft.CodeAnalysis.Location? NotInjectableLocation = null
 ) {
+  /// <summary>The priority of a receptor that declares none: the middle of the range (ReceptorPriority.DEFAULT).</summary>
+  public const int DEFAULT_PRIORITY = 500;
+
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
   /// </summary>
   public bool IsVoid => ResponseType is null;
 
   /// <summary>
-  /// True if receptor has no [FireAt] attributes (should default to ImmediateDetached).
+  /// True if receptor has no [FireAt] attributes (registered at the default stages, LocalImmediateInline and PostInboxDetached).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
 
   /// <summary>
   /// True if local dispatch (SendAsync, SendManyAsync, LocalInvokeAsync) invokes this receptor as the
-  /// message's handler: it has no [FireAt], or it declares LocalImmediateInline or LocalImmediateDetached,
-  /// the stages local dispatch fires. A receptor declared only at other stages is a lifecycle hook.
+  /// message's handler: it has no [FireAt], or it declares LocalImmediateInline, the stage the caller waits for.
+  /// A receptor declared only at other stages, LocalImmediateDetached included, is a lifecycle hook (#1392).
   /// </summary>
   public bool FiresOnLocalDispatch => HasDefaultStage
-    || LifecycleStages.Any(static stage =>
-      stage.EndsWith(".LocalImmediateInline", System.StringComparison.Ordinal)
-      || stage.EndsWith(".LocalImmediateDetached", System.StringComparison.Ordinal));
+    || LifecycleStages.Any(static stage => stage.EndsWith(".LocalImmediateInline", System.StringComparison.Ordinal));
 
   /// <summary>
   /// True if receptor has a [DefaultRouting] attribute.

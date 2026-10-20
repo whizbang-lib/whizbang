@@ -175,6 +175,46 @@ public class PerspectiveRebuilderOutcomeTests {
       .Because("said once per rebuilder, not once per rebuild");
   }
 
+  private sealed class CountingDigest : IPerspectiveRowDigest {
+    public int Calls { get; private set; }
+    public Task<string?> ComputeAsync(string perspectiveName, IReadOnlyCollection<Guid> streamIds, CancellationToken ct = default) {
+      Calls++;
+      return Task.FromResult<string?>("digest");
+    }
+  }
+
+  /// <summary>
+  /// One stream of a multi-stream run is rebuilt quietly: no rebuild events and no row digests. A run calls this once per
+  /// stream, so per-stream reporting meant two system events and two digests per stream, about 254,000 events for a
+  /// 127,000-stream rebuild; the run reports once, when it completes.
+  /// </summary>
+  [Test]
+  public async Task AStreamOfARun_IsRebuiltWithoutPerStreamEventsOrDigestsAsync() {
+    var digest = new CountingDigest();
+    var (rebuilder, dispatcher, _) = _build(new ScriptedRunner(rowChanged: true, events: 2), digest: digest);
+
+    var result = await ((IPerspectiveRebuilder)rebuilder).RebuildStreamOfRunAsync(PERSPECTIVE, Guid.NewGuid(), new RebuildOrigin(Guid.NewGuid(), RebuildTrigger.Requested));
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1);
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("the run, not each of its streams, announces the rebuild");
+    await Assert.That(digest.Calls).IsEqualTo(0)
+      .Because("a row digest is evidence about a whole repair, not each stream of a run");
+  }
+
+  /// <summary>A stream of a run that does not rebuild still says so in its result, so the stream's outcome records it.</summary>
+  [Test]
+  public async Task AStreamOfARunThatDoesNotRebuild_FailsWithoutAPerStreamEventAsync() {
+    var (rebuilder, dispatcher, _) = _build(new ScriptedRunner(rowChanged: false, events: 3));
+
+    var result = await ((IPerspectiveRebuilder)rebuilder).RebuildStreamOfRunAsync(PERSPECTIVE, Guid.NewGuid(), new RebuildOrigin(Guid.NewGuid(), RebuildTrigger.Requested));
+
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).IsNotNull();
+    await Assert.That(dispatcher.Published).IsEmpty();
+  }
+
   [Test]
   public async Task WithADigest_ThereIsNoReasonAsync() {
     var (rebuilder, dispatcher, _) = _build(new ScriptedRunner(rowChanged: true, events: 1), digest: new FixedDigest());

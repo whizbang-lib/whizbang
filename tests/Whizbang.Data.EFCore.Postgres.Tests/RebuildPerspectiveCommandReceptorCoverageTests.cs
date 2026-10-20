@@ -69,6 +69,29 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
     await Assert.That(rebuilder.LastStreamIds).DoesNotContain(excluded);
   }
 
+  // A rebuilder that cannot list a perspective's streams falls back to the whole store, and lists it once for the
+  // command, not once per perspective: two perspectives here, one listing.
+  [Test]
+  public async Task HandleAsync_ExcludeStreamIds_ForTwoPerspectives_ListsTheStoreOnceAsync() {
+    var kept = Guid.NewGuid();
+    var excluded = Guid.NewGuid();
+    var eventStoreQuery = new SyncOnlyEventStoreQuery([kept, excluded]);
+    var rebuilder = new RecordingRebuilder();
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    services.AddSingleton<IPerspectiveRebuilder>(rebuilder);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakeRunnerRegistry("First", "Second"));
+    var sp = services.BuildServiceProvider();
+    var receptor = new RebuildPerspectiveCommandReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RebuildPerspectiveCommandReceptor>.Instance);
+
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(null, RebuildMode.InPlace, ExcludeStreamIds: [excluded]), CancellationToken.None);
+
+    await Assert.That(rebuilder.LastStreamIds).IsEquivalentTo([kept]);
+    await Assert.That(eventStoreQuery.Listings).IsEqualTo(1)
+      .Because("the whole-store listing is the fallback, taken once for the command");
+  }
+
   // The caller's RequestId is what makes a broadcast rebuild answerable: every service that ran
   // stamps the same id on its rebuild events, so the caller can find its own rebuild across them.
   // Replacing it with a fresh id would make "did anything run" unanswerable for that caller.
@@ -128,6 +151,9 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
   /// runs against in production. This is what forces the receptor's sync fallback path.
   /// </summary>
   private sealed class SyncOnlyEventStoreQuery(IReadOnlyList<Guid> streamIds) : IEventStoreQuery {
+    /// <summary>How many times the store was listed.</summary>
+    public int Listings { get; private set; }
+
     private IReadOnlyList<EventStoreRecord> _records() => [.. streamIds.Select(id => new EventStoreRecord {
       StreamId = id,
       AggregateId = id,
@@ -138,7 +164,12 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
       Metadata = null,
     })];
 
-    public IQueryable<EventStoreRecord> Query => _records().AsQueryable();
+    public IQueryable<EventStoreRecord> Query {
+      get {
+        Listings++;
+        return _records().AsQueryable();
+      }
+    }
     public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Query.Where(e => e.StreamId == streamId);
     public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Query.Where(e => e.EventType == eventType);
   }

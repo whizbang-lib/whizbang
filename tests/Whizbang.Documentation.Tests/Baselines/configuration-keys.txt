@@ -44,6 +44,7 @@ Whizbang:CircuitBreakers:*:FailureThreshold
 Whizbang:CircuitBreakers:*:InitialCooldownSeconds
 Whizbang:CircuitBreakers:*:MaxCooldownSeconds
 Whizbang:CircuitBreakers:*:SuccessCacheDurationSeconds
+Whizbang:Configuration:UnknownKeys
 Whizbang:Core:DefaultQueryScope
 Whizbang:Core:EmptyStreamIdPolicy
 Whizbang:Core:EnableTagProcessing
@@ -129,6 +130,7 @@ Whizbang:Lifecycle:TransitionAckTimeout
 Whizbang:MessageSecurity:AllowAnonymous
 Whizbang:MessageSecurity:EnableAuditLogging
 Whizbang:MessageSecurity:PropagateToOutgoingMessages
+Whizbang:MessageSecurity:RequireContextForLocalDispatch
 Whizbang:MessageSecurity:Timeout
 Whizbang:MessageSecurity:ValidateCredentials
 Whizbang:MultiStreamCommands:BatchSize

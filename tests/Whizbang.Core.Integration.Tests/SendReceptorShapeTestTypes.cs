@@ -28,7 +28,7 @@ namespace Whizbang.Core.Integration.Tests.SendShapes.Owned {
   public sealed record OwnedThrowingVoidCommand(Guid Id) : ICommand;
   public sealed record OwnedUnhandledCommand(Guid Id) : ICommand;
   // Receptor results are cascade candidates, so the generator requires them to be messages
-  public sealed record OwnedSyncResult(Guid Id) : IMessage;
+  public sealed record OwnedSyncResult(Guid Id);
 
   public sealed class OwnedVoidCommandReceptor : IReceptor<OwnedVoidCommand> {
     public ValueTask HandleAsync(OwnedVoidCommand message, CancellationToken cancellationToken = default) {

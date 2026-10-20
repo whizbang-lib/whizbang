@@ -24,10 +24,11 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// and at least twice with one.
 /// </summary>
 /// <remarks>
-/// Every count is read after the dispatch returns. The dispatcher awaits its ImmediateDetached call,
-/// so the one expected invocation has happened by then. Before the fix the extra invocations after
-/// <see cref="LifecycleStage.PostLifecycleInline"/> were awaited too, so the old behavior fails here
-/// deterministically; after it, no code path fires the stage again, so nothing can arrive late.
+/// <para>The stage is detached (#1393): the dispatch does not wait for it. So each count is read once the receptor's
+/// signal arrives, never when the dispatch returns. After #1386 one code path fires the stage, so nothing arrives
+/// after the signal.</para>
+/// <para>That the dispatch does not wait is shown by a receptor that cannot finish until the test releases it: the
+/// dispatch returns while it is still blocked. Its exception never reaches the caller either.</para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Lifecycle/LifecycleTrackingState.cs</code-under-test>
@@ -57,11 +58,78 @@ public class ImmediateDetachedOncePerDispatchComponentTests {
     var id = Guid.CreateVersion7();
 
     await _dispatchAsync(dispatcher, entry, id);
+    await ImmediateDetachedProbe.Fired(id).Task;
 
     await Assert.That(ImmediateDetachedProbe.HandledCount(id)).IsEqualTo(1)
       .Because("the business receptor runs once");
     await Assert.That(ImmediateDetachedProbe.ImmediateDetachedCount(id)).IsEqualTo(1)
       .Because("ImmediateDetached fires once per message on the service that handles it, never again after a later stage");
+  }
+
+  public enum GatedEntry {
+    SendGeneric,
+    SendObject,
+    LocalInvokeVoidGeneric,
+    LocalInvokeVoidObject,
+  }
+
+  [Test]
+  [MatrixDataSource]
+  [Timeout(60_000)]
+  public async Task ALocalDispatch_ReturnsWithoutWaitingForImmediateDetachedAsync(
+      [Matrix] GatedEntry entry,
+      [Matrix(false, true)] bool withLifecycleCoordinator,
+      CancellationToken ct) {
+    await using var provider = _buildProvider(withLifecycleCoordinator);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    // The receptor cannot finish until it is released, which happens only after the dispatch returns: a
+    // dispatch that waits for it never returns, and the test fails on its timeout
+    await _dispatchGatedAsync(dispatcher, entry, new GatedDetachedCommand(id)).WaitAsync(ct);
+    await ImmediateDetachedProbe.Fired(id).Task.WaitAsync(ct);
+    ImmediateDetachedProbe.Released(id).TrySetResult();
+
+    await Assert.That(ImmediateDetachedProbe.ImmediateDetachedCount(id)).IsEqualTo(1)
+      .Because("ImmediateDetached runs once, in the background, and the dispatch returned without waiting for it");
+  }
+
+  [Test]
+  [MatrixDataSource]
+  [Timeout(60_000)]
+  public async Task AnImmediateDetachedFailure_NeverReachesTheCallerAsync(
+      [Matrix] GatedEntry entry,
+      [Matrix(false, true)] bool withLifecycleCoordinator,
+      CancellationToken ct) {
+    await using var provider = _buildProvider(withLifecycleCoordinator);
+    var dispatcher = provider.GetRequiredService<IDispatcher>();
+    var id = Guid.CreateVersion7();
+
+    await _dispatchGatedAsync(dispatcher, entry, new ThrowingDetachedCommand(id)).WaitAsync(ct);
+    await ImmediateDetachedProbe.Fired(id).Task.WaitAsync(ct);
+
+    await Assert.That(ImmediateDetachedProbe.HandledCount(id)).IsEqualTo(1)
+      .Because("the dispatch completed: a detached stage's exception is logged, never returned to the caller");
+  }
+
+  private static async Task _dispatchGatedAsync<TCommand>(IDispatcher dispatcher, GatedEntry entry, TCommand command)
+      where TCommand : notnull {
+    switch (entry) {
+      case GatedEntry.SendGeneric:
+        await dispatcher.SendAsync(command);
+        break;
+      case GatedEntry.SendObject:
+        await dispatcher.SendAsync((object)command);
+        break;
+      case GatedEntry.LocalInvokeVoidGeneric:
+        await dispatcher.LocalInvokeAsync(command);
+        break;
+      case GatedEntry.LocalInvokeVoidObject:
+        await dispatcher.LocalInvokeAsync((object)command);
+        break;
+      default:
+        throw new ArgumentOutOfRangeException(nameof(entry), entry, null);
+    }
   }
 
   private static async Task _dispatchAsync(IDispatcher dispatcher, Entry entry, Guid id) {

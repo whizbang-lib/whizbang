@@ -199,7 +199,10 @@ Each slice is one red-then-green increment and its own commit.
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
-11. **Unknown keys (defect 8).** Startup warning from the manifest; `[RemovedConfigurationKey]` for
+11. **Unknown keys (defect 8).** DONE on branch `feat/1490-unknown-config-keys` (issue #1490): the recorded
+    manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
+    start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry
+    `[RemovedConfigurationKey]`. Original scope: startup warning from the manifest; `[RemovedConfigurationKey]` for
     `Whizbang:WorkCoordinator:MaintenanceInterval` naming
     `Whizbang:Workers:Maintenance:IntervalMinutes`. RED: a removed key warns with its replacement; a
     typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:

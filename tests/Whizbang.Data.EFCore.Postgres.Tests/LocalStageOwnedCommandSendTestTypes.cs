@@ -142,6 +142,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.LocalStageSends.Upstream {
 
   public sealed record LocalImmediateDetachedTrigger(Guid Id) : ICommand, ILocalStageTrigger;
 
+  /// <summary>The trigger's handler: a LocalImmediateDetached receptor is a hook that runs after it (#1392).</summary>
+  public sealed class LocalImmediateDetachedTriggerHandler : IReceptor<LocalImmediateDetachedTrigger> {
+    public ValueTask HandleAsync(LocalImmediateDetachedTrigger message, CancellationToken cancellationToken = default) =>
+      ValueTask.CompletedTask;
+  }
+
   [FireAt(LifecycleStage.LocalImmediateDetached)]
   public sealed class LocalImmediateDetachedTriggerReceptor(IDispatcher dispatcher) : IReceptor<LocalImmediateDetachedTrigger> {
     public ValueTask HandleAsync(LocalImmediateDetachedTrigger message, CancellationToken cancellationToken = default) =>
