@@ -63,6 +63,9 @@ Work out the version from facts, not guesses:
   the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`) and is signed (`gitsign verify-tag`, the command in SECURITY.md, "Verifying a Release"), and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
 - `gh pr merge --auto` prints nothing when the PR is already merged. Read `state` back.
+- After a **stable** ships, open one PR into `develop` that moves `PackageValidationBaselineVersion` in
+  `Directory.Build.targets` to it and deletes every `CompatibilitySuppressions.xml` (RELEASING.md,
+  *Public API baseline*).
 - A release-branch run must have built and packed: the publish promotes its `nuget-packages-<run>`
   artifact and the release PR takes its coverage. Every `release/v*` push counts as code and the gate
   fails one with no build or pack (#1208), so a second PR carrying the same fix can no longer leave the
