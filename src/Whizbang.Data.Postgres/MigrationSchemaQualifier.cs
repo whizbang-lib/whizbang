@@ -190,42 +190,59 @@ public static class MigrationSchemaQualifier {
     var output = new StringBuilder(sql.Length);
     var i = 0;
     while (i < sql.Length) {
-      var c = sql[i];
-      var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
-
-      if (c == '-' && next == '-') {
-        var end = sql.IndexOf('\n', i);
-        end = end < 0 ? sql.Length : end;
+      var end = _nonCodeEnd(sql, i);
+      if (end > i) {
         output.Append(_mask(sql[i..end], protectedText));
         i = end;
-      } else if (c == '/' && next == '*') {
-        var end = _blockCommentEnd(sql, i);
-        output.Append(_mask(sql[i..end], protectedText));
-        i = end;
-      } else if (c == '\'') {
-        var escapes = i > 0 && (sql[i - 1] == 'E' || sql[i - 1] == 'e') && (i < 2 || !_isIdentifierChar(sql[i - 2]));
-        var end = _quotedEnd(sql, i, '\'', escapes);
-        output.Append(_mask(sql[i..end], protectedText));
-        i = end;
-      } else if (c == '"') {
-        var end = _quotedEnd(sql, i, '"', backslashEscapes: false);
-        output.Append(_mask(sql[i..end], protectedText));
-        i = end;
-      } else if (c == '$' && (i == 0 || !_isIdentifierChar(sql[i - 1])) && _dollarTag(sql, i) is { } tag) {
-        var bodyStart = i + tag.Length;
-        var close = sql.IndexOf(tag, bodyStart, StringComparison.Ordinal);
-        var bodyEnd = close < 0 ? sql.Length : close;
-        output.Append(tag).Append(_maskNonCode(sql[bodyStart..bodyEnd], protectedText));
-        if (close >= 0) {
-          output.Append(tag);
-        }
-        i = close < 0 ? sql.Length : close + tag.Length;
+      } else if (_dollarTagAt(sql, i) is { } tag) {
+        i = _appendDollarQuoted(sql, i, tag, output, protectedText);
       } else {
-        output.Append(c);
+        output.Append(sql[i]);
         i++;
       }
     }
     return output.ToString();
+  }
+
+  // The index just past the literal, quoted identifier or comment that starts at start, or start
+  // itself when none does.
+  private static int _nonCodeEnd(string sql, int start) {
+    var c = sql[start];
+    var next = start + 1 < sql.Length ? sql[start + 1] : '\0';
+    if (c == '-' && next == '-') {
+      var end = sql.IndexOf('\n', start);
+      return end < 0 ? sql.Length : end;
+    }
+    if (c == '/' && next == '*') {
+      return _blockCommentEnd(sql, start);
+    }
+    if (c == '\'') {
+      return _quotedEnd(sql, start, '\'', _isEscapeString(sql, start));
+    }
+    return c == '"' ? _quotedEnd(sql, start, '"', backslashEscapes: false) : start;
+  }
+
+  // E'...' (or e'...') where the E is not the end of a longer identifier.
+  private static bool _isEscapeString(string sql, int quote) =>
+    quote > 0 && (sql[quote - 1] == 'E' || sql[quote - 1] == 'e') && (quote < 2 || !_isIdentifierChar(sql[quote - 2]));
+
+  // The dollar-quote tag that opens at i, if one does: a "$" that is not part of an identifier.
+  private static string? _dollarTagAt(string sql, int i) =>
+    sql[i] == '$' && (i == 0 || !_isIdentifierChar(sql[i - 1])) ? _dollarTag(sql, i) : null;
+
+  // Appends a dollar-quoted string with its body treated as code, and returns the index just past it.
+  // An unclosed one runs to the end.
+  private static int _appendDollarQuoted(
+      string sql, int start, string tag, StringBuilder output, List<string> protectedText) {
+    var bodyStart = start + tag.Length;
+    var close = sql.IndexOf(tag, bodyStart, StringComparison.Ordinal);
+    output.Append(tag);
+    if (close < 0) {
+      output.Append(_maskNonCode(sql[bodyStart..], protectedText));
+      return sql.Length;
+    }
+    output.Append(_maskNonCode(sql[bodyStart..close], protectedText)).Append(tag);
+    return close + tag.Length;
   }
 
   // Block comments nest in PostgreSQL. An unclosed one runs to the end.
