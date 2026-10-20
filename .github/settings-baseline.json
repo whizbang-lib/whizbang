@@ -160,7 +160,7 @@
               "allowed_actors": [],
               "enabled": false
             },
-            "require_code_owner_review": true,
+            "require_code_owner_review": false,
             "require_extra_approval_for_unattributed_changes": true,
             "require_last_push_approval": false,
             "required_approving_review_count": 0,
@@ -250,7 +250,7 @@
               "allowed_actors": [],
               "enabled": false
             },
-            "require_code_owner_review": true,
+            "require_code_owner_review": false,
             "require_extra_approval_for_unattributed_changes": true,
             "require_last_push_approval": false,
             "required_approving_review_count": 0,
@@ -332,7 +332,7 @@
               "allowed_actors": [],
               "enabled": false
             },
-            "require_code_owner_review": true,
+            "require_code_owner_review": false,
             "require_extra_approval_for_unattributed_changes": true,
             "require_last_push_approval": false,
             "required_approving_review_count": 0,

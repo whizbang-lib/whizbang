@@ -270,3 +270,76 @@ Describe 'Invoke-IssueOpened' {
     $script:calls.Count | Should -Be 0
   }
 }
+
+Describe 'Select-PipelineOwnerJob' {
+  BeforeAll {
+    $script:Gate = "Gate $([char]0x00B7) Pipeline owner"
+    function New-TestJob { param([string]$Conclusion, [string]$Status = 'completed', [string]$Name = $script:Gate, [long]$Id = 41)
+      [pscustomobject]@{ name = $Name; databaseId = $Id; status = $Status; conclusion = $Conclusion } }
+  }
+
+  It 'picks the failed gate when a review approves, since the approval may be the one it waits for' {
+    $jobs = @((New-TestJob -Name "Gate $([char]0x00B7) CI result" -Id 40 -Conclusion 'failure'), (New-TestJob -Conclusion 'failure'))
+    Select-PipelineOwnerJob -Jobs $jobs -ReviewState 'approved' | Should -Be 41
+  }
+
+  It 'picks the passed gate when a review requests changes or is dismissed, since it may have counted that approval' -TestCases @(
+    @{ State = 'changes_requested' }, @{ State = 'dismissed' }
+  ) {
+    Select-PipelineOwnerJob -Jobs @(New-TestJob -Conclusion 'success') -ReviewState $State | Should -Be 41
+  }
+
+  It 'picks nothing when the review cannot change the verdict' -TestCases @(
+    @{ State = 'approved'; Conclusion = 'success' }
+    @{ State = 'changes_requested'; Conclusion = 'failure' }
+    @{ State = 'dismissed'; Conclusion = 'failure' }
+    @{ State = 'commented'; Conclusion = 'failure' }
+    @{ State = 'commented'; Conclusion = 'success' }
+  ) {
+    Select-PipelineOwnerJob -Jobs @(New-TestJob -Conclusion $Conclusion) -ReviewState $State | Should -BeNullOrEmpty
+  }
+
+  It 'picks nothing when the gate has not finished, or is not in the run' {
+    Select-PipelineOwnerJob -Jobs @(New-TestJob -Status 'in_progress' -Conclusion '') -ReviewState 'approved' | Should -BeNullOrEmpty
+    Select-PipelineOwnerJob -Jobs @(New-TestJob -Name 'Build' -Conclusion 'failure') -ReviewState 'approved' | Should -BeNullOrEmpty
+  }
+}
+
+Describe 'Update-PipelineOwnerGate' {
+  BeforeEach {
+    $script:calls = [System.Collections.Generic.List[string]]::new()
+    $script:runStatus = 'completed'
+    $script:gate = "Gate $([char]0x00B7) Pipeline owner"
+    Mock Invoke-Gh {
+      $line = $Arguments -join ' '
+      $script:calls.Add($line)
+      if ($line -like 'pr view 7 *') { return 'abc123' }
+      if ($line -like 'run list *') {
+        return (ConvertTo-Json -Compress -InputObject @(
+            @{ databaseId = 5; status = $script:runStatus; conclusion = 'failure'; event = 'pull_request'; createdAt = '2026-10-20T12:00:00Z' },
+            @{ databaseId = 3; status = 'completed'; conclusion = 'failure'; event = 'pull_request'; createdAt = '2026-10-20T10:00:00Z' }))
+      }
+      if ($line -like 'run view 5 *') {
+        return (ConvertTo-Json -Compress -InputObject @(@{ name = $script:gate; databaseId = 41; status = 'completed'; conclusion = 'failure' }))
+      }
+    }
+  }
+
+  It 're-runs the gate job of the latest pull request run for the head commit (and with it the CI result)' {
+    Update-PipelineOwnerGate -Repository 'o/r' -Number 7 -ReviewState 'approved'
+    $script:calls | Should -Contain 'run rerun --job 41 -R o/r'
+    @($script:calls | Where-Object { $_ -like 'run list * --commit abc123 *' }).Count | Should -Be 1
+  }
+
+  It 'leaves a run that is still going, which cannot be re-run yet' {
+    $script:runStatus = 'in_progress'
+    Update-PipelineOwnerGate -Repository 'o/r' -Number 7 -ReviewState 'approved'
+    @($script:calls | Where-Object { $_ -like 'run rerun*' }).Count | Should -Be 0
+    @($script:calls | Where-Object { $_ -like 'run view*' }).Count | Should -Be 0
+  }
+
+  It 'does nothing when the review cannot change the verdict' {
+    Update-PipelineOwnerGate -Repository 'o/r' -Number 7 -ReviewState 'commented'
+    @($script:calls | Where-Object { $_ -like 'run rerun*' }).Count | Should -Be 0
+  }
+}
