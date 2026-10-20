@@ -62,9 +62,9 @@ public class DapperStateBasedStreamsTests : PostgresTestBase {
       VALUES (@id, @stream, @stream, 'TestAgg', @version, 'TestEvt', @flags, NOW())
       """;
     ins.Parameters.AddWithValue("id", Guid.CreateVersion7());
-    ins.Parameters.AddWithValue("stream", stream);
-    ins.Parameters.AddWithValue("version", version);
-    ins.Parameters.AddWithValue("flags", flags);
+    ins.Parameters.AddWithValue(nameof(stream), stream);
+    ins.Parameters.AddWithValue(nameof(version), version);
+    ins.Parameters.AddWithValue(nameof(flags), flags);
     await ins.ExecuteNonQueryAsync();
   }
 }
