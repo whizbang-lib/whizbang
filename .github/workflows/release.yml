@@ -413,6 +413,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write   # the tag's Sigstore signature (gitsign), keyless
 
     steps:
       # The release app pushes the tag: the tag ruleset lets only that app create v* tags, and GitHub Actions
@@ -471,16 +472,12 @@ jobs:
       # Note: Version update is handled by start-release.yml before PR merge
       # Directory.Build.props already contains the correct version
 
-      - name: Create and Push Tag
-        env:
-          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
-        run: |
-          VERSION="$RELEASE_VERSION"
-          TAG="v$VERSION"
-
-          echo "Creating tag: $TAG"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
+      # Signed keylessly with Sigstore (#1438): see SECURITY.md, "Verifying a Release".
+      - name: Create and push the signed tag
+        uses: ./.github/actions/signed-tag
+        with:
+          tag: v${{ needs.check-release.outputs.version }}
+          message: Release v${{ needs.check-release.outputs.version }}
 
       # Create release as DRAFT so upload-release-assets can add assets before publishing
       - name: Create GitHub Release (stable only)
