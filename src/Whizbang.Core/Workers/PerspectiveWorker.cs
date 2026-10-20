@@ -3883,14 +3883,14 @@ public partial class PerspectiveWorker(
     var head = await _readCollectiveQueueHeadAsync(workCoordinator, streamId, sinkWorkIds, cancellationToken).ConfigureAwait(false);
     if (head is not null) {
       return await _takeCollectiveQueueHeadAsync(
-        head, (workIds, eventIds) => workCoordinator.FetchCollectiveSinkQueueMembersAsync(streamId, workIds, eventIds, cancellationToken),
+        new CollectiveQueueView(head, (workIds, eventIds) => workCoordinator.FetchCollectiveSinkQueueMembersAsync(streamId, workIds, eventIds, cancellationToken)),
         sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
     }
     var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
     if (queue is not null) {
       return await _takeCollectiveQueueHeadAsync(
-        queue, (workIds, eventIds) => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>(
-          [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))]),
+        new CollectiveQueueView(queue, (workIds, eventIds) => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>(
+          [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))])),
         sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
     }
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
@@ -3922,12 +3922,12 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// The collectives this run applies from its stream's queue (#963), in queue order, and the work rows it completes
-  /// when they apply. <paramref name="queue"/> is the stream's unprocessed collectives in commit order, or at least the
+  /// when they apply. <c>view.Queue</c> is the stream's unprocessed collectives in commit order, or at least the
   /// head of them (#1524); this run takes the leading rows it holds and stops at the first it does not, because a
   /// collective ahead of it (leased elsewhere, or backing off after a failure) has to apply first. Returns null when
   /// the head of the queue is not this run's, so nothing applies and nothing is completed: the held rows are offered
   /// again once the one ahead has applied. Whether a row anywhere in the queue is still queued is asked of
-  /// <paramref name="membersOf"/>, by work id or by event.
+  /// <c>view.MembersOf</c>, by work id or by event.
   /// </summary>
   /// <remarks>
   /// A leased row the queue no longer holds was already applied and completed; it is completed again, with no apply,
@@ -3936,10 +3936,10 @@ public partial class PerspectiveWorker(
   /// committed after one with a greater id is still applied, and in its place.
   /// </remarks>
   private async Task<CollectiveSinkBatch?> _takeCollectiveQueueHeadAsync(
-      IReadOnlyList<CollectiveSinkQueueEntry> queue,
-      Func<IReadOnlyCollection<Guid>, IReadOnlyCollection<Guid>, Task<IReadOnlyList<CollectiveSinkQueueEntry>>> membersOf,
+      CollectiveQueueView view,
       Guid[] sinkWorkIds, IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider,
       Guid streamId, CancellationToken cancellationToken) {
+    var (queue, membersOf) = view;
     var held = new HashSet<Guid>(sinkWorkIds);
     // A row this worker already applied is still in the queue until its completion flushes; it is behind us, not
     // ahead, so it neither blocks the queue nor applies again.
@@ -3993,6 +3993,14 @@ public partial class PerspectiveWorker(
     }
     return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, queuedEventIds);
   }
+
+  /// <summary>
+  /// A sink stream's queue as one run sees it (#1524): its rows in apply order (the whole queue, or at least its head),
+  /// and the lookup that says which named rows, by work id or by event, are still queued anywhere in it.
+  /// </summary>
+  private readonly record struct CollectiveQueueView(
+      IReadOnlyList<CollectiveSinkQueueEntry> Queue,
+      Func<IReadOnlyCollection<Guid>, IReadOnlyCollection<Guid>, Task<IReadOnlyList<CollectiveSinkQueueEntry>>> MembersOf);
 
   /// <summary>The collectives a sink run applied, in order, and what each one's specs changed (#1045).</summary>
   private readonly record struct AppliedCollectives(

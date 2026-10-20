@@ -59,7 +59,7 @@ public class DapperCollectiveSinkQueueTests : PostgresTestBase {
     var head = await coordinator.FetchCollectiveSinkQueueHeadAsync(stream, [queue![0].EventWorkId]);
 
     await Assert.That(head).IsNotNull();
-    await Assert.That(head!).IsEquivalentTo([queue[0], queue[1]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    await Assert.That(head).IsEquivalentTo([queue[0], queue[1]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("The walk passes the named row and stops after the first row it was not given.");
   }
 

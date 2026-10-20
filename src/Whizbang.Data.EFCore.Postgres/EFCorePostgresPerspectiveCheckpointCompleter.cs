@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <remarks>
 /// <para>
 /// Unlike <c>complete_perspective_cursor_work</c> (which requires the cursor row to
-/// already exist — normally created by <c>update_perspective_cursors</c> when a live perspective
+/// already exist, normally created by <c>update_perspective_cursors</c> when a live perspective
 /// run's completion is recorded),
 /// rebuild may operate against streams whose events were appended outside the live flow.
 /// This completer uses <c>INSERT ... ON CONFLICT DO UPDATE</c> so missing cursor rows are

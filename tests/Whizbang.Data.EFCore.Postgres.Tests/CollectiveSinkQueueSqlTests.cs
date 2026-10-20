@@ -289,7 +289,7 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
     var head = await coordinator.FetchCollectiveSinkQueueHeadAsync(keyStream, []);
 
     await Assert.That(head).IsNotNull();
-    await Assert.That(head!).IsEquivalentTo([queue![0]])
+    await Assert.That(head).IsEquivalentTo([queue![0]])
       .Because("Naming no rows, the head is the first row of the queue and nothing after it.");
   }
 
@@ -355,7 +355,7 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
   private static Task<List<CollectiveSinkQueueEntry>> _headAsync(NpgsqlConnection conn, Guid streamId, Guid[] through) =>
     _readAsync(conn, "SELECT * FROM wh_collective_sink_queue_head(@sid, @through)", cmd => {
       cmd.Parameters.AddWithValue("sid", streamId);
-      cmd.Parameters.AddWithValue("through", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, through);
+      cmd.Parameters.AddWithValue(nameof(through), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, through);
     });
 
   private static Task<List<CollectiveSinkQueueEntry>> _membersAsync(NpgsqlConnection conn, Guid streamId, Guid[] workIds, Guid[] eventIds) =>

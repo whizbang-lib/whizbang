@@ -237,7 +237,7 @@ public class MigrationSchemaQualifierTests {
     var definitions = new List<string>();
     foreach (var resource in assembly.GetManifestResourceNames()
                .Where(n => n.StartsWith(prefix, StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal))) {
-      using var stream = assembly.GetManifestResourceStream(resource)!;
+      await using var stream = assembly.GetManifestResourceStream(resource)!;
       using var reader = new StreamReader(stream);
       definitions.Add(Regex.Replace(await reader.ReadToEndAsync(), "--[^\n]*", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(5)));
     }

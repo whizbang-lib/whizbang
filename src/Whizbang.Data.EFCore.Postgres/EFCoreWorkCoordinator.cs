@@ -5334,7 +5334,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var dbConnection = __scope.Connection;
     await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id)";
-    cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+    cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
 
     var results = new List<CollectiveSinkQueueEntry>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -5357,7 +5357,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return await _readCollectiveSinkQueueAsync(
       $"SELECT * FROM {functionName}(@p_stream_id, @p_through)",
       cmd => {
-        cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
         cmd.Parameters.Add(new NpgsqlParameter("p_through", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = throughWorkIds.ToArray() });
       },
       cancellationToken).ConfigureAwait(false);
@@ -5374,7 +5374,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return await _readCollectiveSinkQueueAsync(
       $"SELECT * FROM {functionName}(@p_stream_id, @p_work_ids, @p_event_ids)",
       cmd => {
-        cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
         cmd.Parameters.Add(new NpgsqlParameter("p_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = workIds.ToArray() });
         cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
       },
