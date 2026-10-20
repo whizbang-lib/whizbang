@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
-/// Immediate strategy - calls process_work_batch immediately for each operation.
+/// Immediate strategy - flushes queued work to the database immediately for each operation.
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
@@ -143,7 +143,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
       LogDeferredChannelDrained(_logger, deferredMessages.Count);
     }
 
-    // Immediate strategy calls process_work_batch with all queued operations
+    // Immediate strategy flushes all queued operations at once (WorkCoordinatorFlushHelper)
     LogFlushStarting(
       _logger,
       _queues.OutboxMessages.Count,

@@ -1480,14 +1480,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     if (dbContexts.IsEmpty) {
       // Report info - no DbContext found (expected in library projects)
-      var noDbContextDescriptor = new DiagnosticDescriptor(
-          id: "WHIZ703",
-          title: "No DbContext Found",
-          messageFormat: "Could not find any DbContext classes with [WhizbangDbContext] attribute. Partial class generation requires explicit opt-in.",
-          category: DIAGNOSTIC_CATEGORY,
-          defaultSeverity: DiagnosticSeverity.Info,
-          isEnabledByDefault: true);
-      context.ReportDiagnostic(Diagnostic.Create(noDbContextDescriptor, Location.None));
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.NoWhizbangDbContextFound, Location.None));
       return;
     }
 
@@ -2723,18 +2716,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .ToArray();
 
     // DIAGNOSTIC: Report what we found (informational level)
-    var diagnosticDescriptor = new DiagnosticDescriptor(
-        id: "WHIZ702",
-        title: "EF Core Migration Files Discovery",
-        messageFormat: "Found {0} migration files in {1} (prefix: {2}): {3}",
-        category: DIAGNOSTIC_CATEGORY,
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
     var resourceList = string.Join(", ", migrationResources.Take(5).Select(r => r[resourcePrefix.Length..]));
     if (migrationResources.Length > 5) {
       resourceList += $", ... and {migrationResources.Length - 5} more";
     }
-    context.ReportDiagnostic(Diagnostic.Create(diagnosticDescriptor, Location.None,
+    context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.EFCoreMigrationFilesDiscovery, Location.None,
         migrationResources.Length, assembly.GetName().Name, resourcePrefix, resourceList));
 
     // Generate migration tuples

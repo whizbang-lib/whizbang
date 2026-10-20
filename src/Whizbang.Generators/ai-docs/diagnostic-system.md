@@ -181,63 +181,37 @@ description: "A receptor implementation was discovered and will be registered."
 
 ### Whizbang ID Ranges
 
-**Current allocation**:
+**Bands in use** (the descriptors are the source of truth; this table only says where an area's IDs live):
 
-| Range | Feature | Status |
-|-------|---------|--------|
-| WHIZ001-003 | Receptor Discovery | Allocated |
-| WHIZ004-006 | Aggregate ID System | Reserved |
-| WHIZ007-009 | Message Registry | Reserved |
-| WHIZ010+ | Future Features | Available |
+| Band | Area |
+|------|------|
+| WHIZ001-015 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types |
+| WHIZ020-028 | Strongly-typed ids, topic filters, perspective runners |
+| WHIZ030-033 | Perspective events and models: stream ids, name collisions |
+| WHIZ040-041 | User service discovery |
+| WHIZ053-059 | Documentation maps, Guid usage and interception |
+| WHIZ060-063 | Serializable properties |
+| WHIZ070-072 | Vector fields, polymorphic base types |
+| WHIZ080-099 | RPC handlers, message tags, generator notices |
+| WHIZ100-106 | Perspective purity (Apply methods) |
+| WHIZ110-122 | Pinned type identity and the pinned-type ledger |
+| WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
+| WHIZ200 | Perspective model shape |
+| WHIZ300-309 | Perspective model consistency and indexes |
+| WHIZ400-402 | Lens queries (EF Core) |
+| WHIZ500-501 | Dependency injection |
+| WHIZ701-703 | EF Core generator notices |
+| WHIZ801-833 | Perspective storage: vector and physical fields, model shapes, identifier lengths, stored-form migrations |
+| WHIZ900 | Perspective sync in receptors |
 
 ---
 
 ### Allocation Guidelines
 
-**When adding new diagnostic**:
-1. Check `DiagnosticDescriptors.cs` for next available ID
-2. Reserve 2-3 IDs per feature (room for future additions)
-3. Document in this file (update table above)
-4. Use sequential numbering
-
-**Example**:
-```csharp
-// Adding new feature: Perspective Discovery
-// Next available: WHIZ010
-
-/// <summary>
-/// WHIZ010: Info - Perspective discovered.
-/// </summary>
-public static readonly DiagnosticDescriptor PerspectiveDiscovered = new(...);
-
-/// <summary>
-/// WHIZ011: Warning - Perspective missing checkpoint property.
-/// </summary>
-public static readonly DiagnosticDescriptor PerspectiveMissingCheckpoint = new(...);
-
-// Reserve WHIZ012 for future perspective diagnostics
-```
-
----
-
-## Reporting Diagnostics
-
-### Basic Reporting
-
-```csharp
-context.ReportDiagnostic(Diagnostic.Create(
-    DiagnosticDescriptors.ReceptorDiscovered,
-    Location.None,
-    "OrderReceptor",  // Arg 0
-    "CreateOrder",    // Arg 1
-    "OrderCreated"    // Arg 2
-));
-```
-
-**Result**:
-```
-Info WHIZ001: Found receptor 'OrderReceptor' handling CreateOrder → OrderCreated
-```
+Take the next free number in your area's band (`git grep 'id: "WHIZ' -- src` lists every taken ID). Never reuse
+an ID in `DiagnosticDescriptors.RETIRED_IDS`. Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
+and a `<tests>` link to a test that asserts it, and gets a page at that path on the docs site
+(`DiagnosticDescriptorLinkTests` fails a descriptor without the links).
 
 ---
 

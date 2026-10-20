@@ -72,6 +72,8 @@ public static class PerspectiveQueriesDiscovery {
   /// WHIZ307: Warning - a filter compiles to a whole-document match that the model's declaration
   /// leaves without an index.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz307</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/DocumentMatchIndexAnalyzerTests.cs:WholeDocumentMatch_OnAModelThatOptedOut_WarnsAsync</tests>
   /// <remarks>
   /// Here rather than in an analyzer because two report it: the filter analyzer for a filter written
   /// in source, and the query-exposure analyzer for filters a request composes, which no source shows.
@@ -96,6 +98,8 @@ public static class PerspectiveQueriesDiscovery {
   /// WHIZ308: Warning - a filter compiles to a whole-document match on a model that has not declared
   /// whether its queries match on any field, and so does not get the index that answers it.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz308</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/DocumentMatchIndexAnalyzerTests.cs:WholeDocumentMatch_OnAnUndeclaredModel_WarnsWithTheOptInAsync</tests>
   /// <remarks>
   /// Separate from WHIZ307 because the fix differs: nothing was decided here, so declaring the lookup
   /// is as good an answer as indexing the field, and the message offers both.

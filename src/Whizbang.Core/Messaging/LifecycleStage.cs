@@ -99,7 +99,7 @@ public enum LifecycleStage {
   LocalImmediateInline,
 
   /// <summary>
-  /// <strong>Planned.</strong> Executed before process_work_batch call.
+  /// <strong>Planned.</strong> Executed before the flush's database call.
   /// Channel is fully flushed before database call, but does not block dispatch.
   /// Best for: Pre-validation, enrichment that should complete before persistence.
   /// </summary>
@@ -111,28 +111,28 @@ public enum LifecycleStage {
   PreDistributeDetached,
 
   /// <summary>
-  /// <strong>Planned.</strong> Executed before process_work_batch call.
+  /// <strong>Planned.</strong> Executed before the flush's database call.
   /// Blocks the unit of work (not entire queue) until all receptors complete.
   /// Best for: Critical validation that must complete before persistence.
   /// </summary>
   PreDistributeInline,
 
   /// <summary>
-  /// <strong>Planned.</strong> Executed in parallel with process_work_batch call.
+  /// <strong>Planned.</strong> Executed in parallel with the flush's database call.
   /// Fire-and-forget pattern - does not wait for completion.
   /// Best for: Side effects that don't need to block (notifications, caching).
   /// </summary>
   DistributeDetached,
 
   /// <summary>
-  /// <strong>Planned.</strong> Executed after process_work_batch returns.
+  /// <strong>Planned.</strong> Executed after the flush's database call returns.
   /// Detached: fire-and-forget, runs in its own scope. Does not block message flow.
   /// Best for: Post-processing, analytics, notifications.
   /// </summary>
   PostDistributeDetached,
 
   /// <summary>
-  /// <strong>Planned.</strong> Executed after process_work_batch returns.
+  /// <strong>Planned.</strong> Executed after the flush's database call returns.
   /// Blocks the unit of work until all receptors complete.
   /// Best for: Critical post-processing that must complete before acknowledging.
   /// </summary>

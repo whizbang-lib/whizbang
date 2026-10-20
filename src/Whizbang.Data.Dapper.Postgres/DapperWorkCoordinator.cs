@@ -17,7 +17,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
 /// Dapper implementation of IWorkCoordinator for lease-based work coordination.
-/// Uses the PostgreSQL process_work_batch function for atomic operations.
+/// Each operation calls its own focused PostgreSQL function (claim_work, store_outbox_messages,
+/// store_inbox_messages, commit_handler_result, flush_completions, record_heartbeat and others).
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
 public partial class DapperWorkCoordinator(
@@ -78,10 +79,6 @@ public partial class DapperWorkCoordinator(
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
   }
 
-  /// <summary>
-  /// Stores inbox messages directly via store_inbox_messages SQL function.
-  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
-  /// </summary>
   /// <inheritdoc />
   public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
     int partitionCount,
@@ -101,6 +98,10 @@ public partial class DapperWorkCoordinator(
     };
   }
 
+  /// <summary>
+  /// Stores inbox messages directly via the store_inbox_messages SQL function, which only inserts
+  /// them with deduplication; nothing else runs in the same call.
+  /// </summary>
   public async Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,
@@ -509,6 +510,39 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveSinkQueueTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAndStopsAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM wh_collective_sink_queue_head(@p_stream_id, @p_through)",
+      new { p_stream_id = streamId, p_through = throughWorkIds.ToArray() },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+
+    return [.. rows.Select(r => new CollectiveSinkQueueEntry(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Collective/DapperCollectiveSinkQueueTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var rows = await connection.QueryAsync<PendingPerspectiveEventDto>(
+      "SELECT * FROM wh_collective_sink_queue_members(@p_stream_id, @p_work_ids, @p_event_ids)",
+      new { p_stream_id = streamId, p_work_ids = workIds.ToArray(), p_event_ids = eventIds.ToArray() },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+
+    return [.. rows.Select(r => new CollectiveSinkQueueEntry(r.out_event_work_id, r.out_event_id, r.out_commit_sequence))];
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default) {
@@ -778,20 +812,6 @@ public partial class DapperWorkCoordinator(
 
   [LoggerMessage(
     Level = LogLevel.Debug,
-    Message = "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}"
-  )]
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage requires flat parameters matching the structured log template")]
-  static partial void LogProcessingWorkBatch(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId,
-    int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchOptions flags);
-
-  [LoggerMessage(
-    Level = LogLevel.Debug,
-    Message = "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results"
-  )]
-  static partial void LogWorkBatchProcessed(ILogger logger, int outboxWork, int inboxWork, int perspectiveWork, int syncResults);
-
-  [LoggerMessage(
-    Level = LogLevel.Debug,
     Message = "Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}"
   )]
   static partial void LogSerializingOutboxMessage(ILogger logger, Guid messageId, string? destination, string envelopeType, int hopsCount);
@@ -807,24 +827,6 @@ public partial class DapperWorkCoordinator(
     Message = "PostgreSQL Notice [{Severity}]: {Message}"
   )]
   static partial void LogPostgresNotice(ILogger logger, string severity, string message);
-
-  [LoggerMessage(
-    Level = LogLevel.Error,
-    Message = "process_work_batch timed out after {TimeoutSeconds}s for instance {InstanceId} ({ServiceName})"
-  )]
-  static partial void LogWorkBatchTimedOut(ILogger logger, int timeoutSeconds, Guid instanceId, string serviceName, Exception ex);
-
-  [LoggerMessage(
-    Level = LogLevel.Information,
-    Message = "process_work_batch canceled for instance {InstanceId} ({ServiceName})"
-  )]
-  static partial void LogWorkBatchCanceled(ILogger logger, Guid instanceId, string serviceName, Exception ex);
-
-  [LoggerMessage(
-    Level = LogLevel.Error,
-    Message = "process_work_batch failed for instance {InstanceId} ({ServiceName})"
-  )]
-  static partial void LogWorkBatchFailed(ILogger logger, Guid instanceId, string serviceName, Exception ex);
 
   #endregion
 
@@ -1115,7 +1117,7 @@ public partial class DapperWorkCoordinator(
     if (sawOutboxOrInbox) {
       throw new NotImplementedException(
         "DapperWorkCoordinator.ClaimWorkAsync: full envelope deserialization for outbox/inbox lands in Phase C polish. " +
-        "Use ProcessWorkBatchAsync until then.");
+        "Until then this coordinator claims perspective streams only; the EF Core work coordinator claims outbox and inbox work.");
     }
     if (perspectiveStreamIds.Count > 0) {
       // #720: a claim that leased work may have queued ownership doorbells; ring them after its commit.
@@ -1206,9 +1208,9 @@ public partial class DapperWorkCoordinator(
 }
 
 /// <summary>
-/// Internal DTO for mapping process_work_batch function results.
-/// Matches the function's return type structure with snake_case naming (PostgreSQL convention).
-/// Updated for decomposed process_work_batch (migrations 009-029).
+/// Internal DTO with the row shape of the removed process_work_batch function's results, in
+/// snake_case naming (PostgreSQL convention). Nothing in this coordinator hydrates it any more:
+/// claim_work results map to <c>ClaimWorkRow</c>.
 /// </summary>
 internal class WorkBatchRow {
   public int instance_rank { get; set; }
@@ -1266,8 +1268,8 @@ internal class CursorQueryResult {
 }
 
 /// <summary>
-/// Holds all serialized JSON data for the database function call.
-/// Extracted from ProcessWorkBatchAsync to reduce cognitive complexity.
+/// Holds all serialized JSON data for a call to the removed process_work_batch function.
+/// Nothing in this coordinator builds it any more; only its shape is kept.
 /// </summary>
 internal sealed record SerializedWorkBatchData(
   string OutboxCompletions,

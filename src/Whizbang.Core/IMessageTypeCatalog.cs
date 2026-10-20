@@ -107,7 +107,7 @@ public sealed record MessageTypeCatalogEntry(
 /// <c>wh_message_type_registry</c>, and by the rename tool (Phase 5) to detect
 /// pinned-id drift.
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public interface IMessageTypeCatalog {
   /// <summary>True when generated registrations supplied a catalog. The framework's null default returns false so
   /// catalog-driven passes (type-definition reconciliation, event flag derivation) skip rather than run over an empty set.</summary>
@@ -124,7 +124,7 @@ public interface IMessageTypeCatalog {
 /// built when at least one assembly contributed one, so a host with no message types previously
 /// resolved null here; an empty catalog keeps every consumer on its ordinary path.
 /// </summary>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public sealed class NullMessageTypeCatalog : IMessageTypeCatalog, INullDefault {
   /// <inheritdoc />
   public bool IsAvailable => false;

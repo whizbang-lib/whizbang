@@ -43,6 +43,8 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
   /// classes within one compilation. One service owns a command type; a duplicate claim means
   /// every command on the namespace inbox would be handled more than once.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz151</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/CommandOwnershipAnalyzerTests.cs:TwoReceptorClasses_SameCommand_ReportsWhiz151OnEachAsync</tests>
   public static readonly DiagnosticDescriptor DuplicateCommandOwnership = new(
     id: "WHIZ151",
     title: "Command type has more than one inbox receptor",

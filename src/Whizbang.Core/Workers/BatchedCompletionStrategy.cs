@@ -15,8 +15,8 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// <list type="number">
 /// <item><description><strong>Cycle N</strong>: Process perspectives, collect completions/failures in memory via ReportCompletionAsync/ReportFailureAsync</description></item>
-/// <item><description><strong>Cycle N+1</strong>: PerspectiveWorker calls GetPendingCompletions/GetPendingFailures, marks as Sent, reports to coordinator via ProcessWorkBatchAsync</description></item>
-/// <item><description><strong>Acknowledgement</strong>: Coordinator returns counts, worker marks as Acknowledged, clears only acknowledged items</description></item>
+/// <item><description><strong>Cycle N+1</strong>: PerspectiveWorker calls GetPendingCompletions/GetPendingFailures, hands them to the completion channels (<see cref="PerspectiveCompletionFlushWorker"/> for completions, <see cref="FailureFlushWorker"/> for failures), marks as Sent</description></item>
+/// <item><description><strong>Acknowledgement</strong>: Worker acknowledges the count it handed over in the same cycle (there is no SQL response to wait on), marks as Acknowledged, clears only acknowledged items</description></item>
 /// <item><description><strong>Retry</strong>: Stale items (sent but not acknowledged) reset to Pending with exponential backoff</description></item>
 /// </list>
 /// <para>
@@ -68,7 +68,7 @@ public sealed class BatchedCompletionStrategy(
   /// <inheritdoc />
   /// <remarks>
   /// Returns all completions with status = Pending (not yet sent to coordinator).
-  /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
+  /// PerspectiveWorker hands these to the completion channels on the next poll cycle.
   /// </remarks>
   public TrackedCompletion<PerspectiveCursorCompletion>[] GetPendingCompletions() {
     return _completions.GetPending();
@@ -77,7 +77,7 @@ public sealed class BatchedCompletionStrategy(
   /// <inheritdoc />
   /// <remarks>
   /// Returns all failures with status = Pending (not yet sent to coordinator).
-  /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
+  /// PerspectiveWorker hands these to the completion channels on the next poll cycle.
   /// </remarks>
   public TrackedCompletion<PerspectiveCursorFailure>[] GetPendingFailures() {
     return _failures.GetPending();

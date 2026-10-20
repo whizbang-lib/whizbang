@@ -47,6 +47,8 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   /// outside a registered factory builder. Composites carry splitting invariants (one destination
   /// per composite, sender-side count cap, byte budget) that only the mint enforces.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz150</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/MintedCompositeConstructionAnalyzerTests.cs:BuiltInComposite_ConstructedDirectly_ReportsWhiz150Async</tests>
   public static readonly DiagnosticDescriptor DirectMintedCompositeConstruction = new(
     id: "WHIZ150",
     title: "Minted composite constructed outside the mint",

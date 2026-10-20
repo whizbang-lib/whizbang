@@ -80,7 +80,7 @@ This directory contains topic-specific documentation for working with Whizbang's
 ### "I want to report diagnostics"
 1. Read: [diagnostic-system.md](diagnostic-system.md) - Diagnostic patterns
 2. Add descriptor to `DiagnosticDescriptors.cs`
-3. Allocate ID (WHIZ0XX range)
+3. Allocate the next free ID in your area's band ([diagnostic-system.md](diagnostic-system.md)), with `<docs>` and `<tests>` links
 4. Report with `context.ReportDiagnostic()`
 
 ### "Writing tests for generator"

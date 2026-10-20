@@ -99,7 +99,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
       return; // All stages are Detached — safe
     }
 
-    // Report WHIZ200 for each Inline stage
+    // Report WHIZ900 for each Inline stage
     var firstInlineStage = inlineStages[0];
     var suggestedDetachedStage = firstInlineStage.Replace("Inline", "Detached");
 

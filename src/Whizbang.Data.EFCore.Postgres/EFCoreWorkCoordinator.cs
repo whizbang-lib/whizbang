@@ -23,7 +23,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
 /// EF Core implementation of IWorkCoordinator for lease-based work coordination.
-/// Uses the PostgreSQL process_work_batch function for atomic operations.
+/// Each operation calls its own focused PostgreSQL function (claim_work, store_outbox_messages,
+/// store_inbox_messages, commit_handler_result, flush_completions, record_heartbeat and others).
 /// </summary>
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
@@ -3780,12 +3781,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return result.Single();
   }
 
-  /// <summary>
-  /// Stores inbox messages directly via store_inbox_messages SQL function.
-  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
-  /// Event storage and perspective creation happen on the next tick when
-  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
-  /// </summary>
   /// <inheritdoc />
   public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
     int partitionCount,
@@ -3826,6 +3821,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  /// <summary>
+  /// Stores inbox messages directly via the store_inbox_messages SQL function, which only inserts
+  /// them with deduplication. Event storage and perspective work for inbox events happen when
+  /// claim_work later claims the rows (its _emit_event_store_chain_for_inbox step).
+  /// </summary>
   public async Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,
@@ -5333,7 +5333,62 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var dbConnection = __scope.Connection;
     await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id)";
-    cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+    cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+
+    var results = new List<CollectiveSinkQueueEntry>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new CollectiveSinkQueueEntry(
+        EventWorkId: reader.GetGuid(0),
+        EventId: reader.GetGuid(1),
+        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(2)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default) {
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_collective_sink_queue_head");
+    return await _readCollectiveSinkQueueAsync(
+      $"SELECT * FROM {functionName}(@p_stream_id, @p_through)",
+      cmd => {
+        cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter("p_through", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = throughWorkIds.ToArray() });
+      },
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_collective_sink_queue_members");
+    return await _readCollectiveSinkQueueAsync(
+      $"SELECT * FROM {functionName}(@p_stream_id, @p_work_ids, @p_event_ids)",
+      cmd => {
+        cmd.Parameters.Add(new NpgsqlParameter(P_STREAM_ID, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter("p_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = workIds.ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
+      },
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  // One read of collective sink queue rows (work id, event id, commit sequence), for the head and membership reads.
+  private async Task<List<CollectiveSinkQueueEntry>> _readCollectiveSinkQueueAsync(
+      string commandText, Action<NpgsqlCommand> bind, CancellationToken cancellationToken) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var dbConnection = __scope.Connection;
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = commandText;
+    bind(cmd);
 
     var results = new List<CollectiveSinkQueueEntry>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -5511,7 +5566,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 }
 
 /// <summary>
-/// Internal DTO for mapping process_work_batch function results.
+/// Internal DTO for mapping claim_work function results.
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {

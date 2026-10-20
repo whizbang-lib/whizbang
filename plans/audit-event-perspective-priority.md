@@ -11,7 +11,7 @@
 
 ## Context
 
-The PerspectiveWorker drains `wh_perspective_events` via `process_work_batch`'s Phase 7 using a two-tier budget (`v_tier1_max = 70%` for small streams, remainder for large streams). Today, **all perspectives compete for the same event budget** — the tier split is based on per-stream volume, not on the semantic importance of the perspective.
+The PerspectiveWorker drains `wh_perspective_events` through the perspective acquisition that `claim_work` calls (`claim_orphaned_perspective_events`, last redefined in migration 202). When this plan was written that work came from Phase 7 of `process_work_batch` (since removed), using a two-tier budget (`v_tier1_max = 70%` for small streams, remainder for large streams). Today, **all perspectives compete for the same event budget**: the tier split is based on per-stream volume, not on the semantic importance of the perspective.
 
 In live production observations, a single bulk import produces:
 
@@ -27,7 +27,7 @@ The user-visible UX (UI "Validating..." → "Completed" transition) depends on t
 ## Requirements
 
 1. **Opt-in priority tier** — default perspectives keep current behavior; audit perspectives opt into the lower tier via an attribute or registration API.
-2. **SQL-level budget split, not just C# sorting** — prioritization has to happen in `process_work_batch` (migration 029) so the worker only claims low-priority work once high-priority is drained. C#-side sorting is useless because the SQL already caps the returned set via `v_max_work_items`.
+2. **SQL-level budget split, not just C# sorting**: prioritization has to happen in the SQL claim (`claim_orphaned_perspective_events`, called by `claim_work`) so the worker only claims low-priority work once high-priority is drained. C#-side sorting is useless because the SQL already caps the returned set via `v_max_work_items`.
 3. **AOT-compatible** — no runtime reflection, no attribute discovery via `Type.GetCustomAttributes`. Source-generated metadata only.
 4. **Backward-compatible** — existing perspectives without the attribute behave exactly as today (default tier, existing budget split).
 5. **Starvation guard** — audit perspectives must still get SOME events per cycle to avoid pathological growth of the audit backlog. Suggested: reserve a small floor (e.g., 5–10% of the cycle budget) for audit.
@@ -40,10 +40,10 @@ Add a `priority_tier` column to `wh_perspective_events` (SMALLINT, default 0):
 - `1` = Audit (low priority)
 - Space reserved for additional tiers later (0..5)
 
-`priority_tier` gets set at Phase 4.6 (auto-create perspective events in migration 029) based on the `wh_message_associations` row — the association registry already maps `message_type → target_name`, and we add a `priority_tier` column there too. The source generator populates `priority_tier` from the attribute at registration time.
+`priority_tier` gets set where perspective events are created (`_emit_event_store_chain` and `_emit_event_store_chain_for_inbox`) based on the `wh_message_associations` row: the association registry already maps `message_type → target_name`, and we add a `priority_tier` column there too. The source generator populates `priority_tier` from the attribute at registration time.
 
 ### Phase 7 budget split
-Replace the existing `tier1_limited` / `tier2_limited` logic in migration 029 (lines 1259–1303) with a **three-way split**:
+The `tier1_limited` / `tier2_limited` logic this section originally replaced lived in the removed `process_work_batch` (migration 029); the split now belongs in `claim_orphaned_perspective_events`. A **three-way split**:
 
 ```sql
 WITH
@@ -110,7 +110,7 @@ Spillover (if priority 0 doesn't consume its full budget) flows to audit automat
 ## Critical files for the next session
 
 ### To read
-- `src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql` — lines 1259–1326 (Phase 7 perspective work return)
+- `src/Whizbang.Data.Postgres/Migrations/202_ClaimTakesItsLedgerInOnePass.sql`: `claim_orphaned_perspective_events` (the perspective acquisition `claim_work` calls)
 - `src/Whizbang.Data.Postgres/Migrations/007_CreateMessageAssociationsTable.sql` (or wherever `wh_message_associations` is defined) — add `priority_tier` column
 - `src/Whizbang.Data.Postgres/Migrations/009_CreatePerspectiveEventsTable.sql` — add `priority_tier` column
 - `src/Whizbang.Generators/PerspectiveGenerator/*.cs` — emit priority from attribute
@@ -125,7 +125,7 @@ Spillover (if priority 0 doesn't consume its full budget) flows to audit automat
 
 ## Starting-point questions for the next session
 
-1. **Should `priority_tier` live on `wh_message_associations` (once per message-type × perspective) or on `wh_perspective_events` (duplicated per event)?** The associations table is the right logical home but denormalizing onto `wh_perspective_events` makes the Phase 7 query simpler. Recommendation: both — set on associations at registration, copied to `wh_perspective_events` at Phase 4.6 for query efficiency.
+1. **Should `priority_tier` live on `wh_message_associations` (once per message-type × perspective) or on `wh_perspective_events` (duplicated per event)?** The associations table is the right logical home but denormalizing onto `wh_perspective_events` makes the Phase 7 query simpler. Recommendation: both. Set on associations at registration, copied to `wh_perspective_events` where the emit chain creates them, for query efficiency.
 2. **How many tiers?** Start with 2 (Default, Audit). Reserve space for 3–5 total in the column type (SMALLINT has plenty of room).
 3. **What's the right default budget split?** 85/10/5 is a guess. Needs a micro-benchmark with a realistic audit+UI workload to tune.
 4. **Does the current `v_tier1_max` small-vs-large-stream tiering stack with priority tiering, or does priority replace it?** Recommendation: priority tiers are outer, small/large is inner within each priority.

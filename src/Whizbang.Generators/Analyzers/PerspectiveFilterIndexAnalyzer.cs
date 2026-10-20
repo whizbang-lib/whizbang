@@ -116,6 +116,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ302: Warning - a lens query filters a perspective field that has no physical column.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz302</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFilterIndexAnalyzerTests.cs:Filter_OnJsonOnlyField_ReportsAsync</tests>
   public static readonly DiagnosticDescriptor FilteredFieldHasNoIndex = new(
       id: "WHIZ302",
       title: "Filtered perspective field has no index",

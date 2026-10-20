@@ -20,10 +20,15 @@ public sealed class PerspectiveMetrics {
 
   // Timing
 
-  /// <summary>Full _processWorkBatchAsync cycle duration.</summary>
+  /// <summary>Full <c>PerspectiveWorker.ProcessChannelBatchAsync</c> cycle duration.</summary>
   public Histogram<double> BatchDuration { get; }
 
-  /// <summary>ProcessWorkBatchAsync duration to claim perspective work.</summary>
+  /// <summary>
+  /// Not recorded by the framework. It timed the removed <c>ProcessWorkBatchAsync</c> call that once
+  /// claimed perspective work; perspective work is now claimed by <c>ClaimWorker</c> through
+  /// <c>claim_work</c>, which does not record this instrument. Kept registered so dashboards that
+  /// query it keep resolving.
+  /// </summary>
   public Histogram<double> ClaimDuration { get; }
 
   /// <summary>GetEventsBetweenPolymorphicAsync query duration.</summary>
@@ -144,8 +149,8 @@ public sealed class PerspectiveMetrics {
   public PerspectiveMetrics(WhizbangMetrics whizbangMetrics) {
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
-    BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full _processWorkBatchAsync cycle");
-    ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");
+    BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full PerspectiveWorker.ProcessChannelBatchAsync cycle");
+    ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "Not recorded: perspective work is now claimed by claim_work, which does not record this instrument");
     EventLoadDuration = meter.CreateHistogram<double>("whizbang.perspective.event_load.duration", "ms", "GetEventsBetweenPolymorphicAsync query");
     RunnerDuration = meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
     CheckpointDuration = meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");

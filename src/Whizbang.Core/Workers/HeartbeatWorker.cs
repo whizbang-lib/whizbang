@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Decoupled heartbeat timer. Fires <see cref="IWorkCoordinator.RecordHeartbeatAsync"/>
 /// on its own cadence independent of the polling claim worker. Replaces
-/// the legacy "heartbeat embedded in <c>process_work_batch</c>" coupling.
+/// the legacy "heartbeat embedded in <c>process_work_batch</c>" coupling (that function has since been removed).
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <remarks>

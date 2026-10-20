@@ -26,6 +26,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ100: Error - Apply method returns Task (must be synchronous).
   /// </summary>
+  /// <docs>operations/diagnostics/whiz100</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_AsyncApplyMethod_ReportsWHIZ100ErrorAsync</tests>
   public static readonly DiagnosticDescriptor ApplyMethodIsAsync = new(
       id: "WHIZ100",
       title: "Apply method must be synchronous",
@@ -39,6 +41,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ101: Error - Apply method uses async/await keywords.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz101</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyAwaitsInsideBody_ReportsWHIZ101Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodUsesAwait = new(
       id: "WHIZ101",
       title: "Apply method cannot use async/await",
@@ -52,6 +56,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ102: Error - Apply method calls database I/O operations.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz102</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyCallsPerspectiveStore_ReportsWHIZ102Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodCallsDatabase = new(
       id: "WHIZ102",
       title: "Apply method cannot call database I/O",
@@ -65,6 +71,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ103: Error - Apply method calls HTTP/network operations.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz103</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyCallsHttpClient_ReportsWHIZ103Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodCallsHttp = new(
       id: "WHIZ103",
       title: "Apply method cannot call HTTP/network operations",
@@ -78,6 +86,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ104: Warning - Apply method may use non-deterministic DateTime.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz104</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_DateTimeUtcNowUsage_ReportsWHIZ104WarningAsync</tests>
   public static readonly DiagnosticDescriptor ApplyMethodUsesDateTime = new(
       id: "WHIZ104",
       title: "Apply method should use event timestamps instead of reading the clock",
@@ -91,6 +101,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ105: Warning - Perspective injects a service not marked with [PureService].
   /// </summary>
+  /// <docs>operations/diagnostics/whiz105</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerCoverageTests.cs:GenericTypeParameterConstructorInjection_ReportsWHIZ105Async</tests>
   public static readonly DiagnosticDescriptor NonPureServiceInjected = new(
       id: "WHIZ105",
       title: "Perspective injects non-pure service",
@@ -104,6 +116,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ106: Error - Collective apply performs an apply-time cross-perspective query.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz106</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_CollectiveApplyUsesCollectiveQuery_ReportsWHIZ106Async</tests>
   public static readonly DiagnosticDescriptor CollectiveApplyUsesCollectiveQuery = new(
       id: "WHIZ106",
       title: "Collective apply must not query other perspectives at apply time",

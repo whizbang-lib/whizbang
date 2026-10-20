@@ -16,8 +16,8 @@ namespace Whizbang.Generators.Analyzers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Reports WHIZ100 (warning) when a concrete IEvent / ICommand is missing <c>[PinnedId]</c>,
-/// WHIZ101 (warning) for the perspective variant, and WHIZ102 (error) when the attribute value
+/// Reports WHIZ110 (warning) when a concrete IEvent / ICommand is missing <c>[PinnedId]</c>,
+/// WHIZ111 (warning) for the perspective variant, and WHIZ112 (error) when the attribute value
 /// is not a parseable GUID.
 /// </para>
 /// <para>

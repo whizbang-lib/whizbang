@@ -579,11 +579,11 @@ public interface IWorkCoordinator {
   Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Stores inbox messages directly without running the full process_work_batch pipeline.
-  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication,
-  /// bypassing completions, failures, claiming, and return query phases.
-  /// Event storage and perspective creation happen on the next tick when the
-  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// Stores inbox messages directly via the <c>store_inbox_messages</c> SQL function.
+  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication;
+  /// it records no completions or failures and claims nothing.
+  /// Event storage and perspective work for inbox events happen when <c>ClaimWorker</c>'s
+  /// <c>claim_work</c> call claims the messages (its <c>_emit_event_store_chain_for_inbox</c> step).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
   /// <param name="partitionCount">Number of partitions for load balancing. Must match the PartitionCount used by the publisher worker
@@ -623,8 +623,8 @@ public interface IWorkCoordinator {
   }
 
   /// <summary>
-  /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
-  /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
+  /// Stores new outbox messages directly via the <c>store_outbox_messages</c> SQL function,
+  /// which also copies event rows into the event store (<c>_emit_event_store_chain</c>). Used by Dispatcher's
   /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages
   /// during flush. Default impl throws so non-Postgres backends opt in when ready.
   /// </summary>
@@ -2320,6 +2320,55 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
 
   /// <summary>
+  /// The head of one stream's collective sink queue (#1524): the queue of
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>, in the same order, from its start while each row is one
+  /// <paramref name="throughWorkIds"/> names, then the first row it does not name, and nothing after that. A sink run
+  /// applies only the leading rows it holds, so it reads its own rows and one more instead of the whole queue, which
+  /// on a busy ordering key is the difference between linear and quadratic work.
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="throughWorkIds">The work rows the walk continues past: the run's held rows, and any row it already
+  /// applied whose completion has not been written yet.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The head, or null when the engine does not provide one; the sink then reads the whole queue with
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>. An engine that provides the head also answers
+  /// <see cref="FetchCollectiveSinkQueueMembersAsync"/> without reading the whole queue.
+  /// </returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkQueueHeadTests.cs:CollectiveSink_QueueHead_NeverReadsTheWholeQueueAsync</tests>
+  Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+
+  /// <summary>
+  /// Which of the named rows are still in one stream's collective sink queue (#1524): each queued row whose work id
+  /// is in <paramref name="workIds"/> or whose event is in <paramref name="eventIds"/>, in no particular order. The
+  /// sink asks it for the rows it holds (a held row no longer queued was applied already) and for the predecessors
+  /// its collectives name (#1003).
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="workIds">Work rows to look for.</param>
+  /// <param name="eventIds">Events whose work rows to look for.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The named rows still queued. By default this filters <see cref="FetchCollectiveSinkQueueAsync"/>, and
+  /// is empty when the engine has no queue.</returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
+  async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    var queue = await FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    return queue is null ? [] : [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))];
+  }
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>
@@ -2901,7 +2950,7 @@ public record WorkBatch {
 }
 
 /// <summary>
-/// Represents an outbox message to be stored in process_work_batch.
+/// Represents an outbox message to be stored by store_outbox_messages.
 /// Used for immediate processing pattern (store + immediately return for publishing).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
@@ -3066,7 +3115,7 @@ public sealed record CoalesceGroupStats {
 
 
 /// <summary>
-/// Represents an inbox message to be stored in process_work_batch.
+/// Represents an inbox message to be stored by store_inbox_messages.
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
