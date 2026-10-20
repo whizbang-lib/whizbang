@@ -308,6 +308,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   qualified with the configured schema: the new optional `schema` argument of the `DapperWorkCoordinator`
   constructor, else the first schema the connection string's `Search Path` names, else the server's
   `current_schema()`, asked once on first use and kept (which honors a default set on the role or database).
+- **Perspective row retention did nothing on the Dapper driver (#1505).** The Dapper work coordinator implemented
+  none of the row-retention members and inherited the interface's no-op defaults, so a `[RowTtl]` or `[RowCap]`
+  declaration removed no row: nothing was enrolled or adopted, the expiry and cap sweeps reported `unsupported`,
+  a registered `IPerspectiveRowDestructionGuard` was offered nothing, and the stream-group cascade never drained.
+  The Dapper coordinator now runs the same statements as the EF Core coordinator, from one shared copy, qualified
+  with its configured schema: enrollment from the declarations, the adoption gate and its backlog count, the
+  expiry sweep, the cap sweep behind its once-per-window claim, the pre-destruction seam's holds and retry
+  ladder, the cascade drain and delete, and the staged rebuild's presence reconcile. Known limit: the Dapper
+  driver does not write `wh_perspective_registry` (only the EF Core driver's schema reconcile does), and
+  enrollment matches declarations against registry rows, so on a Dapper host a perspective is enrolled only once
+  its registry row exists; until then each declaration is logged at Warning as matching no registry row.
 - **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
   format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
   was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now

@@ -131,6 +131,8 @@ public class DapperRowRetentionTests : PostgresTestBase {
     await Assert.That(await coordinator.TryClaimRowCapSweepAsync(TimeSpan.FromHours(1))).IsTrue();
     await Assert.That(await coordinator.TryClaimRowCapSweepAsync(TimeSpan.FromHours(1))).IsFalse()
       .Because("the watermark is first-instance-wins: a sibling inside the window skips");
+    // The cap sweep honors the adoption gate as the expiry sweep does; in a maintenance cycle adoption opens it.
+    await coordinator.AcknowledgeRetentionEnforcementAsync(_leaderClr);
     var result = await coordinator.ReapPerspectiveRowCapsAsync();
 
     await Assert.That(result.RowsAffected).IsEqualTo(1);
