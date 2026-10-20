@@ -8,12 +8,12 @@ namespace Whizbang.Core.Workers;
 /// Items transition: Pending → Sent → Acknowledged → (cleared)
 /// </summary>
 public enum CompletionStatus {
-  /// <summary>In memory, not yet sent to ProcessWorkBatchAsync</summary>
+  /// <summary>In memory, not yet handed to the completion channels</summary>
   Pending = 0,
 
-  /// <summary>Sent to ProcessWorkBatchAsync, awaiting acknowledgement</summary>
+  /// <summary>Handed to the completion channels, awaiting acknowledgement</summary>
   Sent = 1,
 
-  /// <summary>Confirmed by ProcessWorkBatchAsync, ready to clear</summary>
+  /// <summary>Acknowledged by the perspective worker, ready to clear</summary>
   Acknowledged = 2
 }

@@ -170,14 +170,15 @@ public partial class TransportPublishStrategy(
   /// <para>
   /// When <paramref name="work"/> has a null/empty destination, the message is an event-store-only
   /// message (from Route.Local or Route.EventStoreOnly). These messages are stored in the event store
-  /// via process_work_batch but should not be transported. Returns success immediately.
+  /// when the outbox row is stored (store_outbox_messages, through _emit_event_store_chain) but should not
+  /// be transported. Returns success immediately.
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Publishing one message resolves the destination (an empty one is an event-store-only message and succeeds without a transport call), pre-serializes when a hook needs it, and then retries on throttling up to the configured attempts. The retry loop and the preflight failure are the branches.")]
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     // Skip transport publishing for event-store-only messages (destination is null)
-    // These messages are stored in event store via process_work_batch but should not be transported
+    // These messages reach the event store when the outbox row is stored (store_outbox_messages) but should not be transported
     if (string.IsNullOrEmpty(work.Destination)) {
       LogSkippingEventStoreOnly(work.MessageType);
       return new MessagePublishResult {

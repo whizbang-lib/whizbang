@@ -10,13 +10,14 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <summary>
 /// Dapper / PostgreSQL implementation of <see cref="IPerspectiveCheckpointCompleter"/>.
 /// Upserts <c>wh_perspective_cursors</c> rows so rebuild operations leave cursor state
-/// consistent with the replayed event log, without going through the full
-/// <c>process_work_batch</c> pipeline.
+/// consistent with the replayed event log, without going through the live
+/// perspective completion path.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Unlike <c>complete_perspective_cursor_work</c> (which requires the cursor row to exist —
-/// normally created by <c>process_work_batch</c>'s auto-cursor step), rebuild may operate
+/// normally created by <c>update_perspective_cursors</c> when a live perspective run's completion
+/// is recorded), rebuild may operate
 /// against streams whose events were appended outside the live flow. This completer uses
 /// <c>INSERT ... ON CONFLICT DO UPDATE</c> so missing cursor rows are created at their
 /// replayed end-state.

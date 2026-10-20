@@ -579,11 +579,11 @@ public interface IWorkCoordinator {
   Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Stores inbox messages directly without running the full process_work_batch pipeline.
-  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication,
-  /// bypassing completions, failures, claiming, and return query phases.
-  /// Event storage and perspective creation happen on the next tick when the
-  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// Stores inbox messages directly via the <c>store_inbox_messages</c> SQL function.
+  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication;
+  /// it records no completions or failures and claims nothing.
+  /// Event storage and perspective work for inbox events happen when <c>ClaimWorker</c>'s
+  /// <c>claim_work</c> call claims the messages (its <c>_emit_event_store_chain_for_inbox</c> step).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
   /// <param name="partitionCount">Number of partitions for load balancing. Must match the PartitionCount used by the publisher worker
@@ -623,8 +623,8 @@ public interface IWorkCoordinator {
   }
 
   /// <summary>
-  /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
-  /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
+  /// Stores new outbox messages directly via the <c>store_outbox_messages</c> SQL function,
+  /// which also copies event rows into the event store (<c>_emit_event_store_chain</c>). Used by Dispatcher's
   /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages
   /// during flush. Default impl throws so non-Postgres backends opt in when ready.
   /// </summary>
@@ -2950,7 +2950,7 @@ public record WorkBatch {
 }
 
 /// <summary>
-/// Represents an outbox message to be stored in process_work_batch.
+/// Represents an outbox message to be stored by store_outbox_messages.
 /// Used for immediate processing pattern (store + immediately return for publishing).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
@@ -3115,7 +3115,7 @@ public sealed record CoalesceGroupStats {
 
 
 /// <summary>
-/// Represents an inbox message to be stored in process_work_batch.
+/// Represents an inbox message to be stored by store_inbox_messages.
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>

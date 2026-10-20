@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Audit gap #4 regression lock. <c>resolve_sync_inquiries</c> was inline in the legacy
-/// <c>process_work_batch</c>'s transaction; the new architecture decouples it. After
+/// <c>process_work_batch</c>'s transaction (that function has since been removed); the new architecture decouples it. After
 /// slice 27 (migration 045) the wake-up NOTIFY is no longer global — it's routed per
 /// owner instance via <c>pg_notify('wh_work_i_&lt;instance_id&gt;', payload)</c>, resolved
 /// through <c>wh_active_streams</c>. The test wires that resolution explicitly: pin the

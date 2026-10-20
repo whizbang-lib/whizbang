@@ -3374,7 +3374,7 @@ public partial class PerspectiveWorker(
       List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork) {
 
 #pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
-    _logger.LogDebug("ProcessWorkBatchAsync returned: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+    _logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
       workBatch.PerspectiveWork.Count, groupedWork.Count);
     foreach (var g in groupedWork) {
       _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
@@ -6030,7 +6030,7 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
-  /// Controls exponential backoff when ProcessWorkBatchAsync fails.
+  /// Controls exponential backoff for completions left in 'Sent' status without acknowledgement.
   /// </summary>
   public WorkerRetryOptions RetryOptions { get; set; } = new();
 }

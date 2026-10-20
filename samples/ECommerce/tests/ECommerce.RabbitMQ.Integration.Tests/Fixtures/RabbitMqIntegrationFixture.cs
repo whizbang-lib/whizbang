@@ -745,7 +745,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[RabbitMqFixture] BFF database created!");
 
     // Initialize Inventory database
-    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
+    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call claim_work and the other work-coordinator functions
     Console.WriteLine("[RabbitMqFixture] Initializing Inventory database schema...");
     if (_inventoryHost != null) {
       using var scope = _inventoryHost.Services.CreateScope();

@@ -9,7 +9,8 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// When ProcessWorkBatchAsync fails or doesn't acknowledge completions, items remain in 'Sent' status.
+/// When a completion handed to the completion channels is not acknowledged (the cycle fails before
+/// acknowledging it), it remains in 'Sent' status.
 /// After the retry timeout, they're moved back to 'Pending' with exponential backoff.
 /// </para>
 /// <para>

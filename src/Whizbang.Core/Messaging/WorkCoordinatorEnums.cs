@@ -4,7 +4,7 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Flags indicating metadata about work items returned from ProcessWorkBatchAsync.
+/// Flags passed to a work coordinator strategy flush (<see cref="IWorkCoordinatorStrategy.FlushAsync"/>).
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
@@ -62,9 +62,9 @@ public enum WorkBatchOptions {
   RetryAfterFailure = 1 << 5,
 
   /// <summary>
-  /// Skip claiming orphaned inbox messages during process_work_batch.
-  /// Used by IntervalWorkCoordinatorStrategy (dispatcher) which only handles
-  /// outbox work — inbox claiming should be left to WorkCoordinatorPublisherWorker.
+  /// Asked the removed process_work_batch call to skip claiming orphaned inbox messages.
+  /// A flush no longer claims anything (<c>claim_work</c> is owned by <c>ClaimWorker</c>),
+  /// so the strategies still pass this flag but nothing reads it.
   /// </summary>
   /// <docs>messaging/work-coordinator#skip-inbox-claiming</docs>
   SkipInboxClaiming = 1 << 6

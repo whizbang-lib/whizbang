@@ -189,7 +189,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     return workBatch;
   }
 
-  // Removed _logPostFlushDiagnostics: the legacy ProcessWorkBatchAsync path returned the
+  // Removed _logPostFlushDiagnostics: the legacy ProcessWorkBatchAsync path (since removed) returned the
   // claimed batch synchronously, so an empty result after a non-empty queue indicated a
   // real bug. After the Phase H decomposition the flush helper persists messages and
   // returns an empty WorkBatch by design — claiming is now async via ClaimWorker. The

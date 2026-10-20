@@ -412,7 +412,7 @@ namespace TestNamespace {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource).Contains("DeletedEvent")
-      .Because("IPerspectiveWithActionsFor events must be in DB associations for process_work_batch to create perspective events");
+      .Because("IPerspectiveWithActionsFor events must be in DB associations for _emit_event_store_chain to create perspective events");
     await Assert.That(generatedSource).Contains("OrderPurgePerspective")
       .Because("The perspective class must be the target in the association");
   }

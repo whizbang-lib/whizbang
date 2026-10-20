@@ -254,7 +254,7 @@ public sealed partial class PostgresConnectionRetry {
       return false;
     }
 
-    // Check for required function. Phase H step 3 replaced process_work_batch with
+    // Check for required function. Phase H step 3 replaced process_work_batch (since removed) with
     // the decomposed claim_work entry point — claim_work is now the canonical signal
     // that migrations completed (it's installed by migration 029).
     const string checkFunctionsSql = @"

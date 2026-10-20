@@ -23,7 +23,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
 /// EF Core implementation of IWorkCoordinator for lease-based work coordination.
-/// Uses the PostgreSQL process_work_batch function for atomic operations.
+/// Each operation calls its own focused PostgreSQL function (claim_work, store_outbox_messages,
+/// store_inbox_messages, commit_handler_result, flush_completions, record_heartbeat and others).
 /// </summary>
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
@@ -3781,12 +3782,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return result.Single();
   }
 
-  /// <summary>
-  /// Stores inbox messages directly via store_inbox_messages SQL function.
-  /// Bypasses the full process_work_batch pipeline for maximum inbox throughput.
-  /// Event storage and perspective creation happen on the next tick when
-  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
-  /// </summary>
   /// <inheritdoc />
   public async Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(
     int partitionCount,
@@ -3827,6 +3822,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  /// <summary>
+  /// Stores inbox messages directly via the store_inbox_messages SQL function, which only inserts
+  /// them with deduplication. Event storage and perspective work for inbox events happen when
+  /// claim_work later claims the rows (its _emit_event_store_chain_for_inbox step).
+  /// </summary>
   public async Task StoreInboxMessagesAsync(
     InboxMessage[] messages,
     int partitionCount,
@@ -5567,7 +5567,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 }
 
 /// <summary>
-/// Internal DTO for mapping process_work_batch function results.
+/// Internal DTO for mapping claim_work function results.
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {

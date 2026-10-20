@@ -19,7 +19,7 @@ public sealed class TrackedCompletion<T> where T : notnull {
   public CompletionStatus Status { get; set; } = CompletionStatus.Pending;
 
   /// <summary>
-  /// Timestamp when this completion was sent to ProcessWorkBatchAsync.
+  /// Timestamp when this completion was handed to the completion channels.
   /// </summary>
   public DateTimeOffset SentAt { get; set; }
 

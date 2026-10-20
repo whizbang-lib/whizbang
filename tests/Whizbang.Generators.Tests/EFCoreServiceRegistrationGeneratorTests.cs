@@ -2311,7 +2311,7 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   /// <summary>
   /// Test that schema extensions include Step 5 comment indicating perspective association registration.
   /// Step 5 registers perspective→event type mappings in wh_message_associations table.
-  /// This enables process_work_batch Phase 4.6 to create perspective events.
+  /// This enables _emit_event_store_chain to create perspective events.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {

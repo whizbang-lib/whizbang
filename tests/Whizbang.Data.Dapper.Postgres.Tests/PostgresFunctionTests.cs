@@ -12,7 +12,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
 /// Tests for individual PostgreSQL functions (migrations 009-012).
-/// Tests the decomposed functions that will eventually replace process_work_batch.
+/// Tests the focused functions that replaced the removed process_work_batch.
 /// Uses UUIDv7 for all IDs to ensure proper time-ordered database indexing.
 /// </summary>
 public class PostgresFunctionTests : PostgresTestBase {

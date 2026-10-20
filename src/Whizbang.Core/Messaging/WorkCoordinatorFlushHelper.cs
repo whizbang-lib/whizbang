@@ -47,7 +47,7 @@ internal readonly record struct FlushContext(
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
 /// <remarks>
 /// <para>
-/// The legacy implementation routed every flush through <c>process_work_batch</c>, which
+/// The legacy implementation routed every flush through <c>process_work_batch</c> (since removed), which
 /// inserted messages, recorded completions/failures, and claimed work in one trip.
 /// The new path decomposes those responsibilities:
 ///  - <c>store_outbox_messages</c> / <c>store_inbox_messages</c> insert new rows

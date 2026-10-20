@@ -11,7 +11,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Audit gap #1 regression locks. The legacy <c>process_work_batch</c> ran completions/failures
+/// Audit gap #1 regression locks. The legacy <c>process_work_batch</c> (since removed) ran completions/failures
 /// in a single transaction; the new path splits them across <c>OutboxCompletionFlushWorker</c> and
 /// <c>FailureFlushWorker</c>. These tests pin the SQL-level invariants so cross-worker interleaves
 /// cannot leave a row in a bad state regardless of which call lands first.

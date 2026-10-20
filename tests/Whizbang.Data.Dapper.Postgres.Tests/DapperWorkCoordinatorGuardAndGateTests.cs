@@ -28,7 +28,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 ///   <item><description>Heartbeat metadata (<c>GetRawText</c>) branch, per-table recompute counts,
 ///     NULL-column row mapping in <c>FetchOutboxBatchAsync</c>, and the internal
 ///     <see cref="WorkBatchRow"/> / <see cref="SerializedWorkBatchData"/> DTO shapes that are only
-///     hydrated by the retired <c>process_work_batch</c> pipeline.</description></item>
+///     hydrated by the removed <c>process_work_batch</c> pipeline.</description></item>
 /// </list>
 /// </summary>
 public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
@@ -421,7 +421,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(row.Error).IsNull();
   }
 
-  // ----- Internal DTOs only hydrated by the retired process_work_batch pipeline -----
+  // ----- Internal DTOs only hydrated by the removed process_work_batch pipeline -----
   //
   // ProcessWorkBatchAsync is now an IWorkCoordinator default-interface method returning an
   // empty batch, so nothing in DapperWorkCoordinator hydrates WorkBatchRow or builds
