@@ -250,6 +250,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **At-most-once schedule occurrences were folded into integrity digests, counted in checkpoints and selected for
+  re-delivery (#1484).** Every exclusion looked for the delivery guarantee in the stored event metadata, which never
+  carried it, so none matched: a consumer comparing digests saw each occurrence as missing, and re-delivery could send
+  an occurrence its schedule declared at most once. The guarantee is now a flag on the stored event
+  (`EventFlags.AtMostOnce`, value 32), set when the occurrence is spawned, and the stream and epoch digests, the
+  verification sweep, the checkpoint counts and the re-delivery selection leave flagged events out. Migration 214 flags
+  occurrences already stored (read from the outbox row when it remains, otherwise from the schedule), removes them
+  from the stored digests and sealed epochs, and advances the origin generation once, so consumers reset their seals
+  and re-verify instead of reporting drift. The digest and checkpoint queries no longer read the event body to apply
+  the filter.
 - **Startup failed with `ITransport (required by TransportConsumerWorker)` when no transport was composed
   (#1529).** Registration validation checked every requirement in the generated manifest, including types the
   composition never registers, so `AddWhizbang()` with a storage driver and no `AddTransportConsumer()` could not

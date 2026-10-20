@@ -69,6 +69,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string SETTINGS_TABLE = "wh_settings";
   private const string NORMALIZE_EVENT_TYPE_FUNCTION = "normalize_event_type";
 
+  // The event-store flag bit every integrity query leaves out (#1484): an at-most-once event is owed to no
+  // one, so digests, checkpoint counts and re-delivery skip it. Written into the SQL as a literal.
+  private const int AT_MOST_ONCE_FLAG = (int)EventFlags.AtMostOnce;
+
   // The payload builders below write JSON by hand, so they need the lower-case spellings:
   // StringBuilder.Append(bool) would emit "True"/"False", which no JSON reader accepts.
   private const string JSON_TRUE = "true";
@@ -1549,13 +1553,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
                bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
-        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE es.origin_service_id = @p_origin
           AND es.stream_id = ANY(@p_streams::uuid[])
           AND ((@p_since::bigint) IS NULL OR es.origin_commit_sequence >= @p_since)
           AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
           AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
@@ -1682,11 +1685,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         ),
         win AS (
           SELECT l.* FROM lane l
-          LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = l.event_id
           WHERE l.lane_seq IS NOT NULL AND l.lane_seq >= @p_since AND l.lane_seq < @p_until
             AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
             AND COALESCE(l.flags, 0) & 8 = 0
-            AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+            AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
             AND l.created_at < NOW() - @p_settle::interval
         ),
         pick AS (
@@ -2603,7 +2605,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <summary>
   /// Stream-integrity R1a selection (see <see cref="IWorkCoordinator.SelectRedeliveryEventsAsync"/>).
   /// Joins the event body so reaped ephemeral events are excluded structurally, filters
-  /// at-most-once occurrences by their envelope-metadata delivery guarantee, and returns rows
+  /// at-most-once occurrences by their <see cref="EventFlags.AtMostOnce"/> flag, and returns rows
   /// ordered (stream, version) under a hard LIMIT.
   /// </summary>
   /// <docs>resilience/stream-integrity</docs>
@@ -2628,7 +2630,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         AND (@p_from_seq::bigint IS NULL OR es.commit_sequence > @p_from_seq)
         AND (@p_to_seq::bigint IS NULL OR es.commit_sequence <= @p_to_seq)
         AND ((@p_after_stream::uuid) IS NULL OR (es.stream_id, es.version) > (@p_after_stream::uuid, @p_after_version::bigint))
-        AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+        AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
       ORDER BY es.stream_id, es.version
       LIMIT @p_max
       """;
@@ -3273,16 +3275,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var buckets = new List<CheckpointBucket>();
     if (current > prior.Value) {
-      // At-most-once occurrences are excluded (non-delivery is their declared behavior, not a
-      // gap); checkpoints never count themselves. Reaped ephemeral bodies LEFT-JOIN to null
-      // metadata and stay INCLUDED — the consumer received them live and counts them too.
+      // At-most-once events (EventFlags.AtMostOnce) are excluded (non-delivery is their declared
+      // behavior, not a gap); checkpoints never count themselves. Ephemeral events stay INCLUDED,
+      // reaped or not: the consumer received them live and counts them too.
       await using var count = conn.CreateCommand().WithCoordinatorTimeout();
       count.CommandText = $"""
         SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
         FROM {schema}.wh_event_store es
-        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
-          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.event_type <> @p_checkpoint_type
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -3499,12 +3500,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
                bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
                COUNT(*)::int
         FROM {schema}.wh_event_store es
-        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE ((@p_origin::uuid) IS NULL AND es.origin_service_id IS NULL
                OR es.origin_service_id = @p_origin)
           AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
           AND COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
@@ -3681,9 +3681,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
                bit_xor(hashtextextended(es.event_id::text, 1)) AS digest_hi,
                COUNT(*)::int AS event_count
         FROM {schema}.wh_event_store es
-        LEFT JOIN {schema}.wh_event_body eb ON eb.event_id = es.event_id
         WHERE COALESCE(es.flags, 0) & 8 = 0
-          AND COALESCE((eb.metadata->>'deliveryGuarantee')::integer, 0) <> 1
+          AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3, 4
       ),
