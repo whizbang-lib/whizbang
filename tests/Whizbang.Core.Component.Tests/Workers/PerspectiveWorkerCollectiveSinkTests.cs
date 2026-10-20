@@ -1438,7 +1438,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     await Assert.That(new PerspectiveWorkerOptions().CollectiveLockBusyCountsAsFailure).IsFalse();
   }
 
-  private static PerspectiveWork _sinkWork(Guid streamId) => new() {
+  private protected static PerspectiveWork _sinkWork(Guid streamId) => new() {
     WorkId = Guid.CreateVersion7(),
     StreamId = streamId,
     PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
@@ -1446,7 +1446,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     PartitionNumber = 1
   };
 
-  private static MessageEnvelope<IEvent> _envelope(Guid eventId, IEvent payload) => new() {
+  private protected static MessageEnvelope<IEvent> _envelope(Guid eventId, IEvent payload) => new() {
     MessageId = new MessageId(eventId),
     Payload = payload,
     Hops = [],
@@ -1466,7 +1466,14 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     Failures = failures
   };
 
-  private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, FakeCoordinator Coordinator) _createWorker(
+  /// <summary>
+  /// Whether the fake engine serves the bounded queue reads (#1524). False here: the engine offers only the whole
+  /// queue, as an engine that predates them does. <see cref="PerspectiveWorkerCollectiveSinkQueueHeadTests"/> runs
+  /// every test again with it true.
+  /// </summary>
+  protected virtual bool ServesQueueHead => false;
+
+  private protected (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, FakeCoordinator Coordinator) _createWorker(
       List<PerspectiveWork> work, EventStore eventStore, Registry registry, ICollectiveDispatcher? dispatcher,
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
@@ -1478,7 +1485,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     var instanceProvider = new InstanceProvider();
     var strategy = new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance);
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
-    var coordinator = new FakeCoordinator(work) { DrainStreamIds = drainStreamIds ?? [], StreamEvents = streamEvents ?? [] };
+    var coordinator = new FakeCoordinator(work) { DrainStreamIds = drainStreamIds ?? [], StreamEvents = streamEvents ?? [], ServesQueueHead = ServesQueueHead };
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -1545,7 +1552,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     public required CollectiveScope Scope { get; init; }
   }
 
-  private sealed record FlipCollectiveEvent : ICollectiveEvent {
+  private protected sealed record FlipCollectiveEvent : ICollectiveEvent {
     public required CollectiveScope Scope { get; init; }
     public string Chosen { get; init; } = "";
     public Guid? PredecessorId { get; init; }
@@ -1556,7 +1563,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
   /// Applies a flip: the state becomes the event's choice, so the final state is whichever collective applied last.
   /// Throws for the choice named by <see cref="FailOn"/>.
   /// </summary>
-  private sealed class FlipDispatcher(int expected) : ICollectiveDispatcher {
+  private protected sealed class FlipDispatcher(int expected) : ICollectiveDispatcher {
     private readonly TaskCompletionSource _all = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _firstApplied = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<string> Applied { get; } = [];
@@ -1807,7 +1814,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     }
   }
 
-  private sealed class FakeCoordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {
+  private protected sealed class FakeCoordinator(List<PerspectiveWork> work) : NoOpWorkCoordinator, IWorkCoordinator {
     private int _cycle;
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _waiters = new();
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1874,7 +1881,42 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       }
       return waiter.Task;
     }
+    /// <summary>Serves the bounded head and membership reads (#1524) from the same queue.</summary>
+    public bool ServesQueueHead { get; init; }
+    private int _wholeQueueReads;
+    /// <summary>How many times the whole queue was read.</summary>
+    public int WholeQueueReads => Volatile.Read(ref _wholeQueueReads);
+    Task<IReadOnlyList<CollectiveSinkQueueEntry>?> IWorkCoordinator.FetchCollectiveSinkQueueHeadAsync(
+        Guid streamId, IReadOnlyCollection<Guid> throughWorkIds, CancellationToken cancellationToken) {
+      if (!ServesQueueHead) {
+        return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+      }
+      var queue = _queueFor(streamId);
+      if (queue is null) {
+        // No queue at all: the sink falls back to the whole-queue read, which counts as its read.
+        return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+      }
+      var through = queue.TakeWhile(e => throughWorkIds.Contains(e.EventWorkId)).ToList();
+      var head = queue.Count > through.Count ? [.. through, queue[through.Count]] : through;
+      _signalQueueRead();
+      return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(head);
+    }
+    Task<IReadOnlyList<CollectiveSinkQueueEntry>> IWorkCoordinator.FetchCollectiveSinkQueueMembersAsync(
+        Guid streamId, IReadOnlyCollection<Guid> workIds, IReadOnlyCollection<Guid> eventIds, CancellationToken cancellationToken) =>
+      Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>(
+        [.. (_queueFor(streamId) ?? []).Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))]);
+    private List<CollectiveSinkQueueEntry>? _queueFor(Guid streamId) =>
+      SinkQueues.TryGetValue(streamId, out var own) ? own : SinkQueue;
     Task<IReadOnlyList<CollectiveSinkQueueEntry>?> IWorkCoordinator.FetchCollectiveSinkQueueAsync(Guid streamId, CancellationToken cancellationToken) {
+      Interlocked.Increment(ref _wholeQueueReads);
+      if (ServesQueueHead && _queueFor(streamId) is not null) {
+        // An engine with the head never needs the whole queue; serve it, but do not count it as the sink's read.
+        return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(_queueFor(streamId));
+      }
+      _signalQueueRead();
+      return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(_queueFor(streamId));
+    }
+    private void _signalQueueRead() {
       var reads = Interlocked.Increment(ref _sinkQueueReads);
       foreach (var (count, waiter) in _sinkQueueReadWaiters) {
         if (reads >= count) {
@@ -1882,7 +1924,6 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
         }
       }
       _sinkQueueRead.TrySetResult();
-      return Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(SinkQueues.TryGetValue(streamId, out var own) ? own : SinkQueue);
     }
     /// <summary>Events the store does not hold: a predecessor that has not arrived.</summary>
     public HashSet<Guid> MissingEventIds { get; } = [];
@@ -1898,7 +1939,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
       Task.FromResult(new List<StreamEventData>(StreamEvents));
   }
 
-  private sealed class EventStore : IEventStore {
+  private protected sealed class EventStore : IEventStore {
     public ConcurrentDictionary<Guid, List<MessageEnvelope<IEvent>>> Envelopes { get; } = new();
     /// <summary>Envelopes the drain fetch's <see cref="DeserializeStreamEvents"/> yields (the fake
     /// stand-in for AOT JSON deserialization of the raw rows).</summary>
@@ -1917,7 +1958,7 @@ public partial class PerspectiveWorkerCollectiveSinkTests {
     private static async IAsyncEnumerable<MessageEnvelope<T>> _empty<T>() { await Task.CompletedTask; yield break; }
   }
 
-  private sealed class Registry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
+  private protected sealed class Registry(IReadOnlyList<Type> eventTypes) : IPerspectiveRunnerRegistry {
     // Sink perspective has no runner — return null so the worker would fall through (but the sink guard fires first).
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => null;
     // Must be non-empty: the worker skips building _perspectivesPerEventType when no perspectives are

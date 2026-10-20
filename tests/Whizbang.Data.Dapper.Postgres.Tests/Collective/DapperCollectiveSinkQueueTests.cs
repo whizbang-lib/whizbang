@@ -43,6 +43,45 @@ public class DapperCollectiveSinkQueueTests : PostgresTestBase {
     await Assert.That(queue[2].CommitSequence).IsNull();
   }
 
+  [Test]
+  public async Task FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAndStopsAsync() {
+    var stream = Guid.CreateVersion7();
+    var ids = Enumerable.Range(0, 3).Select(_ => Guid.CreateVersion7()).ToArray();
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      for (var i = 0; i < ids.Length; i++) {
+        await _sinkRowAsync(conn, stream, ids[i], commitSequence: 10 + i);
+      }
+    }
+    var coordinator = new DapperWorkCoordinator(ConnectionString, new JsonSerializerOptions(), NullLogger<DapperWorkCoordinator>.Instance);
+    var queue = await coordinator.FetchCollectiveSinkQueueAsync(stream);
+
+    var head = await coordinator.FetchCollectiveSinkQueueHeadAsync(stream, [queue![0].EventWorkId]);
+
+    await Assert.That(head).IsNotNull();
+    await Assert.That(head!).IsEquivalentTo([queue[0], queue[1]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The walk passes the named row and stops after the first row it was not given.");
+  }
+
+  [Test]
+  public async Task FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync() {
+    var stream = Guid.CreateVersion7();
+    var ids = Enumerable.Range(0, 3).Select(_ => Guid.CreateVersion7()).ToArray();
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      for (var i = 0; i < ids.Length; i++) {
+        await _sinkRowAsync(conn, stream, ids[i], commitSequence: 10 + i);
+      }
+    }
+    var coordinator = new DapperWorkCoordinator(ConnectionString, new JsonSerializerOptions(), NullLogger<DapperWorkCoordinator>.Instance);
+    var queue = await coordinator.FetchCollectiveSinkQueueAsync(stream);
+
+    var members = await coordinator.FetchCollectiveSinkQueueMembersAsync(
+      stream, workIds: [queue![0].EventWorkId], eventIds: [ids[2]]);
+
+    await Assert.That(members).IsEquivalentTo([queue[0], queue[2]]);
+  }
+
   private static async Task _sinkRowAsync(NpgsqlConnection conn, Guid stream, Guid eventId, long? commitSequence) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """

@@ -2320,6 +2320,53 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
 
   /// <summary>
+  /// The head of one stream's collective sink queue (#1524): the queue of
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>, in the same order, from its start while each row is one
+  /// <paramref name="throughWorkIds"/> names, then the first row it does not name, and nothing after that. A sink run
+  /// applies only the leading rows it holds, so it reads its own rows and one more instead of the whole queue, which
+  /// on a busy ordering key is the difference between linear and quadratic work.
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="throughWorkIds">The work rows the walk continues past: the run's held rows, and any row it already
+  /// applied whose completion has not been written yet.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The head, or null when the engine does not provide one; the sink then reads the whole queue with
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>. An engine that provides the head also answers
+  /// <see cref="FetchCollectiveSinkQueueMembersAsync"/> without reading the whole queue.
+  /// </returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkQueueHeadTests.cs:CollectiveSink_QueueHead_NeverReadsTheWholeQueueAsync</tests>
+  Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+
+  /// <summary>
+  /// Which of the named rows are still in one stream's collective sink queue (#1524): each queued row whose work id
+  /// is in <paramref name="workIds"/> or whose event is in <paramref name="eventIds"/>, in no particular order. The
+  /// sink asks it for the rows it holds (a held row no longer queued was applied already) and for the predecessors
+  /// its collectives name (#1003).
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="workIds">Work rows to look for.</param>
+  /// <param name="eventIds">Events whose work rows to look for.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The named rows still queued. By default this filters <see cref="FetchCollectiveSinkQueueAsync"/>, and
+  /// is empty when the engine has no queue.</returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
+  Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>([]);
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
   /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
   /// </summary>
