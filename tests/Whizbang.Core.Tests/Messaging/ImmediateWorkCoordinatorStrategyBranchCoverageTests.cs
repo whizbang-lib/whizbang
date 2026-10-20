@@ -57,4 +57,35 @@ public class ImmediateWorkCoordinatorStrategyBranchCoverageTests {
     await Assert.That(counted[0].Tags["strategy"]).IsEqualTo("immediate");
     await Assert.That(counted[0].Tags["trigger"]).IsEqualTo("api");
   }
+
+  [Test]
+  public async Task FlushAsync_WithNothingQueued_CountsAnEmptyFlushTaggedAsImmediateAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters.First(m => m.Name == WorkCoordinatorMetrics.METER_NAME));
+    await using var provider = new ServiceCollection().BuildServiceProvider();
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      coordinator: new NoOpWorkCoordinator(),
+      instanceProvider: new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()),
+      options: new WorkCoordinatorOptions(),
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null,
+      metrics: metrics);
+
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    var empty = helper.GetByName("whizbang.work_coordinator.flush.empty_calls")
+      .Where(m => m.Value > 0)
+      .ToList();
+    await Assert.That(empty.Count).IsEqualTo(1)
+      .Because("#1535: the other strategies count a flush with nothing queued; immediate did not");
+    await Assert.That(empty[0].Value).IsEqualTo(1);
+    await Assert.That(empty[0].Tags["strategy"]).IsEqualTo("immediate");
+  }
 }

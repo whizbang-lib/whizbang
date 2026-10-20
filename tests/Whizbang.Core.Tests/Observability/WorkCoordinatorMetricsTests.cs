@@ -51,6 +51,29 @@ public class WorkCoordinatorMetricsTests {
   }
 
   [Test]
+  public async Task WCMetrics_PublishesNoInstrumentOfTheRemovedWorkBatchCallAsync() {
+    using var factory = new TestMeterFactory();
+    _ = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    var published = new List<string>();
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, _) => {
+        if (instrument.Meter.Name == WorkCoordinatorMetrics.METER_NAME) {
+          published.Add(instrument.Name);
+        }
+      }
+    };
+
+    listener.Start();
+
+    await Assert.That(published).IsNotEmpty();
+    await Assert.That(published.Where(n =>
+        n.Contains(".process_batch.", StringComparison.Ordinal)
+        || n.Contains(".work_coordinator.batch.", StringComparison.Ordinal)
+        || n.Contains(".work_coordinator.returned.", StringComparison.Ordinal))).IsEmpty()
+      .Because("#1535: the work-batch SQL call these timed, counted and sized is gone, so the instruments are retired");
+  }
+
+  [Test]
   public async Task WCMetrics_Constructor_WithMeterFactory_UsesMeterFactoryAsync() {
     // Arrange
     var factory = new TestMeterFactory();
