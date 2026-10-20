@@ -45,3 +45,7 @@ __PRIORITY_BACKGROUND__ = 250
 __AUDIT_RECORD_TYPE__ = 'Whizbang.Core.SystemEvents.EventAudited'
 __AUDIT_ORIGINAL_EVENT_ID_PATH__ = ARRAY['p','OriginalEventId']
 __AUDIT_ORIGINAL_STREAM_POSITION_PATH__ = ARRAY['p','OriginalStreamPosition']
+
+# The event types no integrity digest folds: the audit system events, as the type-name part of a stored type name
+# (216, #1492). The work coordinator's recomputes bind the same list (DigestExemptTypes.TypeNames).
+__DIGEST_EXEMPT_TYPES__ = ARRAY['Whizbang.Core.SystemEvents.EventAudited','Whizbang.Core.SystemEvents.CommandAudited']
