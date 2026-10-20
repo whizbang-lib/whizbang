@@ -47,7 +47,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       });
 
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     var msg = _outboxMessage(streamId);
     await sut.QueueOutboxMessageAsync(msg);
@@ -89,7 +89,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options, auditDecisionHook: null);
 
     var msg = _eventOutboxMessage(_idProvider.NewGuid());
     await sut.QueueOutboxMessageAsync(msg);
@@ -131,7 +131,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
 
     var inner = new RecordingInnerStrategy();
     // No SystemEventOptions at all — the pre-audit wiring shape. Nothing extra may be batched.
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     await sut.QueueOutboxMessageAsync(_eventOutboxMessage(_idProvider.NewGuid()));
     await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -163,7 +163,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options, auditDecisionHook: null);
 
     // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
     await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));
@@ -181,7 +181,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   public async Task QueueOutboxMessage_SyncCall_ThrowsAsync() {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     var msg = _outboxMessage(_idProvider.NewGuid());
 
@@ -198,7 +198,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   public async Task QueueInboxMessage_DelegatesToInnerStrategyAsync() {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     sut.QueueInboxMessage(_inboxMessage(_idProvider.NewGuid()));
     sut.QueueInboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Stored);
@@ -235,7 +235,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       });
 
     var inner = new RecordingInnerStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     var m1 = _outboxMessage(streamId);
     var m2 = _outboxMessage(streamId);

@@ -48,7 +48,8 @@ public class WorkFlusherTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -186,7 +187,8 @@ public class WorkFlusherTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());

@@ -35,7 +35,7 @@ public class SystemEventEmitterBranchCoverageTests {
     var eventStore = new RecordingEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
     var emitter = new SystemEventEmitter(options, eventStore,
-      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: null!);
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: null!, auditDecisionHook: null);
     var envelope = new MessageEnvelope<UnregisteredAuditedEvent> {
       MessageId = MessageId.New(),
       Payload = new UnregisteredAuditedEvent("probe"),

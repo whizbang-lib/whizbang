@@ -42,7 +42,7 @@ public sealed class SystemEventEmitter(
     IEventStore systemEventStore,
     IServiceInstanceProvider instanceProvider,
     ILogger<SystemEventEmitter> logger,
-    IAuditDecisionHook? auditDecisionHook = null) : ISystemEventEmitter {
+    IAuditDecisionHook? auditDecisionHook) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = ArgumentGuard.NotNull(systemEventStore);

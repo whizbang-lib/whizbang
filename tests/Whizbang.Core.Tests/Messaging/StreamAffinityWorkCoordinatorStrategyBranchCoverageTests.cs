@@ -41,7 +41,8 @@ public class StreamAffinityWorkCoordinatorStrategyBranchCoverageTests {
       outboxBatch: batch,
       logger: NullLogger.Instance,
       systemEventOptions: auditOptions,
-      coalesceResolver: resolver);
+      coalesceResolver: resolver,
+      auditDecisionHook: null);
     var domainEvent = _eventOutboxMessage();
 
     await sut.QueueOutboxMessageAsync(domainEvent);

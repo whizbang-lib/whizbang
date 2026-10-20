@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
 internal sealed class WorkCoordinatorQueues(
-    ILogger logger, CoalesceGroupResolver? coalesceResolver = null, IAuditDecisionHook? auditDecisionHook = null) {
+    ILogger logger, IAuditDecisionHook? auditDecisionHook, CoalesceGroupResolver? coalesceResolver = null) {
   private readonly ILogger _logger = logger;
   private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;

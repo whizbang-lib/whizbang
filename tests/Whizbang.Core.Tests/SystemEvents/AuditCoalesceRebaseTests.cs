@@ -197,7 +197,7 @@ public class AuditCoalesceRebaseTests {
     var tagOptions = new TagOptions();
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);  // REAL generated registry
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver, auditDecisionHook: null);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 
@@ -219,7 +219,7 @@ public class AuditCoalesceRebaseTests {
     var tagOptions = new TagOptions();
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver, auditDecisionHook: null);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 
@@ -242,7 +242,7 @@ public class AuditCoalesceRebaseTests {
     });
     SystemEventCoalesceDefaults.Apply(tagOptions, systemEventOptions);
     var resolver = new CoalesceGroupResolver(tagOptions, time);
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver, auditDecisionHook: null);
 
     queues.AddOutboxMessage(_domainEvent(), systemEventOptions);
 
