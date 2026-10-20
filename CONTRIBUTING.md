@@ -463,6 +463,10 @@ pull request, and every pull request is reviewed against the same standard.
   request that leaves any outcome of any hand-written decision untested, anywhere in `src/`, fails
   (a member excluded by the documented procedure in `ai-docs/coverage-exclusions.md` is not counted);
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
+- no dependency the pull request adds has a known vulnerability of moderate severity or higher, and every
+  dependency a package ships is under a license on the allow list in `.github/dependency-review-config.yml`
+  (**Gate · Dependency review** for npm and GitHub Actions; NuGetAudit at restore and the license check at
+  pack for NuGet). A license outside the list needs a reviewed exception in that file;
 - `dotnet format` makes no changes, and every source file carries the copyright and license header;
 - a change to the pipeline, the gates or the build inputs (the files `.github/CODEOWNERS` assigns to
   `build-admins`) is approved by a build admin on its latest commit, unless a build admin opened it

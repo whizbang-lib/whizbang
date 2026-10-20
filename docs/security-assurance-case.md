@@ -73,7 +73,7 @@ credentials. Whizbang runs with the application's privileges and cannot defend a
 | Improper integrity checking (CWE-354) | Offloaded bodies are verified against the SHA-256 hash in their claim before they are used; encrypted bodies also carry an authentication tag. |
 | Broken or risky cryptography (CWE-327) | Security relies only on AES-256-GCM from the .NET runtime with a fresh random key and nonce per body. MD5 and SHA-1 appear only to derive stable identifiers, never for protection. |
 | Exposure of sensitive information (CWE-200) | Field-level permissions can mask or redact fields for callers without access. Secret scanning runs on every push and pull request. |
-| Use of vulnerable components (CWE-1395) | Dependencies are pinned with committed lock files and restored in locked mode; Dependabot and a weekly OSV scan watch for advisories. |
+| Use of vulnerable components (CWE-1395) | Dependencies are pinned with committed lock files and restored in locked mode; NuGetAudit fails any restore that resolves a package with an advisory; a pull request cannot add a dependency with a known moderate or higher vulnerability (dependency review); Dependabot and a weekly OSV scan watch for advisories in what is already there. Every package ships a software bill of materials, and its dependencies' licenses are checked against an allow list when it is packed. |
 | Unverified downloads (CWE-494) | Stable releases carry a Sigstore-signed SLSA provenance statement; nuget.org adds its repository signature. See [Verifying a release](../SECURITY.md#verifying-a-release). |
 
 Every change also passes static analysis (CodeQL, SonarCloud, Roslyn analyzers with warnings as errors),
