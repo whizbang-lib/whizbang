@@ -103,7 +103,7 @@ BEGIN
     -- 114: emptiness probe, once per distinct stream per call, BEFORE this call's first
     -- insert for that stream (the loop is stream-ordered, so first encounter precedes all
     -- of the stream's inserts). FOR SHARE serializes against an in-flight completion of
-    -- the last pending row — see the header's MVCC lost-wakeup guard.
+    -- the last pending row; see the header's MVCC lost-wakeup guard.
     IF v_msg.stream_id IS NOT NULL AND NOT (v_msg.stream_id = ANY(v_probed_streams)) THEN
       v_probed_streams := array_append(v_probed_streams, v_msg.stream_id);
 
@@ -234,7 +234,7 @@ BEGIN
     END IF;
 
     -- Pinning is ownership/routing, unchanged by 114 (the cold-notify tracking that
-    -- used to ride this block is gone — the notify decision now keys on queue state).
+    -- used to ride this block is gone; the notify decision now keys on queue state).
     IF v_was_new AND v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
       INSERT INTO __SCHEMA__.wh_active_streams
         (stream_id, partition_number, assigned_instance_id, last_activity_at)
