@@ -308,6 +308,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline change now merges through the merge queue like any other change.
 
 ### Fixed
+- **A subscriber's integrity digests reported drift for every audit record it received (#1492).** A received audit
+  composite is fanned out into its records, which are stored as events under the origin's id, so the inbox emit chain
+  folded them into the origin's digest lane. The origin never stores the audit records it publishes, so reconciliation
+  saw rows the origin could not account for; and records the origin did store (the system event emitter appends them)
+  were answered for although no subscriber was sent them. Audit records (`EventAudited`, `CommandAudited`) are a
+  function of the event they audit and are now left out of every digest fold: both emit chains, the epoch seals, the
+  type-level answers and the work coordinator's recomputes and verification sweep. `DigestExemptTypes.TypeNames` names
+  them. Migration 216 removes the buckets and sealed epochs an earlier release folded for them, so stored digests agree
+  at once.
+- **Audit records were missing the event they audit, its stream position and its causation, and ignored the
+  audit decision hook on the main path (#1485).** Every `EventAudited` writer (the outbox audit path, the event
+  store decorator and `SystemEventEmitter`) now sets `OriginalEventId`, `CausationId`, `AuditReason` and
+  `AuditLevel`; the outbox path's `OriginalStreamPosition` is the audited event's stored version (it was always
+  0), filled in when the record is stored with or after its event (a record written before its event, which the
+  per-stream outbox batcher can do, keeps 0). The decorator's message overload now stores the event under the id
+  the record names. A registered `IAuditDecisionHook` now vetoes and names records on every path, and
+  `SystemEventEmitter` honors `AuditMode.OptIn` and takes an optional hook.
+  **Behavior changes:** audit records sent through the outbox now travel on one stream per tenant (the audit
+  ledger, `AuditLedger.StreamFor(tenant)` = UUIDv5 of the tenant under UUIDv5("sys-audit")) instead of one
+  stream per record, and a coalesced bundle of them rides the same stream; this pins a tenant's audit publishing
+  to one stream (one owner, ordered, and one session per tenant on a session-enabled transport). A receiving
+  service still stores each record on its own stream (the record's id), so perspectives over `EventAudited`
+  keep one row per record. The event store decorator's records are now transport-only, like the outbox path's:
+  the origin no longer writes them to its own event store, so a perspective over `EventAudited` in the
+  producing service itself sees no records from that path. Applies migration 216.
 - **The Dapper work coordinator ignored the configured schema (#1508).** Its statements used bare names resolved
   through the session's `search_path`, and maintenance, the orphan-inbox purge, the pending-message discard and the
   pending-stream check named `public` outright. A pooled connection (PgBouncer in transaction mode, for one) does

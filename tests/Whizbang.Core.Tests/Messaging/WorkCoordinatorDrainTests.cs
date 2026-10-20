@@ -195,7 +195,8 @@ public class WorkCoordinatorDrainTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: deferredChannel ?? new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null
     );
   }
 

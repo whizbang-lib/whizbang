@@ -28,7 +28,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_WithPendingAudits_AppendsAfterQueuedOutboxMessagesAsync() {
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null);
     var normalMessage = _createOutboxMessage();
     var auditMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
@@ -44,7 +44,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_NoPendingAudits_LeavesOutboxQueueUntouchedAsync() {
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null);
     var normalMessage = _createOutboxMessage();
     queues.AddOutboxMessage(normalMessage, systemEventOptions: null);
 
@@ -56,7 +56,7 @@ public class WorkCoordinatorQueuesTests {
 
   [Test]
   public async Task MergeAuditMessages_IsIdempotent_SecondCallAddsNothingAsync() {
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null);
     queues.PendingAuditMessages.Add(_createOutboxMessage());
 
     queues.MergeAuditMessages();

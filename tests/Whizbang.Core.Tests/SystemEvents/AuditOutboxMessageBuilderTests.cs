@@ -21,6 +21,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// </summary>
 [Category("SystemEvents")]
 public class AuditOutboxMessageBuilderTests {
+  private static readonly DateTimeOffset _fixedInstant = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   [Test]
   public async Task TryBuildAuditMessage_UnresolvableEventType_LogsWarningAsync() {
     // An event type name that Type.GetType can't resolve makes the audit include/exclude decision
@@ -431,18 +433,17 @@ public class AuditOutboxMessageBuilderTests {
   }
 
   [Test]
-  public async Task TryBuildAuditMessage_SetsStreamId_ToAuditEventIdAsync() {
+  public async Task TryBuildAuditMessage_SetsStreamId_ToTheTenantsLedgerStreamAsync() {
     // Arrange
-    var message = _createOutboxMessage(isEvent: true);
+    var message = _createOutboxMessage(isEvent: true, tenantId: "tenant-ledger");
     var options = _createOptions(auditEnabled: true);
 
     // Act
     var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
 
-    // Assert - StreamId should be the audit event's Id (a new GUID)
+    // Assert - the record rides its tenant's ledger, not a stream of its own (#1485)
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!.StreamId).IsNotNull();
-    await Assert.That(result.StreamId!.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(result!.StreamId).IsEqualTo(AuditLedger.StreamFor("tenant-ledger"));
   }
 
   [Test]
@@ -464,7 +465,8 @@ public class AuditOutboxMessageBuilderTests {
 
   [Test]
   public async Task TryBuildAuditMessage_SetsOriginalStreamPosition_ToZeroAsync() {
-    // Arrange - Position not available from outbox message, should default to 0
+    // Arrange - the version is assigned when the event is stored, after this builder runs; the outbox
+    // store fills it in (#1485, locked by AuditRecordStreamPositionSqlTests), so the builder writes 0
     var message = _createOutboxMessage(isEvent: true);
     var options = _createOptions(auditEnabled: true);
 
@@ -544,6 +546,67 @@ public class AuditOutboxMessageBuilderTests {
     await Assert.That(result.Scope!.UserId).IsEqualTo("scope-user");
   }
 
+  [Test]
+  public async Task TryBuildAuditMessage_TwoRecordsOfOneTenant_ShareTheLedgerStreamAsync() {
+    var options = _createOptions(auditEnabled: true);
+
+    var first = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
+    var second = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-a"), options);
+    var other = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true, tenantId: "tenant-b"), options);
+
+    await Assert.That(second!.StreamId).IsEqualTo(first!.StreamId)
+      .Because("one tenant's audit records form one orderable ledger");
+    await Assert.That(other!.StreamId).IsNotEqualTo(first.StreamId)
+      .Because("a ledger never mixes tenants");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_NoScope_LandsOnTheEmptyTenantLedgerAsync() {
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(_createOutboxMessage(isEvent: true), _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.StreamId).IsEqualTo(AuditLedger.StreamFor(null));
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_SetsCausationId_FromTheAuditedEnvelopeAsync() {
+    var causation = MessageId.New();
+    var message = _createOutboxMessage(isEvent: true, causationIdInHop: causation);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("CausationId").GetString()).IsEqualTo(causation.ToString())
+      .Because("the record names what caused the audited event, as the other audit writers do");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_CorrelationOnTheHop_IsCarriedAsync() {
+    var correlation = CorrelationId.New();
+    var message = _createOutboxMessage(isEvent: true, correlationIdOnHop: correlation);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("CorrelationId").GetString()).IsEqualTo(correlation.ToString())
+      .Because("the envelope carries correlation on the hop itself; reading only the hop's metadata dictionary lost it");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_MarkedEvent_CarriesTheAttributesReasonAndLevelAsync() {
+    var message = _createOutboxMessage(
+      isEvent: true,
+      messageType: typeof(TestMarkedForAuditEvent).AssemblyQualifiedName);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    var payload = result!.Envelope.Payload;
+    await Assert.That(payload.GetProperty("AuditReason").GetString()).IsEqualTo("Financial transaction");
+    var level = payload.GetProperty("AuditLevel");
+    var isCritical = level.ValueKind == JsonValueKind.Number
+      ? level.GetInt32() == (int)Whizbang.Core.Audit.AuditLevel.Critical
+      : level.GetString() == nameof(Whizbang.Core.Audit.AuditLevel.Critical);
+    await Assert.That(isCritical).IsTrue()
+      .Because("the attribute's level travels with the record, as the decorator path already does");
+  }
+
   #endregion
 
   // The sliding-ship floor tests moved to AuditCoalesceRebaseTests with intent preserved:
@@ -584,7 +647,7 @@ public class AuditOutboxMessageBuilderTests {
   internal sealed record TestExcludedFromAuditEvent : IEvent;
 
   // Event explicitly marked for audit (not excluded)
-  [AuditEvent(Reason = "Financial transaction")]
+  [AuditEvent(Reason = "Financial transaction", Level = Whizbang.Core.Audit.AuditLevel.Critical)]
   internal sealed record TestMarkedForAuditEvent : IEvent;
 
   #endregion
@@ -601,7 +664,9 @@ public class AuditOutboxMessageBuilderTests {
       string? userId = null,
       string? correlationIdInHop = null,
       bool includeHops = true,
-      bool hopMetadataWithoutCorrelation = false) {
+      bool hopMetadataWithoutCorrelation = false,
+      MessageId? causationIdInHop = null,
+      CorrelationId? correlationIdOnHop = null) {
     var msgId = messageId ?? Guid.NewGuid();
     var body = payload ?? JsonSerializer.SerializeToElement(new { test = "data" });
 
@@ -644,7 +709,9 @@ public class AuditOutboxMessageBuilderTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = _fixedInstant,
+          CausationId = causationIdInHop,
+          CorrelationId = correlationIdOnHop
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

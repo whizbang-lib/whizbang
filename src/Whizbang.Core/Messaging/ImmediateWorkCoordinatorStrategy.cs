@@ -39,6 +39,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IDeferredOutboxChannel deferredChannel,
   IOptions<SystemEventOptions> systemEventOptions,
   IWorkChannelWriter workChannelWriter,
+  IAuditDecisionHook? auditDecisionHook,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
@@ -56,7 +57,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.

@@ -34,7 +34,7 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   public async Task FlushAsync_DelegatesToInnerStrategyWithSameFlagsAndTokenAsync() {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlushInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
     using var cts = new CancellationTokenSource();
 
     await sut.FlushAsync(WorkBatchOptions.SkipInboxClaiming, cts.Token);
@@ -54,7 +54,7 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var expectedBatch = new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
     var inner = new RecordingFlushInner { BatchToReturn = expectedBatch };
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
     using var cts = new CancellationTokenSource();
 
     var actualBatch = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None, cts.Token);
@@ -74,7 +74,7 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   public async Task IWorkFlusher_FlushAsync_InnerImplementsIWorkFlusher_DelegatesToInnersIWorkFlusherAsync() {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlusherInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
     var flusher = (IWorkFlusher)sut;
     using var cts = new CancellationTokenSource();
 
@@ -94,7 +94,7 @@ public class StreamAffinityWorkCoordinatorStrategyCoverageTests {
   public async Task IWorkFlusher_FlushAsync_InnerDoesNotImplementIWorkFlusher_FallsBackToFlushAsyncWithNoneFlagsAsync() {
     await using var batch = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask, logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance);
     var inner = new RecordingFlushInner();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
     var flusher = (IWorkFlusher)sut;
     using var cts = new CancellationTokenSource();
 

@@ -61,15 +61,31 @@ public static class SystemEventCoalesceDefaults {
   /// <returns>The built audit composite.</returns>
   public static CompositeEventBase BuildAuditComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
+    // The ledger (#1485): records of one tenant share one stream, and a fold never mixes tenants, so a bundle of
+    // them inherits it. A bundle whose singles do not share a stream (a host override, an older record) gets a
+    // stream of its own, as before.
+    var streams = batch.Singles.Select(m => m.StreamId ?? Guid.Empty).Distinct().ToList();
     return new AuditEventsComposite {
-      StreamId = TrackedGuid.New(),
+      StreamId = streams is [var shared] && shared != Guid.Empty ? shared : TrackedGuid.New(),
       Atomicity = batch.Atomicity,
       InnerPayloads = [.. batch.Singles.Select(m => m.Envelope.Payload)],
       InnerTypeNames = [.. batch.Singles.Select(m => m.MessageType)],
       InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)],
-      // #596: each single's OWN stream rides the wire, so the receiver's expansion restores
-      // per-stream identity instead of collapsing every child onto the composite's stream.
-      InnerStreamIds = [.. batch.Singles.Select(m => m.StreamId ?? Guid.Empty)]
+      // #596: each record's OWN stream rides the wire, so the receiver's expansion restores per-record
+      // identity instead of collapsing every child onto one stream. A record's own stream is its id, not the
+      // ledger it travels on: the receiver keys each stored row by the stream its child lands on, so
+      // restoring children onto the shared ledger would fold a tenant's whole trail into one row.
+      InnerStreamIds = [.. batch.Singles.Select(_recordStreamOf)]
     };
+  }
+
+  private static Guid _recordStreamOf(OutboxMessage single) {
+    var payload = single.Envelope.Payload;
+    return payload.ValueKind == System.Text.Json.JsonValueKind.Object
+        && payload.TryGetProperty(nameof(EventAudited.Id), out var id)
+        && id.ValueKind == System.Text.Json.JsonValueKind.String
+        && id.TryGetGuid(out var recordId)
+      ? recordId
+      : single.StreamId ?? Guid.Empty;
   }
 }

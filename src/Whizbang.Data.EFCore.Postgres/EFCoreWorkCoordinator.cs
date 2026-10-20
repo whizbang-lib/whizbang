@@ -73,6 +73,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   // one, so digests, checkpoint counts and re-delivery skip it. Written into the SQL as a literal.
   private const int AT_MOST_ONCE_FLAG = (int)EventFlags.AtMostOnce;
 
+  // The event types no digest folds (#1492): the audit system events, matched on the type-name part of the
+  // stored event_type. Bound as @p_digest_exempt; the SQL folds read the same list as __DIGEST_EXEMPT_TYPES__.
+  private const string P_DIGEST_EXEMPT = "p_digest_exempt";
+
   // The payload builders below write JSON by hand, so they need the lower-case spellings:
   // StringBuilder.Append(bool) would emit "True"/"False", which no JSON reader accepts.
   private const string JSON_TRUE = "true";
@@ -1528,6 +1532,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND ((@p_until::bigint) IS NULL OR es.origin_commit_sequence < @p_until)
           AND COALESCE(es.flags, 0) & 8 = 0
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
@@ -1543,6 +1548,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Value = (object?)untilSequence ?? DBNull.Value
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+      _addDigestExemptParam(cmd);
 
       return (IReadOnlyList<StreamDigest>?)await _readStreamDigestsAsync(
         cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken).ConfigureAwait(false);
@@ -1658,6 +1664,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
             AND ((@p_types::text[]) IS NULL OR l.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
             AND COALESCE(l.flags, 0) & 8 = 0
             AND COALESCE(l.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+            AND split_part(l.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
             AND l.created_at < NOW() - @p_settle::interval
         ),
         pick AS (
@@ -1682,6 +1689,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_LIMIT, pageBound + 1));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+      _addDigestExemptParam(cmd);
 
       var rows = new List<StreamDigest>();
       await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
@@ -3276,12 +3284,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
           AND ((@p_types::text[]) IS NULL OR es.event_type IN (SELECT {BuildSchemaQualifiedName(schema, NORMALIZE_EVENT_TYPE_FUNCTION)}(t) FROM unnest(@p_types::text[]) AS t))
           AND COALESCE(es.flags, 0) & 8 = 0
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3
         ORDER BY 1, 2, 3
         """;
       AddDigestFilterParams(cmd, originServiceId, eventTypes);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+      _addDigestExemptParam(cmd);
 
       return await _readStreamDigestsAsync(cmd, hasUpdatedAt: false, typeLevel: false, cancellationToken)
         .ConfigureAwait(false);
@@ -3454,6 +3464,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         FROM {schema}.wh_event_store es
         WHERE COALESCE(es.flags, 0) & 8 = 0
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
           AND es.created_at < NOW() - @p_settle::interval
         GROUP BY 1, 2, 3, 4
       ),
@@ -3496,6 +3507,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
              (SELECT COUNT(*)::int FROM drift_added)
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
+    _addDigestExemptParam(cmd);
   }
 
   /// <summary>
@@ -3516,6 +3528,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = eventTypes is null ? DBNull.Value : eventTypes.ToArray()
     });
   }
+
+  // Binds the digest exemption every recompute folds against (#1492).
+  private static void _addDigestExemptParam(System.Data.Common.DbCommand cmd) =>
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_DIGEST_EXEMPT, NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = Whizbang.Core.SystemEvents.DigestExemptTypes.TypeNames.ToArray()
+    });
 #pragma warning restore RCS1158
 
   /// <inheritdoc />

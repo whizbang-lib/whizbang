@@ -39,7 +39,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task AddOutboxMessage_BoundTag_StampsGroupAndFloorAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: _resolver(time, out _));
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null, coalesceResolver: _resolver(time, out _));
 
     queues.AddOutboxMessage(_taggedMessage(), systemEventOptions: null);
 
@@ -50,7 +50,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task AddOutboxMessage_UnboundType_QueuesUntouchedAsync() {
     var time = new FakeTimeProvider(_testNow);
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: _resolver(time, out _));
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null, coalesceResolver: _resolver(time, out _));
 
     queues.AddOutboxMessage(_untaggedMessage(), systemEventOptions: null);
 
@@ -60,7 +60,7 @@ public class CoalesceMintStampingTests {
 
   [Test]
   public async Task AddOutboxMessage_NoResolver_BehavesExactlyAsBeforeAsync() {
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null);
 
     queues.AddOutboxMessage(_taggedMessage(), systemEventOptions: null);
 
@@ -83,7 +83,7 @@ public class CoalesceMintStampingTests {
     ]);
     var systemEventOptions = new SystemEventOptions { AuditShipSlideSeconds = 0 };
     systemEventOptions.EnableEventAudit();
-    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, coalesceResolver: resolver);
+    var queues = new WorkCoordinatorQueues(logger: NullLogger.Instance, auditDecisionHook: null, coalesceResolver: resolver);
 
     queues.AddOutboxMessage(_untaggedMessage(), systemEventOptions);
 
@@ -104,6 +104,7 @@ public class CoalesceMintStampingTests {
       inner: new RecordingInner(),
       outboxBatch: batch,
       logger: NullLogger.Instance,
+      auditDecisionHook: null,
       systemEventOptions: null,
       coalesceResolver: _resolver(time, out _));
 
@@ -117,7 +118,7 @@ public class CoalesceMintStampingTests {
   [Test]
   public async Task StreamAffinity_NoResolver_AppendsUntouchedAsync() {
     var batch = new RecordingBatchStrategy();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: new RecordingInner(), outboxBatch: batch, logger: NullLogger.Instance);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: new RecordingInner(), outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     await sut.QueueOutboxMessageAsync(_taggedMessage());
 
@@ -148,6 +149,7 @@ public class CoalesceMintStampingTests {
       deferredChannel: deferredChannel,
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null,
       coalesceResolver: _resolver(time, out _));
 
     await strategy.FlushAsync(WorkBatchOptions.None);

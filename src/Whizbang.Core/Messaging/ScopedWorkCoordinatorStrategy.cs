@@ -31,6 +31,8 @@ public record ScopedWorkCoordinatorDependencies {
   public SystemEvents.SystemEventOptions? SystemEventOptions { get; init; }
   /// <summary>Coalesce-group resolver for tag-bound coalesce stamping at the mint seam.</summary>
   public Tags.CoalesceGroupResolver? CoalesceResolver { get; init; }
+  /// <summary>The registered audit decision hook, consulted for every audit record this strategy builds.</summary>
+  public SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; init; }
 }
 
 /// <summary>
@@ -69,7 +71,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.CoalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver);
 
   private bool _disposed;
 

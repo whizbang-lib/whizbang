@@ -17,8 +17,10 @@ namespace Whizbang.Core.Messaging;
 /// helpers. This is a composition helper -- each strategy owns an instance and delegates
 /// queue operations to it while keeping its own FlushAsync, logging, and lifecycle logic.
 /// </summary>
-internal sealed class WorkCoordinatorQueues(ILogger logger, CoalesceGroupResolver? coalesceResolver = null) {
+internal sealed class WorkCoordinatorQueues(
+    ILogger logger, IAuditDecisionHook? auditDecisionHook, CoalesceGroupResolver? coalesceResolver = null) {
   private readonly ILogger _logger = logger;
+  private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   internal readonly List<OutboxMessage> OutboxMessages = [];
   internal readonly List<OutboxMessage> PendingAuditMessages = [];
@@ -43,7 +45,7 @@ internal sealed class WorkCoordinatorQueues(ILogger logger, CoalesceGroupResolve
     // Audit messages are collected separately and merged AFTER lifecycle stages
     // to avoid SecurityContextRequiredException during lifecycle processing.
     if (message.IsEvent && systemEventOptions?.EventAuditEnabled == true) {
-      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions, _logger);
+      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, systemEventOptions, _logger, _auditDecisionHook);
       if (auditMessage != null) {
         // The audit companion rides the SAME generic path — with the built-in sys-audit
         // binding registered, this is where it gains its group + floor.
