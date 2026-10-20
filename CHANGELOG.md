@@ -300,6 +300,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **At-most-once schedule occurrences were folded into integrity digests, counted in checkpoints and selected for
+  re-delivery (#1484).** Every exclusion looked for the delivery guarantee in the stored event metadata, which never
+  carried it, so none matched: a consumer comparing digests saw each occurrence as missing, and re-delivery could send
+  an occurrence its schedule declared at most once. The guarantee is now a flag on the stored event
+  (`EventFlags.AtMostOnce`, value 32), set when the occurrence is spawned, and the stream and epoch digests, the
+  verification sweep, the checkpoint counts and the re-delivery selection leave flagged events out. Migration 214 flags
+  occurrences already stored (read from the outbox row when it remains, otherwise from the schedule), removes them
+  from the stored digests and sealed epochs, and advances the origin generation once, so consumers reset their seals
+  and re-verify instead of reporting drift. The digest and checkpoint queries no longer read the event body to apply
+  the filter.
 - **A multi-stream run over many streams ran its host out of memory.** A run stored the whole command, its stream ids
   included, and every claimed stream read and parsed it again, so a run's cost grew with the square of its stream
   count: an in-place rebuild over 127,288 streams parsed about 630 GB and OOMKilled its pods. A run's payload now
