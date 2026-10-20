@@ -250,6 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **The Dapper work coordinator ignored the configured schema (#1508).** Its statements used bare names resolved
+  through the session's `search_path`, and maintenance, the orphan-inbox purge, the pending-message discard and the
+  pending-stream check named `public` outright. A pooled connection (PgBouncer in transaction mode, for one) does
+  not carry a configured `search_path` to the server connection a statement lands on, so a host whose framework
+  tables live in another schema read and wrote `public` or failed there. Every coordinator statement is now
+  qualified with the configured schema: the new optional `schema` argument of the `DapperWorkCoordinator`
+  constructor, else the first schema the connection string's `Search Path` names, else the server's
+  `current_schema()`, asked once on first use and kept (which honors a default set on the role or database).
 - **Startup failed with `ITransport (required by TransportConsumerWorker)` when no transport was composed
   (#1529).** Registration validation checked every requirement in the generated manifest, including types the
   composition never registers, so `AddWhizbang()` with a storage driver and no `AddTransportConsumer()` could not

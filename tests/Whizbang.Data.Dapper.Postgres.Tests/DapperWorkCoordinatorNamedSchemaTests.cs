@@ -217,6 +217,43 @@ public class DapperWorkCoordinatorNamedSchemaTests {
     await Assert.That(results).IsNotEmpty();
   }
 
+  [Test]
+  public async Task WithNoSchemaGiven_TheConnectionStringsSearchPathConfiguresItAsync() {
+    var configured = new NpgsqlConnectionStringBuilder(_database.ConnectionString) { SearchPath = $"{SCHEMA}, public" }.ConnectionString;
+    var coordinator = new DapperWorkCoordinator(configured, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), _log);
+    var instanceId = Guid.CreateVersion7();
+
+    await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, SERVICE, HOST, 7));
+
+    await Assert.That(await _countAsync("wh_service_instances", "instance_id = @id", new { id = instanceId })).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task WithNothingConfigured_TheServersDefaultIsAskedOnceAndKeptAsync() {
+    // A default set on the database (or the role) is what the server applies to every session, pooled ones included.
+    await _executeAsync($"ALTER DATABASE \"{_database.Name}\" SET search_path = {SCHEMA}", new { });
+    // Unpooled, so every call is a new session that reads the database's current default.
+    var unpooled = new NpgsqlConnectionStringBuilder(_database.ConnectionString) { Pooling = false }.ConnectionString;
+    var coordinator = new DapperWorkCoordinator(unpooled, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), _log);
+    await coordinator.SyncDebugRetentionSettingAsync(debugMode: true);
+
+    await _executeAsync($"ALTER DATABASE \"{_database.Name}\" RESET search_path", new { });
+    await coordinator.SyncDebugRetentionSettingAsync(debugMode: false);
+
+    await Assert.That(await _scalarAsync<string?>(
+      $"SELECT setting_value FROM {SCHEMA}.wh_settings WHERE setting_key = 'debug_mode'", null)).IsEqualTo("false")
+      .Because("the schema the first call resolved is kept, so a later session that resolves elsewhere still lands here");
+  }
+
+  [Test]
+  public async Task ASessionThatResolvesNoSchema_IsTakenAsPublicAsync() {
+    var nowhere = new NpgsqlConnectionStringBuilder(_database.ConnectionString) { SearchPath = "no_such_schema" }.ConnectionString;
+    await using var connection = new NpgsqlConnection(nowhere);
+    await connection.OpenAsync();
+
+    await Assert.That(await DapperCoordinatorSchema.CurrentAsync(connection, CancellationToken.None)).IsEqualTo("public");
+  }
+
   private static OutboxMessage _outbox(Guid messageId, Guid streamId) => new() {
     MessageId = messageId,
     Destination = "named-schema-topic",
