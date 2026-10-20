@@ -118,7 +118,8 @@ public sealed class UnknownConfigurationKeyCheckTests {
     await Assert.That(removed).IsNotNull();
     await Assert.That(removed!.ReplacedBy).Contains("Whizbang:Workers:Maintenance:IntervalMinutes");
     await Assert.That(removed.ReplacedBy).Contains("Whizbang:Housekeeping:SettledCooldown");
-    await Assert.That(removed.ReplacedBy).Contains("Whizbang:Housekeeping:MaxConsecutiveDeferrals");
+    await Assert.That(removed.ReplacedBy).Contains("Whizbang:Housekeeping:MaxDeferral");
+    await Assert.That(removed.ReplacedBy).DoesNotContain("Whizbang:Housekeeping:MaxConsecutiveDeferrals");
     await Assert.That(RemovedConfigurationKeys.Find("Whizbang:Workers:Maintenance:IntervalMinutes")).IsNull();
   }
 
