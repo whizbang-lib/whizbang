@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.RegularExpressions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -223,6 +224,35 @@ public class MigrationSchemaQualifierTests {
       GRANT EXECUTE ON FUNCTION "svc".perform_maintenance TO PUBLIC;
       COMMENT ON FUNCTION "svc".perform_maintenance IS 'Runs perform_maintenance work';
       """);
+  }
+
+  [Test]
+  public async Task EveryListedFunction_IsOneAMigrationDefinesAsync() {
+    // The list once named four functions no migration had defined for a long time (#1463), so it
+    // read as a description of the current function set while qualifying nothing. Each entry has to
+    // be defined by some migration, written qualified or bare; line comments are dropped first so a
+    // name mentioned in prose does not count as a definition.
+    var assembly = typeof(PostgresMigrationProvider).Assembly;
+    const string prefix = "Whizbang.Data.Postgres.Migrations.";
+    var definitions = new List<string>();
+    foreach (var resource in assembly.GetManifestResourceNames()
+               .Where(n => n.StartsWith(prefix, StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal))) {
+      using var stream = assembly.GetManifestResourceStream(resource)!;
+      using var reader = new StreamReader(stream);
+      definitions.Add(Regex.Replace(await reader.ReadToEndAsync(), "--[^\n]*", string.Empty, RegexOptions.None, TimeSpan.FromSeconds(5)));
+    }
+
+    var undefined = MigrationSchemaQualifier.FunctionNames
+      .Where(name => !definitions.Any(sql => Regex.IsMatch(
+        sql,
+        $@"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:__SCHEMA__\.)?{Regex.Escape(name)}\s*\(",
+        RegexOptions.IgnoreCase,
+        TimeSpan.FromSeconds(5))))
+      .ToList();
+
+    await Assert.That(definitions).IsNotEmpty().Because("the migrations are embedded in Whizbang.Data.Postgres");
+    await Assert.That(undefined).IsEmpty()
+      .Because($"every qualified function name must be one a migration defines; undefined: {string.Join(", ", undefined)}");
   }
 
   [Test]
