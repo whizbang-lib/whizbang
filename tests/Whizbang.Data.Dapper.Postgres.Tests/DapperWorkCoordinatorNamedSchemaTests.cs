@@ -38,6 +38,9 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 public class DapperWorkCoordinatorNamedSchemaTests {
+  // Later than any database clock reads, so a hold or deferral is still in force when the sweep runs.
+  private static readonly DateTimeOffset _heldUntil = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private const string SCHEMA = "svc_coord";
   private const string SERVICE = "named-schema-svc";
   private const string HOST = "named-schema-host";
@@ -215,6 +218,60 @@ public class DapperWorkCoordinatorNamedSchemaTests {
 
     var results = await coordinator.PerformMaintenanceAsync();
     await Assert.That(results).IsNotEmpty();
+  }
+
+  [Test]
+  public async Task RowRetention_RunsInTheConfiguredSchemaAsync() {
+    // The Dapper driver does not write the perspective registry itself, so the row a host's perspective would have
+    // is seeded here, with its table, in the configured schema.
+    const string TABLE = "wh_per_named_retained";
+    const string ANNOUNCER = "wh_per_named_announcer";
+    const string CLR = "Named.Retained.Model";
+    await _executeAsync($@"
+      CREATE TABLE {SCHEMA}.{TABLE} (
+        id UUID NOT NULL PRIMARY KEY, data JSONB NOT NULL, metadata JSONB NOT NULL, scope JSONB,
+        created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
+        sys_created_at TIMESTAMPTZ, sys_updated_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, version INTEGER NOT NULL);
+      CREATE TABLE {SCHEMA}.{ANNOUNCER} (id UUID NOT NULL PRIMARY KEY);
+      INSERT INTO {SCHEMA}.wh_perspective_registry (clr_type_name, table_name, schema_json, schema_hash, service_name)
+      VALUES (@c, @t, '{{}}'::jsonb, 'h', 'svc');", new { c = CLR, t = TABLE });
+    var expired = Guid.CreateVersion7();
+    var kept = Guid.CreateVersion7();
+    foreach (var (id, hours) in new[] { (expired, 48), (kept, 0) }) {
+      await _executeAsync($@"
+        INSERT INTO {SCHEMA}.{TABLE} (id, data, metadata, scope, created_at, updated_at, version)
+        VALUES (@id, '{{}}'::jsonb, '{{}}'::jsonb, '{{}}'::jsonb, NOW() - make_interval(hours => @h), NOW() - make_interval(hours => @h), 1)",
+        new { id, h = hours });
+    }
+    var coordinator = _build();
+    var keptRef = new Whizbang.Core.Lifecycle.PerspectiveRowRef(TABLE, kept);
+
+    await coordinator.SyncPerspectiveRetentionAsync([new PerspectiveRetentionDeclaration(CLR, true, 3600, null, 5, "u")]);
+    await Assert.That(await coordinator.CountPerspectiveRetentionBacklogAsync(CLR)).IsEqualTo(1L);
+    await Assert.That(await coordinator.GetPerspectiveRowsAboutToReapAsync([CLR])).IsEmpty()
+      .Because("the adoption gate withholds an unacknowledged perspective from the collect phase too");
+    await Assert.That((await coordinator.AdoptEnrolledPerspectiveRetentionAsync()).Single().Backlog).IsEqualTo(1L);
+    await coordinator.AcknowledgeRetentionEnforcementAsync(CLR);
+    await Assert.That((await coordinator.GetPerspectiveRowsAboutToReapAsync([CLR])).Single().RowId).IsEqualTo(expired);
+    await Assert.That((await coordinator.ReapEnrolledPerspectiveRowsAsync()).RowsAffected).IsEqualTo(1);
+    await Assert.That(await coordinator.TryClaimRowCapSweepAsync(TimeSpan.FromHours(1))).IsTrue();
+    await Assert.That((await coordinator.ReapPerspectiveRowCapsAsync()).RowsAffected).IsEqualTo(0);
+
+    await Assert.That((await coordinator.DrainRowEvictionJournalAsync()).Single().RowId).IsEqualTo(expired);
+    await coordinator.RequeueRowEvictionsAsync([keptRef]);
+    await Assert.That(await _countAsync("wh_row_eviction_journal", "row_id = @r", new { r = kept })).IsEqualTo(1L);
+    await Assert.That((await coordinator.GetPerspectiveTableNamesAsync([CLR])).Single().TableName).IsEqualTo(TABLE);
+    await Assert.That((await coordinator.GetPerspectiveRowsByIdsAsync(CLR, TABLE, [kept])).Single().RowId).IsEqualTo(kept);
+
+    await coordinator.HoldPerspectiveRowDestructionAsync([keptRef], _heldUntil);
+    await Assert.That(await coordinator.RecordPerspectiveRowDestructionFailureAsync(
+      [keptRef], TimeSpan.FromMinutes(1), 3, Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenKeep)).IsEqualTo(1);
+    await Assert.That(await coordinator.CascadeDeletePerspectiveRowsAsync(TABLE, [kept])).IsEqualTo(0);
+    await coordinator.ReleasePerspectiveRowHoldsAsync([keptRef]);
+    await Assert.That(await _countAsync("wh_perspective_row_hold", "row_id = @r", new { r = kept })).IsEqualTo(0L);
+    await Assert.That(await coordinator.ReconcileFollowerPresenceAsync(TABLE, [ANNOUNCER], [kept])).IsEqualTo(1)
+      .Because("the announcer is looked up in the configured schema too; it lacks the row, so the unheld row goes");
+    await _assertNoMissedRingsAsync();
   }
 
   [Test]
