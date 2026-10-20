@@ -47,6 +47,9 @@ DECLARE
   v_partition INTEGER;
   v_was_new BOOLEAN;
   v_inserted_event_ids UUID[] := ARRAY[]::UUID[];
+  -- 216: streams this call pins, written after the audit position fill so the work tables stay in canonical lock order.
+  v_pin_streams UUID[] := ARRAY[]::UUID[];
+  v_pin_partitions INTEGER[] := ARRAY[]::INTEGER[];
   -- 114 edge-notify state: streams probed once per call (first encounter, BEFORE this
   -- call inserts for them), the probed-empty subsets per category, and the notify sets.
   v_probed_streams UUID[] := ARRAY[]::UUID[];
@@ -235,12 +238,12 @@ BEGIN
 
     -- Pinning is ownership/routing, unchanged by 114 (the cold-notify tracking that
     -- used to ride this block is gone; the notify decision now keys on queue state).
+    -- 216: the pin is collected here and written after the audit position fill below, so this function
+    -- locks wh_outbox before wh_active_streams. The emit chain reads a stream's pinned owner and falls back
+    -- to p_instance_id when none is pinned, which is the owner the pin would have named.
     IF v_was_new AND v_msg.stream_id IS NOT NULL AND p_instance_id IS NOT NULL THEN
-      INSERT INTO __SCHEMA__.wh_active_streams
-        (stream_id, partition_number, assigned_instance_id, last_activity_at)
-      VALUES
-        (v_msg.stream_id, COALESCE(v_partition, 0), p_instance_id, p_now)
-      ON CONFLICT (stream_id) DO NOTHING;
+      v_pin_streams := array_append(v_pin_streams, v_msg.stream_id);
+      v_pin_partitions := array_append(v_pin_partitions, COALESCE(v_partition, 0));
     END IF;
 
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
@@ -277,6 +280,17 @@ BEGIN
     FROM unnest(v_audit_record_ids, v_audited_event_ids) AS a(record_id, audited_event_id)
     JOIN __SCHEMA__.wh_event_store es ON es.event_id = a.audited_event_id
     WHERE o.message_id = a.record_id;
+  END IF;
+
+  -- Pin the streams collected above: the first message of a stream names its partition, as the per-message
+  -- insert did. Sorted by stream id, so two calls pinning the same streams take them in one order.
+  IF cardinality(v_pin_streams) > 0 THEN
+    INSERT INTO __SCHEMA__.wh_active_streams
+      (stream_id, partition_number, assigned_instance_id, last_activity_at)
+    SELECT DISTINCT ON (p.stream_id) p.stream_id, p.partition_number, p_instance_id, p_now
+    FROM unnest(v_pin_streams, v_pin_partitions) WITH ORDINALITY AS p(stream_id, partition_number, ord)
+    ORDER BY p.stream_id, p.ord
+    ON CONFLICT (stream_id) DO NOTHING;
   END IF;
 
   IF cardinality(v_notify_outbox_streams) > 0 THEN

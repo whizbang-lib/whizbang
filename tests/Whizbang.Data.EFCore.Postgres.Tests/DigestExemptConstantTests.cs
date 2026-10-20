@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// disagree on every audit bucket (#1492).
 /// </summary>
 [Category("Unit")]
+[Category("Shard5")]
 public class DigestExemptConstantTests {
   [Test]
   public async Task MigrationConstant_NamesTheSameTypesAsTheCoordinatorAsync() {
