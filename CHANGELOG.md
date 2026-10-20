@@ -166,6 +166,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read model was a persisted row either way, and a model held in one instance's memory would be lost whenever its
   stream moved. Whether an ephemeral event can stay local and in memory is open as #1549. **Upgrade:** remove
   `Storage = TransientStorage.InMemory`; the default, `PersistedRow`, is what those types already got.
+- **Breaking (packaging): no shipped package depends on a dependency under a non-open-source license (#1552).**
+  `Whizbang.Transports.HotChocolate` depends on `HotChocolate` instead of `HotChocolate.AspNetCore`, which also
+  brought the Nitro IDE under the ChilliCream License. `Whizbang.Data.Dapper.Custom` no longer references
+  `Microsoft.Data.SqlClient`, which nothing used and which brought the SNI runtime under Microsoft's proprietary
+  terms. `Whizbang.Migrate` and `Whizbang.CLI` no longer bundle LibGit2Sharp, which nothing used and whose native
+  libgit2 is GPL-2.0. **Upgrade:** an application that serves GraphQL over HTTP (`AddGraphQLServer`, `MapGraphQL`)
+  adds a `HotChocolate.AspNetCore` package reference itself. An application that used SQL Server through the
+  transitive `Microsoft.Data.SqlClient` references it directly.
 - **Breaking (dispatch): every local receptor for a message runs, on every call (#1412).** A send or a local
   invoke ran only the first receptor for a command while a publish ran them all. Now every entry runs them all,
   in `[ReceptorPriority]` order. When a caller asks for a result and several receptors return one, the earliest

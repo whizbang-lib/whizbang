@@ -21,6 +21,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <!-- Serves GraphQL over HTTP (AddGraphQLServer); the transport no longer brings it (#1552). -->
+    <PackageReference Include="HotChocolate.AspNetCore" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <!-- Reference the generator to discover perspectives in this project -->
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
@@ -49,6 +51,9 @@
   </ItemGroup>
 
   <PropertyGroup>
+    <!-- HotChocolate.AspNetCore adds global usings (HotChocolate, GreenDonut) to a project that references it directly,
+         which make System.IO.Path and KeyNotFoundException ambiguous here. -->
+    <HotChocolateImplicitUsings>disable</HotChocolateImplicitUsings>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>

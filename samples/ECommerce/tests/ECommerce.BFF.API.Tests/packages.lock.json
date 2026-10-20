@@ -470,24 +470,6 @@
           "QRCoder": "1.7.0"
         }
       },
-      "HotChocolate": {
-        "type": "Transitive",
-        "resolved": "15.1.14",
-        "contentHash": "2UtWHtv2k/3FwRC4L9gdXkf9R9lhm1G/oN6w+zpXXVBeSHMoogPyqGeNTCYnDrG0+OyvhhP8vopWu9Ihd7dgAA==",
-        "dependencies": {
-          "HotChocolate.Authorization": "15.1.14",
-          "HotChocolate.CostAnalysis": "15.1.14",
-          "HotChocolate.Execution": "15.1.14",
-          "HotChocolate.Execution.Projections": "15.1.14",
-          "HotChocolate.Fetching": "15.1.14",
-          "HotChocolate.Types": "15.1.14",
-          "HotChocolate.Types.CursorPagination": "15.1.14",
-          "HotChocolate.Types.CursorPagination.Extensions": "15.1.14",
-          "HotChocolate.Types.Mutations": "15.1.14",
-          "HotChocolate.Types.Queries": "15.1.14",
-          "HotChocolate.Validation": "15.1.14"
-        }
-      },
       "HotChocolate.Abstractions": {
         "type": "Transitive",
         "resolved": "15.1.14",
@@ -1962,6 +1944,25 @@
         "dependencies": {
           "FastEndpoints": "7.2.0",
           "NSwag.AspNetCore": "14.6.3"
+        }
+      },
+      "HotChocolate": {
+        "type": "CentralTransitive",
+        "requested": "[15.1.14, )",
+        "resolved": "15.1.14",
+        "contentHash": "2UtWHtv2k/3FwRC4L9gdXkf9R9lhm1G/oN6w+zpXXVBeSHMoogPyqGeNTCYnDrG0+OyvhhP8vopWu9Ihd7dgAA==",
+        "dependencies": {
+          "HotChocolate.Authorization": "15.1.14",
+          "HotChocolate.CostAnalysis": "15.1.14",
+          "HotChocolate.Execution": "15.1.14",
+          "HotChocolate.Execution.Projections": "15.1.14",
+          "HotChocolate.Fetching": "15.1.14",
+          "HotChocolate.Types": "15.1.14",
+          "HotChocolate.Types.CursorPagination": "15.1.14",
+          "HotChocolate.Types.CursorPagination.Extensions": "15.1.14",
+          "HotChocolate.Types.Mutations": "15.1.14",
+          "HotChocolate.Types.Queries": "15.1.14",
+          "HotChocolate.Validation": "15.1.14"
         }
       },
       "HotChocolate.AspNetCore": {

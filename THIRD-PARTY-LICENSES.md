@@ -25,7 +25,6 @@ All dependencies use permissive open-source licenses compatible with MIT:
 - Microsoft.EntityFrameworkCore
 - Microsoft.EntityFrameworkCore.Relational
 - Microsoft.Data.Sqlite
-- Microsoft.Data.SqlClient
 - System.Text.Json
 
 ### Testing Frameworks
