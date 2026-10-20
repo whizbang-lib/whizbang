@@ -24,12 +24,16 @@ public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null,
-  WorkCoordinatorGate? gate = null
+  WorkCoordinatorGate? gate = null,
+  string? schema = null
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
   private readonly WorkCoordinatorGate? _gate = gate;
+#pragma warning disable S1144 // Red step of #1508: accepted, not yet applied to the statements.
+  private readonly string? _schema = schema;
+#pragma warning restore S1144
 
   /// <summary>
   /// Reports perspective cursor completion directly (out-of-band).
