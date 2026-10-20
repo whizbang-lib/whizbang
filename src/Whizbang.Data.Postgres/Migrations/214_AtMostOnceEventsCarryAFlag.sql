@@ -147,7 +147,7 @@ BEGIN
   -- the race didn't exist; the new path lets parallel handlers / strategy flushes
   -- target the same stream concurrently.
   --
-  -- Lock order is hashtext(stream_id::text), sorted ascending — ensures deadlock-free
+  -- Lock order is hashtext(stream_id::text), sorted ascending, ensures deadlock-free
   -- nesting between any pair of transactions touching overlapping stream sets.
   -- pg_advisory_xact_lock auto-releases at commit/rollback.
   PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || sid::text))
@@ -164,11 +164,11 @@ BEGIN
   -- Phase H step 10 slice 1: ORDER BY o.message_id (UUIDv7 = chronological at the source)
   -- so version assignment matches canonical event_id ordering. Without this, two events stored
   -- "out of wall-clock order" (e.g., one took longer to land) would receive versions that
-  -- disagree with their UUIDv7 ordering — perspective cursors advance by version, then later
+  -- disagree with their UUIDv7 ordering, perspective cursors advance by version, then later
   -- see an "earlier" event_id and trip the cursor-inversion detector + full replay.
   -- Phase H step 10 slice 3: version is computed via a correlated subquery rather than a
   -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
-  -- the per-row form is defensive — if a future refactor weakens or bypasses the lock, the
+  -- the per-row form is defensive, if a future refactor weakens or bypasses the lock, the
   -- per-row MAX read still picks up any concurrent commits.
   -- Migration 061: o.flags carried into wh_event_store.flags (was dropped here previously).
   WITH outbox_events AS (
@@ -187,7 +187,7 @@ BEGIN
       AND o.is_event = true
       AND o.stream_id IS NOT NULL
   ),
-  -- Migration 072: materialise the extracted payload + built metadata ONCE, so the pointer INSERT
+  -- Migration 072: materialize the extracted payload + built metadata ONCE, so the pointer INSERT
   -- and the ephemeral body offload read identical values without recomputing the JSON extraction.
   computed AS (
     SELECT
@@ -242,7 +242,7 @@ BEGIN
     FROM computed c
     JOIN stored_events se ON se.event_id = c.message_id
     -- Constraint-LESS form (event_id PK is wh_event_body's only constraint, so semantics are
-    -- identical) — keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
+    -- identical), keeps the emit-chain source free of constraint-specific ON CONFLICT forms,
     -- which the version-ordering regression lock forbids (a specific-constraint form on
     -- wh_event_store once let idx_event_store_stream conflicts bubble up as PG 23505).
     ON CONFLICT DO NOTHING
@@ -296,7 +296,7 @@ BEGIN
   -- so claim_orphaned_perspective_events can apply partition-modulo load balancing symmetric
   -- with the outbox / inbox claim paths.
   -- Slice 26.14: route the lease through wh_active_streams. When a live owner is pinned for
-  -- the stream, lease to that owner regardless of which instance ran the commit — eliminates
+  -- the stream, lease to that owner regardless of which instance ran the commit, eliminates
   -- the cross-instance saga race (different instances commit to the same stream, each
   -- selfishly leasing to themselves, drainer races) that produced the residual ~1000 cursor
   -- inversions in a production run. When no live owner is pinned yet (new stream OR stale owner),
@@ -317,7 +317,7 @@ BEGIN
     p_now,
     -- Slice 26.14: when caller is actively leasing (p_lease_expiry IS NOT NULL),
     -- route through wh_active_streams to the stream's pinned owner. When caller passed
-    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path — "leave unleased so
+    -- NULL p_lease_expiry / NULL p_instance_id (strategy-flush path, "leave unleased so
     -- claim_orphaned picks it up"), preserve that contract; otherwise we'd land in
     -- instance_id-set-but-lease-NULL purgatory that claim_orphaned's filter excludes.
     CASE WHEN p_lease_expiry IS NOT NULL THEN COALESCE(owner.assigned_instance_id, p_instance_id) ELSE NULL END,
@@ -348,7 +348,7 @@ BEGIN
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;
 
   -- Migration 061: collective-event routing. A collective event carries no perspective
-  -- association — route it to the single fixed __collective__ sink so the perspective worker
+  -- association, route it to the single fixed __collective__ sink so the perspective worker
   -- dispatches it via ICollectiveDispatcher exactly once (the dispatcher fans out to every
   -- matching model handler internally). One sink row per collective event, driven by the
   -- flag bit, independent of associations. Same partition / owner-lease / dedupe semantics as
@@ -504,7 +504,7 @@ BEGIN
   -- Phase H step 10 slice 3: version computed via correlated subquery rather than a
   -- pre-materialized CTE. Inside the per-stream advisory lock the values are equivalent, but
   -- the per-row form is defensive, see _emit_event_store_chain above for the rationale.
-  -- Migration 072: materialise the extracted payload + built metadata ONCE (see outbox fn above).
+  -- Migration 072: materialize the extracted payload + built metadata ONCE (see outbox fn above).
   computed AS (
     SELECT
       ie.message_id,
@@ -1073,7 +1073,7 @@ BEGIN
     );
 
   -- Migration 093 (#80-F): capture, per lane, the sequence range of the fold-relevant rows the
-  -- stamp below will remove from the fold — same predicates as the UPDATE, evaluated BEFORE it.
+  -- stamp below will remove from the fold, same predicates as the UPDATE, evaluated BEFORE it.
   SELECT array_agg(t.lane), array_agg(t.mn), array_agg(t.mx)
   INTO v_lanes, v_mins, v_maxs
   FROM (
@@ -1095,7 +1095,7 @@ BEGIN
   WHERE t.mn IS NOT NULL;
 
   -- Full split (078): bodies live in wh_event_body from birth for BOTH classes, so reclassification is
-  -- purely a flags stamp — there is no inline body to offload or null out anymore.
+  -- purely a flags stamp, there is no inline body to offload or null out anymore.
   WITH reclassified AS (
     UPDATE __SCHEMA__.wh_event_store es
     SET flags = es.flags | c_flag_ephemeral
@@ -1111,7 +1111,7 @@ BEGIN
   ),
   -- Migration 087 (A1c): the reclassified rows leave the audited digest set (flags & 8 excluded),
   -- so XOR them back out of wh_stream_digests. Reads the pre-statement bucket snapshot (data-
-  -- modifying CTEs can't see each other's table effects) — safe: buckets pre-exist and only this
+  -- modifying CTEs can't see each other's table effects), safe: buckets pre-exist and only this
   -- statement touches them. A missing bucket is a no-op; the full-sweep verification heals drift.
   digest_subtract AS (
     UPDATE __SCHEMA__.wh_stream_digests d
@@ -1256,7 +1256,7 @@ BEGIN
     GROUP BY 1, 2
   ),
   open_fold AS (
-    -- The live remainder. A row the stamper has not yet sequenced belongs here by definition —
+    -- The live remainder. A row the stamper has not yet sequenced belongs here by definition , 
     -- it can be in no epoch, so the NULL-sequence branch keeps it from falling through the crack.
     SELECT COALESCE(es.scope ->> 't', '') AS b_tenant, es.event_type AS b_type,
            bit_xor(hashtextextended(es.event_id::text, 0)) AS lo,
@@ -1347,7 +1347,7 @@ BEGIN
   ),
   live_fold AS (
     -- The window minus the sealed run: the low fringe [since, e_lo*width) and the tail
-    -- [(e_hi+1)*width, until) — or the whole window when no epoch fits (e_lo > e_hi).
+    -- [(e_hi+1)*width, until), or the whole window when no epoch fits (e_lo > e_hi).
     SELECT COALESCE(l.scope ->> 't', '') AS b_tenant, l.event_type AS b_type,
            bit_xor(hashtextextended(l.event_id::text, 0)) AS lo,
            bit_xor(hashtextextended(l.event_id::text, 1)) AS hi,
