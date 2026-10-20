@@ -148,6 +148,20 @@ public static class ServiceCollectionExtensions {
     // host.RunAsync() instead of shipping under a policy nobody declared.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
 
+    // #1490: .NET binding ignores a key no options class reads, so a removed or misspelled Whizbang:* key
+    // left its setting at the default without a word. At host start every configured Whizbang:* key is
+    // checked against the embedded configuration key manifest; each one nothing reads is logged once at
+    // Warning (naming the replacement of a removed key), or fails start under
+    // Whizbang:Configuration:UnknownKeys = Throw.
+    services.AddOptions<ConfigurationCheckOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ConfigurationCheckOptions>, ConfigureConfigurationCheckOptions>(
+      sp => new ConfigureConfigurationCheckOptions(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, UnknownConfigurationKeyStartupValidator>(
+      sp => new UnknownConfigurationKeyStartupValidator(
+        sp.GetRequiredService<IOptions<ConfigurationCheckOptions>>(),
+        sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UnknownConfigurationKeyStartupValidator>>(),
+        sp.GetService<IConfiguration>())));
+
     // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
     // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
     // shipped default advertises concurrency the runtime will not use, and every deployment

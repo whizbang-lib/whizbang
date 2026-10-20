@@ -45,6 +45,11 @@ public sealed class ConfigurationCheckOptions {
 /// <tests>tests/Whizbang.Core.Tests/Configuration/UnknownConfigurationKeyCheckTests.cs</tests>
 internal sealed class ConfigureConfigurationCheckOptions(IConfiguration? configuration) : IConfigureOptions<ConfigurationCheckOptions> {
   public void Configure(ConfigurationCheckOptions options) {
-    _ = configuration;
+    if (configuration is null) {
+      return;
+    }
+#pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+    configuration.GetSection("Whizbang:Configuration").Bind(options);
+#pragma warning restore IL2026, IL3050
   }
 }

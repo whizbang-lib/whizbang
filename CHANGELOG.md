@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
+  so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
+  the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the
+  recorded configuration key manifest, embedded in `Whizbang.Core`; consumer-named entries such as
+  `Whizbang:PerspectiveRowRetention:Overrides:<Model>` count as known). Each key nothing reads is logged once
+  at Warning, naming the key; a removed key also names its replacement, for example
+  `Whizbang:WorkCoordinator:MaintenanceInterval` points to `Whizbang:Workers:Maintenance:IntervalMinutes`,
+  `Whizbang:Housekeeping:SettledCooldown` and `Whizbang:Housekeeping:MaxConsecutiveDeferrals`.
+  `Whizbang:Configuration:UnknownKeys` (default `Warn`) selects `Warn`, `Throw` (fail start, naming every
+  unknown key) or `Ignore`.
 
 #### Messaging & delivery
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the
