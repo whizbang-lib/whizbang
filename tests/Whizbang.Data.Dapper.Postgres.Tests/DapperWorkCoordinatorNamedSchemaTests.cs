@@ -38,6 +38,9 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/DapperWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 public class DapperWorkCoordinatorNamedSchemaTests {
+  // Later than any database clock reads, so a hold or deferral is still in force when the sweep runs.
+  private static readonly DateTimeOffset _heldUntil = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private const string SCHEMA = "svc_coord";
   private const string SERVICE = "named-schema-svc";
   private const string HOST = "named-schema-host";
@@ -260,7 +263,7 @@ public class DapperWorkCoordinatorNamedSchemaTests {
     await Assert.That((await coordinator.GetPerspectiveTableNamesAsync([CLR])).Single().TableName).IsEqualTo(TABLE);
     await Assert.That((await coordinator.GetPerspectiveRowsByIdsAsync(CLR, TABLE, [kept])).Single().RowId).IsEqualTo(kept);
 
-    await coordinator.HoldPerspectiveRowDestructionAsync([keptRef], DateTimeOffset.UtcNow.AddHours(1));
+    await coordinator.HoldPerspectiveRowDestructionAsync([keptRef], _heldUntil);
     await Assert.That(await coordinator.RecordPerspectiveRowDestructionFailureAsync(
       [keptRef], TimeSpan.FromMinutes(1), 3, Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenKeep)).IsEqualTo(1);
     await Assert.That(await coordinator.CascadeDeletePerspectiveRowsAsync(TABLE, [kept])).IsEqualTo(0);

@@ -32,6 +32,9 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/PerspectiveRowRetentionSql.cs</code-under-test>
 [Category("Integration")]
 public class DapperRowRetentionTests : PostgresTestBase {
+  // Later than any database clock reads, so a hold or deferral is still in force when the sweep runs.
+  private static readonly DateTimeOffset _heldUntil = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private const string LEADER_TABLE = "wh_per_dapper_leader";
   private const string FOLLOWER_TABLE = "wh_per_dapper_follower";
   private const string ROW_CAP_KEY = "row_cap_sweep_last_run";
@@ -182,7 +185,7 @@ public class DapperRowRetentionTests : PostgresTestBase {
     await Assert.That(rows.Single().Scope!.Value.GetProperty("u").GetString()).IsEqualTo("user-1");
     await Assert.That((await coordinator.GetPerspectiveRowsByIdsAsync(_followerClr, FOLLOWER_TABLE, [free])).Single().Scope).IsNull();
 
-    await coordinator.HoldPerspectiveRowDestructionAsync([new PerspectiveRowRef(FOLLOWER_TABLE, held)], DateTimeOffset.UtcNow.AddHours(1));
+    await coordinator.HoldPerspectiveRowDestructionAsync([new PerspectiveRowRef(FOLLOWER_TABLE, held)], _heldUntil);
     await Assert.That(await coordinator.ReconcileFollowerPresenceAsync(FOLLOWER_TABLE, [LEADER_TABLE], [orphan, held])).IsEqualTo(1)
       .Because("scoped to the rebuilt streams, only the unheld one absent from every announcer goes");
     await Assert.That(await _survivesAsync(FOLLOWER_TABLE, orphan)).IsFalse();
@@ -245,7 +248,7 @@ public class DapperRowRetentionTests : PostgresTestBase {
 
     await coordinator.SyncPerspectiveRetentionAsync([]);
     await Assert.That(await coordinator.GetPerspectiveRowsAboutToReapAsync([])).IsEmpty();
-    await coordinator.HoldPerspectiveRowDestructionAsync([], DateTimeOffset.UtcNow);
+    await coordinator.HoldPerspectiveRowDestructionAsync([], _heldUntil);
     await coordinator.ReleasePerspectiveRowHoldsAsync([]);
     await Assert.That(await coordinator.RecordPerspectiveRowDestructionFailureAsync([], TimeSpan.Zero, 1, OnDestroyFailure.RetryThenKeep)).IsEqualTo(0);
     await coordinator.RequeueRowEvictionsAsync([]);
@@ -327,7 +330,7 @@ public class DapperRowRetentionTests : PostgresTestBase {
       return ValueTask.FromResult<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(
         targets.ToDictionary(t => t.RowId, _ => Clean
           ? PerspectiveRowDecision.Proceed()
-          : PerspectiveRowDecision.Defer(DateTimeOffset.UtcNow.AddHours(1))));
+          : PerspectiveRowDecision.Defer(_heldUntil)));
     }
 
     public ValueTask OnAfterReapAsync(IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken cancellationToken = default) {
