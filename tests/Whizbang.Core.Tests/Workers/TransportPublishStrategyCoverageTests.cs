@@ -398,6 +398,30 @@ public class TransportPublishStrategyCoverageTests {
   // otherwise flow into the transport and the message would be published to "" — accepted by some
   // brokers, silently unroutable, and invisible until a consumer noticed nothing ever arrived.
   // Failing loudly here is what turns that into a diagnosable error naming the message.
+  // An event whose namespace or name reads like a command (a "Commands" segment, a "...Command" suffix) is still an
+  // event: the row says so, and the dispatcher already chose its topic. Re-routing it by name sent it to a command
+  // inbox, where nothing subscribed to the event ever sees it.
+  [Test]
+  [Arguments("Coverage.Commands.OrderPlaced, Coverage")]
+  [Arguments("Coverage.Orders.ApprovalCommandIssued, Coverage")]
+  [Arguments("Coverage.Orders.ShipCommand, Coverage")]
+  public async Task ResolveEntityDestination_AnEventRowNamedLikeACommand_KeepsTheTopicTheDispatcherChoseAsync(string messageType) {
+    var strategy = new TransportPublishStrategy(
+      transport: new CaptureTransport(),
+      readinessCheck: new DefaultTransportReadinessCheck(),
+      inboxTopic: "inbox",
+      loggerFactory: new LoggerFactoryReturning(new CapturingLogger()),
+      namespaceRouting: NullCommandInboxAddressResolver.Instance,
+      throttleRetryOptions: _fastOpts());
+
+    var work = _work() with { Destination = "coverage.orders", MessageType = messageType, IsEvent = true };
+
+    var resolved = strategy.ResolveEntityDestination(work);
+
+    await Assert.That(resolved.Address).IsEqualTo("coverage.orders")
+      .Because("an event row goes to the topic the dispatcher chose, whatever its type name looks like");
+  }
+
   [Test]
   public async Task ResolveEntityDestination_EventWithNoDestination_ThrowsNamingTheMessageAsync() {
     var strategy = new TransportPublishStrategy(

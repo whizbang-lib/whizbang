@@ -65,6 +65,19 @@ public interface IPerspectiveRebuilder {
     RebuildStreamsAsync(perspectiveName, streamIds, ct);
 
   /// <summary>
+  /// Rebuilds one stream as part of a multi-stream run: a run of many streams calls this once per stream, so it reports
+  /// nothing per stream (no rebuild events, no row digests, no Information log) and the run reports once, when it
+  /// completes. A stream that does not rebuild still returns a failed result, so its outcome records why.
+  /// </summary>
+  /// <param name="perspectiveName">The perspective to rebuild the stream for.</param>
+  /// <param name="streamId">The one stream to rebuild.</param>
+  /// <param name="origin">Who asked for the run.</param>
+  /// <param name="ct">Cancellation token.</param>
+  Task<RebuildResult> RebuildStreamOfRunAsync(
+      string perspectiveName, Guid streamId, RebuildOrigin origin, CancellationToken ct = default) =>
+    RebuildStreamsAsync(perspectiveName, [streamId], origin, ct);
+
+  /// <summary>
   /// Get status of an in-progress rebuild.
   /// </summary>
   Task<RebuildStatus?> GetRebuildStatusAsync(

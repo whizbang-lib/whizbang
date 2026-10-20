@@ -51,6 +51,14 @@ public sealed class CoalescePolicyOptions {
   public int MaxBatchCount { get; set; } = 500;
 
   /// <summary>
+  /// Maximum bytes of folded payload in one composite envelope; a pending set whose payloads add up to more splits into
+  /// further composites, as <see cref="MaxBatchCount"/> splits by count. Without it, a batch of large singles (audit
+  /// records carry the original message's body) became one message with no size bound. Default: 192,000, which fits
+  /// the smallest common broker tier with envelope headroom, as redelivery composites do.
+  /// </summary>
+  public long MaxBatchBytes { get; set; } = 192_000;
+
+  /// <summary>
   /// Per-child failure policy for the shipped composite. Default
   /// <see cref="FanoutAtomicity.Independent"/>: coalesce groups bundle self-contained records,
   /// so one poison inner dead-letters alone. <see cref="FanoutAtomicity.Atomic"/> is opt-in for

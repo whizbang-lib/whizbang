@@ -212,6 +212,10 @@ public sealed partial class CoalesceShipWorker(
         // from GroupKey, which this split would otherwise corrupt.
         GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => $"{m.Destination}|{_scopeKey(m)}"),
         MaxConstituentsPerComposite = binding.MaxBatchCount,
+        // And by size: an audit single carries the original message's body, so a count cap alone let 500 large
+        // singles become one message no broker accepts
+        MaxBytesPerComposite = binding.MaxBatchBytes,
+        ConstituentSizeBytes = static m => m.Envelope.Payload.GetRawText().Length,
         BuildComposite = batch => (binding.CompositeFactory ?? BuildDefaultComposite)(new CoalesceFoldBatch {
           Group = group,
           Singles = batch.Constituents,
