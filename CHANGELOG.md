@@ -323,6 +323,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and runs again when a review is submitted or dismissed. It replaces the code owner review the
   branch rules required, which a build admin's own pull request could never satisfy, so a build admin's
   pipeline change now merges through the merge queue like any other change.
+- **Contributing: a pull request cannot remove the pipeline-owner check that applies to it (#1566).**
+  The `Gate · Pipeline owner` job runs from the pull request's own `ci.yml`, so a pull request could
+  delete it. PR intake now runs the same check from the base branch when a pull request enters the merge
+  queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
 - **A subscriber's integrity digests reported drift for every audit record it received (#1492).** A received audit

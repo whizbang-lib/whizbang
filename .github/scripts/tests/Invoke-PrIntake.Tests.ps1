@@ -343,3 +343,59 @@ Describe 'Update-PipelineOwnerGate' {
     @($script:calls | Where-Object { $_ -like 'run rerun*' }).Count | Should -Be 0
   }
 }
+
+Describe 'Invoke-QueueGuard' {
+  BeforeEach {
+    $script:calls = [System.Collections.Generic.List[string]]::new()
+    $script:check = [pscustomobject]@{ Pass = $true; Problems = @() }
+    $script:dequeueFails = $false
+    Mock Invoke-PipelineOwnerCheck { $script:check }
+    Mock Invoke-Gh {
+      $line = $Arguments -join ' '
+      $script:calls.Add($line)
+      if ($line -like 'pr view 7 *') { return 'PR_node7' }
+      if ($line -like 'api graphql *dequeuePullRequest*' -and $script:dequeueFails) { throw 'gh api graphql failed (exit 1)' }
+    }
+  }
+
+  It 'leaves a pull request that passes the pipeline-owner check in the queue' {
+    Invoke-QueueGuard -Repository 'o/r' -Number 7
+    @($script:calls | Where-Object { $_ -like '*dequeuePullRequest*' }).Count | Should -Be 0
+    @($script:calls | Where-Object { $_ -like 'pr comment*' }).Count | Should -Be 0
+  }
+
+  It 'takes a pull request that fails the check out of the queue, and says why on it' {
+    $script:check = [pscustomobject]@{ Pass = $false; Problems = @('changes .github/workflows/ci.yml without a build admin') }
+    Invoke-QueueGuard -Repository 'o/r' -Number 7
+    @($script:calls | Where-Object { $_ -like 'api graphql *dequeuePullRequest* -f id=PR_node7' }).Count | Should -Be 1
+    $comment = @($script:calls | Where-Object { $_ -like 'pr comment 7 -R o/r --body *' })
+    $comment.Count | Should -Be 1
+    $comment[0] | Should -BeLike '*changes .github/workflows/ci.yml without a build admin*'
+  }
+
+  It 'fails, so the run shows red, when the dequeue itself fails' {
+    $script:check = [pscustomobject]@{ Pass = $false; Problems = @('no build admin approval') }
+    $script:dequeueFails = $true
+    { Invoke-QueueGuard -Repository 'o/r' -Number 7 } | Should -Throw
+  }
+}
+
+Describe 'ConvertFrom-PipelineOwnerOutput' {
+  It 'passes on exit 0' {
+    $result = ConvertFrom-PipelineOwnerOutput -ExitCode 0 -Output @('Pipeline owner: pull request #7 changes no file build admins own.')
+    $result.Pass | Should -BeTrue
+  }
+
+  It 'fails on any other exit, with the ::error:: lines as the problems' {
+    $result = ConvertFrom-PipelineOwnerOutput -ExitCode 1 -Output @('Pipeline owner: failed, no build admin approval on the head commit.', '::error::Pull request #7 changes files ...')
+    $result.Pass | Should -BeFalse
+    $result.Problems | Should -Be @('Pull request #7 changes files ...')
+  }
+
+  It 'fails closed with a generic problem when the check could not say why' {
+    $result = ConvertFrom-PipelineOwnerOutput -ExitCode 3 -Output @()
+    $result.Pass | Should -BeFalse
+    @($result.Problems).Count | Should -Be 1
+    $result.Problems[0] | Should -BeLike '*exit 3*'
+  }
+}

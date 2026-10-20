@@ -61,6 +61,12 @@ with no review, since GitHub never lets an author approve their own pull request
 not require a code owner's review for that reason. The check runs again when a review is submitted
 or dismissed, and in the merge queue.
 
+The CI check runs from the pull request's own `ci.yml`, which the pull request itself could change. So
+the same check also runs from the base branch's copy of `pr-intake.yml` when a pull request enters the
+merge queue, and a pull request that fails it is taken out of the queue with a comment saying why. A pull
+request cannot change that copy. Disabling the workflow from the Actions tab is the one way around it,
+and the organization audit log records it.
+
 The settings that enforce all this (the rulesets, the Actions settings, the environments, who has which
 role, and the organization's two-factor and repository-creation settings) are recorded in
 `.github/settings-baseline.json`. A weekly check (`settings-drift.yml`) compares the live settings with
