@@ -46,6 +46,9 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
   private const string ZERO = "00000000-0000-0000-0000-000000000000";
 
+  /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
+  private const int AT_MOST_ONCE_FLAG = 32;
+
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -65,8 +68,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
   /// <summary>Seeds one LOCAL-lane event (origin_service_id NULL) with an explicit commit sequence.</summary>
   private static async Task _seedLocalAsync(NpgsqlConnection conn, Guid streamId, Guid eventId,
-      string eventType, long commitSeq, bool settled, int flags = 0, string? tenant = null,
-      int? deliveryGuarantee = null) {
+      string eventType, long commitSeq, bool settled, int flags = 0, string? tenant = null) {
     await using (var store = conn.CreateCommand()) {
       store.CommandText = $"""
         INSERT INTO wh_event_store
@@ -89,8 +91,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
         """;
     body.Parameters.AddWithValue("event", eventId);
-    body.Parameters.AddWithValue("meta",
-      deliveryGuarantee is int g ? $"{{\"deliveryGuarantee\":{g}}}" : "{}");
+    body.Parameters.AddWithValue("meta", "{}");
     await body.ExecuteNonQueryAsync();
     await EmitChainDigestFold.FoldAsync(conn, eventId);
   }
@@ -231,7 +232,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
     await _seedLocalAsync(conn, stream, kept, "Contracts.EpochProbe", 5, settled: true);
     await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 6, settled: true, flags: 8);
-    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 7, settled: true, deliveryGuarantee: 1);
+    await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 7, settled: true, flags: AT_MOST_ONCE_FLAG);
     await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 105, settled: true);
 
     _ = await _closeAsync(conn);
