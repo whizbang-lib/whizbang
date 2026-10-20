@@ -163,6 +163,8 @@ public class SendReceptorShapeIntegrationTests {
 
     try {
       await _sendAsync(dispatcher, command, overload);
+      // ImmediateDetached is detached: the send does not wait for it, so wait for its signal (#1393)
+      await stageTracker.Fired.Task.WaitAsync(TimeSpan.FromSeconds(30));
     } finally {
       registry.Unregister<OwnedVoidCommand>(stageTracker, LifecycleStage.ImmediateDetached);
     }
@@ -218,13 +220,9 @@ public class SendReceptorShapeIntegrationTests {
   [Arguments(SendOverload.UntypedWithOptions, true)]
   [Arguments(SendOverload.Typed, true)]
   [Arguments(SendOverload.TypedWithOptions, true)]
-  [Arguments(SendOverload.Untyped, false)]
-  [Arguments(SendOverload.UntypedWithOptions, false)]
-  [Arguments(SendOverload.Typed, false)]
-  [Arguments(SendOverload.TypedWithOptions, false)]
   public async Task SendAsync_ReceptorDeclaredAtALocalDispatchStage_IsTheHandlerAsync(SendOverload overload, bool inline) {
-    // [FireAt(LocalImmediateInline/Detached)] names the stage local dispatch fires: the receptor is
-    // the command's handler, unlike a hook at any other stage
+    // [FireAt(LocalImmediateInline)] names the stage local dispatch awaits: the receptor is the command's
+    // handler, unlike a hook at any other stage (LocalImmediateDetached included since #1392)
     var outbox = new RecordingOutbox();
     var dispatcher = _buildDispatcher(outbox);
     object command = inline ? new OwnedLocalInlineCommand(Guid.CreateVersion7()) : new OwnedLocalDetachedCommand(Guid.CreateVersion7());
@@ -244,7 +242,6 @@ public class SendReceptorShapeIntegrationTests {
 
   [Test]
   [Arguments(true)]
-  [Arguments(false)]
   public async Task LocalInvokeAsync_ReceptorDeclaredAtALocalDispatchStage_IsTheHandlerAsync(bool inline) {
     var outbox = new RecordingOutbox();
     var dispatcher = _buildDispatcher(outbox);
@@ -257,6 +254,24 @@ public class SendReceptorShapeIntegrationTests {
     }
 
     await Assert.That(SendShapeInvocations.CountFor(id)).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// #1392: a receptor declared at LocalImmediateDetached is a background hook, not a handler, so an owned command
+  /// whose only receptor it is has no handler here and is refused, as any owned command nothing handles is.
+  /// </summary>
+  [Test]
+  [Arguments(SendOverload.Typed)]
+  [Arguments(SendOverload.Untyped)]
+  public async Task SendAsync_OwnedCommandWhoseOnlyReceptorIsALocalImmediateDetachedHook_HasNoHandlerAsync(SendOverload overload) {
+    var outbox = new RecordingOutbox();
+    var dispatcher = _buildDispatcher(outbox);
+    var command = new OwnedLocalDetachedCommand(Guid.CreateVersion7());
+
+    await Assert.That(async () => await _sendAsync(dispatcher, command, overload)).Throws<ReceptorNotFoundException>()
+      .Because("a detached hook is not the command's handler");
+    await Assert.That(SendShapeInvocations.CountFor(command.Id)).IsEqualTo(0);
+    await Assert.That(outbox.QueuedOf(command)).IsEmpty();
   }
 
   // ========================================
@@ -380,10 +395,14 @@ public class SendReceptorShapeIntegrationTests {
       }
     }
 
+    /// <summary>Completes on the first firing: a detached stage runs after the dispatch returns (#1393).</summary>
+    public TaskCompletionSource Fired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
       lock (_firedFor) {
         _firedFor.Add(idOf(message));
       }
+      Fired.TrySetResult();
       return ValueTask.CompletedTask;
     }
   }

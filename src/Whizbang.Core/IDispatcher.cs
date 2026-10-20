@@ -702,15 +702,21 @@ public interface IDispatcher {
   /// <summary>
   /// Sends multiple typed messages with dispatch options: a selected policy, overrides, and what to do
   /// when one message's local handler fails (<see cref="DispatchOptions.BatchFailure"/>). The default
-  /// implementation ignores the options and sends as <see cref="SendManyAsync{TMessage}(IEnumerable{TMessage})"/> does.
+  /// implementation sends as <see cref="SendManyAsync{TMessage}(IEnumerable{TMessage})"/> does, and refuses options
+  /// carrying any setting it would drop (<see cref="NotSupportedException"/>, #1415).
   /// </summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull =>
-    SendManyAsync(messages);
+  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(SendManyAsync));
+    return SendManyAsync(messages);
+  }
 
   /// <summary>Sends multiple messages with dispatch options (see the typed overload).</summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages, DispatchOptions options) => SendManyAsync(messages);
+  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages, DispatchOptions options) {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(SendManyAsync));
+    return SendManyAsync(messages);
+  }
 
   /// <summary>
   /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
@@ -739,12 +745,17 @@ public interface IDispatcher {
 
   /// <summary>Sends multiple typed messages to local receptors only, with dispatch options.</summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull =>
-    LocalSendManyAsync(messages);
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages, DispatchOptions options) where TMessage : notnull {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(LocalSendManyAsync));
+    return LocalSendManyAsync(messages);
+  }
 
   /// <summary>Sends multiple messages to local receptors only, with dispatch options.</summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages, DispatchOptions options) => LocalSendManyAsync(messages);
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages, DispatchOptions options) {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(LocalSendManyAsync));
+    return LocalSendManyAsync(messages);
+  }
 
   /// <summary>
   /// Publishes multiple events with event routing (namespace-specific topics).
@@ -768,12 +779,17 @@ public interface IDispatcher {
 
   /// <summary>Publishes multiple typed events with dispatch options (see <see cref="SendManyAsync{TMessage}(IEnumerable{TMessage}, DispatchOptions)"/>).</summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events, DispatchOptions options) where TEvent : notnull =>
-    PublishManyAsync(events);
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events, DispatchOptions options) where TEvent : notnull {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(PublishManyAsync));
+    return PublishManyAsync(events);
+  }
 
   /// <summary>Publishes multiple events with dispatch options.</summary>
   /// <docs>fundamentals/dispatcher/dispatch-policy#batches</docs>
-  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events, DispatchOptions options) => PublishManyAsync(events);
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events, DispatchOptions options) {
+    DispatchOptions.ThrowIfABatchDefaultWouldDrop(options, nameof(PublishManyAsync));
+    return PublishManyAsync(events);
+  }
 
   /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.

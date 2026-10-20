@@ -121,7 +121,10 @@ public static class TestConstants {
   /// <para>DispatcherLocalDispatchRecordTests.cs adds 1 (LocalDispatchRecordTriggerReceptor: a receptor whose
   /// returned event the dispatcher cascades and runs locally).</para>
   ///
-  /// <para>Total: 128 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>DispatcherPublishOnceTests.cs adds 1 (PublishOnceFailingEventReceptor: a publish that fails after
+  /// its claim was won, #1414).</para>
+  ///
+  /// <para>Total: 129 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 128;
+  public const int EXPECTED_RECEPTOR_COUNT = 129;
 }

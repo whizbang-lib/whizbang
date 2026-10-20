@@ -119,6 +119,18 @@ public sealed class UndeclaredReceptor : IReceptor<OrderPlaced> {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task UndeclaredHandBuiltReceptor_IsWarnedAboutAtTheParameterDiCannotSupplyAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(UNDECLARED_SOURCE);
+
+    // #1429: reported where the cause is written, so it can be suppressed there
+    var whiz014 = result.Diagnostics.Single(d => d.Id == "WHIZ014");
+    await Assert.That(whiz014.Location.IsInSource).IsTrue();
+    var text = await whiz014.Location.SourceTree!.GetTextAsync();
+    await Assert.That(text.ToString(whiz014.Location.SourceSpan)).IsEqualTo("onReceived");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task UndeclaredHandBuiltReceptor_IsWarnedAboutAsync() {
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(UNDECLARED_SOURCE);
 

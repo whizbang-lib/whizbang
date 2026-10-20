@@ -72,7 +72,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
 
   /// <summary>
   /// A receptor with multiple [FireAt] attributes must be registered at EVERY declared
-  /// stage — and NOT at the default stages (LocalImmediateDetached/PostInboxDetached).
+  /// stage, and NOT at the default stages (LocalImmediateInline/PostInboxDetached).
   /// Exercises the full _tryExtractFireAtStage enum-member resolution path.
   /// </summary>
   [Test]
@@ -103,7 +103,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(registry).IsNotNull();
     await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline");
     await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostPerspectiveInline");
-    await Assert.That(registry).DoesNotContain("LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).DoesNotContain("LifecycleStage.LocalImmediateInline");
   }
 
   /// <summary>
@@ -134,7 +134,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
     await Assert.That(registry).IsNotNull();
     // Unknown stage value skipped -> receptor registered at the default stages
-    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline");
     await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
     await Assert.That(registry).DoesNotContain("999");
   }
@@ -950,7 +950,7 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
       .Because("a throw inside the transform would take the whole assembly's receptor registry with it");
     await Assert.That(registry).Contains("global::MyApp.Receptors.AuditReceptor")
       .Because("the receptor is still discovered — only its unreadable stage declaration is dropped");
-    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline")
       .Because("with no resolvable stage the receptor falls back to the default stages");
     await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
     await Assert.That(registry).DoesNotContain("LifecycleStage.3")

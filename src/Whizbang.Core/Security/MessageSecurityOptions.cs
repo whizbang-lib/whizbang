@@ -43,6 +43,21 @@ public sealed class MessageSecurityOptions {
   public bool AllowAnonymous { get; set; }
 
   /// <summary>
+  /// When true, a dispatch handled in this process (send, publish, local invoke, batch or cascade) is
+  /// refused up front when the caller has no security context, before any handler runs or anything is
+  /// written. DEFAULT: FALSE.
+  /// </summary>
+  /// <remarks>
+  /// <para>By default an in-process dispatch is trusted like a mediator call: it runs whether or not the
+  /// caller has a context, and the lifecycle stages after its handler do not refuse it either (a refusal
+  /// after the handler ran would protect nothing, #1419). A message that arrives from a transport is still
+  /// refused under <see cref="AllowAnonymous"/> = false, whatever this setting says.</para>
+  /// <para>Framework control-plane messages and system events are exempt, as they are on receive.</para>
+  /// </remarks>
+  /// <docs>fundamentals/security/message-security#local-dispatch</docs>
+  public bool RequireContextForLocalDispatch { get; set; }
+
+  /// <summary>
   /// When true, logs security context establishment for audit.
   /// DEFAULT: TRUE.
   /// </summary>

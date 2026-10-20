@@ -182,10 +182,14 @@ public class DispatcherTagProcessingTests {
     // Act
     await dispatcher.SendAsync(command);
 
-    // Assert - Tag processor should be invoked
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(1);
-    await Assert.That(spyProcessor.LastMessage).IsEqualTo(command);
-    await Assert.That(spyProcessor.LastMessageType).IsEqualTo(typeof(TestCommand));
+    // Assert - the dispatcher processes tags once after the receptor, as on a local invoke. The lifecycle
+    // stages a send's local run now fires (PostLifecycle, #1413) process tags too, as they do on every path
+    var afterReceptor = spyProcessor.AllInvocations.Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(afterReceptor.Count).IsEqualTo(1);
+    await Assert.That(afterReceptor[0].Message).IsEqualTo(command);
+    await Assert.That(afterReceptor[0].MessageType).IsEqualTo(typeof(TestCommand));
+    await Assert.That(spyProcessor.AllInvocations.Select(i => i.Stage).ToArray())
+      .Contains(LifecycleStage.PostLifecycleInline).Because("a send's local run fires PostLifecycle, which processes tags (#1413)");
   }
 
   [Test]
@@ -201,8 +205,9 @@ public class DispatcherTagProcessingTests {
     var receipt = await dispatcher.SendAsync(command);
 
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
-    await Assert.That(spyProcessor.InvocationCount).IsEqualTo(1);
-    await Assert.That(spyProcessor.LastMessage).IsEqualTo(command);
+    var afterReceptor = spyProcessor.AllInvocations.Where(i => i.Stage == LifecycleStage.AfterReceptorCompletion).ToList();
+    await Assert.That(afterReceptor.Count).IsEqualTo(1);
+    await Assert.That(afterReceptor[0].Message).IsEqualTo(command);
   }
 
   [Test]

@@ -129,6 +129,7 @@ Whizbang:Lifecycle:TransitionAckTimeout
 Whizbang:MessageSecurity:AllowAnonymous
 Whizbang:MessageSecurity:EnableAuditLogging
 Whizbang:MessageSecurity:PropagateToOutgoingMessages
+Whizbang:MessageSecurity:RequireContextForLocalDispatch
 Whizbang:MessageSecurity:Timeout
 Whizbang:MessageSecurity:ValidateCredentials
 Whizbang:MultiStreamCommands:BatchSize
