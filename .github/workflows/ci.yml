@@ -1109,6 +1109,45 @@ jobs:
           QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
         run: pwsh -NoProfile -File .github/scripts/Test-LinkedIssue.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
 
+  pipeline-owner:
+    name: Gate · Pipeline owner
+    # A change to the pipeline, the gates or the build inputs (the files .github/CODEOWNERS gives to
+    # build-admins) merges only when its author has the admin role, which the build-admins team grants, or a
+    # user with the admin role approved its current head commit (GOVERNANCE.md, "Roles"). It stands in for a
+    # code owner's review, which the rulesets do not require because an author can never approve their own
+    # pull request. pr-intake.yml re-runs this job when a review is submitted or dismissed. Bots are exempt;
+    # the rules live in .github/scripts/Test-PipelineOwner.ps1, tested by script-tests. It runs again in the
+    # merge queue, so an approval dismissed after the pull request run passed is caught. In ci-result's needs.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # the changed files and the reviews
+    steps:
+      # The base branch's script and CODEOWNERS, not the pull request's, so a pull request cannot change
+      # the rule that judges it.
+      - name: Checkout the base branch's pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          sparse-checkout: .github
+          persist-credentials: false
+      # A base branch from before this gate existed has no script to run; the pull request's is used there.
+      - name: Checkout the pull request's pipeline scripts (base branch predates the gate)
+        if: hashFiles('.github/scripts/Test-PipelineOwner.ps1') == ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: A change to a build admin's files has a build admin's approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || 0 }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref || '' }}
+        run: pwsh -NoProfile -File .github/scripts/Test-PipelineOwner.ps1 -Repository "$REPO" -PullRequest "$PR" -HeadRef "$QUEUE_REF"
+
   pr-type:
     name: Gate · Pull request type
     # The title is a Conventional Commit (it becomes the squash commit), and a breaking change (! in the
@@ -1214,7 +1253,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pr-type, review-checks]
+    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has

@@ -11,10 +11,15 @@ name: PR intake
 #   - applies /accept and /decline <reason> from a maintainer (the maintain or admin role) on an issue, and
 #     on a pull request /late-issue and /docs-not-needed from a maintainer, /recheck from its author or a
 #     committer (write or above), re-running its failed CI jobs;
-#   - daily, closes outside pull requests still without an accepted issue 14 days after opening.
+#   - daily, closes outside pull requests still without an accepted issue 14 days after opening;
+#   - when a review is submitted or dismissed, re-runs the "Gate · Pipeline owner" job when the review can
+#     change its verdict, so a build admin's approval is seen without a new push.
 #
 # pull_request_target runs with the base branch's code and a token that can label a fork's pull request.
 # It never checks out or runs the pull request's code: the checkout below is the base branch's .github.
+# pull_request_review has no _target form: it runs this file as the pull request has it, with a token
+# that is read-only for a fork, so the review job runs only for pull requests from this repository, whose
+# authors can push here already. On a fork's pull request, /recheck re-runs the gate after an approval.
 
 on:
   pull_request_target:
@@ -24,6 +29,8 @@ on:
     types: [opened, labeled, unlabeled]
   issue_comment:
     types: [created]
+  pull_request_review:
+    types: [submitted, dismissed]
   schedule:
     - cron: '23 13 * * *'   # daily, 09:23 EDT
   workflow_dispatch:
@@ -154,3 +161,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Sweep -Days 14
+
+  review:
+    name: Re-check the pipeline-owner gate after a review
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.review.state != 'commented'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-intake-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read   # the head commit
+      actions: write        # re-run the gate job
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Re-run the gate when the review can change its verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          STATE: ${{ github.event.review.state }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Review -Number "$PR" -ReviewState "$STATE"
