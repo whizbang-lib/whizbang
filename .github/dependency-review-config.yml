@@ -48,7 +48,6 @@ allow-dependencies-licenses:
 
   # Permissive, read from the license file or URL the package declares instead of an SPDX expression, which
   # the SBOM cannot carry.
-  - pkg:nuget/LibGit2Sharp                                # MIT (license file)
   - pkg:nuget/Fractions                                   # BSD (license file)
   - pkg:nuget/J2N                                         # Apache-2.0 (license file)
   - pkg:nuget/Lucene.Net                                  # Apache-2.0 (license file), and the four below
