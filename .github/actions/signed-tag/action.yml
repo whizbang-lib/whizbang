@@ -1,0 +1,54 @@
+name: Create a signed release tag
+description: >-
+  Creates an annotated tag signed keylessly with Sigstore (gitsign), checks the signature names this
+  repository's release workflows, and pushes it (#1438). The signature carries the same identity as the
+  packages' provenance: the workflow that ran, not a key anyone holds. The calling job needs
+  `id-token: write`, and a checkout whose origin can push v* tags (the release app's token).
+
+inputs:
+  tag:
+    description: The tag to create, for example v1.2.3
+    required: true
+  message:
+    description: The tag's annotation
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # A pinned, checksum-verified release binary rather than a setup action: a new third-party action
+    # would need the repository's allowed-actions setting changed (#1467), and this is one file.
+    - name: Install gitsign
+      shell: bash
+      run: |
+        set -euo pipefail
+        curl -sSL --proto '=https' --proto-redir '=https' -o "$RUNNER_TEMP/gitsign" \
+          https://github.com/sigstore/gitsign/releases/download/v0.17.1/gitsign_0.17.1_linux_amd64
+        echo "69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae  $RUNNER_TEMP/gitsign" | sha256sum -c -
+        chmod +x "$RUNNER_TEMP/gitsign"
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    - name: Create, verify and push the signed tag
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        MESSAGE: ${{ inputs.message }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        # gitsign takes the job's GitHub OIDC token (ACTIONS_ID_TOKEN_REQUEST_*), gets a short-lived
+        # certificate from Fulcio for it, and records the signature in Rekor's public log.
+        git config gpg.format x509
+        git config gpg.x509.program gitsign
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -s -a "$TAG" -m "$MESSAGE"
+
+        # The same check SECURITY.md gives consumers, before anything is pushed: a signature from any other
+        # identity, or none, fails here rather than publishing a tag that does not verify.
+        gitsign verify-tag "$TAG" \
+          --certificate-identity-regexp "^https://github\.com/${REPO}/\.github/workflows/(release|nuget-publish)\.yml@" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+        git push origin "$TAG"
+        echo "Created and pushed signed tag $TAG"

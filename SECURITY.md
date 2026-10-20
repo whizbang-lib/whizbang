@@ -77,6 +77,21 @@ dotnet nuget verify SoftwareExtravaganza.Whizbang.Core.X.Y.Z.nupkg --all
 Apart from that signature file, the nuget.org package has exactly the contents of the GitHub release
 asset.
 
+**A release tag** (`vX.Y.Z`, and every beta and rc tag) is signed the same keyless way, with
+[gitsign](https://github.com/sigstore/gitsign), by the workflow that published the release. Verify it in a
+clone of the repository with gitsign installed:
+
+```bash
+git fetch --tags origin
+gitsign verify-tag vX.Y.Z \
+  --certificate-identity-regexp '^https://github\.com/whizbang-lib/whizbang/\.github/workflows/(release|nuget-publish)\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It succeeds only for a tag created by this repository's release workflows and not moved since. GitHub's
+own "Verified" badge does not check Sigstore signatures, so the tag shows as unverified on github.com; use
+the command above. Tags created before signing was introduced (#1438) are unsigned.
+
 ## Security Assurance
 
 What Whizbang protects, its threat model and trust boundaries, and what an application can and cannot
