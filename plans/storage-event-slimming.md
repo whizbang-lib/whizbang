@@ -39,6 +39,11 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
   reading `body_meta`/`eb.metadata ->> 'deliveryGuarantee'` (149:622, 162:2106, 093, 180:255,
   `src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs:1565`) sees null. A new migration
   redefines both chains whole (rule 5) and copies `deliveryGuarantee` into `body_meta` when present.
+- **Done differently (#1484, migration 214).** Not a metadata key: the guarantee is bit 5 of the row's
+  `flags` (`EventFlags.AtMostOnce` = 32), set by `_wh_spawn_occurrence` and copied by the emit chain,
+  so it costs no stored bytes (in line with S8) and every filter is a bit test with no join to
+  `wh_event_body`. 214 also flags rows stored before it from `wh_schedule_runs` and corrects the
+  digests and sealed epochs they were folded into.
 - **RED first.** In `tests/Whizbang.Data.EFCore.Postgres.Tests/EmitChainDigestFold.cs`: an
   at-most-once occurrence stored through the real outbox path is absent from `wh_stream_digests`;
   the same through the inbox path; a normal event is still folded. Existing digest tests seed
