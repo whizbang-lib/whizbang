@@ -36,9 +36,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// ImmediateDetached fires after SendAsync's business receptor completes. PostLifecycleInline and
 /// PostLifecycleDetached fire only from LocalInvokeAsync; with an <see cref="ILifecycleCoordinator"/>
 /// registered the detached stage runs on its own task and scope, and without one it is awaited
-/// inline, so both configurations are covered. LocalImmediateInline and LocalImmediateDetached are
-/// not fired as lifecycle stages: a receptor declared at one is the message's handler for local
-/// dispatch, so for those the trigger's own handler makes the send.
+/// inline, so both configurations are covered. A receptor declared at LocalImmediateInline is the
+/// message's handler for local dispatch, so that trigger's own handler makes the send; one declared at
+/// LocalImmediateDetached is a hook that runs in the background after the trigger's handler (#1392).
 /// </para>
 /// <para>
 /// The outbox is the real one: <see cref="ScopedWorkCoordinatorStrategy"/> over

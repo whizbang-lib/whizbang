@@ -1076,8 +1076,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             var ctx = lifecycleContext with { CurrentStage = detachedStage };
             await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
             if (isHandlingStage) {
-              await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-                ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+              await _invokeImmediateDetachedAsync(detachedInvoker, typedEnvelope, ctx, work.MessageId, detachedCt);
             }
           } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
             // graceful shutdown
@@ -1103,8 +1102,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
         if (isHandlingStage && !hasDetached) {
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+          // ImmediateDetached is never part of the inbox unit of work (#1393): it starts after the handler, in its
+          // own scope, and its failure is logged without failing the message
+          _ = _runImmediateDetachedAsync(typedEnvelope, lifecycleContext, work.MessageId, detachedCt);
         }
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
@@ -1127,6 +1127,29 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         Error = $"Lifecycle stage {stageName} failed: {ex}",
         Reason = ClassifyHandlerFailure(ex),
       }, cancellationToken);
+    }
+  }
+
+  // ImmediateDetached after the handler, in a scope of its own, when no PostInboxDetached task is there to run it
+  private Task _runImmediateDetachedAsync(IMessageEnvelope envelope, LifecycleExecutionContext context, Guid messageId,
+      CancellationToken detachedCt) =>
+    Task.Run(async () => {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      if (scope.ServiceProvider.GetService<IReceptorInvoker>() is { } invoker) {
+        await _invokeImmediateDetachedAsync(invoker, envelope, context, messageId, detachedCt);
+      }
+    }, CancellationToken.None);
+
+  // A detached stage never fails the message (#1393): its exception is logged, not routed to the failure channel
+  private async Task _invokeImmediateDetachedAsync(IReceptorInvoker invoker, IMessageEnvelope envelope,
+      LifecycleExecutionContext context, Guid messageId, CancellationToken detachedCt) {
+    try {
+      await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+        context with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+    } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
+      // graceful shutdown
+    } catch (Exception ex) {
+      _logLifecycleError(messageId, nameof(LifecycleStage.ImmediateDetached), ex);
     }
   }
 

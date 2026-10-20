@@ -97,12 +97,18 @@ namespace Whizbang.Core.Component.Tests.RuntimeLocalReceptors {
   [FireAt(LifecycleStage.ImmediateDetached)]
   [ReceptorIdempotent]
   public sealed class SyncVoidCommandImmediateDetachedHook : IReceptor<SyncVoidCommand> {
-    private static int _count;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _counts = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, TaskCompletionSource> _fired = new();
 
-    public static int Count => Volatile.Read(ref _count);
+    /// <summary>How many times the hook ran for the command <paramref name="id"/>.</summary>
+    public static int CountFor(Guid id) => _counts.TryGetValue(id, out var n) ? n : 0;
+
+    /// <summary>Completes when the hook has run for <paramref name="id"/>: the stage is detached, so the dispatch does not wait for it (#1393).</summary>
+    public static Task Fired(Guid id) => _fired.GetOrAdd(id, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
     public ValueTask HandleAsync(SyncVoidCommand message, CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _count);
+      _counts.AddOrUpdate(message.Id, 1, static (_, n) => n + 1);
+      _fired.GetOrAdd(message.Id, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
       return ValueTask.CompletedTask;
     }
   }
