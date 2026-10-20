@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
+  so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
+  the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the
+  recorded configuration key manifest, embedded in `Whizbang.Core`; consumer-named entries such as
+  `Whizbang:PerspectiveRowRetention:Overrides:<Model>` count as known). Each key nothing reads is logged once
+  at Warning, naming the key; a removed key also names its replacement, for example
+  `Whizbang:WorkCoordinator:MaintenanceInterval` points to `Whizbang:Workers:Maintenance:IntervalMinutes`,
+  `Whizbang:Housekeeping:SettledCooldown` and `Whizbang:Housekeeping:MaxDeferral`.
+  `Whizbang:Configuration:UnknownKeys` (default `Warn`) selects `Warn`, `Throw` (fail start, naming every
+  unknown key) or `Ignore`.
 
 #### Messaging & delivery
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
@@ -290,6 +300,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
+  format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
+  was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now
+  handled the same way as no snapshot: the row starts fresh from the incoming events and a warning names the
+  unreadable snapshot. The incoming events are always applied.
+- **At-most-once schedule occurrences were folded into integrity digests, counted in checkpoints and selected for
+  re-delivery (#1484).** Every exclusion looked for the delivery guarantee in the stored event metadata, which never
+  carried it, so none matched: a consumer comparing digests saw each occurrence as missing, and re-delivery could send
+  an occurrence its schedule declared at most once. The guarantee is now a flag on the stored event
+  (`EventFlags.AtMostOnce`, value 32), set when the occurrence is spawned, and the stream and epoch digests, the
+  verification sweep, the checkpoint counts and the re-delivery selection leave flagged events out. Migration 214 flags
+  occurrences already stored (read from the outbox row when it remains, otherwise from the schedule), removes them
+  from the stored digests and sealed epochs, and advances the origin generation once, so consumers reset their seals
+  and re-verify instead of reporting drift. The digest and checkpoint queries no longer read the event body to apply
+  the filter.
 - **A collective sink run read its stream's whole queue (#1524).** Each run read every unprocessed collective
   on the stream, joined to the event store and sorted, then applied only the rows it held: draining a busy ordering
   key cost the backlog squared over the batch. A run now reads the head of the queue on an index, through its own

@@ -28,6 +28,14 @@ public class EventFlagsTests {
   }
 
   [Test]
+  public async Task EventFlags_AtMostOnce_BitPositionLockedAsync() {
+    await Assert.That(_asInt(EventFlags.AtMostOnce)).IsEqualTo(32)
+      .Because("Bit position 5. The SQL digest folds, epoch folds, checkpoint counts and re-delivery selection read (flags & 32) to leave at-most-once events out (#1484); moving the bit silently puts them back in.");
+    await Assert.That(EventFlags.AtMostOnce.IsStateBased()).IsFalse()
+      .Because("At-most-once is a delivery treatment, not a lifecycle: the event is still replayed from the log.");
+  }
+
+  [Test]
   public async Task IsStateBased_TrueForEphemeralAndCompacted_FalseOtherwiseAsync() {
     await Assert.That(EventFlags.Ephemeral.IsStateBased()).IsTrue()
       .Because("Ephemeral is StateBased (no-replay) — self-destructing.");

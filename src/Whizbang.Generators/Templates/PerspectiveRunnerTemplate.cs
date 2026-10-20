@@ -373,13 +373,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // already stored, so the replay includes them). The eviction kept exactly that snapshot. The core
       // variant is required because RunAsync already holds the apply lock the public RewindAndRunAsync
       // acquires. An ephemeral perspective's history before its snapshot is reaped, so it rebuilds only
-      // from a snapshot floor; with none, nothing can rebuild the row and it starts fresh from this
-      // batch, with a warning, because the earlier state is gone.
+      // from a snapshot floor it can READ; with none, nothing can rebuild the row and it starts fresh from
+      // this batch, with a warning, because the earlier state is gone. A floor written in an older snapshot
+      // format is the same case (issue #1506): the rewind could not restore it, would find no floor, and
+      // would drop this batch as a late straggler, leaving the row missing until the next event.
       if (events.Count > 0
           && global::Whizbang.Core.Perspectives.PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))
           && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
-        if (!_isEphemeralPerspective
-            || await _hasSnapshotFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken)) {
+        var floor = !_isEphemeralPerspective
+            ? (State: EvictedRowFloor.Readable, SnapshotEventId: Guid.Empty)
+            : await _evictedRowFloorAsync(streamId, perspectiveName, events[0].MessageId.Value, cancellationToken);
+        if (floor.State == EvictedRowFloor.Readable) {
           _logger.LogInformation(
               "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history: resurrecting via re-fold",
               streamId,
@@ -388,12 +392,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           return await _rewindAndRunCoreAsync(
               streamId, perspectiveName, events[0].MessageId.Value, null, cancellationToken);
         }
-        _logger.LogWarning(
-            "Row for stream {StreamId} in {PerspectiveName} was evicted and its ephemeral history is reaped with no snapshot to restore from; starting it fresh from event {EventId}",
-            streamId,
-            perspectiveName,
-            events[0].MessageId.Value
-        );
+        if (floor.State == EvictedRowFloor.Stale) {
+          _logger.LogWarning(
+              "Row for stream {StreamId} in {PerspectiveName} was evicted and its ephemeral history is reaped; its snapshot at {SnapshotEventId} has a stale serialization version and cannot be restored, so starting it fresh from event {EventId}",
+              streamId,
+              perspectiveName,
+              floor.SnapshotEventId,
+              events[0].MessageId.Value
+          );
+        } else {
+          _logger.LogWarning(
+              "Row for stream {StreamId} in {PerspectiveName} was evicted and its ephemeral history is reaped with no snapshot to restore from; starting it fresh from event {EventId}",
+              streamId,
+              perspectiveName,
+              events[0].MessageId.Value
+          );
+        }
       }
 
       // Purge stays purged (issue #1027). A missing row is otherwise a new stream; when the stream carries a
@@ -1276,19 +1290,34 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     #endregion
   }
 
+  /// <summary>What an evicted ephemeral row can be rebuilt from (issues #1483, #1506).</summary>
+  private enum EvictedRowFloor {
+    /// <summary>No snapshot of the stream is placed before the incoming batch.</summary>
+    None,
+    /// <summary>A snapshot is placed before the batch and the current serialization version reads it.</summary>
+    Readable,
+    /// <summary>A snapshot is placed before the batch but was written in a serialization version that cannot be read.</summary>
+    Stale,
+  }
+
   /// <summary>
-  /// True when a snapshot of this stream is placed before <paramref name="beforeEventId"/> in stream order:
-  /// the floor an ephemeral perspective's evicted row can be rebuilt from (issue #1483). It is the same
-  /// lookup the rewind core makes, so "a floor exists" here means the rewind will restore from it.
+  /// The snapshot floor an ephemeral perspective's evicted row can be rebuilt from: the snapshot placed before
+  /// <paramref name="beforeEventId"/> in stream order (issue #1483), and whether it can be read (issue #1506). It is
+  /// the same lookup and the same read the rewind core makes, so <see cref="EvictedRowFloor.Readable"/> here means
+  /// the rewind will restore from it. A stale floor is reported apart from a missing one so the warning names it.
   /// </summary>
-  private async Task<bool> _hasSnapshotFloorAsync(
+  private async Task<(EvictedRowFloor State, Guid SnapshotEventId)> _evictedRowFloorAsync(
       Guid streamId, string perspectiveName, Guid beforeEventId, CancellationToken cancellationToken) {
     if (_snapshotStore is null) {
-      return false;
+      return (EvictedRowFloor.None, Guid.Empty);
     }
     var floor = await _snapshotStore.GetLatestSnapshotBeforeEventInStreamOrderAsync(
         streamId, perspectiveName, beforeEventId, cancellationToken);
-    return floor.HasValue;
+    if (!floor.HasValue) {
+      return (EvictedRowFloor.None, Guid.Empty);
+    }
+    var state = FromSnapshotJson(floor.Value.SnapshotData) is null ? EvictedRowFloor.Stale : EvictedRowFloor.Readable;
+    return (state, floor.Value.SnapshotEventId);
   }
 
   public Task<PerspectiveCursorCompletion> RewindAndRunAsync(
