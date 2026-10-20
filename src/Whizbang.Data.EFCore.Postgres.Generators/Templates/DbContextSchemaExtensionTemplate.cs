@@ -828,6 +828,14 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       System.Threading.CancellationToken cancellationToken) {
     var segments = Whizbang.Data.Postgres.MigrationBatchRegions.Segment(sql);
 
+    // The migration runs with current_schema() resolving to the schema it migrates, and only the
+    // migration: shipped guards compare table_schema = current_schema(), and shipped files are never
+    // edited, so this is what makes a re-run on upgrade find what the earlier run created. Restored
+    // after, because the same transaction goes on to the next migration and the perspective DDL.
+    var migrationConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+    var previousSearchPath = await Whizbang.Data.Postgres.MigrationSearchPath.EnterAsync(
+      migrationConnection, "__SCHEMA__", cancellationToken);
+
     // The overwhelming majority of migrations carry no marker and come back as one plain segment,
     // which is sent exactly as it was before this path existed.
     foreach (var segment in segments) {
@@ -872,6 +880,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           migrationName, totalRows, pass, segment.BatchSize);
       }
     }
+
+    await Whizbang.Data.Postgres.MigrationSearchPath.ExitAsync(migrationConnection, previousSearchPath, cancellationToken);
   }
 
   /// <summary>
@@ -1806,7 +1816,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   /// <summary>
   /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
-  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox".
+  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox"
+  /// where SQL names an object, never inside a string literal, quoted identifier or comment.
   /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
   /// Schema names are quoted to handle PostgreSQL reserved keywords (e.g., "user").
   /// </summary>

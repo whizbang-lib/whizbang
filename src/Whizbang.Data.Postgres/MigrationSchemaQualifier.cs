@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Whizbang.Data.Postgres;
@@ -65,18 +67,40 @@ public static class MigrationSchemaQualifier {
   /// <param name="quotedSchema">The schema as a quoted identifier, for example <c>"inventory"</c>.</param>
   /// <returns>The migration text with the bare framework names qualified.</returns>
   /// <remarks>
-  /// A name already preceded by a period is left alone, and a <c>RENAME TO</c> target is never
+  /// <para>
+  /// Only SQL that names objects is rewritten. A string literal (<c>'...'</c>, <c>E'...'</c>), a quoted
+  /// identifier and a comment are left exactly as written: the same letters there are a value, and a
+  /// value changed under the author is a different program. A catalog guard written
+  /// <c>table_name = 'wh_inbox'</c> rewritten to <c>table_name = '"svc".wh_inbox'</c> matches no row,
+  /// so on every re-run it reads "not there yet"; a stored <c>source_table</c> value or an advisory-lock
+  /// key changes the same way.
+  /// </para>
+  /// <para>
+  /// A dollar-quoted string is treated as code, because that is what a function or <c>DO</c> body
+  /// is and its table references must be qualified; the literals and comments inside it are protected
+  /// in turn. A name already preceded by a period is left alone, and a <c>RENAME TO</c> target is never
   /// qualified because PostgreSQL requires it bare.
+  /// </para>
   /// </remarks>
+  /// <exception cref="ArgumentException">
+  /// <paramref name="sql"/> holds one of the private-use characters the rewrite marks protected text with.
+  /// </exception>
   public static string Qualify(string sql, string quotedSchema) {
     ArgumentNullException.ThrowIfNull(sql);
     ArgumentException.ThrowIfNullOrEmpty(quotedSchema);
+    if (sql.Contains(MASK_OPEN, StringComparison.Ordinal) || sql.Contains(MASK_CLOSE, StringComparison.Ordinal)) {
+      throw new ArgumentException(
+        "The migration text holds a private-use character (U+E000 or U+E001) the qualification reserves.", nameof(sql));
+    }
+
+    var protectedText = new List<string>();
+    var transformedSql = _maskNonCode(sql, protectedText);
 
     // First, protect RENAME TO targets by replacing them with a placeholder
     // PostgreSQL RENAME TO requires an unqualified name, so these must NOT be schema-qualified
     var renameToPlaceholders = new Dictionary<string, string>(StringComparer.Ordinal);
-    var transformedSql = Regex.Replace(
-      sql,
+    transformedSql = Regex.Replace(
+      transformedSql,
       @"(RENAME\s+TO\s+)(\w+)",
       m => {
         var placeholder = $"__RENAME_TARGET_{renameToPlaceholders.Count}__";
@@ -138,6 +162,120 @@ public static class MigrationSchemaQualifier {
         _regexTimeout);
     }
 
-    return transformedSql;
+    return _unmask(transformedSql, protectedText);
   }
+
+  private const char MASK_OPEN = '\uE000';
+  private const char MASK_CLOSE = '\uE001';
+
+  // A protected run becomes MASK_OPEN + its index + MASK_CLOSE. Neither mark is a word character, so
+  // the word boundaries and the "not after a period" test of the patterns see the same edges they
+  // would have seen at the protected text's own quotes or comment markers.
+  private static string _unmask(string masked, List<string> protectedText) =>
+    Regex.Replace(
+      masked,
+      $"{MASK_OPEN}(\\d+){MASK_CLOSE}",
+      m => protectedText[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)],
+      RegexOptions.None,
+      _regexTimeout);
+
+  private static string _mask(string text, List<string> protectedText) {
+    protectedText.Add(text);
+    return string.Create(CultureInfo.InvariantCulture, $"{MASK_OPEN}{protectedText.Count - 1}{MASK_CLOSE}");
+  }
+
+  // Walks the text the way PostgreSQL's lexer does and replaces every literal, quoted identifier and
+  // comment with a mark, leaving code (including the content of every dollar-quoted string) visible.
+  private static string _maskNonCode(string sql, List<string> protectedText) {
+    var output = new StringBuilder(sql.Length);
+    var i = 0;
+    while (i < sql.Length) {
+      var c = sql[i];
+      var next = i + 1 < sql.Length ? sql[i + 1] : '\0';
+
+      if (c == '-' && next == '-') {
+        var end = sql.IndexOf('\n', i);
+        end = end < 0 ? sql.Length : end;
+        output.Append(_mask(sql[i..end], protectedText));
+        i = end;
+      } else if (c == '/' && next == '*') {
+        var end = _blockCommentEnd(sql, i);
+        output.Append(_mask(sql[i..end], protectedText));
+        i = end;
+      } else if (c == '\'') {
+        var escapes = i > 0 && (sql[i - 1] == 'E' || sql[i - 1] == 'e') && (i < 2 || !_isIdentifierChar(sql[i - 2]));
+        var end = _quotedEnd(sql, i, '\'', escapes);
+        output.Append(_mask(sql[i..end], protectedText));
+        i = end;
+      } else if (c == '"') {
+        var end = _quotedEnd(sql, i, '"', backslashEscapes: false);
+        output.Append(_mask(sql[i..end], protectedText));
+        i = end;
+      } else if (c == '$' && (i == 0 || !_isIdentifierChar(sql[i - 1])) && _dollarTag(sql, i) is { } tag) {
+        var bodyStart = i + tag.Length;
+        var close = sql.IndexOf(tag, bodyStart, StringComparison.Ordinal);
+        var bodyEnd = close < 0 ? sql.Length : close;
+        output.Append(tag).Append(_maskNonCode(sql[bodyStart..bodyEnd], protectedText));
+        if (close >= 0) {
+          output.Append(tag);
+        }
+        i = close < 0 ? sql.Length : close + tag.Length;
+      } else {
+        output.Append(c);
+        i++;
+      }
+    }
+    return output.ToString();
+  }
+
+  // Block comments nest in PostgreSQL. An unclosed one runs to the end.
+  private static int _blockCommentEnd(string sql, int start) {
+    var depth = 0;
+    var i = start;
+    while (i < sql.Length) {
+      if (sql[i] == '/' && i + 1 < sql.Length && sql[i + 1] == '*') {
+        depth++;
+        i += 2;
+      } else if (sql[i] == '*' && i + 1 < sql.Length && sql[i + 1] == '/') {
+        i += 2;
+        if (--depth == 0) {
+          return i;
+        }
+      } else {
+        i++;
+      }
+    }
+    return sql.Length;
+  }
+
+  // The index just past the closing quote. A doubled quote is one character of content; in an escape
+  // string (E'...') so is a backslash and whatever follows it. An unclosed one runs to the end.
+  private static int _quotedEnd(string sql, int start, char quote, bool backslashEscapes) {
+    var i = start + 1;
+    while (i < sql.Length) {
+      if (backslashEscapes && sql[i] == '\\') {
+        i += 2;
+      } else if (sql[i] != quote) {
+        i++;
+      } else if (i + 1 < sql.Length && sql[i + 1] == quote) {
+        i += 2;
+      } else {
+        return i + 1;
+      }
+    }
+    return sql.Length;
+  }
+
+  // "$$" or "$tag$", where a tag is an identifier that does not start with a digit ("$1" is a parameter).
+  private static string? _dollarTag(string sql, int start) {
+    var i = start + 1;
+    if (i < sql.Length && (char.IsLetter(sql[i]) || sql[i] == '_')) {
+      while (i < sql.Length && (char.IsLetterOrDigit(sql[i]) || sql[i] == '_')) {
+        i++;
+      }
+    }
+    return i < sql.Length && sql[i] == '$' ? sql[start..(i + 1)] : null;
+  }
+
+  private static bool _isIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '$';
 }

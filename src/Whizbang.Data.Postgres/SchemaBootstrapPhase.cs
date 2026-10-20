@@ -157,6 +157,10 @@ public static class SchemaBootstrapPhase {
         return;
       }
 
+      // The bootstrap regions are migration text, and shipped migration text may ask current_schema()
+      // about the schema it alters. Transaction-local, so it ends with this transaction.
+      _ = await MigrationSearchPath.EnterAsync(connection, schema, cancellationToken).ConfigureAwait(false);
+
       foreach (var (name, sql) in closure.Scripts) {
         applying = name;
         await using var command = new NpgsqlCommand(sql, connection) {

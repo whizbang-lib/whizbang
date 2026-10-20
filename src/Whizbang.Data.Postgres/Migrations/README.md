@@ -27,9 +27,12 @@ whole (rule 5).
    `COMMENT ON`. Never rely on a runner to qualify a bare name for you:
    - the **Dapper** runner does exactly one thing, `sql.Replace("__SCHEMA__", schema)` — it never
      auto-qualifies anything, in bodies or at top level;
-   - the **EF Core** runner additionally regex-qualifies a *hard-coded 16-name list* of legacy
-     tables, with **no `$$`-body awareness at all** — so it rewrites those names everywhere, and
-     every other name nowhere.
+   - the **EF Core** runner additionally qualifies a *hard-coded list* of legacy table names
+     (`MigrationSchemaQualifier`) wherever SQL names an object (top-level code and the inside of
+     every `$$` body alike), but **never inside a string literal, quoted identifier or comment**,
+     where the same letters are a value. Before that rule it rewrote literals too, so
+     `table_name = 'wh_inbox'` became `table_name = '"svc".wh_inbox'`; see rule 14. Every other
+     name it leaves alone.
 
    A bare ref therefore resolves through the connection's `search_path`, which defaults to
    `"$user", public`. At migration time the object is *created* in `public`; at runtime a bare ref
@@ -105,6 +108,34 @@ whole (rule 5).
     genuinely has no docs page, say so and list it rather than inventing a path; a missing page is a
     real gap. The lint baselines the 263 definitions that predate the rule in
     `scripts/migration-sql-docs-baseline.txt`, and that list can only shrink.
+
+14. **A catalog lookup names its own schema**: a guard that asks `information_schema` or `pg_*`
+    whether a column, table or index already exists must ask about the schema its DDL alters, and so
+    must a function that finds tables at run time. Write the schema as
+    `replace('__SCHEMA__', '"', '')` (or reach the table through `to_regclass('__SCHEMA__.wh_x')`),
+    never as:
+    - `current_schema()`: that is the **caller's** `search_path`, and on a pooled runtime connection
+      (and the EF Core driver's) it is `public` whatever schema the service owns;
+    - `'__SCHEMA__'` compared as text: the EF Core driver substitutes the **quoted** form
+      (`'"svc"'`), which no catalog row equals;
+    - a lookup by name alone: in a shared database it answers for another service's table.
+
+    Each of these makes a guard read "not there yet" on a named-schema EF Core service. On an empty
+    database that is true, so every first run passes; on a re-run (the ledger re-runs a file whose
+    hash changed) the guarded DDL fails (`ADD COLUMN` raising 42701) or a repair silently never runs.
+    Prefer `ADD COLUMN IF NOT EXISTS` (rule 1) to a catalog guard where one will do.
+
+    Files that shipped before this rule are not edited. Their guards are made correct by the EF Core
+    runner, which runs every migration (and the bootstrap regions) with `search_path` set to the
+    migrated schema (`MigrationSearchPath`), so `current_schema()` inside a migration is that schema;
+    on the Dapper driver it already is, because that driver takes its schema from `current_schema()`. A run-time function is not covered by that, because it runs later
+    on a pooled connection, so a function whose latest definition asks the caller's schema is
+    redefined whole in a new migration (`213` did this for the seven that did). Locked by
+    `MigrationSchemaQualificationTests` (new files: no `current_schema()`, no `'__SCHEMA__'`
+    compared as text, every `information_schema`/`pg_indexes` lookup names its schema; every
+    function's latest definition names its own schema) and by `NamedSchemaMigrationReplayTests`,
+    which re-runs every migration over its own earlier run in a named schema with the default
+    `search_path`.
 
 **Rules 3, 4, 12 and 13 are enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format`
 job). Rule 13's absent-annotation findings are baselined and ratchet down; its broken-link findings
