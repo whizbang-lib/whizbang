@@ -99,11 +99,6 @@
         "resolved": "2.14.1",
         "contentHash": "lQKvtaTDOXnoVJ20ibTuSIOf2i0uO0MPbDhd1jm238I+U/2ZnRENj0cktKZhtchBMtCUSRQ5v4xBCUbKNmyVMw=="
       },
-      "LibGit2Sharp.NativeBinaries": {
-        "type": "Transitive",
-        "resolved": "2.0.323",
-        "contentHash": "Kg+fJGWhGj5qRXG0Ilj4ddhuodGXZg57yhfX6OVUDR0M2DKg/UR42/d74+qv5l1qotc1qJilo/ho7xQnULP6yA=="
-      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -502,7 +497,6 @@
       "SoftwareExtravaganza.Whizbang.Migrate": {
         "type": "Project",
         "dependencies": {
-          "LibGit2Sharp": "[0.31.0, )",
           "Microsoft.CodeAnalysis.CSharp.Workspaces": "[5.0.0, )",
           "Microsoft.Extensions.FileSystemGlobbing": "[10.0.13, )",
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
@@ -520,15 +514,6 @@
           "TUnit": "[1.12.125, )",
           "Testcontainers.PostgreSql": "[4.10.0, )",
           "Testcontainers.RabbitMq": "[4.9.0, )"
-        }
-      },
-      "LibGit2Sharp": {
-        "type": "CentralTransitive",
-        "requested": "[0.31.0, )",
-        "resolved": "0.31.0",
-        "contentHash": "b3+UfV7LjKMjAHWwl7VawejiOv2gJIC6dTCA/S0puLTHACAA/Oeb5JJmWUQMeyH/T/WR/LaIK8bk2RbdFnrZvg==",
-        "dependencies": {
-          "LibGit2Sharp.NativeBinaries": "[2.0.323]"
         }
       },
       "Microsoft.CodeAnalysis.Analyzers": {

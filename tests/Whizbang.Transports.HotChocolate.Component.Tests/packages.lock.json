@@ -147,24 +147,6 @@
         "resolved": "15.1.14",
         "contentHash": "FW0ordLAF8gS1TvNt7Mn1N/nPlFAtDM5ocKwSDj4f0MLy8YTIRPkDdI4x9y6IMFctvcNiqGskuuQfJ4N4TtYnQ=="
       },
-      "HotChocolate": {
-        "type": "Transitive",
-        "resolved": "15.1.14",
-        "contentHash": "2UtWHtv2k/3FwRC4L9gdXkf9R9lhm1G/oN6w+zpXXVBeSHMoogPyqGeNTCYnDrG0+OyvhhP8vopWu9Ihd7dgAA==",
-        "dependencies": {
-          "HotChocolate.Authorization": "15.1.14",
-          "HotChocolate.CostAnalysis": "15.1.14",
-          "HotChocolate.Execution": "15.1.14",
-          "HotChocolate.Execution.Projections": "15.1.14",
-          "HotChocolate.Fetching": "15.1.14",
-          "HotChocolate.Types": "15.1.14",
-          "HotChocolate.Types.CursorPagination": "15.1.14",
-          "HotChocolate.Types.CursorPagination.Extensions": "15.1.14",
-          "HotChocolate.Types.Mutations": "15.1.14",
-          "HotChocolate.Types.Queries": "15.1.14",
-          "HotChocolate.Validation": "15.1.14"
-        }
-      },
       "HotChocolate.Abstractions": {
         "type": "Transitive",
         "resolved": "15.1.14",
@@ -746,7 +728,7 @@
       "SoftwareExtravaganza.Whizbang.Transports.HotChocolate": {
         "type": "Project",
         "dependencies": {
-          "HotChocolate.AspNetCore": "[15.1.14, )",
+          "HotChocolate": "[15.1.14, )",
           "HotChocolate.Data": "[15.1.14, )",
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "SoftwareExtravaganza.Whizbang.Transports.Mutations": "[0.100.0-local.111, )"
@@ -756,6 +738,25 @@
         "type": "Project",
         "dependencies": {
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
+      "HotChocolate": {
+        "type": "CentralTransitive",
+        "requested": "[15.1.14, )",
+        "resolved": "15.1.14",
+        "contentHash": "2UtWHtv2k/3FwRC4L9gdXkf9R9lhm1G/oN6w+zpXXVBeSHMoogPyqGeNTCYnDrG0+OyvhhP8vopWu9Ihd7dgAA==",
+        "dependencies": {
+          "HotChocolate.Authorization": "15.1.14",
+          "HotChocolate.CostAnalysis": "15.1.14",
+          "HotChocolate.Execution": "15.1.14",
+          "HotChocolate.Execution.Projections": "15.1.14",
+          "HotChocolate.Fetching": "15.1.14",
+          "HotChocolate.Types": "15.1.14",
+          "HotChocolate.Types.CursorPagination": "15.1.14",
+          "HotChocolate.Types.CursorPagination.Extensions": "15.1.14",
+          "HotChocolate.Types.Mutations": "15.1.14",
+          "HotChocolate.Types.Queries": "15.1.14",
+          "HotChocolate.Validation": "15.1.14"
         }
       },
       "Microsoft.Extensions.DependencyInjection": {
