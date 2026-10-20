@@ -19,7 +19,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// Epoch closure finds a lane from that bucket (193), so a seed that skips the fold describes a store production
 /// does not have. The predicate and the bucket key here are the emit chain's: ephemeral events (flags &amp; 8) and
-/// at-most-once occurrences are left out, and the origin is the zero uuid for a locally written event.
+/// at-most-once occurrences (flags &amp; 32, #1484) are left out, and the origin is the zero uuid for a locally written
+/// event.
 /// </para>
 /// </remarks>
 internal static class EmitChainDigestFold {
@@ -33,10 +34,9 @@ internal static class EmitChainDigestFold {
              COALESCE(es.scope ->> 't', ''), es.event_type, es.stream_id,
              hashtextextended(es.event_id::text, 0), hashtextextended(es.event_id::text, 1), 1, NOW()
       FROM wh_event_store es
-      LEFT JOIN wh_event_body eb ON eb.event_id = es.event_id
       WHERE es.event_id = @event
         AND COALESCE(es.flags, 0) & 8 = 0
-        AND COALESCE((eb.metadata ->> 'deliveryGuarantee')::integer, 0) <> 1
+        AND COALESCE(es.flags, 0) & 32 = 0
       ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO UPDATE SET
         digest_lo = d.digest_lo # EXCLUDED.digest_lo,
         digest_hi = d.digest_hi # EXCLUDED.digest_hi,
