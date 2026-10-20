@@ -300,6 +300,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A subscriber's integrity digests reported drift for every audit record it received (#1492).** A received audit
+  composite is fanned out into its records, which are stored as events under the origin's id, so the inbox emit chain
+  folded them into the origin's digest lane. The origin never stores the audit records it publishes, so reconciliation
+  saw rows the origin could not account for; and records the origin did store (the system event emitter appends them)
+  were answered for although no subscriber was sent them. Audit records (`EventAudited`, `CommandAudited`) are a
+  function of the event they audit and are now left out of every digest fold: both emit chains, the epoch seals, the
+  type-level answers and the work coordinator's recomputes and verification sweep. `DigestExemptTypes.TypeNames` names
+  them. Migration 216 removes the buckets and sealed epochs an earlier release folded for them, so stored digests agree
+  at once.
 - **Audit records were missing the event they audit, its stream position and its causation, and ignored the
   audit decision hook on the main path (#1485).** Every `EventAudited` writer (the outbox audit path, the event
   store decorator and `SystemEventEmitter`) now sets `OriginalEventId`, `CausationId`, `AuditReason` and

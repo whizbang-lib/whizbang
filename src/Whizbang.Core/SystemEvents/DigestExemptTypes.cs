@@ -22,5 +22,8 @@ namespace Whizbang.Core.SystemEvents;
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/DigestExemptTypesTests.cs</tests>
 public static class DigestExemptTypes {
   /// <summary>The full type names (namespace and type, no assembly) of the event types left out of every digest.</summary>
-  public static IReadOnlyList<string> TypeNames { get; } = []; // RED stub (#1492)
+  public static IReadOnlyList<string> TypeNames { get; } = [
+    TypeNameFormatter.FormatClrTypeName(typeof(EventAudited)),
+    TypeNameFormatter.FormatClrTypeName(typeof(CommandAudited)),
+  ];
 }
