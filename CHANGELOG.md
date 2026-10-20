@@ -290,6 +290,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
+  format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
+  was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now
+  handled the same way as no snapshot: the row starts fresh from the incoming events and a warning names the
+  unreadable snapshot. The incoming events are always applied.
 - **At-most-once schedule occurrences were folded into integrity digests, counted in checkpoints and selected for
   re-delivery (#1484).** Every exclusion looked for the delivery guarantee in the stored event metadata, which never
   carried it, so none matched: a consumer comparing digests saw each occurrence as missing, and re-delivery could send
