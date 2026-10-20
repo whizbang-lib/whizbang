@@ -65,11 +65,13 @@ public class EphemeralAttributeTests {
   }
 
   [Test]
-  public async Task TransientStorage_HasPersistedRowInMemoryAndTtlRowAsync() {
+  public async Task TransientStorage_IsPersistedRowAndTtlRowOnlyAsync() {
     // PersistedRow is first (the zero-value), so an uninitialized/default TransientStorage is the safe option.
-    await Assert.That(Enum.GetNames<TransientStorage>()).Contains("PersistedRow");
-    await Assert.That(Enum.GetNames<TransientStorage>()).Contains("InMemory");
-    await Assert.That(Enum.GetNames<TransientStorage>()).Contains("TtlRow");
+    // #1538: InMemory was removed. It was never acted on, and a read model held in one instance's memory is
+    // lost when its stream moves; a local, in-memory ephemeral event is its own design question (#1549).
+    await Assert.That(Enum.GetNames<TransientStorage>()).IsEquivalentTo(["PersistedRow", "TtlRow"]);
+    await Assert.That(Enum.GetValues<TransientStorage>().Select(storage => (int)storage)).IsEquivalentTo([0, 2])
+      .Because("removing a member must not renumber the ones that remain");
   }
 
   [Test]
