@@ -58,6 +58,8 @@ public class CollectivePredicateIndexAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ309: Warning - a collective predicate filters a perspective field that has no index of its own.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz309</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/CollectivePredicateIndexAnalyzerTests.cs:AnEqualityOnAnUnindexedField_WarnsAsync</tests>
   public static readonly DiagnosticDescriptor CollectivePredicateFieldHasNoIndex = new(
       id: "WHIZ309",
       title: "Collective predicate filters an unindexed field",

@@ -25,7 +25,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// migration script or admin command.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Rename tool runs once per namespace change; structured logging cost is negligible.")]
 [SuppressMessage("Performance", "CA1873:Avoid potentially expensive argument evaluation when logging", Justification = "Rename tool runs infrequently; argument evaluation cost is negligible.")]
 public sealed class DapperEventTypeRenameTool : IEventTypeRenameTool {

@@ -365,6 +365,8 @@ public static class SortableExposureDiscovery {
   /// <summary>
   /// WHIZ306: Warning - a model reachable by request-time sorting has fields with no index.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz306</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/QueryExposureDocumentMatchTests.cs:ASortableAndFilterableLens_RaisesBothAsync</tests>
   /// <remarks>
   /// Shared so both integrations report the same thing. Two analyzers inventing two descriptions of
   /// one condition is how a consumer comes to believe they are unrelated problems.

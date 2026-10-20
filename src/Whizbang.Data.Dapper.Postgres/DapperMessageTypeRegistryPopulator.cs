@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Provided for explicit invocation (admin commands, migrations). Turnkey startup paths run
 /// the same SQL function per-DbContext inside <c>EnsureWhizbangDatabaseInitializedAsync</c>.
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Populator runs once at startup; structured logging cost is negligible.")]
 [SuppressMessage("Performance", "CA1873:Avoid potentially expensive argument evaluation when logging", Justification = "Populator runs once at startup; argument evaluation cost is negligible.")]
 public sealed class DapperMessageTypeRegistryPopulator : IMessageTypeRegistryPopulator {
