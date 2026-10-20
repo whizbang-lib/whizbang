@@ -13,7 +13,10 @@ name: PR intake
 #     committer (write or above), re-running its failed CI jobs;
 #   - daily, closes outside pull requests still without an accepted issue 14 days after opening;
 #   - when a review is submitted or dismissed, re-runs the "Gate · Pipeline owner" job when the review can
-#     change its verdict, so a build admin's approval is seen without a new push.
+#     change its verdict, so a build admin's approval is seen without a new push;
+#   - when a pull request enters the merge queue, runs the same pipeline-owner check from this base-branch
+#     copy and takes a pull request that fails it out of the queue (#1566). The CI gate runs from the pull
+#     request's own ci.yml, which the pull request can change; this file runs as the base branch has it.
 #
 # pull_request_target runs with the base branch's code and a token that can label a fork's pull request.
 # It never checks out or runs the pull request's code: the checkout below is the base branch's .github.
@@ -23,7 +26,7 @@ name: PR intake
 
 on:
   pull_request_target:
-    types: [opened, reopened, edited, synchronize, labeled, unlabeled]
+    types: [opened, reopened, edited, synchronize, labeled, unlabeled, enqueued]
     branches: [main, develop, 'release/v**']
   issues:
     types: [opened, labeled, unlabeled]
@@ -40,7 +43,7 @@ permissions: {}
 jobs:
   pull-request:
     name: Label the pull request's issue state
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request_target' && github.event.action != 'enqueued'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -190,3 +193,27 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           STATE: ${{ github.event.review.state }}
         run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Review -Number "$PR" -ReviewState "$STATE"
+
+  queue-guard:
+    name: Take a pull request out of the queue when it fails the pipeline-owner check
+    if: github.event_name == 'pull_request_target' && github.event.action == 'enqueued'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: pr-intake-queue-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write       # taking a pull request out of the merge queue is a merge-queue write
+      pull-requests: write  # the dequeue and the comment saying why
+    steps:
+      - name: Checkout the base branch's pipeline scripts and CODEOWNERS
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Check the pull request, and dequeue it when it fails
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Enqueued -Number "$PR"
