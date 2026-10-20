@@ -60,7 +60,7 @@ Work out the version from facts, not guesses:
   personal token. A red `Mint the release app token` has its own Recovery row. RELEASING.md →
   *Which identity writes*.
 - After merging a release PR, confirm three things, and don't assume: the `release.yml` run reached
-  the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`) and is signed (`gitsign verify-tag`, the command in SECURITY.md, "Verifying a Release"), and after approval the
+  the approval gate, the tag exists (`git ls-remote --tags origin vX.Y.Z`) and is signed (`gitsign verify-tag`, the command in SECURITY.md, "Verifying a Release"), that the release attaches a `*.cdx.json` SBOM per package, and after approval the
   packages are live (`curl -s https://api.nuget.org/v3-flatcontainer/softwareextravaganza.whizbang.core/index.json | jq -r '.versions[-3:][]'`).
 - `gh pr merge --auto` prints nothing when the PR is already merged. Read `state` back.
 - After a **stable** ships, open one PR into `develop` that moves `PackageValidationBaselineVersion` in
