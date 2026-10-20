@@ -575,7 +575,7 @@ public class DispatcherTests {
   // ========================================
   // NOTE: Outbox fallback tests removed - replaced by IWorkCoordinatorStrategy pattern
   // In the unified architecture, ALL outbox operations flow through:
-  // IWorkCoordinatorStrategy → IWorkCoordinator → process_work_batch
+  // IWorkCoordinatorStrategy → IWorkCoordinator → store_outbox_messages
   // The old Dispatcher(outbox: IOutbox) pattern no longer exists.
   // ========================================
 

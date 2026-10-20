@@ -51,10 +51,6 @@ public static class MigrationSchemaQualifier {
   public static IReadOnlyList<string> FunctionNames { get; } = [
     "register_message_associations",
     "reconcile_perspective_registry",
-    "process_work_batch",
-    "process_inbox_batch",
-    "process_outbox_batch",
-    "process_perspectives_batch",
     "perform_maintenance"
   ];
 

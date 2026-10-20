@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// <summary>
 /// Tracks a unit of work from channel processing (Outbox/Inbox/Perspective workers).
 /// Similar to DispatchUnitOfWork but for worker-side processing.
-/// Accumulates completions and failures to report back to process_work_batch.
+/// Accumulates completions and failures to report back to the work coordinator.
 /// </summary>
 public class ProcessingUnitOfWork {
   /// <summary>
@@ -31,13 +31,13 @@ public class ProcessingUnitOfWork {
   public DateTimeOffset CreatedAt { get; init; }
 
   /// <summary>
-  /// Completions to report back to process_work_batch.
+  /// Completions to report back to the work coordinator.
   /// Accumulated as work items are successfully processed.
   /// </summary>
   public List<MessageCompletion> Completions { get; init; } = [];
 
   /// <summary>
-  /// Failures to report back to process_work_batch.
+  /// Failures to report back to the work coordinator.
   /// Accumulated when work items fail processing.
   /// </summary>
   public List<MessageFailure> Failures { get; init; } = [];

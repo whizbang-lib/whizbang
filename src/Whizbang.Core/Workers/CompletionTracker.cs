@@ -47,7 +47,7 @@ public sealed class CompletionTracker<T>(
   }
 
   /// <summary>
-  /// Mark items as sent to ProcessWorkBatchAsync.
+  /// Mark items as handed to the completion channels.
   /// Updates status to Sent and records sent timestamp.
   /// </summary>
   /// <param name="items">Items to mark as sent</param>
@@ -61,7 +61,7 @@ public sealed class CompletionTracker<T>(
 
   /// <summary>
   /// Mark oldest N 'Sent' items as Acknowledged.
-  /// This is called after receiving acknowledgement count from ProcessWorkBatchAsync.
+  /// This is called with the count the perspective worker handed over in the same cycle.
   /// </summary>
   /// <param name="count">Number of items to acknowledge</param>
   public void MarkAsAcknowledged(int count) {

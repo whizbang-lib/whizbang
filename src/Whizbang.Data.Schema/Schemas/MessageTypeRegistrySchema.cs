@@ -16,7 +16,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// carries <c>[PinnedId]</c>; a partial unique index enforces that no two types share
 /// a pinned ID while allowing any number of unpinned rows with null.
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public static class MessageTypeRegistrySchema {
   /// <summary>
   /// Column name constants for type-safe access.

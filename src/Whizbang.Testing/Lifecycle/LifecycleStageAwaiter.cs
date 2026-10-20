@@ -223,7 +223,7 @@ public static class LifecycleAwaiter {
   }
 
   /// <summary>
-  /// Creates an awaiter for PostDistributeInline (after ProcessWorkBatchAsync completes).
+  /// Creates an awaiter for PostDistributeInline (after the flush's database call; the stage is planned).
   /// Automatically skips Inbox-sourced messages to avoid duplicate counts.
   /// </summary>
   public static LifecycleStageAwaiter<TEvent> ForPostDistribute<TEvent>(IHost host)
@@ -232,7 +232,7 @@ public static class LifecycleAwaiter {
   }
 
   /// <summary>
-  /// Creates an awaiter for PreDistributeInline (before ProcessWorkBatchAsync).
+  /// Creates an awaiter for PreDistributeInline (before the flush's database call; the stage is planned).
   /// Automatically skips Inbox-sourced messages to avoid duplicate counts.
   /// </summary>
   public static LifecycleStageAwaiter<TEvent> ForPreDistribute<TEvent>(IHost host)

@@ -21,7 +21,7 @@
 
 #### Category 2: Debug Mode Configuration - FIXED (3 tests)
 
-**Root Cause**: Tests expected messages to exist after completion, but the PostgreSQL `process_work_batch` function deletes completed messages by default (non-debug mode behavior). Tests were written expecting debug mode behavior where completed messages are kept with status flags updated.
+**Root Cause**: Tests expected messages to exist after completion, but the PostgreSQL `process_work_batch` function (since removed) deleted completed messages by default (non-debug mode behavior). Tests were written expecting debug mode behavior where completed messages are kept with status flags updated.
 
 **Solution**: Added `flags: WorkBatchFlags.DebugMode` parameter to test calls to enable debug mode. This sets bit 2 (value 4) in the flags parameter, which the SQL function checks: `v_debug_mode BOOLEAN := (p_flags & 4) = 4;`
 

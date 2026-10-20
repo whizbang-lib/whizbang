@@ -852,14 +852,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Reports the WHIZ701 perspective discovery diagnostic.
   /// </summary>
   private static void _reportPerspectiveDiscoveryDiagnostic(SourceProductionContext context, int perspectiveCount) {
-    var debugDescriptor = new DiagnosticDescriptor(
-        id: "WHIZ701",
-        title: "EF Core Perspective Discovery",
-        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
-    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectiveCount));
+    context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.EFCorePerspectiveDiscovery, Location.None, perspectiveCount));
   }
 
   /// <summary>

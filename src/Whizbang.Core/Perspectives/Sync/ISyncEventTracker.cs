@@ -52,13 +52,15 @@ public interface ISyncEventTracker {
       Type[]? eventTypes = null);
 
   /// <summary>
-  /// Mark events as processed (called when ProcessWorkBatch confirms completion).
+  /// Mark events as processed for every perspective at once. The perspective worker reports per
+  /// perspective instead, through <see cref="MarkProcessedByPerspective"/>.
   /// </summary>
   /// <param name="eventIds">The event IDs to mark as processed.</param>
   void MarkProcessed(IEnumerable<Guid> eventIds);
 
   /// <summary>
-  /// Get all tracked event IDs (to send to ProcessWorkBatch for completion check).
+  /// Get all tracked event IDs (an event still tracked is not yet fully processed; see
+  /// <see cref="EventCompletionAwaiter.AreEventsFullyProcessed"/>).
   /// </summary>
   /// <returns>A read-only list of all currently tracked event IDs.</returns>
   IReadOnlyList<Guid> GetAllTrackedEventIds();

@@ -10,7 +10,7 @@ namespace Whizbang.Core.Attributes;
 /// </summary>
 /// <remarks>
 /// Apply to concrete IMessage (events + commands) and IPerspectiveFor&lt;&gt; implementors.
-/// The analyzer (WHIZ100 / WHIZ101 warning; WHIZ102 error for invalid GUID) enforces
+/// The analyzer (WHIZ110 / WHIZ111 warning; WHIZ112 error for invalid GUID) enforces
 /// presence and format. The attribute itself accepts any non-empty string.
 /// </remarks>
 /// <example>
@@ -19,7 +19,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record OrderPlacedEvent(Guid OrderId) : IEvent;
 /// </code>
 /// </example>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class PinnedIdAttribute(string id) : Attribute {
   /// <summary>

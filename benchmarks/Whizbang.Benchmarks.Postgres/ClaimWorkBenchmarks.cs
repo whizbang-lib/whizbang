@@ -9,7 +9,7 @@ namespace Whizbang.Benchmarks.Postgres;
 /// <summary>
 /// Headline benchmark for the work-pump decomposition: prove the empty-call
 /// short-circuit on <c>claim_work</c> hits the ≤ 1 ms target.
-/// Baseline (legacy <c>process_work_batch</c>) was ~17 ms per empty call.
+/// Baseline (legacy <c>process_work_batch</c>, since removed) was ~17 ms per empty call.
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
@@ -37,7 +37,7 @@ public class ClaimWorkBenchmarks {
 
   /// <summary>
   /// Empty-queues call cost: 4-EXISTS short-circuit returns immediately.
-  /// Target: ≤ 1 ms mean. Baseline (legacy <c>process_work_batch</c>): ~17 ms.
+  /// Target: ≤ 1 ms mean. Baseline (legacy <c>process_work_batch</c>, since removed): ~17 ms.
   /// </summary>
   [Benchmark(Description = "claim_work — empty queues (idle stack scenario)")]
   public async Task<int> IdleClaimCallCostAsync() {

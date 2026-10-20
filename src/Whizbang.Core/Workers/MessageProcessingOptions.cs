@@ -10,13 +10,13 @@ namespace Whizbang.Core.Workers;
 /// <remarks>
 /// <para>
 /// <b>Concurrency control:</b> Each concurrent message handler holds a DB connection
-/// from the pool for the duration of <c>process_work_batch</c>. With multiple subscriptions
+/// from the pool for the duration of its inbox write (<c>store_inbox_messages</c>). With multiple subscriptions
 /// and high <c>MaxConcurrentSessions</c>, the total concurrent handlers can exceed the
 /// connection pool size. <see cref="MaxConcurrentMessages"/> caps total concurrent handlers
 /// across all subscriptions via a shared semaphore.
 /// </para>
 /// <para>
-/// <b>Inbox batching:</b> Instead of each handler making its own <c>process_work_batch</c>
+/// <b>Inbox batching:</b> Instead of each handler making its own <c>store_inbox_messages</c>
 /// DB call, the <see cref="IInboxBatchStrategy"/> collects messages and flushes them in a
 /// single call. The batch parameters control when the flush triggers.
 /// </para>

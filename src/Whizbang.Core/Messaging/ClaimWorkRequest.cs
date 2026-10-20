@@ -5,7 +5,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Parameters for <see cref="IWorkCoordinator.ClaimWorkAsync"/> — the focused
-/// replacement for the claim portion of the legacy <c>ProcessWorkBatchAsync</c>.
+/// replacement for the claim portion of the legacy <c>ProcessWorkBatchAsync</c> (since removed).
 /// Only the polling claim worker calls this method; flushers and heartbeats
 /// have their own dedicated calls.
 /// </summary>

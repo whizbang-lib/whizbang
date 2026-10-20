@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Tests for the new <c>claim_work</c> SQL function — the focused replacement for the
-/// claim portion of the deprecated <c>process_work_batch</c> monolith.
+/// claim portion of the removed <c>process_work_batch</c> monolith.
 /// Foundational contract tests for Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>

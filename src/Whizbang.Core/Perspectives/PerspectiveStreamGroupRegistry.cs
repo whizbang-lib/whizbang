@@ -10,7 +10,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="Announce">Own-origin evictions are announced to this group.</param>
 /// <param name="Follow">Group announcements evict this perspective's row for the stream.</param>
 /// <param name="Bridge">Evictions received via another group re-announce into this one.</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 public sealed record StreamGroupMembership(string Key, bool Announce, bool Follow, bool Bridge);
 
@@ -20,7 +20,7 @@ public sealed record StreamGroupMembership(string Key, bool Announce, bool Follo
 /// maintenance cascade to compute the eviction closure. AOT-safe: types arrive as
 /// <c>typeof(...)</c> from generated code, never reflection.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 public static class PerspectiveStreamGroupRegistry {

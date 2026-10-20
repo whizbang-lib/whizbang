@@ -211,8 +211,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
 
     // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
-    // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
-    // process_work_batch used to provide. Must remain attached for the lifetime of the
+    // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that the
+    // removed process_work_batch function used to provide. Must remain attached for the lifetime of the
     // worker; BackgroundService disposal handles cleanup.
     _outboxChannel.OnNewWorkAvailable += SignalNewWork;
     _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
@@ -421,11 +421,10 @@ public sealed partial class ClaimWorker : BackgroundService {
       LogInitialHeartbeatFailed(_logger, ex);
     }
 
-    // PerspectiveOnly mode: legacy WorkCoordinatorPublisherWorker is wired up and is the
-    // sole poller. Its process_work_batch handles outbox/inbox/perspective claiming and
-    // routes PerspectiveStreamIds onto the drain channel. ClaimWorker doing its own
-    // claim_work would race the publisher and break Phase 4.5B's event-store auto-create
-    // chain (orphan rows get leased before process_work_batch sees them).
+    // PerspectiveOnly mode: another poller is the sole claimer, so this worker claims nothing
+    // and idles until shutdown. The mode was added for the legacy WorkCoordinatorPublisherWorker,
+    // whose process_work_batch call (both since removed) ran the event-store chain over orphan
+    // rows; a second claim_work caller would lease those rows first.
     if (_options.PerspectiveOnly) {
       try {
         await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -1562,11 +1561,10 @@ public sealed class ClaimWorkerOptions {
   public int ClaimWindowGrowthStep { get; set; } = 25;
 
   /// <summary>
-  /// When true, ClaimWorker only distributes perspective stream IDs to the drain channel
-  /// and ignores any outbox/inbox/per-event-perspective work in the claim batch.
-  /// Set this when the legacy <c>WorkCoordinatorPublisherWorker</c> is also registered —
-  /// otherwise both workers race to claim inbox/outbox rows and Phase 4.5B's event-store
-  /// auto-create chain inside <c>process_work_batch</c> never sees the rows as orphans.
+  /// When true, ClaimWorker does not call <c>claim_work</c> at all: it records its initial
+  /// heartbeat and then idles until shutdown, leaving claiming to another poller. The mode was
+  /// added for the legacy <c>WorkCoordinatorPublisherWorker</c>, whose <c>process_work_batch</c>
+  /// call ran the event-store chain over orphan rows; both have since been removed.
   /// </summary>
   public bool PerspectiveOnly { get; set; }
   /// <summary>Modulo partition count. Default 10000.</summary>

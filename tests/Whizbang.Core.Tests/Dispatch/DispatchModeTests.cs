@@ -245,7 +245,7 @@ public class DispatchModeTests {
     // Arrange
     var mode = DispatchModes.Outbox;
 
-    // Assert - Outbox handles event storage via process_work_batch
+    // Assert - Outbox handles event storage via store_outbox_messages (_emit_event_store_chain)
     await Assert.That(mode.HasFlag(DispatchModes.EventStore)).IsFalse();
   }
 

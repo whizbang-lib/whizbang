@@ -86,7 +86,7 @@ var features = context.SyntaxProvider.CreateSyntaxProvider(
 ```csharp
 // Add to DiagnosticDescriptors.cs
 public static readonly DiagnosticDescriptor FeatureDiscovered = new(
-    id: "WHIZ010",  // Next available ID
+    id: "WHIZ0NN",  // The next free ID in your area's band (see diagnostic-system.md)
     title: "Feature Discovered",
     messageFormat: "Found feature '{0}'",
     category: "Whizbang.SourceGeneration",

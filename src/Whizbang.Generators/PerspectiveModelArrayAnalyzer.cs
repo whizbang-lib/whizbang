@@ -24,6 +24,8 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ200: Warning - Perspective model uses array property which causes EF Core tracking failures.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz200</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveModelArrayAnalyzerTests.cs:Analyzer_ArrayInPerspectiveAttribute_ReportsWHIZ200WarningAsync</tests>
   public static readonly DiagnosticDescriptor ArrayPropertyInPerspectiveModel = new(
       id: "WHIZ200",
       title: "Perspective model should use List<T> instead of array",

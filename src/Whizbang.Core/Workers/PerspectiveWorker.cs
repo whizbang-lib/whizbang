@@ -3374,7 +3374,7 @@ public partial class PerspectiveWorker(
       List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork) {
 
 #pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
-    _logger.LogDebug("ProcessWorkBatchAsync returned: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+    _logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
       workBatch.PerspectiveWork.Count, groupedWork.Count);
     foreach (var g in groupedWork) {
       _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
@@ -3874,15 +3874,24 @@ public partial class PerspectiveWorker(
   /// The collectives this sink run applies and the work rows it completes when they do, or null when the run has to
   /// wait its turn. #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an
   /// ordering key share this stream, and the queue is what keeps them in line; without it the stream is read after
-  /// its cursor.
+  /// its cursor. #1524: an engine that provides the head of the queue is asked for the head and for the rows it
+  /// names, never for the whole queue, which on a busy key costs the queue's length on every run.
   /// </summary>
   private async Task<CollectiveSinkBatch?> _loadCollectiveSinkBatchAsync(
       IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId,
       Guid[] sinkWorkIds, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    var head = await _readCollectiveQueueHeadAsync(workCoordinator, streamId, sinkWorkIds, cancellationToken).ConfigureAwait(false);
+    if (head is not null) {
+      return await _takeCollectiveQueueHeadAsync(
+        new CollectiveQueueView(head, (workIds, eventIds) => workCoordinator.FetchCollectiveSinkQueueMembersAsync(streamId, workIds, eventIds, cancellationToken)),
+        sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+    }
     var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
     if (queue is not null) {
       return await _takeCollectiveQueueHeadAsync(
-        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+        new CollectiveQueueView(queue, (workIds, eventIds) => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>(
+          [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))])),
+        sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
     }
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
@@ -3891,11 +3900,34 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// The head of the stream's queue for this run (#1524), or null when the engine does not provide one. The walk goes
+  /// past the rows this run holds and stops at the first it does not; when that row is one this worker already applied
+  /// (its completion not yet written), it is behind the run rather than ahead of it, so the walk goes past it too.
+  /// </summary>
+  private async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> _readCollectiveQueueHeadAsync(
+      IWorkCoordinator workCoordinator, Guid streamId, Guid[] sinkWorkIds, CancellationToken cancellationToken) {
+    var through = new HashSet<Guid>(sinkWorkIds);
+    while (true) {
+      var head = await workCoordinator.FetchCollectiveSinkQueueHeadAsync(streamId, through, cancellationToken).ConfigureAwait(false);
+      if (head is null || head.Count == 0) {
+        return head;
+      }
+      var last = head[^1].EventWorkId;
+      if (through.Contains(last) || !_processedEventCache.Contains(last)) {
+        return head;
+      }
+      through.Add(last);
+    }
+  }
+
+  /// <summary>
   /// The collectives this run applies from its stream's queue (#963), in queue order, and the work rows it completes
-  /// when they apply. The queue is the stream's unprocessed collectives in commit order; this run takes the leading
-  /// rows it holds and stops at the first it does not, because a collective ahead of it (leased elsewhere, or backing
-  /// off after a failure) has to apply first. Returns null when the head of the queue is not this run's, so nothing
-  /// applies and nothing is completed: the held rows are offered again once the one ahead has applied.
+  /// when they apply. <c>view.Queue</c> is the stream's unprocessed collectives in commit order, or at least the
+  /// head of them (#1524); this run takes the leading rows it holds and stops at the first it does not, because a
+  /// collective ahead of it (leased elsewhere, or backing off after a failure) has to apply first. Returns null when
+  /// the head of the queue is not this run's, so nothing applies and nothing is completed: the held rows are offered
+  /// again once the one ahead has applied. Whether a row anywhere in the queue is still queued is asked of
+  /// <c>view.MembersOf</c>, by work id or by event.
   /// </summary>
   /// <remarks>
   /// A leased row the queue no longer holds was already applied and completed; it is completed again, with no apply,
@@ -3904,8 +3936,10 @@ public partial class PerspectiveWorker(
   /// committed after one with a greater id is still applied, and in its place.
   /// </remarks>
   private async Task<CollectiveSinkBatch?> _takeCollectiveQueueHeadAsync(
-      IReadOnlyList<CollectiveSinkQueueEntry> queue, Guid[] sinkWorkIds, IWorkCoordinator workCoordinator,
-      IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
+      CollectiveQueueView view,
+      Guid[] sinkWorkIds, IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider,
+      Guid streamId, CancellationToken cancellationToken) {
+    var (queue, membersOf) = view;
     var held = new HashSet<Guid>(sinkWorkIds);
     // A row this worker already applied is still in the queue until its completion flushes; it is behind us, not
     // ahead, so it neither blocks the queue nor applies again.
@@ -3918,17 +3952,18 @@ public partial class PerspectiveWorker(
       head.Add(entry);
     }
 
-    var queued = new HashSet<Guid>(pending.Select(e => e.EventWorkId));
+    var heldQueued = (await membersOf(sinkWorkIds, []).ConfigureAwait(false))
+      .Select(e => e.EventWorkId).Where(id => !_processedEventCache.Contains(id)).ToHashSet();
     // Held rows behind one this run does not hold wait for the run that holds it, which is usually this pod's next.
     _settleHeldBackSinkRows(streamId, sinkWorkIds,
-      [.. sinkWorkIds.Where(id => queued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
-    if (head.Count == 0 && sinkWorkIds.Any(queued.Contains)) {
+      [.. sinkWorkIds.Where(id => heldQueued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
+    if (head.Count == 0 && heldQueued.Count > 0) {
       LogCollectiveSinkWaitingItsTurn(_logger, streamId, pending[0].EventId);
       return null;
     }
 
     // Rows this run holds that the queue does not were applied already; completing them is harmless and stops a loop.
-    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !queued.Contains(id))).ToArray();
+    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !heldQueued.Contains(id))).ToArray();
     if (head.Count == 0) {
       return new CollectiveSinkBatch([], completed);
     }
@@ -3946,8 +3981,26 @@ public partial class PerspectiveWorker(
         workIdByEventId[entry.EventId] = entry.EventWorkId;
       }
     }
-    return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, [.. pending.Select(e => e.EventId)]);
+
+    // #1003: a collective waits for a predecessor still queued on this stream, wherever it is in the queue.
+    var predecessors = envelopes
+      .Select(e => ((ICollectiveEvent)e.Payload).PredecessorId)
+      .OfType<Guid>().ToHashSet();
+    var queuedEventIds = pending.Select(e => e.EventId).ToHashSet();
+    if (predecessors.Count > 0) {
+      queuedEventIds.UnionWith((await membersOf([], predecessors).ConfigureAwait(false))
+        .Where(e => !_processedEventCache.Contains(e.EventWorkId)).Select(e => e.EventId));
+    }
+    return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, queuedEventIds);
   }
+
+  /// <summary>
+  /// A sink stream's queue as one run sees it (#1524): its rows in apply order (the whole queue, or at least its head),
+  /// and the lookup that says which named rows, by work id or by event, are still queued anywhere in it.
+  /// </summary>
+  private readonly record struct CollectiveQueueView(
+      IReadOnlyList<CollectiveSinkQueueEntry> Queue,
+      Func<IReadOnlyCollection<Guid>, IReadOnlyCollection<Guid>, Task<IReadOnlyList<CollectiveSinkQueueEntry>>> MembersOf);
 
   /// <summary>The collectives a sink run applied, in order, and what each one's specs changed (#1045).</summary>
   private readonly record struct AppliedCollectives(
@@ -5985,7 +6038,7 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
-  /// Controls exponential backoff when ProcessWorkBatchAsync fails.
+  /// Controls exponential backoff for completions left in 'Sent' status without acknowledgement.
   /// </summary>
   public WorkerRetryOptions RetryOptions { get; set; } = new();
 }

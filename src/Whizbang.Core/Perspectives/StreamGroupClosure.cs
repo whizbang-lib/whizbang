@@ -17,7 +17,7 @@ namespace Whizbang.Core.Perspectives;
 /// memberships only where Bridge is on. Seeds themselves are never in the result — they are
 /// already destroyed; the result is the cascade set only.
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs:LeaderTtlEviction_CascadesToTheFollower_InTheSameCycleAsync</tests>
 public static class StreamGroupClosure {
@@ -92,7 +92,7 @@ public static class StreamGroupClosure {
   /// <param name="memberships">Each participating model's memberships (typically from
   /// <see cref="PerspectiveStreamGroupRegistry"/>).</param>
   /// <returns>The models that can announce an eviction the follower would receive.</returns>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/StreamGroupClosureTests.cs:ReachableAnnouncers_FollowsBridges_SoPresenceSeesTheWholeReachAsync</tests>
   public static IReadOnlyList<Type> ReachableAnnouncers(
       Type follower,

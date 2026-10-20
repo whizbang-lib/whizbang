@@ -325,6 +325,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep one row per record. The event store decorator's records are now transport-only, like the outbox path's:
   the origin no longer writes them to its own event store, so a perspective over `EventAudited` in the
   producing service itself sees no records from that path. Applies migration 216.
+- **The Dapper work coordinator ignored the configured schema (#1508).** Its statements used bare names resolved
+  through the session's `search_path`, and maintenance, the orphan-inbox purge, the pending-message discard and the
+  pending-stream check named `public` outright. A pooled connection (PgBouncer in transaction mode, for one) does
+  not carry a configured `search_path` to the server connection a statement lands on, so a host whose framework
+  tables live in another schema read and wrote `public` or failed there. Every coordinator statement is now
+  qualified with the configured schema: the new optional `schema` argument of the `DapperWorkCoordinator`
+  constructor, else the first schema the connection string's `Search Path` names, else the server's
+  `current_schema()`, asked once on first use and kept (which honors a default set on the role or database).
 - **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
   format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
   was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now
@@ -340,6 +348,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the stored digests and sealed epochs, and advances the origin generation once, so consumers reset their seals
   and re-verify instead of reporting drift. The digest and checkpoint queries no longer read the event body to apply
   the filter.
+- **A collective sink run read its stream's whole queue (#1524).** Each run read every unprocessed collective
+  on the stream, joined to the event store and sorted, then applied only the rows it held: draining a busy ordering
+  key cost the backlog squared over the batch. A run now reads the head of the queue on an index, through its own
+  rows and one more, and asks separately which of its held rows and predecessors are still queued (migration 215).
+  An unstamped collective now takes its place in the queue by stream version, the order a replay gives it, rather
+  than by event id.
+- **WHIZ006 missed a `[StreamId]` inherited from a base type (#1512).** A derived property silently hid an
+  inherited one, and an inherited property silently won over a derived record's constructor parameter. Both are now
+  reported.
+- **Diagnostics linked pages that did not exist (#1430).** Every WHIZ descriptor now links its own diagnostics page
+  and a test that asserts it, and a test keeps it that way. WHIZ900's summary named WHIZ200, and the pinned-identity
+  comments named WHIZ100-102 for WHIZ110-112.
+- **Documentation, comments, logs and database comments named `process_work_batch`, which no longer exists
+  (#1463).** They now name the functions that do that work. The `process_batch` metric instruments keep their names
+  for dashboard compatibility; nothing records them (#1535). Migration 220 corrects two function comments.
 - **A multi-stream run over many streams ran its host out of memory.** A run stored the whole command, its stream ids
   included, and every claimed stream read and parsed it again, so a run's cost grew with the square of its stream
   count: an in-place rebuild over 127,288 streams parsed about 630 GB and OOMKilled its pods. A run's payload now

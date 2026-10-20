@@ -478,11 +478,11 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>
   /// Handles a received message using the inbox/work-coordinator pattern.
-  /// Messages are stored in the inbox via process_work_batch for atomic deduplication.
+  /// Messages are stored in the inbox via store_inbox_messages for atomic deduplication.
   /// Perspectives are processed asynchronously by PerspectiveWorker.
   /// </summary>
   /// <summary>
-  /// Batch handler: ONE scope, serialize all N, ONE process_work_batch, return → transport ACKs.
+  /// Batch handler: ONE scope, serialize all N, ONE store_inbox_messages call, return → transport ACKs.
   /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
@@ -526,7 +526,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Ensure event type set is built before echo check (lazy, one-time init).
     _ensureKnownEventTypesInitialized(scope.ServiceProvider);
 
-    // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
+    // Collect inbox messages for one direct INSERT (store_inbox_messages)
     var inboxMessages = new List<InboxMessage>(messages.Count);
     // Active-cleanup claims accumulated by the rehydrator; fired post-commit
     // so a failed inbox INSERT doesn't leave bodies stranded in the store.
@@ -632,9 +632,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       IWorkCoordinator workCoordinator,
       CancellationToken cancellationToken) {
 
-    // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
-    // Event storage + perspective creation happens on next tick via self-healing
-    // (Phase 5 claims → Phase 4.5B stores events → Phase 4.6/4.7 creates perspectives).
+    // Direct INSERT into wh_inbox via store_inbox_messages; nothing else runs in the call.
+    // Event storage + perspective creation happen when ClaimWorker's claim_work claims the
+    // rows (its _emit_event_store_chain_for_inbox step).
     // PartitionCount is sourced from WorkCoordinatorPublisherOptions — the single source
     // of truth across this service's TransportConsumerWorker, WorkBatchCoordinator, and
     // WorkCoordinatorPublisherWorker — preventing the partition mismatch wedge.

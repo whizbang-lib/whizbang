@@ -109,7 +109,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Act - Initialize database schema
     await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
-    // Assert - Verify claim_work function exists (replaced process_work_batch in Phase A).
+    // Assert - Verify claim_work function exists (replaced the removed process_work_batch in Phase A).
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 

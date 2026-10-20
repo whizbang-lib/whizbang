@@ -49,6 +49,8 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ300: Error - Perspective class uses inconsistent model types across interfaces.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz300</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveModelConsistencyAnalyzerTests.cs:Analyzer_MultiplePerspectivesWithDifferentModels_ReportsDiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor InconsistentModelTypes = new(
       id: "WHIZ300",
       title: "Perspective interfaces must use the same model type",
