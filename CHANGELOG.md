@@ -301,6 +301,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognizes redelivery by the sent time handled a genuine redelivery twice. The message is now stamped
   once, by its copy when there is one and by the local run when there is not, and a batch send runs under
   its copy's correlation.
+- **An upgrade failed on an EF Core context with a schema of its own (#1530).** The ledger re-runs a migration
+  whose text changed, and on such a context, with the default `search_path`, a re-run could not see what the
+  earlier run had done: the guards asked `current_schema()`, which on the driver's connection is `public`, and
+  the driver's qualification of bare framework table names reached inside string literals, turning
+  `table_name = 'wh_inbox'` into a name no row has. Upgrading from 0.1024.0 failed at startup (046 raised 42701
+  on `source_service_id`). The EF Core driver now runs each migration with `search_path` set to the migrated
+  schema (the Dapper driver's schema already is `current_schema()`), the qualification leaves literals, quoted identifiers and comments alone, and migration 213 redefines the seven
+  run-time functions that found their tables through `current_schema()` (the row reaps, `perform_maintenance`,
+  the retention preview, the reap-target collection and the table-rewrite scan), which on such a context looked
+  in `public` and did nothing. The literal rewrite had also changed the dead-letter `source_table` comparisons
+  (`move_to_dead_letters` rejected `wh_outbox`), the stream-purge labels and the advisory-lock keys of a
+  named-schema EF Core context. No shipped migration is edited; on a named-schema EF Core context, the migrations
+  with a framework name in a literal or comment have a new hash and run once more on the first start.
 - **A multi-instance Dapper fleet never dropped a retired schema object (#1253).** The Dapper driver ran
   its managed-object cleanup at registration with no instance id, so every running peer looked
   unreported and the fleet gate held every drop; it also ignored `Whizbang:Schema:Reconcile` and logged
