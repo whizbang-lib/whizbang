@@ -1462,6 +1462,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0);
 
   /// <summary>
+  /// The presence reconcile scoped to the streams a rebuild just replayed: only their rows can have been resurrected,
+  /// so only they are checked. A rebuild of one stream reconciling the whole follower table made a run over many
+  /// streams cost streams times rows. Null scopes to the whole table. Default: the unscoped reconcile.
+  /// </summary>
+  /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
+  /// <param name="announcerTables">Its groups' announcer tables.</param>
+  /// <param name="streamIds">The streams rebuilt, or null for the whole table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
+  Task<int> ReconcileFollowerPresenceAsync(
+    string followerTable,
+    IReadOnlyCollection<string> announcerTables,
+    IReadOnlyCollection<Guid>? streamIds,
+    CancellationToken cancellationToken = default) => ReconcileFollowerPresenceAsync(followerTable, announcerTables, cancellationToken);
+
+  /// <summary>
   /// Stream-integrity Phase B: the DISTINCT event types this service has ever emitted into its own
   /// audited lane (the own-emissions digest rows). The checkpoint publisher fans its heartbeat out
   /// to these types' topics — the topics this origin's consumers already subscribe to — so a quiet
@@ -3228,6 +3245,12 @@ public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrior
   /// Unique message ID.
   /// </summary>
   public required Guid MessageId { get; init; }
+
+  /// <summary>
+  /// True when the row is an event. The transport routes an event to the topic the dispatcher chose, whatever its
+  /// type name looks like; only a non-event row is classified by its name.
+  /// </summary>
+  public bool IsEvent { get; init; }
 
   /// <summary>
   /// Destination to publish to (topic name).

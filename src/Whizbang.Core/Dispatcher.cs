@@ -406,6 +406,16 @@ public abstract partial class Dispatcher(
     return result;
   }
 
+  /// <summary>Whether a message of this type is a composite this service owns, so it is expanded here.</summary>
+  private bool _expandsHere(Type messageType) =>
+    typeof(ICompositeEvent).IsAssignableFrom(messageType) && _isOwnedNamespace(messageType.Namespace);
+
+  /// <summary>Expands an owned composite here, as part of its local run; anything else is left alone.</summary>
+  private Task _expandIfOwnedCompositeAsync(object message, Type messageType, MessageId? copyId) =>
+    _expandsHere(messageType)
+      ? FanOutCompositeLocallyAtPublishAsync(message, messageType, copyId ?? MessageId.New())
+      : Task.CompletedTask;
+
   private static ReceptorInfo? _firstRuntimeReceptor(IReadOnlyList<ReceptorInfo> registered) =>
     registered.FirstOrDefault(receptor => receptor.RuntimeInstance is not null);
 
@@ -416,7 +426,9 @@ public abstract partial class Dispatcher(
   /// event nothing here handles is not treated as handled and its copy does not claim it was (#1410 follow-up).
   /// </summary>
   private bool _hasLocalPublishReceptors(Type eventType) {
-    if (GetUntypedReceptorPublisher(eventType) is not null) {
+    // An owned composite is expanded here, so it is handled here: the decision then runs its fan-out now, or at
+    // its scheduled time through the copy that comes back, on every entry
+    if (GetUntypedReceptorPublisher(eventType) is not null || _expandsHere(eventType)) {
       return true;
     }
     return _foreignLookups().Any(lookup => lookup.LookupUntypedReceptorPublisher(eventType) is not null)
@@ -488,8 +500,14 @@ public abstract partial class Dispatcher(
     var kind = message switch {
       IEvent => MessageTraits.Event,
       ICommand => MessageTraits.Command,
+      // A composite carries events, so every policy treats it as one, whatever the call's default
+      ICompositeEvent => MessageTraits.Event,
       _ => unmarkedKind,
     };
+    // Only an event is stored: a store-only route for anything else is refused rather than written nowhere
+    if (message is not IEvent) {
+      kind |= MessageTraits.NotStorable;
+    }
     if (message is ICompositeEvent) {
       kind |= MessageTraits.Composite;
     }
@@ -566,6 +584,9 @@ public abstract partial class Dispatcher(
       case DispatchRejection.CommandCannotBeStoreOnly:
         throw new DispatchRejectedException(decision.Reject, messageType,
           $"{messageType.Name} is a command routed to the event store only; commands are not stored. Route it Local, Outbox or Both.");
+      case DispatchRejection.NotAnEventCannotBeStoreOnly:
+        throw new DispatchRejectedException(decision.Reject, messageType,
+          $"{messageType.Name} is not an event and is routed to the event store only; only events are stored. Route it Local, Outbox or Both.");
       case DispatchRejection.CannotScheduleInProcess:
         throw new DispatchRejectedException(decision.Reject, messageType,
           $"{messageType.Name} is scheduled for later but never leaves this service, so nothing can deliver it later. Send it through the outbox or drop the schedule.");
@@ -965,6 +986,7 @@ public abstract partial class Dispatcher(
     _causeCopyWrite.Value = outboxTask;
     var registered = _registerLocalRunEnvelope(message, sourceEnvelope: null, stampMessage: copyId is null, copyId);
     try {
+      await _expandIfOwnedCompositeAsync(message, eventType, copyId).ConfigureAwait(false);
       await publisher(eventData);
       await _publishToForeignLookupsAsync(message, eventType, null, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(message, eventType, cancellationToken).ConfigureAwait(false);
@@ -3563,6 +3585,7 @@ public abstract partial class Dispatcher(
       IMessageEnvelope? sourceEnvelope, MessageId? copyId, CancellationToken cancellationToken) {
     var registered = _registerLocalRunEnvelope(message, sourceEnvelope, stampMessage: copyId is null, copyId);
     try {
+      await _expandIfOwnedCompositeAsync(message, messageType, copyId).ConfigureAwait(false);
       if (GetUntypedReceptorPublisher(messageType) is { } publisher) {
         await publisher(message, localEnvelope, cancellationToken);
       }
@@ -3939,15 +3962,6 @@ public abstract partial class Dispatcher(
       // Get strongly-typed delegate from generated code
       var publisher = GetReceptorPublisher(eventData, eventType);
 
-      // Owned composite — fan out LOCALLY at publish (step 1.1). Expand the composite and local-publish
-      // each inner event (→ event store + receptors + perspectives, no transport) so the publishing service
-      // materializes its own composite's children immediately. The composite ALSO goes over transport below
-      // (step 1.2) like any owned event, for OTHER subscribing services that fan out on receive. The
-      // service's own transported copy loops back and is echo-discarded (it already fanned out here), so
-      // there is no double fan-out. The composite itself is IMessage-not-IEvent and is never event-stored.
-      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
-      }
 
       // Start outbox publishing concurrently with the local receptor.
       // The receptor (publisher) can take 30+ seconds for heavy operations — we don't want
@@ -4062,10 +4076,6 @@ public abstract partial class Dispatcher(
       var decision = _decide(DispatchPolicies.Publish, eventData, eventType, _hasLocalPublishReceptors(eventType), options, route, unmarkedKind: MessageTraits.Event);
       _throwIfRejected(in decision, eventType);
 
-      // Owned composite — fan out LOCALLY at publish (step 1.1); see the other PublishAsync overload.
-      if (eventData is ICompositeEvent && _isOwnedNamespace(eventType.Namespace)) {
-        await FanOutCompositeLocallyAtPublishAsync(eventData, eventType, messageId).ConfigureAwait(false);
-      }
 
       // Start outbox concurrently with receptor (see other overload for rationale).
       // options.ScheduledFor flows through to the outbox row's scheduled_for column so
@@ -4969,12 +4979,38 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Where a message's outbox copy goes: an event to its topic, anything else to its owner's command
-  /// destination, as a send routes it. A cascade writes commands through the same outbox paths as
-  /// events and used to send them to an event topic (#1410 follow-up).
+  /// Where a message's outbox copy goes: an event to its topic, a composite to its events' topic, and anything
+  /// else to its owner's command destination, as a send routes it. A cascade writes commands through the same
+  /// outbox paths as events and used to send them to an event topic (#1410 follow-up). A composite is not an
+  /// <see cref="IEvent"/>, and routing it as a command sent it only to its owner, which discards its own echo,
+  /// so no subscriber received it.
   /// </summary>
-  private string _resolveDestination(object? message, Type messageType) =>
-    message is IEvent ? _resolveEventTopic(messageType) : _resolveCommandDestination(messageType);
+  private string _resolveDestination(object? message, Type messageType) => message switch {
+    IEvent => _resolveEventTopic(messageType),
+    ICompositeEvent composite => _resolveCompositeTopic(composite, messageType),
+    _ => _resolveCommandDestination(messageType),
+  };
+
+  /// <summary>
+  /// The topic a composite goes to: the one its inner events share, where the services subscribed to them
+  /// listen, whatever namespace the composite type itself is declared in. When its events would go to
+  /// different topics, or it carries none, the composite's own type decides.
+  /// </summary>
+  private string _resolveCompositeTopic(ICompositeEvent composite, Type compositeType) {
+    string? shared = null;
+    foreach (var inner in composite.InnerEvents) {
+      if (inner is null) {
+        continue;
+      }
+      var topic = _resolveDestination(inner, inner.GetType());
+      if (shared is null) {
+        shared = topic;
+      } else if (!string.Equals(shared, topic, StringComparison.Ordinal)) {
+        return _resolveEventTopic(compositeType);
+      }
+    }
+    return shared ?? _resolveEventTopic(compositeType);
+  }
 
   /// <summary>
   /// Writes a cascaded message whose type no generated cascade arm names to the outbox by its runtime
@@ -5508,6 +5544,7 @@ public abstract partial class Dispatcher(
     var publisher = GetReceptorPublisher(eventData, eventType);
     var registered = _registerLocalRunEnvelope(eventData, sourceEnvelope: null, stampMessage: copyId is null, copyId);
     try {
+      await _expandIfOwnedCompositeAsync(eventData, eventType, copyId).ConfigureAwait(false);
       await publisher(eventData);
       await _publishToForeignLookupsAsync(eventData, eventType, null, cancellationToken).ConfigureAwait(false);
       await _publishToRuntimeLocalReceptorsAsync(eventData, eventType, cancellationToken).ConfigureAwait(false);

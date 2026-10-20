@@ -16,6 +16,9 @@ namespace Shop.Orders {
     public OrderPlaced() : this(Guid.Empty) { }
   }
 
+  /// <summary>An owned composite: it carries events, so it is filtered as one.</summary>
+  public sealed class OrderBurst : Whizbang.Core.Minting.CompositeEventBase;
+
   namespace Fulfillment {
     public sealed record OrderShipped([property: StreamId] Guid OrderId) : IEvent {
       public OrderShipped() : this(Guid.Empty) { }
