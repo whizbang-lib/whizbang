@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   will be retried), on both Postgres drivers.
 - **`ISchemaInitializationRunner` and `AddWhizbangSchemaInitialization()`** — one schema initializer runs every
   driver's registered runner in order, then opens the schema-ready gate.
+- **Capabilities: one pattern for external dependencies** (#1511, #1513, #1498): every external dependency the
+  library can use is a capability, identified by provider and name (`postgres/pg_squeeze`), described once
+  (purpose, features, whether the library may provision it, prerequisites, the fix per state) and probed per
+  scope with one generic state: Ready, Provisionable, NotPermitted, NeedsServerChange, NoPrivilege, Missing or
+  Unknown, with the provider's own detail kept beside it. `ICapabilityProvider` is the extension point for
+  any package; `ICapabilityRegistry` aggregates every provider. After the migration step, and without
+  blocking readiness, the library probes every provider and writes one verdict per provider and scope:
+  the usable capabilities with their purpose at Information, the rest at Debug with the fix. A provider
+  that cannot probe a scope reads Unknown with a warning and never stops startup. Gauge
+  `whizbang.capability.state` (tags provider, capability, scope, state) on the new `Whizbang.Capabilities`
+  meter, in `WhizbangMeters.All`. `Whizbang:Capabilities:ProbeOnStartup` (default `true`) turns the probe off.
+  Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
+  scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
+  `pg_cron`.
 
 #### Messaging & delivery
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the
@@ -61,6 +75,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-rewind are not skipped.
 - **Throughput** — drain mode (per-perspective event filtering with full lifecycle), a bulk-import
   throughput path, and throughput instrumentation (gate hold-duration histograms, WorkCoordinator metrics).
+- **Retention windows from configuration** (#1487): every retention window the maintenance sweep reads from
+  `wh_settings` is now an option, set like any other: `Whizbang:Workers:Maintenance:Retention` (deduplication,
+  stuck inbox, recovered dead letters, abandoned streams, instance-eviction tombstones, orphaned perspective
+  events, collective-ordering heads) and `Whizbang:Ephemeral` (`RewindGraceSeconds`, `PointerPrune`). Each
+  maintenance cycle publishes the options you set before the sweep runs; an option left unset leaves the stored
+  value alone, a negative value fails startup naming the key, and a failed write is logged without failing the
+  cycle. The Dapper engine now also publishes `debug_mode`, which it never did.
+- **Maintenance deferral ceiling is a time** (#1491): `Whizbang:Housekeeping:MaxDeferral` (default one hour)
+  bounds how long the idle gate can hold back maintenance or dead-letter recovery, measured from the first
+  deferral, so changing a tick interval no longer moves the ceiling. The forced pass still reports as
+  `ProceedDeferralLimit`. `MaxConsecutiveDeferrals` remains as a legacy fallback, used only when it is set and
+  `MaxDeferral` is not; with neither set the one-hour time applies. A zero or negative `MaxDeferral` fails
+  startup naming the key. The turnkey coordinator now measures its dwell and ceiling on the registered
+  `TimeProvider`.
 
 #### Context, identity & serialization
 - **Scope & security propagation** — `[InheritScope]` + `ScopeFields`, `IStreamScopeEvent` +
@@ -99,6 +127,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`whizbang migrate` CLI** — Marten/Wolverine migration analyzers + transformers (JSONB LINQ,
   global-using rewrites, package-ref upgrades); PgBouncer-compatible schema initialization; the
   `ExtractMessageRegistry` MSBuild target shipped via NuGet.
+- **Table statistics cover every framework and perspective table, on both Postgres drivers (#1488).** The
+  `Whizbang.TableStatistics` meter reported sizes and bloat for a fixed list of seven tables, so the event body
+  store, deduplication, dead letters and every perspective table were invisible, and a Dapper host reported nothing
+  at all. Every `wh_` table in the service's schema is now found in the catalog on each refresh (partitioned tables
+  once, with their partitions summed), and two gauges are added: `whizbang.table.component_bytes` (tags
+  `table_name`, `component` = `heap`, `toast`, `indexes`, adding up to `whizbang.table.estimated_bytes`) and
+  `whizbang.table.live_rows`. All of it comes from one catalog statement per refresh. Cardinality is capped by
+  `Whizbang:TableStatistics:MaxTrackedTables` (default 500); past it the smallest tables are summed under
+  `table_name="other"`. A table missing from a refresh stops reporting instead of keeping its last value, and
+  `TableStatisticsCollector.CycleCompleted` is public. **Upgrade:** `PostgresTableStatisticsProvider` moved from
+  `Whizbang.Data.EFCore.Postgres` to `Whizbang.Data.Postgres.Observability`; a host that constructs it directly
+  changes the namespace. Dashboards that sum `estimated_bytes` across tables will see the new tables' bytes.
 - **API hygiene** — a `SyncMode` enum + `LocalInvokeAndSyncAsync(msg, SyncMode, ct)` overload; the old
   timeout-based overloads are now `[Obsolete]`.
 
@@ -250,6 +290,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatcher chose.
 - **PreOutbox receptors never fired for an owned composite.** It was filtered as an owned command; it is filtered
   as an event.
+- **Startup failed with `ITransport (required by TransportConsumerWorker)` when no transport was composed
+  (#1529).** Registration validation checked every requirement in the generated manifest, including types the
+  composition never registers, so `AddWhizbang()` with a storage driver and no `AddTransportConsumer()` could not
+  start. A requirement is now checked only when its implementation is registered in the service collection being
+  validated: as a service type, an implementation type, an instance (keyed or not), or through a factory
+  registration. For factory registrations the generator records the service type each descriptor carries in the
+  new `ServiceRequirement.FactoryServiceTypes` (`IHostedService` for `AddHostedService<T>`); the two-argument
+  `ServiceRequirement` constructor is unchanged. A registered type with a missing dependency still fails startup.
+- **Closing a stream failed whenever a perspective cursor pointed into the truncated range, and left snapshots a
+  rewind could no longer replay from (#1486).** `CloseStreamAsync` now moves such a cursor onto the first event
+  that survives the close, removes every snapshot that needs a truncated event (keeping a moved perspective's
+  current-state snapshot), and removes processed work rows and lapsed destruction holds for the truncated
+  events. Deduplication entries are kept so a redelivered copy is still turned away. Two new statuses refuse a
+  close instead of losing data: `held` (an active destruction hold covers an event in the range) and
+  `cursor_behind` (a perspective in the range has not yet applied the first surviving event). Same behavior on
+  the EF Core and Dapper schemas.
+- **Evicting a perspective row left its cursor and every snapshot behind, and a row evicted by a cap or a
+  stream-group cascade came back holding only the newest event (#1483).** An eviction now reclaims storage
+  only: for each perspective of the evicted model, the row's cursor and every snapshot but the latest are
+  removed with it, on every eviction path (row TTL, row cap, stream-group cascade, stamped expiry) and both
+  drivers (migration 211). The next event on the stream rebuilds the whole row from that snapshot plus the
+  later history, for any perspective whose rows can be evicted (`PerspectiveRowEviction.CanEvict`), not only
+  row-TTL ones. An ephemeral perspective rebuilds from a surviving snapshot; with none it starts the row
+  fresh and logs a warning. Perspectives on the same stream that fold another model are untouched. The EF
+  Core registry payload now names each model's perspectives (`wh_perspective_registry.perspective_names`),
+  recorded at the next startup; until then an eviction removes the row alone.
+- **A scope event's scope could be overwritten or narrowed before the row was written (#1432).** A later message in
+  the same batch replaced it, the model's `[InheritScope(OnCreate)]` filtered it (dropping the principals the event
+  shared the row with), and `IPerspectiveScopeFor.ApplyScope` was given the last message's scope as the current one.
+  The runner now writes the scope the event set, unfiltered, and gives `ApplyScope` the row's stored scope.
+  `ScopeInheritance.Resolve` takes that scope in place of its `scopeEventChanged` flag.
+- **A lens or perspective that inherits its interface from an abstract base was never registered (#1482).**
+- **A generic message type broke the consumer's build (#1481).** The generators emitted the open type into generated
+  code. They now skip it, and WHIZ015 warns at the type that generic message types are not supported.
+- **The message registry was never enriched with docs URLs or tests (#1428).** The docs and tests maps were read
+  case-sensitively against their camelCase keys.
+- **Five build properties had no effect when set in a project (#1426):** `WhizbangMaxIdentifierLength`,
+  `WhizbangStripTableNameSuffixes`, `WhizbangTableNameSuffixesToStrip`, `WhizbangGuidInterceptionEnabled` and
+  `WhizbangQueryComposingAttributes`. The generator packages now declare them compiler-visible.
+- **Build diagnostics can be suppressed where they appear (#1429).** Twenty were reported with no location (or an
+  external-file one); they are now reported at the declaration they are about.
+- **Build diagnostic messages said things the analyzers do not do (#1428).** Among them: WHIZ104 now finds
+  `System.DateTime.UtcNow`, WHIZ102 no longer doubles WHIZ103 on an `HttpClient` call, WHIZ811 is silenced by the
+  `[PolymorphicDiscriminator]` it suggests, and WHIZ900 covers every Inline stage and `WaitForAppliedAsync`.
+- **Mutation testing never completed (#1444).**
 - **Perspective sync waited on an event id the Postgres event stores never wrote (#1465).** Appending a
   message, the sync tracker recorded one id and the store wrote another, so `AppendAndWaitAsync` and any
   sync wait on that append could only time out. The tracker now sits inside the security-context decorator
@@ -264,6 +349,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognizes redelivery by the sent time handled a genuine redelivery twice. The message is now stamped
   once, by its copy when there is one and by the local run when there is not, and a batch send runs under
   its copy's correlation.
+- **An upgrade failed on an EF Core context with a schema of its own (#1530).** The ledger re-runs a migration
+  whose text changed, and on such a context, with the default `search_path`, a re-run could not see what the
+  earlier run had done: the guards asked `current_schema()`, which on the driver's connection is `public`, and
+  the driver's qualification of bare framework table names reached inside string literals, turning
+  `table_name = 'wh_inbox'` into a name no row has. Upgrading from 0.1024.0 failed at startup (046 raised 42701
+  on `source_service_id`). The EF Core driver now runs each migration with `search_path` set to the migrated
+  schema (the Dapper driver's schema already is `current_schema()`), the qualification leaves literals, quoted identifiers and comments alone, and migration 213 redefines the seven
+  run-time functions that found their tables through `current_schema()` (the row reaps, `perform_maintenance`,
+  the retention preview, the reap-target collection and the table-rewrite scan), which on such a context looked
+  in `public` and did nothing. The literal rewrite had also changed the dead-letter `source_table` comparisons
+  (`move_to_dead_letters` rejected `wh_outbox`), the stream-purge labels and the advisory-lock keys of a
+  named-schema EF Core context. No shipped migration is edited; on a named-schema EF Core context, the migrations
+  with a framework name in a literal or comment have a new hash and run once more on the first start.
 - **A multi-instance Dapper fleet never dropped a retired schema object (#1253).** The Dapper driver ran
   its managed-object cleanup at registration with no instance id, so every running peer looked
   unreported and the fleet gate held every drop; it also ignored `Whizbang:Schema:Reconcile` and logged

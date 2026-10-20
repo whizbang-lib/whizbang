@@ -54,8 +54,9 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Get type symbol
-    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol || typeSymbol.IsAbstract) {
+    // Get type symbol. A generic declaration is an open type with no closed form to name (#1481).
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol
+        || typeSymbol.IsAbstract || typeSymbol.IsGenericType) {
       return null;
     }
 

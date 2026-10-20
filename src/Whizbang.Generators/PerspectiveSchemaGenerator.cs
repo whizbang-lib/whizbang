@@ -510,16 +510,9 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    };");
     schemaBuilder.AppendLine("}");
 
-    // Add source file as C# code
+    // Add source file as C# code. No summary diagnostic: WHIZ007 is the discovery generator's per-perspective
+    // message, and a summary under it formatted as "Found perspective '2' listening to A, B" (#1428).
     context.AddSource("PerspectiveSchemas.g.sql.cs", schemaBuilder.ToString());
-
-    // Report summary
-    context.ReportDiagnostic(Diagnostic.Create(
-        DiagnosticDescriptors.PerspectiveDiscovered,
-        Location.None,
-        perspectives.Length.ToString(CultureInfo.InvariantCulture),
-        string.Join(", ", perspectives.Select(p => p.ClassName))
-    ));
   }
 
   /// <summary>

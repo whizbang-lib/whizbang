@@ -137,7 +137,9 @@ public class PerspectivePurityAnalyzerCoverageTests {
     // Assert
     var whiz100 = diagnostics.Where(d => d.Id == "WHIZ100").ToArray();
     await Assert.That(whiz100.Length).IsEqualTo(1);
-    await Assert.That(whiz100[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Task<TModel>")
+    await Assert.That(whiz100[0].GetMessage(CultureInfo.InvariantCulture)).Contains("returns 'Task'")
+      .Because("the message names the return type the method actually has (#1428)");
+    await Assert.That(whiz100[0].GetMessage(CultureInfo.InvariantCulture)).Contains("'TModel'")
       .Because("a bare Task has no type argument to extract, so the message must fall back to a generic placeholder rather than fail");
   }
 }

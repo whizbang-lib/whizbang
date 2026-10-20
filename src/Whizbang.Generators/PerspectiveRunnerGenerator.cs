@@ -62,12 +62,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             if (result!.Warning is { } warning) {
               ctx.ReportDiagnostic(Diagnostic.Create(
                   DiagnosticDescriptors.PerspectiveModelMissingStreamId,
-                  Location.Create(
-                      warning.FilePath,
-                      default,
-                      new Microsoft.CodeAnalysis.Text.LinePositionSpan(
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column),
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column))),
+                  warning.Location,
                   warning.PerspectiveName,
                   warning.ModelName
               ));
@@ -275,16 +270,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       ClassDeclarationSyntax classDeclaration,
       INamedTypeSymbol classSymbol,
       ITypeSymbol modelType) {
-    var location = classDeclaration.GetLocation();
-    var lineSpan = location.GetLineSpan();
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
             PerspectiveName: classSymbol.Name,
             ModelName: modelType.Name,
-            FilePath: lineSpan.Path,
-            Line: lineSpan.StartLinePosition.Line,
-            Column: lineSpan.StartLinePosition.Character
+            Location: classDeclaration.Identifier.GetLocation()
         )
     );
   }
@@ -997,17 +988,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (perspective.HasScopeInterface) {
       // Perspective implements IPerspectiveScopeFor — let it decide the final scope
       sb.AppendLine($"          if (perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<{perspective.InterfaceTypeArguments[0]}> scopePerspective) {{");
-      sb.AppendLine("            var currentScope = lastScope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
-      sb.AppendLine("            lastScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
+      // The current scope is the one an earlier scope event in this batch set, else the row's stored scope,
+      // never the last message's envelope scope (#1432).
+      sb.AppendLine("            var currentScope = scopeEventScope ?? applyRead.Scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
+      sb.AppendLine("            scopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
       sb.AppendLine("          } else {");
-      sb.AppendLine("            lastScope = proposedScope;");
+      sb.AppendLine("            scopeEventScope = proposedScope;");
       sb.AppendLine("          }");
     } else {
       // No IPerspectiveScopeFor — accept proposed scope directly
-      sb.AppendLine("          lastScope = proposedScope;");
+      sb.AppendLine("          scopeEventScope = proposedScope;");
     }
-
-    sb.AppendLine("          scopeChanged = true;");
     sb.AppendLine("        }");
 
     return sb.ToString().TrimEnd('\r', '\n');

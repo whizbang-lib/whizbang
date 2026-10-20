@@ -3,7 +3,8 @@
 # The release app's ID and key are environment secrets (#1466): a job reads them only by declaring the
 # release-app environment (develop, main and release/v* only) or release-cut (the same, plus a build
 # admin's approval), so a workflow pushed on any other branch cannot mint a release token. A reusable
-# workflow cannot be handed an environment secret by its caller, so no job passes them along.
+# workflow cannot be handed an environment secret by its caller, so no job passes them along; it declares
+# them as optional workflow_call secrets instead, which is what lets the environment's values reach its jobs.
 
 BeforeAll {
   $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
@@ -54,6 +55,18 @@ Describe 'Release app secrets' {
         Where-Object { (Get-Content -Raw $_.FullName) -match '(?m)^      RELEASE_APP_(ID|PRIVATE_KEY):\s*\n        required:\s*true' } |
         ForEach-Object { $_.Name })
     $required | Should -BeNullOrEmpty
+  }
+
+  It 'are declared as workflow_call secrets by every reusable workflow that reads them, or its jobs never see them' {
+    # A reusable workflow's job sees only the secrets its workflow_call trigger declares (or its caller
+    # passes); declaring the name is what lets the release-app environment's value through (#1477).
+    $undeclared = @(Get-ChildItem (Join-Path $Root '.github' 'workflows') -Filter '*.yml' |
+        Where-Object {
+          $raw = Get-Content -Raw $_.FullName
+          $raw -match '(?m)^  workflow_call:' -and $raw -match 'secrets\.RELEASE_APP_' -and
+            -not ($raw -match '(?m)^      RELEASE_APP_ID:\s*$' -and $raw -match '(?m)^      RELEASE_APP_PRIVATE_KEY:\s*$')
+        } | ForEach-Object { $_.Name })
+    $undeclared | Should -BeNullOrEmpty
   }
 
   It 'cut a release only after a build admin approves (release-cut)' {

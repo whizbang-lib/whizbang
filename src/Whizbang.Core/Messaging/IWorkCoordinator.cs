@@ -245,6 +245,33 @@ public interface IWorkCoordinator {
     => Task.CompletedTask;
 
   /// <summary>
+  /// Publishes the host's database-side settings (debug retention and every configured retention window) to the
+  /// store in one write, where the maintenance sweep reads them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Called once per maintenance cycle, before the sweep, with what
+  /// <see cref="Whizbang.Core.Workers.RetentionSettingsBridge.SettingsFor"/> returns: <c>debug_mode</c> always, and
+  /// each retention option that is set. An option left unset is absent, so the stored value stands.
+  /// </para>
+  /// <para>
+  /// The default hands the <c>debug_mode</c> entry to <see cref="SyncDebugRetentionSettingAsync"/> and ignores the
+  /// rest, so an engine that implements only that method keeps its debug retention. Engines with a settings table
+  /// override this to write every entry.
+  /// </para>
+  /// </remarks>
+  /// <param name="settings">The settings to write, each key at most once.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the settings are stored.</returns>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:AnEngineThatOnlySyncsDebugMode_StillReceivesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:TheDefaultSync_WithNoDebugEntry_DoesNothingAsync</tests>
+  Task SyncRetentionSettingsAsync(IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default)
+    => Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeIn(settings) is bool debugMode
+      ? SyncDebugRetentionSettingAsync(debugMode, cancellationToken)
+      : Task.CompletedTask;
+
+  /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
@@ -1913,10 +1940,12 @@ public interface IWorkCoordinator {
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
-  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
-  /// <c>unsupported</c>) plus the number of events truncated.
+  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
+  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>closed</c>, every
+  /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
+  /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
+  /// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
   Task<StreamCloseResult> CloseStreamAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
     Task.FromResult(new StreamCloseResult("unsupported", 0));
@@ -2639,10 +2668,12 @@ public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status)
 /// <summary>
 /// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
 /// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
-/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
+/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>held</c> = an
+/// active destruction hold covers an event in the range | <c>cursor_behind</c> = a perspective whose cursor is in
+/// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
 /// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
+/// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
 public sealed record StreamCloseResult(string Status, long EventsTruncated);
 
 /// <summary>

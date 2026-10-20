@@ -38,6 +38,7 @@ Whizbang:BodyOffload:PassiveSweepMaxBatchesPerCycle
 Whizbang:BodyOffload:ProviderName
 Whizbang:BodyOffload:RequireSealedBodies
 Whizbang:BodyOffload:SizeThresholdBytes
+Whizbang:Capabilities:ProbeOnStartup
 Whizbang:CircuitBreakers:*:CooldownBackoffMultiplier
 Whizbang:CircuitBreakers:*:FailureThreshold
 Whizbang:CircuitBreakers:*:InitialCooldownSeconds
@@ -107,7 +108,11 @@ Whizbang:DebuggerAwareClock:FrozenThreshold
 Whizbang:DebuggerAwareClock:Mode
 Whizbang:DebuggerAwareClock:SamplingInterval
 Whizbang:DisableGuidTracking
+Whizbang:Ephemeral:PointerPrune:Enabled
+Whizbang:Ephemeral:PointerPrune:IntervalDays
+Whizbang:Ephemeral:PointerPrune:RetentionDays
 Whizbang:Ephemeral:ReconcileHistoricalOnStartup
+Whizbang:Ephemeral:RewindGraceSeconds
 Whizbang:Guardrails:EnableChaosHooks
 Whizbang:Guardrails:OnDoubleFire
 Whizbang:Guardrails:PersistInvocations
@@ -117,6 +122,7 @@ Whizbang:Health:Components:*
 Whizbang:Health:Default
 Whizbang:Health:SourceTimeout
 Whizbang:Housekeeping:MaxConsecutiveDeferrals
+Whizbang:Housekeeping:MaxDeferral
 Whizbang:Housekeeping:SettledCooldown
 Whizbang:Lifecycle:FaultRecordWindow
 Whizbang:Lifecycle:TransitionAckTimeout
@@ -290,6 +296,7 @@ Whizbang:SystemEvents:AuditShipMaxBatchCount
 Whizbang:SystemEvents:AuditShipMaxDelaySeconds
 Whizbang:SystemEvents:AuditShipSlideSeconds
 Whizbang:SystemEvents:LocalOnly
+Whizbang:TableStatistics:MaxTrackedTables
 Whizbang:Tags
 Whizbang:Tags:Coalesce
 Whizbang:Tags:Coalesce:*:Atomicity
@@ -508,6 +515,13 @@ Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
+Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
+Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
+Whizbang:Workers:Maintenance:Retention:DeduplicationDays
+Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours
+Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours
+Whizbang:Workers:Maintenance:Retention:RecoveredDeadLetterDays
+Whizbang:Workers:Maintenance:Retention:StuckInboxDays
 Whizbang:Workers:Maintenance:RowCapSweepClaimWindowMinutes
 Whizbang:Workers:Maintenance:RowCascadeDrainLimit
 Whizbang:Workers:Maintenance:RowGuardCollectLimit

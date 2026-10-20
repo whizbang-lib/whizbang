@@ -161,6 +161,33 @@ public class SchemaBootstrapPhaseTests {
   }
 
   /// <summary>
+  /// A named schema's bootstrap runs with that schema as <c>current_schema()</c>, so the migration text
+  /// it carries answers about the schema it alters.
+  /// </summary>
+  /// <remarks>
+  /// The bootstrap regions are shipped migration text, and shipped guards compare
+  /// <c>table_schema = current_schema()</c>. The connection here keeps the default <c>search_path</c>,
+  /// where that is <c>public</c>.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ANamedSchemasBootstrapRunsInThatSchemaAsync(CancellationToken cancellationToken) {
+    const string named = NamedSchemaDbContext.SCHEMA;
+    await _scalarAsync<object>($"CREATE SCHEMA IF NOT EXISTS {named}");
+    var scripts = NamedSchemaDbContextSchemaExtensions.GetBootstrapScripts();
+    scripts.Add(("probe", $"CREATE TABLE {named}.bootstrap_schema_probe AS SELECT current_schema()::TEXT AS seen"));
+
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, named, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(await _scalarAsync<string>($"SELECT seen FROM {named}.bootstrap_schema_probe"))
+      .IsEqualTo(named)
+      .Because("a shipped guard asking current_schema() must be asking about the schema it migrates");
+    await Assert.That(await _scalarAsync<string>("SELECT current_schema()")).IsEqualTo("public")
+      .Because("precondition: the setting belonged to the bootstrap's transaction, not to the database");
+  }
+
+  /// <summary>
   /// Without the bootstrap, that same election is impossible.
   /// </summary>
   /// <remarks>

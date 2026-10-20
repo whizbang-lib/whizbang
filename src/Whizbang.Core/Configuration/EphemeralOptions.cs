@@ -18,4 +18,18 @@ public sealed class EphemeralOptions {
   /// explicitly, to act.
   /// </summary>
   public bool ReconcileHistoricalOnStartup { get; set; }
+
+  /// <summary>
+  /// Seconds a consumed ephemeral event body is kept, so an out-of-order straggler can still rewind through it,
+  /// before the sweep deletes it. Publishes <c>wh_settings.ephemeral_rewind_grace_seconds</c>; the database default
+  /// is 300. Unset (<see langword="null"/>) leaves the stored value alone.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  public int? RewindGraceSeconds { get; set; }
+
+  /// <summary>The opt-in prune of ancient ephemeral pointers, under <c>Whizbang:Ephemeral:PointerPrune</c>.</summary>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:EphemeralRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  public EphemeralPointerPruneOptions PointerPrune { get; set; } = new();
 }

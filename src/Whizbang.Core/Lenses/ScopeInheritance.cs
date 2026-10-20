@@ -26,7 +26,8 @@ public readonly record struct ScopeWrite(PerspectiveScope? Scope, bool ForceUpda
 /// <see cref="InheritScopeAttribute.Always"/> fields from the message that created it.</item>
 /// <item>An existing row keeps its scope, except the <see cref="InheritScopeAttribute.Always"/> fields,
 /// which follow the latest writer (<see cref="PerspectiveScope.WithFieldsFrom"/>).</item>
-/// <item>An <see cref="IScopeEvent"/> replaces the scope, as it always has.</item>
+/// <item>An <see cref="IScopeEvent"/> replaces the scope with the scope it set, unfiltered: the model's fields decide
+/// what a row inherits from the messages it applies, not what a scope event sets (#1432).</item>
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/security/scoping#scope-inheritance</docs>
@@ -38,7 +39,10 @@ public static class ScopeInheritance {
   /// <param name="rowExists">Whether the row existed when the apply read it.</param>
   /// <param name="onCreate">The model's <see cref="InheritScopeAttribute.OnCreate"/> fields.</param>
   /// <param name="always">The model's <see cref="InheritScopeAttribute.Always"/> fields.</param>
-  /// <param name="scopeEventChanged">Whether an <see cref="IScopeEvent"/> set the scope during this apply.</param>
+  /// <param name="scopeEventScope">
+  /// The scope an <see cref="IScopeEvent"/> set during this apply, or null when none did. Kept apart from
+  /// <paramref name="messageScope"/>, so a later message in the same batch cannot replace it.
+  /// </param>
   /// <returns>The scope to write and whether it replaces an existing row's scope.</returns>
   public static ScopeWrite Resolve(
       PerspectiveScope? messageScope,
@@ -46,12 +50,12 @@ public static class ScopeInheritance {
       bool rowExists,
       ScopeFields onCreate,
       ScopeFields always,
-      bool scopeEventChanged) {
+      PerspectiveScope? scopeEventScope) {
+    if (scopeEventScope is not null) {
+      return new ScopeWrite(scopeEventScope, true);
+    }
     if (messageScope is null) {
       return new ScopeWrite(null, false);
-    }
-    if (scopeEventChanged) {
-      return new ScopeWrite(messageScope.FilterByFields(onCreate), true);
     }
     if (!rowExists) {
       return new ScopeWrite(messageScope.FilterByFields(onCreate | always), false);

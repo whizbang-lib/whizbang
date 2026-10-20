@@ -20,8 +20,14 @@ on:
         description: 'The published version, e.g. 0.2450.1'
         required: true
         type: string
-    # No secrets: the release app's are environment secrets, which a caller cannot pass; the sync job
-    # reads them through the release-app environment (#1466).
+    secrets:
+      # Optional and never passed: the sync job reads the release-app environment's own secrets (#1466).
+      # A reusable workflow's job sees only the secrets its trigger declares, so without these names the
+      # environment's values never reach it and the token step fails (#1477).
+      RELEASE_APP_ID:
+        required: false
+      RELEASE_APP_PRIVATE_KEY:
+        required: false
 
 permissions: {}
 

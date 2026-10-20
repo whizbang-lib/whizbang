@@ -18,6 +18,20 @@
     <CompilerVisibleProperty Include="WhizbangCollectiveIndexWarning" />
   </ItemGroup>
 
+  <!-- Every other property a generator reads must be declared here too, or a project's setting never reaches it
+       and the default always applies (#1426; BuildPropertyVisibilityTests finds each read in the source).
+       Table naming: WhizbangMaxIdentifierLength, WhizbangStripTableNameSuffixes, WhizbangTableNameSuffixesToStrip.
+       WhizbangGuidInterceptionEnabled turns on Guid creation interception; WhizbangQueryComposingAttributes names
+       a third party's query-composing attributes, comma separated. The Exclude keeps one item per name when the
+       EF Core generators package declares the table-naming properties as well. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="WhizbangMaxIdentifierLength" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangStripTableNameSuffixes" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangTableNameSuffixesToStrip" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangGuidInterceptionEnabled" Exclude="@(CompilerVisibleProperty)" />
+    <CompilerVisibleProperty Include="WhizbangQueryComposingAttributes" Exclude="@(CompilerVisibleProperty)" />
+  </ItemGroup>
+
   <!-- Rename platform (P0/P1): surface the committed pinned-type ledger to the analyzer + generators as an
        AdditionalFile so former-name aliases resolve and un-acknowledged renames are gated (WHIZ120/WHIZ121).
        The ledger is the COMMITTED source-of-truth lockfile and lives in .whizbang/ (tracked in git). The

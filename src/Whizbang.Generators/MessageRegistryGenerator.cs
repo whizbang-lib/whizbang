@@ -590,7 +590,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     try {
       var json = File.ReadAllText(mapPath);
-      var map = JsonSerializer.Deserialize<Dictionary<string, CodeDocsEntry>>(json);
+      var map = JsonSerializer.Deserialize<Dictionary<string, CodeDocsEntry>>(json, _mapJsonOptions);
       return map?.ToDictionary(
         kvp => kvp.Key,
         kvp => kvp.Value.Docs
@@ -622,7 +622,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     try {
       var json = File.ReadAllText(mapPath);
-      var map = JsonSerializer.Deserialize<CodeTestsMapData>(json);
+      var map = JsonSerializer.Deserialize<CodeTestsMapData>(json, _mapJsonOptions);
       return map?.CodeToTests?.ToDictionary(
         kvp => kvp.Key,
         kvp => kvp.Value?.Select(t => new TestInfo(
@@ -851,6 +851,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     }
     return entries.ToString();
   }
+
+  /// <summary>
+  /// The docs site writes both maps with camelCase keys; the models below are PascalCase. Read case-insensitively,
+  /// or every entry deserializes empty and no registry entry is enriched (#1428).
+  /// </summary>
+  private static readonly JsonSerializerOptions _mapJsonOptions = new() { PropertyNameCaseInsensitive = true };
 
   // Helper classes for JSON deserialization
   private sealed class CodeDocsEntry {

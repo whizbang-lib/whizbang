@@ -44,7 +44,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
     id: "WHIZ130",
     title: "Perspective mixes ephemeral and Sourced Apply methods",
     messageFormat: "Perspective '{0}' applies both ephemeral event(s) ({1}) and Sourced event(s) ({2}). "
-      + "A perspective cannot be both authoritative state (ephemeral) and a rebuildable cache (Sourced) — "
+      + "A perspective cannot be both authoritative state (ephemeral) and a rebuildable cache (Sourced): "
       + "split it, or make the stream homogeneous.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,

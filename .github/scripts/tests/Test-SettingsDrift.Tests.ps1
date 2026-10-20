@@ -92,6 +92,18 @@ Describe 'Get-SecuritySettings' {
     Mock Invoke-GhJson { throw 'HTTP 403' } -ParameterFilter { $Path -eq 'orgs/o' }
     { Get-SecuritySettings -Repository 'o/r' } | Should -Throw '*403*'
   }
+
+  It 'marks a ruleset bypass list it cannot see as not visible, rather than failing or calling it empty' {
+    # GitHub returns bypass_actors only to a reader who can edit the ruleset; a read-only token gets none.
+    $Api['repos/o/r/rulesets/2'] = ConvertTo-Live '{"id":2,"name":"main","target":"branch","enforcement":"active","conditions":null,"rules":[]}'
+    try {
+      $s2 = Get-SecuritySettings -Repository 'o/r'
+      $s2.rulesets['main'].bypass_actors | Should -Be $NotVisible
+      $s2.rulesets['develop'].bypass_actors.Count | Should -Be 2
+    } finally {
+      $Api['repos/o/r/rulesets/2'] = ConvertTo-Live '{"id":2,"name":"main","target":"branch","enforcement":"active","conditions":null,"rules":[],"bypass_actors":[]}'
+    }
+  }
 }
 
 Describe 'Compare-SecuritySettings' {
@@ -118,6 +130,31 @@ Describe 'Compare-SecuritySettings' {
     $d[0].Baseline | Should -Be '[]'
     $d[1].Baseline | Should -Be '{}'
   }
+
+  It 'does not compare a setting the reader could not see, nor anything under it' {
+    $baseline = @{ rulesets = @{ main = @{ bypass_actors = @(@{ actor_id = 9 }); enforcement = 'active' } } }
+    $live = @{ rulesets = @{ main = @{ bypass_actors = $NotVisible; enforcement = 'disabled' } } }
+    $d = @(Compare-SecuritySettings -Baseline $baseline -Live $live)
+    $d.Setting | Should -Be @('rulesets.main.enforcement')
+  }
+
+  It 'still reports a hidden setting whose parent is gone' {
+    $baseline = @{ rulesets = @{ main = @{ bypass_actors = @(@{ actor_id = 9 }) } } }
+    $d = @(Compare-SecuritySettings -Baseline $baseline -Live @{ rulesets = @{} })
+    # The ruleset is gone, so its bypass list is reported missing too, and the rulesets are now empty.
+    $d.Setting | Should -Be @('rulesets', 'rulesets.main.bypass_actors[0].actor_id')
+  }
+}
+
+Describe 'Get-UncheckedSetting' {
+  It 'lists each setting the reader could not see, by its path' {
+    $live = @{ rulesets = @{ b = @{ bypass_actors = $NotVisible }; a = @{ bypass_actors = $NotVisible; target = 'branch' } } }
+    Get-UncheckedSetting -Live $live | Should -Be @('rulesets.a.bypass_actors', 'rulesets.b.bypass_actors')
+  }
+
+  It 'lists nothing when everything was visible' {
+    @(Get-UncheckedSetting -Live @{ a = 1 }).Count | Should -Be 0
+  }
 }
 
 Describe 'Format-DriftIssueBody' {
@@ -126,6 +163,16 @@ Describe 'Format-DriftIssueBody' {
     $body | Should -Match '\| `org.twofa` \| `true` \| `fal\\\|se` \|'
     $body | Should -Match 'https://run'
     $body | Should -Match 'settings-baseline\.json'
+  }
+
+  It 'names the settings that were not checked because the reader could not see them' {
+    $body = Format-DriftIssueBody -Differences @([pscustomobject]@{ Setting = 'a'; Baseline = '1'; Live = '2' }) -RunUrl 'u' -Unchecked @('rulesets.main.bypass_actors')
+    $body | Should -Match 'Not checked'
+    $body | Should -Match '`rulesets.main.bypass_actors`'
+  }
+
+  It 'says nothing about unchecked settings when there are none' {
+    Format-DriftIssueBody -Differences @() -RunUrl 'u' | Should -Not -Match 'Not checked'
   }
 }
 

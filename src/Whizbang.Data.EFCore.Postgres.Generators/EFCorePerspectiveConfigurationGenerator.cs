@@ -142,7 +142,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     if (tableError is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TableNameExceedsLimit,
-          Location.None,
+          perspective.ModelLocation,
           perspective.ModelTypeName,
           perspective.TableName,
           IdentifierValidation.GetByteCount(perspective.TableName),
@@ -180,7 +180,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     if (columnError is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ColumnNameExceedsLimit,
-          Location.None,
+          perspective.ModelLocation,
           field.PropertyName,
           perspective.ModelTypeName,
           field.ColumnName,
@@ -197,7 +197,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       if (indexError is not null) {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.IndexNameExceedsLimit,
-            Location.None,
+            perspective.ModelLocation,
             indexName,
             field.PropertyName,
             perspective.ModelTypeName,
@@ -366,7 +366,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
+        ModelLocation: LocationUtilities.FirstOrNone(modelType)
     );
   }
 
@@ -385,7 +386,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        BuildsDataIndex: candidate.BuildsDataIndex);
+        BuildsDataIndex: candidate.BuildsDataIndex,
+        ModelLocation: candidate.ModelLocation);
   }
 
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";

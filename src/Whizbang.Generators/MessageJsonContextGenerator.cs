@@ -610,6 +610,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return perspectiveModelInfo;
     }
 
+    // A generic declaration is an open type: it has no closed form to name a JsonTypeInfo for (#1481). A generic
+    // perspective class still names its model above, which is why this check comes after that path.
+    if (typeSymbol.IsGenericType) {
+      return null;
+    }
+
     return _buildMessageTypeInfo(typeSymbol, isCommand, isEvent, isSerializable, isComposite);
   }
 
@@ -732,7 +738,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             "MessageJsonContextGenerator invoked for assembly '{0}' with {1} message type(s)",
             "Whizbang.SourceGeneration",
             DiagnosticSeverity.Info,
-            true),
+            true,
+            "Reports that the generator ran and how many message types it found. It is reported without a location "
+            + "because it is about the whole compilation, not one declaration; turn it off for a project in "
+            + ".globalconfig or NoWarn."),
         Location.None,
         compilation.AssemblyName ?? "Unknown",
         messages.Length

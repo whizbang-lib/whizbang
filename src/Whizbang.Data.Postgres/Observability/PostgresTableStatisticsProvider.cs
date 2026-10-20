@@ -1,0 +1,389 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using Npgsql;
+using Whizbang.Core.Observability;
+
+namespace Whizbang.Data.Postgres.Observability;
+
+/// <summary>
+/// PostgreSQL implementation of <see cref="ITableStatisticsProvider"/>, shared by both data drivers.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Every table in the schema whose name starts with <c>wh_</c> is reported: the framework's own tables
+/// and every perspective table, found in the catalog on each read rather than listed, so a perspective
+/// added in a release is reported from its first start. A partitioned table is reported once, under its
+/// own name, with its partitions summed.
+/// </para>
+/// <para>
+/// Everything about the tables comes from one catalog statement per read: sizes, the split into heap,
+/// TOAST and indexes, live rows and the bloat ratio. Nothing reads a table's rows, so the cost depends on
+/// how many tables and indexes the schema has, not on how much they hold.
+/// </para>
+/// </remarks>
+/// <docs>operations/observability/metrics#table-statistics</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs</tests>
+public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsProvider {
+  /// <summary>
+  /// The size, split, rows and bloat of every <c>wh_</c> table in the schema, with the tables past the
+  /// cap summed under <see cref="TableStatisticsOptions.OTHER_TABLES"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>tracked</c> is every ordinary or partitioned table named <c>wh_</c> (the underscore escaped, so
+  /// it is not a wildcard); a partition is left out because its parent carries it. <c>leaves</c> is
+  /// what holds each table's storage: the table itself, or a partitioned table's leaf partitions.
+  /// </para>
+  /// <para>
+  /// TOAST is measured with its own index; heap is the table's size without TOAST, so heap, TOAST and
+  /// indexes add up exactly to <c>pg_total_relation_size</c>. Every size function is wrapped in
+  /// <c>COALESCE</c> because each answers null for a relation dropped while the statement runs, which
+  /// a perspective table being retired can be.
+  /// </para>
+  /// <para>
+  /// Live rows are the planner's count (<c>reltuples</c>), which <c>ANALYZE</c> and <c>VACUUM</c>
+  /// refresh. A table never analyzed has -1 there, meaning unknown, so the server's running count of
+  /// live rows answers for it instead.
+  /// </para>
+  /// <para>
+  /// The bloat ratio is computed set-based, one pass over the statistics views for all tables. A
+  /// per-table lateral read of <c>pg_stat_user_tables</c> evaluated that view once per table, which
+  /// cost three times as much at 500 tables.
+  /// </para>
+  /// </remarks>
+  private const string STORAGE_SQL = """
+    WITH tracked AS (
+      SELECT c.oid, c.relname, c.relkind
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = COALESCE(@schema, current_schema())
+        AND c.relkind IN ('r', 'p')
+        AND NOT c.relispartition
+        AND c.relname LIKE 'wh\_%'
+    ),
+    leaves AS (
+      SELECT t.oid AS table_oid, t.relname, t.oid AS leaf
+      FROM tracked t
+      WHERE t.relkind = 'r'
+      UNION ALL
+      SELECT t.oid, t.relname, p.relid
+      FROM tracked t
+      CROSS JOIN LATERAL pg_catalog.pg_partition_tree(t.oid) p
+      WHERE t.relkind = 'p' AND p.isleaf
+    ),
+    measured AS (
+      SELECT l.table_oid, l.relname,
+             COALESCE(pg_catalog.pg_table_size(l.leaf), 0) AS table_bytes,
+             COALESCE(pg_catalog.pg_total_relation_size(NULLIF(c.reltoastrelid, 0)), 0) AS toast_bytes,
+             COALESCE(pg_catalog.pg_indexes_size(l.leaf), 0) AS index_bytes,
+             CASE WHEN c.reltuples >= 0 THEN c.reltuples::bigint ELSE COALESCE(s.n_live_tup, 0) END AS live_rows
+      FROM leaves l
+      JOIN pg_catalog.pg_class c ON c.oid = l.leaf
+      LEFT JOIN pg_catalog.pg_stat_user_tables s ON s.relid = l.leaf
+    ),
+    per_table AS (
+      SELECT table_oid, relname,
+             sum(table_bytes - toast_bytes)::bigint AS heap_bytes,
+             sum(toast_bytes)::bigint AS toast_bytes,
+             sum(index_bytes)::bigint AS index_bytes,
+             sum(live_rows)::bigint AS live_rows
+      FROM measured
+      GROUP BY table_oid, relname
+    ),
+    widths AS (
+      SELECT ps.tablename, sum(ps.avg_width) + 28 AS expected
+      FROM pg_catalog.pg_stats ps
+      WHERE ps.schemaname = COALESCE(@schema, current_schema())
+        AND ps.tablename LIKE 'wh\_%'
+        AND NOT ps.inherited
+      GROUP BY ps.tablename
+    ),
+    bloat AS (
+      SELECT t.oid AS table_oid,
+             (pg_catalog.pg_relation_size(t.oid)::numeric / s.n_live_tup)
+             / GREATEST(COALESCE(w.expected, 28), 1) AS ratio
+      FROM tracked t
+      JOIN pg_catalog.pg_stat_user_tables s ON s.relid = t.oid
+      LEFT JOIN widths w ON w.tablename = t.relname
+      WHERE t.relkind = 'r' AND s.n_live_tup > @bloat_floor
+    ),
+    ranked AS (
+      SELECT p.*,
+             row_number() OVER (ORDER BY p.heap_bytes + p.toast_bytes + p.index_bytes DESC, p.relname) AS size_rank
+      FROM per_table p
+    )
+    SELECT CASE WHEN r.size_rank <= @cap THEN r.relname ELSE @other END AS table_name,
+           sum(r.heap_bytes)::bigint AS heap_bytes,
+           sum(r.toast_bytes)::bigint AS toast_bytes,
+           sum(r.index_bytes)::bigint AS index_bytes,
+           sum(r.live_rows)::bigint AS live_rows,
+           max(b.ratio)::float8 AS bloat_ratio
+    FROM ranked r
+    LEFT JOIN bloat b ON b.table_oid = r.table_oid AND r.size_rank <= @cap
+    GROUP BY 1
+    """;
+
+  /// <summary>
+  /// Tables with no more live rows than this report no bloat ratio: with few rows the per-row average
+  /// is dominated by page overhead and reads as alarming for a table measured in kilobytes.
+  /// </summary>
+  private const int BLOAT_FLOOR_ROWS = 1000;
+
+  private readonly Func<CancellationToken, ValueTask<NpgsqlConnection>> _openConnectionAsync;
+  private readonly string? _schema;
+  private readonly int _maxTrackedTables;
+
+  /// <summary>Reads the statistics of the schema's tables through connections the caller opens.</summary>
+  /// <param name="openConnectionAsync">Opens a connection the provider disposes.</param>
+  /// <param name="schema">
+  /// The schema, unquoted. Null reads the connection's current schema, which is where a driver that
+  /// resolves its tables through the search path keeps them.
+  /// </param>
+  /// <param name="maxTrackedTables">
+  /// The most tables reported by name, at least 1; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.
+  /// </param>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxTrackedTables"/> is less than 1.</exception>
+  public PostgresTableStatisticsProvider(
+      Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnectionAsync,
+      string? schema = "public",
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES) {
+    ArgumentNullException.ThrowIfNull(openConnectionAsync);
+    ArgumentOutOfRangeException.ThrowIfLessThan(maxTrackedTables, 1);
+    _openConnectionAsync = openConnectionAsync;
+    _schema = schema;
+    _maxTrackedTables = maxTrackedTables;
+  }
+
+  /// <summary>Reads the statistics of the schema's tables through a data source.</summary>
+  /// <param name="dataSource">The data source connections are opened from.</param>
+  /// <param name="schema">The schema, unquoted; null reads the connection's current schema.</param>
+  /// <param name="maxTrackedTables">
+  /// The most tables reported by name, at least 1; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.
+  /// </param>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxTrackedTables"/> is less than 1.</exception>
+  public PostgresTableStatisticsProvider(
+      NpgsqlDataSource dataSource,
+      string? schema = "public",
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES)
+    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables) {
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyDictionary<string, TableStorageStatistics>> GetTableStorageAsync(CancellationToken ct = default) {
+    var results = new Dictionary<string, TableStorageStatistics>(StringComparer.Ordinal);
+
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    await using var cmd = new NpgsqlCommand(STORAGE_SQL, connection);
+    _addSchema(cmd);
+    cmd.Parameters.AddWithValue("cap", _maxTrackedTables);
+    cmd.Parameters.AddWithValue("other", TableStatisticsOptions.OTHER_TABLES);
+    cmd.Parameters.AddWithValue("bloat_floor", BLOAT_FLOOR_ROWS);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      results[reader.GetString(0)] = new TableStorageStatistics(
+        HeapBytes: reader.GetInt64(1),
+        ToastBytes: reader.GetInt64(2),
+        IndexBytes: reader.GetInt64(3),
+        LiveRows: reader.GetInt64(4),
+        BloatRatio: reader.IsDBNull(5) ? null : reader.GetDouble(5));
+    }
+
+    return results;
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// <para>
+  /// Heap bytes per live row over the width those rows should need. The expected width comes from
+  /// <c>pg_stats.avg_width</c> (planner statistics, already maintained by autoanalyze) plus per-tuple
+  /// overhead, so this costs nothing beyond a catalog read, unlike pgstattuple, which is exact but
+  /// scans the table and needs an extension that managed Postgres may not allow.
+  /// </para>
+  /// <para>
+  /// Around 1.0 means the heap is about the size its rows need. A sustained large multiple means space
+  /// that cannot be used: dead tuples awaiting vacuum, or (the case autovacuum can never fix) bytes left
+  /// behind by a dropped column, which persist in every row written before the drop until the table is
+  /// rewritten.
+  /// </para>
+  /// <para>
+  /// Tables with 1,000 live rows or fewer are excluded: with few rows the per-row average is dominated
+  /// by page overhead and reports alarming ratios for tables measured in kilobytes. A partitioned table
+  /// and the tables summed past the cap report none, because a ratio cannot be added up.
+  /// </para>
+  /// <para>Read from <see cref="GetTableStorageAsync"/>, so it covers the same tables.</para>
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, double>> GetTableBloatRatiosAsync(CancellationToken ct = default) {
+    var storage = await GetTableStorageAsync(ct).ConfigureAwait(false);
+    return storage
+      .Where(table => table.Value.BloatRatio.HasValue)
+      .ToDictionary(table => table.Key, table => table.Value.BloatRatio.GetValueOrDefault(), StringComparer.Ordinal);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>Read from <see cref="GetTableStorageAsync"/>, so it covers the same tables, capped the same way.</remarks>
+  public async Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) {
+    var storage = await GetTableStorageAsync(ct).ConfigureAwait(false);
+    return storage.ToDictionary(table => table.Key, table => table.Value.TotalBytes, StringComparer.Ordinal);
+  }
+
+  /// <summary>Adds the schema as text, so that null reaches the statement as a typed null.</summary>
+  private void _addSchema(NpgsqlCommand cmd) =>
+    cmd.Parameters.Add(new NpgsqlParameter("schema", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)_schema ?? DBNull.Value });
+
+  /// <summary>A table name qualified by the schema, or bare to resolve through the search path.</summary>
+  private string _qualified(string table) =>
+    _schema is null ? table : SqlText.Identifier(_schema) + "." + table;
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) {
+    var results = new Dictionary<string, long>();
+
+    await using var connection = await _openConnectionAsync(ct);
+
+    // Schema-qualified for multi-schema deployments, or bare where the search path decides.
+    // 162: the inbox depth gauge counts unprocessed rows, and processed_at is work state.
+    var inboxTable = _qualified("wh_inbox_state");
+    var outboxTable = _qualified("wh_outbox");
+    var deadLettersTable = _qualified("wh_dead_letters");
+
+    // Dead letters are a queue like any other, sliced by status because the three
+    // populations mean three different things to an operator: held is quarantine awaiting
+    // a verdict, pending is the recovery backlog, failed is the operator-decision pile.
+    // Emitted even at zero: "no quarantine" must be a positively-reported value, not an
+    // absent series (#683: only hold TRANSITIONS were counted, so a standing five-figure
+    // held population was invisible while the services that happened to be transitioning
+    // were the only ones charted). Recovered rows are receipts, not depth.
+    await using var cmd = new NpgsqlCommand($"""
+      SELECT 'inbox' as queue_name, COUNT(*) as depth FROM {inboxTable} WHERE processed_at IS NULL
+      UNION ALL
+      SELECT 'outbox', COUNT(*) FROM {outboxTable} WHERE processed_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_held', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 2
+      UNION ALL
+      SELECT 'dead_letters_pending', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 0 AND recovered_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_failed', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 4
+      """, connection);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      results[reader.GetString(0)] = reader.GetInt64(1);
+    }
+
+    return results;
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Read from the same catalog view the sizes come from, so this costs another cheap statement on
+  /// the maintenance cadence rather than anything that touches the tables themselves.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, TableScanStatistics>> GetTableScanStatisticsAsync(
+      CancellationToken ct = default) {
+    var statistics = new Dictionary<string, TableScanStatistics>(StringComparer.Ordinal);
+
+    await using var connection = await _openConnectionAsync(ct);
+    await using var cmd = new NpgsqlCommand("""
+      SELECT relname,
+             COALESCE(seq_scan, 0) AS seq_scans,
+             COALESCE(seq_tup_read, 0) AS seq_rows,
+             COALESCE(idx_scan, 0) AS idx_scans
+      FROM pg_stat_user_tables
+      WHERE schemaname = COALESCE(@schema, current_schema())
+      """, connection);
+
+    _addSchema(cmd);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      statistics[reader.GetString(0)] =
+        new TableScanStatistics(reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
+    }
+
+    return statistics;
+  }
+
+  /// <summary>
+  /// Adds the document filters one recorded statement names, to the table it reads.
+  /// </summary>
+  /// <remarks>
+  /// Separated from the read so that what it understands can be established without a database.
+  /// What it reads is the tag the naming interceptor writes, because a recorded statement has had
+  /// its constants replaced by placeholders and a JSON key is a constant; see
+  /// <see cref="DocumentFilterNaming"/>.
+  /// </remarks>
+  /// <param name="collected">The filters found so far, by table.</param>
+  /// <param name="statement">The recorded statement text.</param>
+  /// <param name="calls">How many times it ran.</param>
+  /// <param name="meanMilliseconds">Its mean execution time.</param>
+  internal static void Collect(
+      Dictionary<string, List<ExpensivePredicate>> collected,
+      string statement, long calls, double meanMilliseconds) {
+    var table = DocumentFilterNaming.PerspectiveTable().Match(statement);
+    if (!table.Success) {
+      return;
+    }
+
+    var name = table.Value.ToLowerInvariant();
+    if (!collected.TryGetValue(name, out var predicates)) {
+      predicates = [];
+      collected[name] = predicates;
+    }
+
+    foreach (var (document, field) in DocumentFilterNaming.FiltersIn(statement)) {
+      // The same field named twice in one statement is one filter, and the same field across
+      // statements is still one thing to promote, so the dearest sighting is the one kept -- which
+      // is the first seen, because the statements arrive dearest first.
+      if (!predicates.Exists(p => p.Document == document && p.Field == field)) {
+        predicates.Add(new ExpensivePredicate(document, field, calls, meanMilliseconds));
+      }
+    }
+  }
+
+  /// <inheritdoc/>
+  /// <remarks>
+  /// Answers empty rather than throwing when the statistics are not collected. The extension has to
+  /// be installed AND loaded at startup, and a deployment may have done neither; naming the filter
+  /// is an improvement on the advice rather than a condition of it, so its absence is not a fault.
+  /// </remarks>
+  public async Task<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>> GetExpensivePredicatesAsync(
+      CancellationToken ct = default) {
+    var byTable = new Dictionary<string, IReadOnlyList<ExpensivePredicate>>(StringComparer.Ordinal);
+
+    await using var connection = await _openConnectionAsync(ct);
+
+    try {
+      await using var cmd = new NpgsqlCommand("""
+        SELECT query, calls, mean_exec_time
+        FROM pg_stat_statements
+        WHERE query ILIKE '%wh\_per\_%' AND query LIKE '%->%'
+        ORDER BY mean_exec_time DESC
+        LIMIT 200
+        """, connection);
+
+      await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
+
+      while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+        var statement = reader.GetString(0);
+        var calls = reader.GetInt64(1);
+        var mean = reader.GetDouble(2);
+
+        Collect(collected, statement, calls, mean);
+      }
+
+      foreach (var (table, predicates) in collected) {
+        byTable[table] = predicates;
+      }
+    } catch (PostgresException) {
+      // Not installed, not loaded, or not readable by this role. The table-level advice stands on
+      // its own and this only ever made it sharper.
+      return byTable;
+    }
+
+    return byTable;
+  }
+}

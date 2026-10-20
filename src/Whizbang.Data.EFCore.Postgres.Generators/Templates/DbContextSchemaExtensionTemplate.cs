@@ -828,6 +828,14 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       System.Threading.CancellationToken cancellationToken) {
     var segments = Whizbang.Data.Postgres.MigrationBatchRegions.Segment(sql);
 
+    // The migration runs with current_schema() resolving to the schema it migrates, and only the
+    // migration: shipped guards compare table_schema = current_schema(), and shipped files are never
+    // edited, so this is what makes a re-run on upgrade find what the earlier run created. Restored
+    // after, because the same transaction goes on to the next migration and the perspective DDL.
+    var migrationConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+    var previousSearchPath = await Whizbang.Data.Postgres.MigrationSearchPath.EnterAsync(
+      migrationConnection, "__SCHEMA__", cancellationToken);
+
     // The overwhelming majority of migrations carry no marker and come back as one plain segment,
     // which is sent exactly as it was before this path existed.
     foreach (var segment in segments) {
@@ -872,6 +880,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           migrationName, totalRows, pass, segment.BatchSize);
       }
     }
+
+    await Whizbang.Data.Postgres.MigrationSearchPath.ExitAsync(migrationConnection, previousSearchPath, cancellationToken);
   }
 
   /// <summary>
@@ -1806,7 +1816,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   /// <summary>
   /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
-  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox".
+  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox"
+  /// where SQL names an object, never inside a string literal, quoted identifier or comment.
   /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
   /// Schema names are quoted to handle PostgreSQL reserved keywords (e.g., "user").
   /// </summary>
@@ -1830,119 +1841,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return transformedSql;
     }
 
-    // List of Whizbang infrastructure table names to qualify
-    var tableNames = new[] {
-      "wh_inbox",
-      "wh_outbox",
-      "wh_event_store",
-      "wh_events", // Alias for wh_event_store
-      "wh_receptor_processing",
-      "wh_perspective_cursors",
-      "wh_perspective_events",
-      "wh_message_associations",
-      "wh_request_response",
-      "wh_service_instances",
-      "wh_partition_assignments",
-      "wh_message_deduplication",
-      "wh_sequences",
-      "wh_active_streams",
-      "wh_event_sequence" // Sequence name
-    };
-
-    // Replace each table name with schema-qualified version
-    // Use word boundaries (\b) to avoid replacing column names or partial matches
-    // First, protect RENAME TO targets by replacing them with a placeholder
-    // PostgreSQL RENAME TO requires an unqualified name, so these must NOT be schema-qualified
-    var renameToPlaceholders = new System.Collections.Generic.Dictionary<string, string>();
-    transformedSql = System.Text.RegularExpressions.Regex.Replace(
-      transformedSql,
-      @"(RENAME\s+TO\s+)(\w+)",
-      m => {
-        var placeholder = $"__RENAME_TARGET_{renameToPlaceholders.Count}__";
-        renameToPlaceholders[placeholder] = m.Groups[2].Value;
-        return m.Groups[1].Value + placeholder;
-      },
-      System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-      System.TimeSpan.FromSeconds(5)
-    );
-
-    foreach (var tableName in tableNames) {
-      // Pattern: tableName NOT preceded by period (to avoid replacing already-qualified names)
-      // Matches: "FROM wh_inbox", "ALTER TABLE wh_inbox", etc.
-      // Does NOT match: "inventory.wh_inbox", "wh_inbox_id" (column name)
-      // RENAME TO targets are protected by placeholders above
-      // Uses quoted schema to handle PostgreSQL reserved keywords (e.g., "user")
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
-        $"{quotedSchema}.$1",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-    }
-
-    // Restore RENAME TO placeholders
-    foreach (var (placeholder, original) in renameToPlaceholders) {
-      transformedSql = transformedSql.Replace(placeholder, original);
-    }
-
-    // List of Whizbang PostgreSQL function names to qualify
-    // CRITICAL: Functions are database-wide in PostgreSQL. When multiple schemas share the same database,
-    // they must have schema-qualified function names to avoid overwriting each other's functions.
-    var functionNames = new[] {
-      "register_message_associations",
-      "reconcile_perspective_registry",
-      "process_work_batch",
-      "process_inbox_batch",
-      "process_outbox_batch",
-      "process_perspectives_batch",
-      "perform_maintenance"
-    };
-
-    // Replace function names in CREATE/DROP/CALL statements
-    // This ensures each schema has its own function instance (e.g., inventory.register_message_associations)
-    // Use quotedSchema to handle PostgreSQL reserved keywords (e.g., "user")
-    foreach (var functionName in functionNames) {
-      // Pattern 1: "CREATE [OR REPLACE] FUNCTION functionName(" → "CREATE [OR REPLACE] FUNCTION "schema".functionName("
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b(\s*\()",
-        $"$1{quotedSchema}.{functionName}$2",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] "schema".functionName"
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION "schema".functionName"
-      // This handles GRANT/REVOKE statements for function permissions
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"((?:GRANT|REVOKE)\s+.*\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION "schema".functionName"
-      // This handles COMMENT statements for function documentation
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(COMMENT\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-    }
-
-    return transformedSql;
+    // Bare framework names are qualified in the library, which is shared with its tests.
+    return Whizbang.Data.Postgres.MigrationSchemaQualifier.Qualify(transformedSql, quotedSchema);
   }
 
   /// <summary>
@@ -1956,7 +1856,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     CancellationToken cancellationToken) {
 
     // Perspective metadata JSON embedded by source generator
-    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"..."}]
+    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"...","PerspectiveName":"..."}]
     const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
 
     if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {

@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.CodeAnalysis;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -150,13 +152,12 @@ internal sealed record PerspectiveOrWarning(
 /// </summary>
 /// <param name="PerspectiveName">Simple name of the perspective class</param>
 /// <param name="ModelName">Simple name of the model class</param>
-/// <param name="FilePath">Source file path for diagnostic location</param>
-/// <param name="Line">Line number in source file</param>
-/// <param name="Column">Column number in source file</param>
+/// <param name="Location">
+/// The perspective class's name in source. A location in the syntax tree, not an external-file one rebuilt from a
+/// path and line, so the warning can be suppressed where it appears (#1429).
+/// </param>
 internal sealed record PerspectiveMissingStreamIdWarning(
     string PerspectiveName,
     string ModelName,
-    string FilePath,
-    int Line,
-    int Column
+    Location Location
 );

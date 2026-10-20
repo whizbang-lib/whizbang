@@ -137,6 +137,60 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Issue #1483: the registry entry for a model names the perspective that folds it, in the CLR form
+  /// its cursors and snapshots are keyed by, one entry per perspective. The SQL that evicts a model's row
+  /// has only the model's table; this is how it finds whose cursors and snapshots the row leaves behind.
+  /// </summary>
+  [Test]
+  public async Task Generator_RegistryEntries_CarryEachPerspectiveOfTheModelInClrFormAsync() {
+    // Arrange
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record SharedEvent : IEvent;
+
+      public record SharedModel {
+        public string Id { get; init; } = "";
+      }
+
+      public static class Holder {
+        public class NestedPerspective : IPerspectiveFor<SharedModel, SharedEvent> {
+          public SharedModel Apply(SharedModel currentData, SharedEvent eventData) => currentData;
+        }
+      }
+
+      public class SecondPerspective : IPerspectiveFor<SharedModel, SharedEvent> {
+        public SharedModel Apply(SharedModel currentData, SharedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var registryLine = schemaExtensions!.SourceText.ToString()
+      .Split('\n')
+      .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
+    await Assert.That(registryLine).IsNotNull();
+    await Assert.That(registryLine).Contains("PerspectiveName\\\":\\\"TestApp.Holder+NestedPerspective\\\"")
+      .Because("the perspective is named in the CLR form its cursors carry, '+' for the nesting");
+    await Assert.That(registryLine).Contains("PerspectiveName\\\":\\\"TestApp.SecondPerspective\\\"")
+      .Because("a model folded by two perspectives names both, so an eviction reaches both");
+  }
+
+  /// <summary>
   /// Test that a DbContext WITHOUT [WhizbangDbContext] attribute is NOT discovered.
   /// Explicit opt-in is required - no attribute = no participation.
   /// </summary>

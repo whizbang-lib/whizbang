@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.CodeAnalysis;
+
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
 /// <summary>
@@ -22,8 +24,10 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <param name="PropertyName">The value's name on its model.</param>
 /// <param name="ValueTypeName">Fully qualified type of the value, unwrapped from Nullable&lt;T&gt;.</param>
 /// <param name="ConverterTypeName">Fully qualified type of the declared converter.</param>
+/// <param name="Location">The property that declares it; WHIZ812 is reported there so it can be suppressed there (#1429).</param>
 internal sealed record DeclaredConverterInfo(
     string PropertyName,
     string ValueTypeName,
-    string ConverterTypeName
+    string ConverterTypeName,
+    Location? Location = null
 );
