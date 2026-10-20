@@ -5348,6 +5348,61 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default) {
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_collective_sink_queue_head");
+    return await _readCollectiveSinkQueueAsync(
+      $"SELECT * FROM {functionName}(@p_stream_id, @p_through)",
+      cmd => {
+        cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter("p_through", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = throughWorkIds.ToArray() });
+      },
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  public async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    var functionName = BuildSchemaQualifiedName(_resolveSchema(typeof(OutboxRecord)), "wh_collective_sink_queue_members");
+    return await _readCollectiveSinkQueueAsync(
+      $"SELECT * FROM {functionName}(@p_stream_id, @p_work_ids, @p_event_ids)",
+      cmd => {
+        cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamId });
+        cmd.Parameters.Add(new NpgsqlParameter("p_work_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = workIds.ToArray() });
+        cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = eventIds.ToArray() });
+      },
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  // One read of collective sink queue rows (work id, event id, commit sequence), for the head and membership reads.
+  private async Task<List<CollectiveSinkQueueEntry>> _readCollectiveSinkQueueAsync(
+      string commandText, Action<NpgsqlCommand> bind, CancellationToken cancellationToken) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var dbConnection = __scope.Connection;
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = commandText;
+    bind(cmd);
+
+    var results = new List<CollectiveSinkQueueEntry>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      results.Add(new CollectiveSinkQueueEntry(
+        EventWorkId: reader.GetGuid(0),
+        EventId: reader.GetGuid(1),
+        CommitSequence: await reader.IsDBNullAsync(2, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt64(2)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<StreamEventData>> FetchEventsByIdsAsync(
     IReadOnlyList<Guid> eventIds,
     CancellationToken cancellationToken = default) {

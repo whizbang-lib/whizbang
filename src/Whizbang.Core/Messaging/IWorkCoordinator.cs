@@ -2359,12 +2359,14 @@ public interface IWorkCoordinator {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
-  Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+  async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
     Guid streamId,
     IReadOnlyCollection<Guid> workIds,
     IReadOnlyCollection<Guid> eventIds,
-    CancellationToken cancellationToken = default)
-    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>([]);
+    CancellationToken cancellationToken = default) {
+    var queue = await FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    return queue is null ? [] : [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))];
+  }
 
   /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
