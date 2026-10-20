@@ -61,3 +61,11 @@ runs:
           count=$((count + 1))
         done < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' .github/nuget-packages.txt)
         echo "Wrote $count SBOMs to $PKG_DIR"
+
+    # Every package's whole graph, not only what a pull request adds: GitHub's dependency review cannot see
+    # NuGet licenses (#1441), and a version bump can change one. The allow list is the dependency review's.
+    - name: Check the licenses the packages ship
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.directory }}
+      run: pwsh -NoProfile -File .github/scripts/Test-PackageLicenses.ps1 -Directory "$PKG_DIR"
