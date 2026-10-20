@@ -690,6 +690,94 @@ public class SystemEventEmitterCoverageTests {
 
   #endregion
 
+  #region Record Fields and Decision Hook (#1485)
+
+  [Test]
+  public async Task EmitEventAuditedAsync_SetsOriginalEventId_ToTheEnvelopesIdAsync() {
+    var (emitter, eventStore) = _auditingEmitter();
+    var envelope = _createTestEnvelope("payload");
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 4, envelope);
+
+    var audited = ((MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single()).Payload;
+    await Assert.That(audited.OriginalEventId).IsEqualTo(envelope.MessageId.Value)
+      .Because("the record must point at the event it audits; Guid.Empty points at nothing");
+    await Assert.That(audited.OriginalStreamPosition).IsEqualTo(4L);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_SetsCausationId_FromTheEnvelopeAsync() {
+    var (emitter, eventStore) = _auditingEmitter();
+    var causation = MessageId.New();
+    var envelope = _createTestEnvelope("payload");
+    envelope.Hops[0] = envelope.Hops[0] with { CausationId = causation };
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    var audited = ((MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single()).Payload;
+    await Assert.That(audited.CausationId).IsEqualTo(causation.ToString());
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_MarkedEvent_CarriesTheAttributesReasonAndLevelAsync() {
+    var (emitter, eventStore) = _auditingEmitter();
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterMarkedEvent()));
+
+    var audited = ((MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single()).Payload;
+    await Assert.That(audited.AuditReason).IsEqualTo("Emitter reason");
+    await Assert.That(audited.AuditLevel).IsEqualTo(Whizbang.Core.Audit.AuditLevel.Warning);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_VetoingHook_SuppressesTheRecordAsync() {
+    var (emitter, eventStore) = _auditingEmitter(new EmitterHook(AuditDecision.Skip));
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterMarkedEvent()));
+
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty()
+      .Because("the registered hook decides on every audit path, this one included");
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_NamingHook_SetsTheActivityAsync() {
+    var (emitter, eventStore) = _auditingEmitter(new EmitterHook(AuditDecision.Record("Named", "Described")));
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope(new EmitterMarkedEvent()));
+
+    var audited = ((MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes.Single()).Payload;
+    await Assert.That(audited.ActivityName).IsEqualTo("Named");
+    await Assert.That(audited.ActivityDescription).IsEqualTo("Described");
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_OptInMode_UnmarkedEventIsNotAuditedAsync() {
+    var eventStore = new CoverageMockEventStore();
+    var options = Options.Create(new SystemEventOptions { AuditMode = AuditMode.OptIn }.EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope("unmarked"));
+
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty()
+      .Because("this writer decides through the same rule as the others, so OptIn audits only marked types");
+  }
+
+  private static (SystemEventEmitter Emitter, CoverageMockEventStore Store) _auditingEmitter(IAuditDecisionHook? hook = null) {
+    var eventStore = new CoverageMockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: hook);
+    return (emitter, eventStore);
+  }
+
+  private sealed class EmitterHook(AuditDecision decision) : IAuditDecisionHook {
+    public AuditDecision Decide(object payload, Type eventType) => decision;
+  }
+
+  [AuditEvent(Reason = "Emitter reason", Level = Whizbang.Core.Audit.AuditLevel.Warning)]
+  private sealed record EmitterMarkedEvent : IEvent;
+
+  #endregion
+
   #region Test Types
 
   /// <summary>

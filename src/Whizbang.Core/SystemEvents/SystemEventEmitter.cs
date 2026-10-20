@@ -38,7 +38,8 @@ public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore,
     IServiceInstanceProvider instanceProvider,
-    ILogger<SystemEventEmitter> logger) : ISystemEventEmitter {
+    ILogger<SystemEventEmitter> logger,
+    IAuditDecisionHook? auditDecisionHook = null) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = ArgumentGuard.NotNull(systemEventStore);
@@ -48,6 +49,7 @@ public sealed class SystemEventEmitter(
   // Optional by design: a service with no telemetry identity wired must still produce audit
   // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
+  internal IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(

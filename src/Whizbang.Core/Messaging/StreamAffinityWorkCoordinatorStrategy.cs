@@ -29,7 +29,8 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
     IOutboxBatchStrategy outboxBatch,
     Microsoft.Extensions.Logging.ILogger logger,
     Whizbang.Core.SystemEvents.SystemEventOptions? systemEventOptions = null,
-    Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
+    Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
+    Whizbang.Core.SystemEvents.IAuditDecisionHook? auditDecisionHook = null
 ) : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinatorStrategy _inner = ArgumentGuard.NotNull(inner);
   private readonly IOutboxBatchStrategy _outboxBatch = ArgumentGuard.NotNull(outboxBatch);
@@ -37,6 +38,7 @@ public sealed class StreamAffinityWorkCoordinatorStrategy(
   private readonly Microsoft.Extensions.Logging.ILogger _logger =
     logger;
   private readonly Whizbang.Core.Tags.CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
+  internal Whizbang.Core.SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
 
   /// <inheritdoc />
   /// <remarks>

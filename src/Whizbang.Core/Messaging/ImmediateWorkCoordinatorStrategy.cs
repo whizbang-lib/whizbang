@@ -41,7 +41,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IWorkChannelWriter workChannelWriter,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
-  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
+  Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null,
+  IAuditDecisionHook? auditDecisionHook = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
@@ -57,6 +58,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
   private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
+  internal IAuditDecisionHook? AuditDecisionHook { get; } = auditDecisionHook; // RED stub (#1485)
 
   /// <summary>
   /// Queues an outbox message for immediate flush.
