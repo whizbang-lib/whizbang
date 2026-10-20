@@ -135,4 +135,33 @@ public class StreamIdAttributeAnalyzerTests {
 
     await Assert.That(diagnostics.Count(d => d.Id == "WHIZ006")).IsEqualTo(0);
   }
+
+  [Test]
+  public async Task TwoParameterStreamIds_ReportWhiz006NamingTheFirstAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public record OrderPlaced([StreamId] System.Guid OrderId, [StreamId] System.Guid CustomerId) : IEvent;
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    await Assert.That(whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'OrderId' will be used");
+  }
+
+  [Test]
+  public async Task TwoStreamIdsOnAnInterface_ReportWhiz006Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public interface IOrderEvent {
+        [StreamId] System.Guid OrderId { get; }
+        [StreamId] System.Guid CustomerId { get; }
+      }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ006")).IsEqualTo(1)
+      .Because("An interface has no base type to search, and its own two still count.");
+  }
 }
