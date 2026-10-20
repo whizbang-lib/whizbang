@@ -24,11 +24,11 @@ internal static class RemovedConfigurationKeys {
   /// <summary>Every removed key, with its replacements.</summary>
   public static IReadOnlyList<RemovedConfigurationKey> All { get; } = [
     // Removed with the legacy publisher worker. Maintenance now runs on the idle-gated cadence: an
-    // admission interval, a settled dwell, and a forced run after a number of deferrals.
+    // admission interval, a settled dwell, and a forced run once deferrals have lasted MaxDeferral.
     new("Whizbang:WorkCoordinator:MaintenanceInterval", [
       "Whizbang:Workers:Maintenance:IntervalMinutes",
       "Whizbang:Housekeeping:SettledCooldown",
-      "Whizbang:Housekeeping:MaxConsecutiveDeferrals",
+      "Whizbang:Housekeeping:MaxDeferral",
     ]),
     // Renamed when extension detection became the generic capability pattern.
     new("Whizbang:PostgresExtensions:ProbeOnStartup", ["Whizbang:Capabilities:ProbeOnStartup"]),
