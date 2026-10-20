@@ -148,6 +148,14 @@ public sealed class WhizbangCoreOptions {
   public bool EnableTagProcessing { get; set; } = true;
 
   /// <summary>
+  /// When a receptor returns a value that is neither a command nor an event, and nothing in this service
+  /// handles it (by its exact type, or as a mediator would, by any interface or base type it implements),
+  /// the call fails (true, the default) or the value is skipped with a warning (false). #1418.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#mediator-lookup</docs>
+  public bool RequireReceptorForReturnedResult { get; set; } = true;
+
+  /// <summary>
   /// Gets or sets the tag processing mode.
   /// Default: <see cref="TagProcessingMode.AfterReceptorCompletion"/>.
   /// </summary>

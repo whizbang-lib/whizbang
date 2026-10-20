@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pg_cron`.
 
 #### Messaging & delivery
+- **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
+  `ReceptorPriority.FIRST`, `EARLY`, `DEFAULT`, `LATE` and `LAST` name the usual points, and a receptor that
+  declares nothing runs at `DEFAULT`, the middle of the range.
 - **Composite events** — `ICompositeEvent`: durable dispatch-time fan-out that lives inside the
   inbox/dispatch/retry/DLQ envelope (not at the transport edge), with lineage, composite
   `[StreamId]` generation, echo-gate exemption for owned composites, and end-to-end inner-event
@@ -144,6 +147,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (dispatch): every local receptor for a message runs, on every call (#1412).** A send or a local
+  invoke ran only the first receptor for a command while a publish ran them all. Now every entry runs them all,
+  in `[ReceptorPriority]` order. When a caller asks for a result and several receptors return one, the earliest
+  answers and the others' results cascade. **Upgrade:** a command with two receptors now runs both.
+- **Breaking (lifecycle): the default local stage is `LocalImmediateInline`, and `LocalImmediateDetached` is a
+  background hook (#1392).** A receptor with no `[FireAt]` was registered at `LocalImmediateDetached` but awaited by
+  the caller, which is Inline behavior; it is now registered at `LocalImmediateInline`, with no change in how it runs.
+  A receptor declared `[FireAt(LocalImmediateDetached)]` now runs in its own scope after the handler, whenever this
+  service handles the message in-process, and nobody waits for it; its exception is logged. **Upgrade:** a receptor
+  that used `[FireAt(LocalImmediateDetached)]` as its message's only handler no longer handles it; remove the
+  attribute or declare `LocalImmediateInline`. A runtime registration at `LocalImmediateDetached` is likewise a hook.
+- **Breaking (lifecycle): `ImmediateDetached` is never waited for (#1393).** Local dispatch awaited it and a receptor
+  exception reached the caller, and an inbox message with no `PostInboxDetached` receptor ran it inline, so its
+  exception failed the message. It now runs in its own scope on every entry point, and a failure is logged. Tests that
+  count its invocations wait for a signal rather than reading the count when the dispatch returns.
+- **Breaking (dispatch): a returned value no receptor handles fails the call (#1418).** A value a receptor
+  returns that is neither a command nor an event, and has no receptor of its own type, now goes to the
+  receptors of an interface or base type it implements, as a mediator would, in this assembly, other
+  assemblies, or registered at runtime. With none the call throws `ReceptorNotFoundException`; it used to be
+  skipped with a warning. **Upgrade:** set `WhizbangCoreOptions.RequireReceptorForReturnedResult = false` to
+  keep skipping.
+- **Breaking (security): a local dispatch runs without a caller context by default (#1419).** With
+  `AllowAnonymous = false`, whether a context-less in-process dispatch was refused depended on the handler's
+  shape, and the refusal came from a lifecycle stage after the handler had already run. An in-process
+  dispatch now runs, like a mediator call. `MessageSecurityOptions.RequireContextForLocalDispatch = true`
+  refuses it up front, before any handler runs or anything is written. Exempt, control-plane and system
+  messages are never refused. The dispatcher also now reads the application's configured
+  `ExemptMessageTypes`; it read an unconfigured copy before.
+- **Breaking (dispatch): the default batch-options overloads refuse options they would drop (#1415).** An
+  `IDispatcher` implementation that does not override `SendManyAsync`/`PublishManyAsync` with options used to
+  ignore them silently; the default now throws `NotSupportedException` naming the setting it cannot honor.
+- **Breaking (build diagnostics): ten never-reported diagnostic IDs are retired, five are now reported
+  (#1427).** `WHIZ006`, `WHIZ025`, `WHIZ801`, `WHIZ802` and `WHIZ805` are reported by analyzers. `WHIZ003`,
+  `WHIZ005`, `WHIZ020`, `WHIZ023`, `WHIZ042`, `WHIZ050`, `WHIZ051`, `WHIZ052`, `WHIZ057` and `WHIZ803` are
+  retired and will never be reused; any property type may be a stream id, so `WHIZ005` described no rule.
+  `WHIZ014` and `WHIZ022` now point at the offending declaration. **Upgrade:** remove
+  suppressions of the retired IDs.
 - **Breaking (scope inheritance): `[InheritScope]` is applied the way it is documented, and checked where it takes
   effect.** Creation records ownership: a new perspective row copies every scope field from the message that created
   it, including the user, and `[InheritScope]` written without `OnCreate` now means the same (it used to mean tenant
@@ -250,6 +290,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A receptor's top-level `Route.X(...)` result lost its route (#1405).** `return Route.Local(evt);` cascaded
+  the event with the default route; only a route inside a tuple was kept. Fixed with the dispatch policy work, and now
+  covered on every entry by a test against the generated dispatcher.
+- **A send or publish handled locally never fired PostLifecycle (#1413).** PostLifecycle now fires once per
+  handling service on every local run. When the event is stored and a perspective on this service applies
+  it, the perspective worker fires it after the apply instead, so it still fires once.
+- **`PublishOnceAsync` kept its claim when the publish failed outside a transaction (#1414),** so a retry
+  was refused as a duplicate. The claim is now released when the publish fails; when the release fails too,
+  both errors surface together.
+- **The periodic maintenance sweep ran on every instance (#1377).** It now runs only on the instance holding
+  the maintainer duty, as the vacuum already did.
+- **The destruction lifecycle stages never fired (#1381).** The receptors of `PreDestruction*` stages now
+  run before the ephemeral reap removes a message, and `PostDestruction*` after, with the envelopes loaded
+  before the reap. A throwing inline pre-destruction receptor holds the batch for a retry, as a throwing destruction hook
+  does.
 - **Startup failed with `ITransport (required by TransportConsumerWorker)` when no transport was composed
   (#1529).** Registration validation checked every requirement in the generated manifest, including types the
   composition never registers, so `AddWhizbang()` with a storage driver and no `AddTransportConsumer()` could not

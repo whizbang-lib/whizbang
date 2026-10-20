@@ -10,6 +10,15 @@ namespace Whizbang.Generators;
 /// </summary>
 /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs</tests>
 public static class DiagnosticDescriptors {
+  /// <summary>
+  /// Diagnostic IDs that were declared but never reported and have been retired (#1427). A retired ID is
+  /// never given a new meaning, so a suppression or a search for it can never match something else.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
+  public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
+    "WHIZ003", "WHIZ005", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
+  ];
+
   private const string CATEGORY = "Whizbang.SourceGeneration";
 
   /// <summary>
@@ -41,19 +50,6 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ003: Error - Invalid receptor implementation detected.
-  /// </summary>
-  public static readonly DiagnosticDescriptor InvalidReceptor = new(
-      id: "WHIZ003",
-      title: "Invalid Receptor Implementation",
-      messageFormat: "Invalid receptor '{0}': {1}",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Error,
-      isEnabledByDefault: true,
-      description: "The receptor implementation has errors and cannot be registered."
-  );
-
-  /// <summary>
   /// WHIZ004: Info - Stream ID property discovered on command.
   /// </summary>
   public static readonly DiagnosticDescriptor CommandStreamIdDiscovered = new(
@@ -66,18 +62,6 @@ public static class DiagnosticDescriptors {
       description: "A stream ID property was discovered on a command and will be accessible via PolicyContext."
   );
 
-  /// <summary>
-  /// WHIZ005: Error - [StreamId] must be on Guid property or type with .Value property.
-  /// </summary>
-  public static readonly DiagnosticDescriptor StreamIdMustBeGuid = new(
-      id: "WHIZ005",
-      title: "Stream ID Must Be Guid",
-      messageFormat: "[StreamId] on {0}.{1} must be of type Guid, Guid?, or a type with a .Value property returning Guid",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Error,
-      isEnabledByDefault: true,
-      description: "The [StreamId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
-  );
 
   /// <summary>
   /// WHIZ006: Warning - Multiple [StreamId] attributes on same type.
@@ -184,19 +168,6 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ020: Info - WhizbangId discovered during source generation.
-  /// </summary>
-  public static readonly DiagnosticDescriptor WhizbangIdDiscovered = new(
-      id: "WHIZ020",
-      title: "WhizbangId Discovered",
-      messageFormat: "Found [WhizbangId] on {0} in namespace {1}",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "A strongly-typed ID was discovered and will be generated with UUIDv7 support."
-  );
-
-  /// <summary>
   /// WHIZ021: Warning - [WhizbangId] on non-partial struct.
   /// </summary>
   public static readonly DiagnosticDescriptor WhizbangIdMustBePartial = new(
@@ -220,19 +191,6 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "A topic filter was discovered on a command and will be included in the generated registry."
-  );
-
-  /// <summary>
-  /// WHIZ023: Warning - Enum filter has no Description attribute, using symbol name.
-  /// </summary>
-  public static readonly DiagnosticDescriptor EnumFilterNoDescription = new(
-      id: "WHIZ023",
-      title: "Enum Filter No Description",
-      messageFormat: "Enum value '{0}.{1}' has no [Description] attribute. Using enum symbol name '{1}' as filter.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "An enum-based topic filter has no Description attribute, so the enum symbol name will be used as the filter string."
   );
 
   /// <summary>
@@ -271,7 +229,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "The source generator did not find any commands with [TopicFilter] attributes."
+      description: "The source generator did not find any commands with [TopicFilter] attributes. Reported without a location, because it concerns the whole compilation rather than any one declaration."
   );
 
   /// <summary>
@@ -394,64 +352,9 @@ public static class DiagnosticDescriptors {
       description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
-  /// <summary>
-  /// WHIZ042: Info - No user services found in the compilation.
-  /// Reports when no lens or perspective services are discovered.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz042</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
-  public static readonly DiagnosticDescriptor NoUserServicesFound = new(
-      id: "WHIZ042",
-      title: "No User Services Found",
-      messageFormat: "No user-defined lens or perspective services were found for service registration",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "The source generator did not find any user-defined interfaces extending ILensQuery or IPerspectiveFor. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn."
-  );
-
   // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================
-
-  /// <summary>
-  /// WHIZ050: Warning - Public API has no associated tests.
-  /// </summary>
-  public static readonly DiagnosticDescriptor PublicApiMissingTests = new(
-      id: "WHIZ050",
-      title: "Public API Missing Tests",
-      messageFormat: "Public {0} '{1}' has no associated tests. Consider adding test coverage or marking with [ExcludeFromCodeCoverage].",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "A public API member has no associated tests in the code-tests mapping."
-  );
-
-  /// <summary>
-  /// WHIZ051: Warning - &lt;tests&gt; XML tag references non-existent test.
-  /// </summary>
-  public static readonly DiagnosticDescriptor InvalidTestReference = new(
-      id: "WHIZ051",
-      title: "Invalid Test Reference",
-      messageFormat: "&lt;tests&gt; tag on '{0}' references test '{1}' which was not found. Verify test file path and method name.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "The &lt;tests&gt; XML documentation tag references a test that does not exist."
-  );
-
-  /// <summary>
-  /// WHIZ052: Info - Test link discovered between code and test.
-  /// </summary>
-  public static readonly DiagnosticDescriptor TestLinkDiscovered = new(
-      id: "WHIZ052",
-      title: "Test Link Discovered",
-      messageFormat: "Found test link: {0}.{1} ← {2} (via {3})",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "A code-to-test link was discovered through convention, semantic analysis, or XML tag."
-  );
 
   /// <summary>
   /// WHIZ053: Info - Failed to load code-docs-map.json for VSCode tooling.
@@ -578,20 +481,6 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ057: Warning - Raw Guid parameter where IWhizbangId expected.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz057</docs>
-  public static readonly DiagnosticDescriptor RawGuidWhereIdExpected = new(
-      id: "WHIZ057",
-      title: "Raw Guid Parameter",
-      messageFormat: "Consider using a strongly-typed ID instead of raw Guid for parameter '{0}'. Raw Guid loses metadata about precision and ordering.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "Raw Guid parameters lose metadata about precision and ordering. Consider using IWhizbangId or a strongly-typed ID generated with [WhizbangId]."
-  );
-
-  /// <summary>
   /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
   /// </summary>
   /// <docs>operations/diagnostics/whiz058</docs>
@@ -674,27 +563,13 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ803: Warning - [PhysicalField] on complex type may not benefit from indexing.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz803</docs>
-  public static readonly DiagnosticDescriptor PhysicalFieldComplexType = new(
-      id: "WHIZ803",
-      title: "PhysicalField Complex Type",
-      messageFormat: "[PhysicalField] on {0}.{1} with type {2} may not benefit from indexing. Consider using simple types.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "Physical fields work best with simple types (string, int, decimal, bool, Guid). Complex types may not benefit from database indexing."
-  );
-
-  /// <summary>
   /// WHIZ805: Warning - Split mode with no [PhysicalField] is equivalent to JsonOnly.
   /// </summary>
   /// <docs>operations/diagnostics/whiz805</docs>
   public static readonly DiagnosticDescriptor SplitModeNoPhysicalFields = new(
       id: "WHIZ805",
       title: "Split Mode No Physical Fields",
-      messageFormat: "Perspective '{0}' uses Split mode but has no [PhysicalField] or [VectorField] attributes. This is equivalent to JsonOnly mode.",
+      messageFormat: "Model '{0}' is stored Split but has no [PhysicalField] or [VectorField] property, so it is stored exactly as JsonOnly. Mark the fields that need columns, or use JsonOnly.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,

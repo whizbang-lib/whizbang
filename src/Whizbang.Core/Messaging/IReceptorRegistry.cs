@@ -17,14 +17,14 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <list type="bullet">
 /// <item><description>Receptors WITH [FireAt(X)] are registered at stage X only</description></item>
-/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached, never at an outbox stage</description></item>
+/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached, never at an outbox stage</description></item>
 /// </list>
 /// <para>
 /// Runtime registration via <see cref="Register{TMessage}(IReceptor{TMessage}, LifecycleStage)"/> wires the
 /// framework's own receptors for its own message types, which the generator cannot see, and lets
 /// integration tests register receptors after hosts start. A runtime registration at
-/// <see cref="LifecycleStage.LocalImmediateInline"/> or <see cref="LifecycleStage.LocalImmediateDetached"/>
-/// is the message's local handler when no generated receptor exists. Runtime-registered receptors
+/// <see cref="LifecycleStage.LocalImmediateInline"/> is the message's local handler when no generated receptor
+/// exists; one at <see cref="LifecycleStage.LocalImmediateDetached"/> is a hook started after the handler (#1392). Runtime-registered receptors
 /// are invoked through the same <see cref="IReceptorInvoker"/> pipeline as compile-time receptors,
 /// ensuring full security context propagation and event cascading.
 /// </para>
@@ -43,6 +43,17 @@ public interface IReceptorRegistry {
   /// <param name="stage">The lifecycle stage to query.</param>
   /// <returns>Collection of receptor information for AOT-compatible invocation.</returns>
   IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage);
+
+  /// <summary>
+  /// The receptors registered at runtime for an interface or base type of <paramref name="messageType"/>
+  /// (not the type itself) at <paramref name="stage"/>: the ones a mediator hands a message with no receptor
+  /// of its own (#1418). Empty by default, for a registry that predates it.
+  /// </summary>
+  /// <param name="messageType">The message's runtime type.</param>
+  /// <param name="stage">The lifecycle stage to query.</param>
+  /// <returns>The runtime receptors declared for a type <paramref name="messageType"/> is assignable to.</returns>
+  /// <docs>fundamentals/dispatcher/message-cascade#mediator-lookup</docs>
+  IReadOnlyList<ReceptorInfo> GetRuntimeReceptorsForBaseTypesOf(Type messageType, LifecycleStage stage) => [];
 
   /// <summary>
   /// Registers a void receptor at a specific lifecycle stage for runtime invocation.

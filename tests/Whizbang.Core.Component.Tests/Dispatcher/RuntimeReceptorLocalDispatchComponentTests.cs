@@ -44,7 +44,6 @@ public class RuntimeReceptorLocalDispatchComponentTests {
 
   [Test]
   [Arguments(LifecycleStage.LocalImmediateInline)]
-  [Arguments(LifecycleStage.LocalImmediateDetached)]
   public async Task SendAsync_UnownedCommandWithOnlyARuntimeReceptor_HandlesItLocallyAndSendsAMarkedCopyAsync(LifecycleStage stage) {
     var outbox = new RecordingOutbox();
     await using var provider = _buildProvider(outbox);
@@ -105,7 +104,6 @@ public class RuntimeReceptorLocalDispatchComponentTests {
 
   [Test]
   [Arguments(LifecycleStage.LocalImmediateInline)]
-  [Arguments(LifecycleStage.LocalImmediateDetached)]
   public async Task LocalInvokeAsync_CommandWithOnlyARuntimeReceptor_HandlesItAsync(LifecycleStage stage) {
     await using var provider = _buildProvider(new RecordingOutbox());
     _registry(provider).Register(new RecordingRuntimeReceptor<UnownedRuntimeCommand>(), stage);
@@ -299,12 +297,12 @@ public class RuntimeReceptorLocalDispatchComponentTests {
   public async Task LocalInvokeVoidWithOptions_SyncReceptorBesideAnImmediateDetachedHook_RunsBothOnceAsync() {
     await using var provider = _buildProvider(new RecordingOutbox());
     var command = new SyncVoidCommand(Guid.CreateVersion7());
-    var before = SyncVoidCommandImmediateDetachedHook.Count;
 
     await provider.GetRequiredService<IDispatcher>().LocalInvokeAsync((object)command, new DispatchOptions());
+    await SyncVoidCommandImmediateDetachedHook.Fired(command.Id);
 
     await Assert.That(RuntimeReceptorProbe.CountFor(command.Id)).IsEqualTo(1);
-    await Assert.That(SyncVoidCommandImmediateDetachedHook.Count - before).IsEqualTo(1)
+    await Assert.That(SyncVoidCommandImmediateDetachedHook.CountFor(command.Id)).IsEqualTo(1)
       .Because("a sync handler with an ImmediateDetached hook takes the full path, which fires the hook once");
   }
 
