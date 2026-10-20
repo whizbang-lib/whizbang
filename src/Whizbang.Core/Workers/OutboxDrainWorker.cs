@@ -1368,6 +1368,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     return new OutboxWork {
       MessageId = row.MessageId,
       Priority = priority,
+      IsEvent = row.IsEvent,
       Destination = row.Destination,
       Envelope = envelope,
       EnvelopeType = row.EnvelopeType ?? string.Empty,

@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// Two exclusions are built into the selection, not left to callers:
 /// <list type="bullet">
-/// <item><b>At-most-once schedule occurrences</b> (envelope metadata <c>deliveryGuarantee = 1</c>)
+/// <item><b>At-most-once schedule occurrences</b> (flagged <see cref="EventFlags.AtMostOnce"/> on the stored row)
 /// are never selected — re-delivery would violate the exact guarantee they were declared for.</item>
 /// <item><b>Reaped ephemeral events</b> are excluded structurally: selection joins the event body,
 /// and a reaped body is absent — an event whose body no longer exists cannot be re-delivered

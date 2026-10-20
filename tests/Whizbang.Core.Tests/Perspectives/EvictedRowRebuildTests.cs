@@ -242,6 +242,41 @@ public class EvictedRowRebuildTests {
   }
 
   [Test]
+  public async Task EphemeralPerspective_EvictedRowWithStaleSnapshot_StartsFreshFromTheIncomingBatchAndWarnsAsync() {
+    // Issue #1506: the kept snapshot was written before a snapshot format change, so it cannot be read, and the
+    // history before it is reaped. Nothing can rebuild the row, exactly as when no snapshot survives: the row must
+    // start fresh from the incoming batch. The defect treated the batch as a dropped straggler and wrote nothing.
+    var streamId = Guid.NewGuid();
+    var store = new HistoryEventStore { HandledHistory = true };
+    var b1 = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 1 });
+    var incoming = _envelope(new EvictionEphemeralAdded { StreamId = streamId, Delta = 7 });
+    store.Stream.Add(incoming);   // b1's body is reaped; only the incoming event is readable
+    var snapshots = new KeptSnapshotStore(b1.MessageId.Value, _staleSnapshotOf(new EvictionEphemeralModel { Id = streamId, Total = 50 }));
+    var rows = new InMemoryRows<EvictionEphemeralModel>();
+    var logs = new List<(LogLevel Level, string Message)>();
+    var runner = _runner<EvictionEphemeralPerspective, EvictionEphemeralModel>(store, rows, snapshots, logs);
+
+    var completion = await runner.RunWithEventsAsync(
+      streamId, _name<EvictionEphemeralPerspective>(), null, [incoming], CancellationToken.None);
+
+    var row = await rows.GetByStreamIdAsync(streamId);
+    await Assert.That(row).IsNotNull()
+      .Because("the incoming batch is always applied; a stale snapshot is no reason to leave the evicted row missing");
+    await Assert.That(row!.Total).IsEqualTo(7)
+      .Because("the stale snapshot cannot be read and the earlier history is reaped, so the row starts from the incoming event");
+    await Assert.That(completion.Status).IsEqualTo(PerspectiveProcessingStatus.Completed);
+    await Assert.That(completion.LastEventId).IsEqualTo(incoming.MessageId.Value)
+      .Because("the cursor moves past the applied event instead of staying behind a batch that was never folded");
+    await Assert.That(logs.Any(l => l.Level == LogLevel.Warning
+        && l.Message.Contains("stale serialization version", StringComparison.Ordinal)
+        && l.Message.Contains("starting it fresh", StringComparison.Ordinal)
+        && l.Message.Contains(b1.MessageId.Value.ToString(), StringComparison.Ordinal))).IsTrue()
+      .Because("the accepted loss is reported, naming the unreadable snapshot, so it is never silent");
+    await Assert.That(logs.Any(l => l.Message.Contains("Straggler dropped", StringComparison.Ordinal))).IsFalse()
+      .Because("the incoming event is the row's newest event, not a late straggler to drop");
+  }
+
+  [Test]
   public async Task EphemeralPerspective_NoSnapshotStore_StartsFreshAndWarnsAsync() {
     var streamId = Guid.NewGuid();
     var store = new HistoryEventStore { HandledHistory = true };
@@ -284,6 +319,13 @@ public class EvictedRowRebuildTests {
     var info = (JsonTypeInfo<TModel>)JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(TModel));
     var element = JsonSerializer.SerializeToElement(model, info);
     return SnapshotEnvelope.Wrap(element, SerializationVersion.CURRENT);
+  }
+
+  // A snapshot written before the snapshot envelope existed: the bare model with no serialization version, which
+  // the current reader cannot place and so refuses to restore from.
+  private static JsonDocument _staleSnapshotOf<TModel>(TModel model) {
+    var info = (JsonTypeInfo<TModel>)JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(TModel));
+    return JsonSerializer.SerializeToDocument(model, info);
   }
 
   private static IPerspectiveRunner _runner<TPerspective, TModel>(

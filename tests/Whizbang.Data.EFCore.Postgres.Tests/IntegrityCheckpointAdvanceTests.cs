@@ -29,6 +29,9 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
 
+  /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
+  private const int AT_MOST_ONCE_FLAG = 32;
+
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
@@ -54,7 +57,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX");
     await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeY");
     await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.OccurrenceFired",
-      metadataJson: "{\"scheduleId\":\"s-1\",\"deliveryGuarantee\":1}");
+      flags: AT_MOST_ONCE_FLAG);
 
     var window = await coordinator.AdvanceIntegrityCheckpointAsync();
     await Assert.That(window).IsNotNull();
@@ -159,17 +162,18 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   /// <summary>Seeds one stamped event (store pointer + body).</summary>
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
-      string? metadataJson = null) {
+      int flags = 0) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags)
-        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), 0)";
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), @flags)";
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {
@@ -179,7 +183,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
       body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+      body.Parameters.AddWithValue("meta", "{}");
       await body.ExecuteNonQueryAsync();
     }
     return eventId;

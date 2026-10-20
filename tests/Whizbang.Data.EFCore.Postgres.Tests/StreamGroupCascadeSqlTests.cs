@@ -176,6 +176,31 @@ public class StreamGroupCascadeSqlTests : EFCoreTestBase {
       .Because("holds are honored on every destruction path, the presence reconcile included");
   }
 
+  /// <summary>
+  /// The reconcile scoped to the streams a rebuild replayed drops only their orphaned rows; another orphan, which that
+  /// rebuild did not touch, is left for a rebuild that does.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task PresenceReconcile_ScopedToStreams_DropsOnlyThoseStreamsOrphansAsync(CancellationToken cancellationToken) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(cancellationToken);
+    await _arrangeAsync(conn);
+    var rebuilt = Guid.NewGuid();
+    var untouched = Guid.NewGuid();
+    await _seedAsync(conn, FOLLOWER_TABLE, rebuilt, idleHours: 0);
+    await _seedAsync(conn, FOLLOWER_TABLE, untouched, idleHours: 0);
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    var removed = await coordinator.ReconcileFollowerPresenceAsync(FOLLOWER_TABLE, [LEADER_TABLE], [rebuilt], cancellationToken);
+
+    await Assert.That(removed).IsEqualTo(1);
+    await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, rebuilt)).IsFalse();
+    await Assert.That(await _survivesAsync(conn, FOLLOWER_TABLE, untouched)).IsTrue()
+      .Because("a reconcile scoped to the rebuilt streams does not scan or touch any other row");
+  }
+
   [Test]
   [Timeout(120000)]
   public async Task LeaderTtlEviction_CascadesToTheFollower_InTheSameCycleAsync(CancellationToken cancellationToken) {

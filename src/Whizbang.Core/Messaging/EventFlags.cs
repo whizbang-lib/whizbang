@@ -104,6 +104,17 @@ public enum EventFlags {
   /// <docs>fundamentals/events/ephemeral-events</docs>
   Compacted = 1 << 4,
 
+  /// <summary>
+  /// Treatment flag: this event was declared <strong>at-most-once</strong> (a schedule occurrence whose
+  /// schedule uses <c>ScheduleDeliveryGuarantee.AtMostOnce</c>), so nothing owes it to anyone. The stream and
+  /// epoch digests, the integrity checkpoint counts and the re-delivery selection all leave it out
+  /// (<c>(flags &amp; 32) = 0</c>): a consumer that never received it is not missing it, and sending it again
+  /// is the one thing its guarantee forbids. The occurrence spawn sets it on the outbox row and the emit chain
+  /// copies it to <c>wh_event_store.flags</c>. It does not change replay: the event stays in the log.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  AtMostOnce = 1 << 5,
+
   // Future flags add new values here without requiring schema migrations.
 }
 

@@ -973,7 +973,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       string? envelopeType,
       string messageType,
       KeyValuePair<string, object?> messageTypeTag) {
-    if (_ownedDomains.Count == 0 || envelopeType is null) {
+    // A copy whose local handling this service deferred to its delivery (a scheduled publish) comes back to be
+    // handled here, so it is not an echo (#1401)
+    if (_ownedDomains.Count == 0 || envelopeType is null || envelope.DispatchContext.LocalDeferred) {
       return false;
     }
     var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);

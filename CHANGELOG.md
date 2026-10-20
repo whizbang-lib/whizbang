@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
+  so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
+  the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the
+  recorded configuration key manifest, embedded in `Whizbang.Core`; consumer-named entries such as
+  `Whizbang:PerspectiveRowRetention:Overrides:<Model>` count as known). Each key nothing reads is logged once
+  at Warning, naming the key; a removed key also names its replacement, for example
+  `Whizbang:WorkCoordinator:MaintenanceInterval` points to `Whizbang:Workers:Maintenance:IntervalMinutes`,
+  `Whizbang:Housekeeping:SettledCooldown` and `Whizbang:Housekeeping:MaxDeferral`.
+  `Whizbang:Configuration:UnknownKeys` (default `Warn`) selects `Warn`, `Throw` (fail start, naming every
+  unknown key) or `Ignore`.
 
 #### Messaging & delivery
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
@@ -306,6 +316,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keep one row per record. The event store decorator's records are now transport-only, like the outbox path's:
   the origin no longer writes them to its own event store, so a perspective over `EventAudited` in the
   producing service itself sees no records from that path. Applies migration 216.
+- **An evicted row of an ephemeral perspective stayed missing when its kept snapshot was in an older snapshot
+  format (#1506).** With the earlier history already reaped, the next event treated itself as a late straggler and
+  was not applied, so the row stayed missing until a later event arrived. A snapshot that cannot be read is now
+  handled the same way as no snapshot: the row starts fresh from the incoming events and a warning names the
+  unreadable snapshot. The incoming events are always applied.
+- **At-most-once schedule occurrences were folded into integrity digests, counted in checkpoints and selected for
+  re-delivery (#1484).** Every exclusion looked for the delivery guarantee in the stored event metadata, which never
+  carried it, so none matched: a consumer comparing digests saw each occurrence as missing, and re-delivery could send
+  an occurrence its schedule declared at most once. The guarantee is now a flag on the stored event
+  (`EventFlags.AtMostOnce`, value 32), set when the occurrence is spawned, and the stream and epoch digests, the
+  verification sweep, the checkpoint counts and the re-delivery selection leave flagged events out. Migration 214 flags
+  occurrences already stored (read from the outbox row when it remains, otherwise from the schedule), removes them
+  from the stored digests and sealed epochs, and advances the origin generation once, so consumers reset their seals
+  and re-verify instead of reporting drift. The digest and checkpoint queries no longer read the event body to apply
+  the filter.
+- **A multi-stream run over many streams ran its host out of memory.** A run stored the whole command, its stream ids
+  included, and every claimed stream read and parsed it again, so a run's cost grew with the square of its stream
+  count: an in-place rebuild over 127,288 streams parsed about 630 GB and OOMKilled its pods. A run's payload now
+  carries no stream ids (they are rows of the run, and each stream's handler is given its id), the claim sends each
+  run's payload once (migration 213), and a run's payload is read back once and shared by its streams. A run recorded
+  by an earlier release still works each of its streams.
+- **Each stream of a multi-stream rebuild did a whole rebuild's reporting.** Every stream published its own rebuild
+  Started, Progress and Completed events, computed two row digests and logged at Information, about 254,000 system
+  events for a 127,000-stream rebuild. A stream of a run now reports nothing of its own; the run announces its
+  completion once (`MultiStreamCommandCompleted`). `IPerspectiveRebuilder.RebuildStreamOfRunAsync` is the new entry.
+- **A rebuild of named streams reconciled the whole follower table.** The stream-group presence reconcile deleted
+  across every row of a follower perspective after each rebuild, so a multi-stream rebuild did that once per stream.
+  It is now scoped to the streams the rebuild replayed (`IWorkCoordinator.ReconcileFollowerPresenceAsync` overload).
+- **A rebuild that excludes streams listed every stream in the store.** It took every distinct stream in the event
+  store, whatever events it held, and recorded that list as a run for every perspective. It now takes each
+  perspective's own streams less the excluded ones, listing the whole store only for a rebuilder that cannot list a
+  perspective's streams, and then once per command.
+- **A coalesced audit composite had no size bound.** A batch of up to 500 audit singles, each carrying the original
+  message's body, became one message no broker accepts. `CoalescePolicyOptions.MaxBatchBytes` (default 192,000)
+  splits a batch by size as `MaxBatchCount` does by count.
+- **A published composite never reached another service (0.2623.0 regression).** Its outbox copy was routed to
+  its owner's command destination, because a composite is not an `IEvent`, so only the publishing service got it
+  and discarded it as its own echo. Nothing failed or logged. A composite now goes to the topic its inner events
+  share, wherever the composite type is declared.
+- **A composite written any way other than a single publish was not expanded here.** `PublishManyAsync` and a
+  composite returned by a receptor now expand an owned composite locally, as a publish does; a returned composite
+  is no longer refused as an owned command nothing handles.
+- **A scheduled composite expanded at publish.** Its inner events were stored and handled before its time. It now
+  expands when it is delivered.
+- **A scheduled owned event was discarded when it came back.** The transport consumer dropped the publisher's own
+  deferred copy as an echo, so the publisher never handled its scheduled event. A copy marked as deferred to its
+  delivery now passes the echo check.
+- **A message that is not an event, routed to the event store only, vanished.** Its row had no destination and was
+  not stored. It is now refused with `DispatchRejectedException` (`NotAnEventCannotBeStoreOnly`); one that also runs
+  here keeps its local run.
+- **The transport re-routed an event to a command inbox by its type name.** An event in a `Commands` namespace or
+  named `...Command` went to a command inbox no subscriber of the event reads. An event row now keeps the topic the
+  dispatcher chose.
+- **PreOutbox receptors never fired for an owned composite.** It was filtered as an owned command; it is filtered
+  as an event.
 - **A receptor's top-level `Route.X(...)` result lost its route (#1405).** `return Route.Local(evt);` cascaded
   the event with the default route; only a route inside a tuple was kept. Fixed with the dispatch policy work, and now
   covered on every entry by a test against the generated dispatcher.
