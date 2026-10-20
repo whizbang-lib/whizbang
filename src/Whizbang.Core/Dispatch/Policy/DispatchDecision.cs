@@ -42,6 +42,9 @@ public enum DispatchRejection : byte {
 
   /// <summary>The caller needs the handler's result, but the handler does not run during the call.</summary>
   ResultUnavailable = 7,
+
+  /// <summary>A message that is not an event was routed to the event store only; only events are stored.</summary>
+  NotAnEventCannotBeStoreOnly = 8,
 }
 
 /// <summary>The rule that last shaped a decision, recorded for logs and traces.</summary>
@@ -76,6 +79,9 @@ public enum DispatchReason : byte {
 
   /// <summary>A developer hook changed the decision.</summary>
   Hook = 9,
+
+  /// <summary>A message that is not an event cannot be routed to the event store only.</summary>
+  NotAnEventCannotBeStoreOnly = 10,
 }
 
 /// <summary>
