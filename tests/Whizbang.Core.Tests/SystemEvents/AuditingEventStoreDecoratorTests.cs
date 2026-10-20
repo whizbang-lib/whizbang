@@ -25,6 +25,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// </summary>
 [Category("SystemEvents")]
 public class AuditingEventStoreDecoratorTests {
+  private static readonly DateTimeOffset _fixedInstant = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   #region Constructor Tests
 
   [Test]
@@ -579,7 +581,7 @@ public class AuditingEventStoreDecoratorTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
+          Timestamp = _fixedInstant,
           CausationId = causation,
           Scope = tenantId is null ? null : ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId })
         }

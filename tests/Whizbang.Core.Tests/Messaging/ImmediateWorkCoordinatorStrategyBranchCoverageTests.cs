@@ -43,8 +43,8 @@ public class ImmediateWorkCoordinatorStrategyBranchCoverageTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics,
-      auditDecisionHook: null);
+      auditDecisionHook: null,
+      metrics: metrics);
 
     await sut.FlushAsync(WorkBatchOptions.None);
 

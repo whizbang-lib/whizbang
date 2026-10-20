@@ -89,7 +89,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options, auditDecisionHook: null);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null, systemEventOptions: options);
 
     var msg = _eventOutboxMessage(_idProvider.NewGuid());
     await sut.QueueOutboxMessageAsync(msg);
@@ -163,7 +163,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
     options.EnableEventAudit();
-    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, systemEventOptions: options, auditDecisionHook: null);
+    var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null, systemEventOptions: options);
 
     // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
     await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));

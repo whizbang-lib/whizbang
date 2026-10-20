@@ -107,8 +107,8 @@ public class AuditDecisionHookCallSiteTests {
       inner: _scoped(new CapturingWorkCoordinator(), hook: null),
       outboxBatch: batch,
       logger: NullLogger.Instance,
-      systemEventOptions: _auditOptions(),
-      auditDecisionHook: new FixedHook(AuditDecision.Skip));
+      auditDecisionHook: new FixedHook(AuditDecision.Skip),
+      systemEventOptions: _auditOptions());
 
     await sut.QueueOutboxMessageAsync(_auditedEvent());
 
@@ -123,8 +123,8 @@ public class AuditDecisionHookCallSiteTests {
       inner: _scoped(new CapturingWorkCoordinator(), hook: null),
       outboxBatch: batch,
       logger: NullLogger.Instance,
-      systemEventOptions: _auditOptions(),
-      auditDecisionHook: new FixedHook(AuditDecision.Record(RENAMED)));
+      auditDecisionHook: new FixedHook(AuditDecision.Record(RENAMED)),
+      systemEventOptions: _auditOptions());
 
     await sut.QueueOutboxMessageAsync(_auditedEvent());
 

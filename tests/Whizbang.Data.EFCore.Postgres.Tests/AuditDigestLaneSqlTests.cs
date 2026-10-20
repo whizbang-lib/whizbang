@@ -31,6 +31,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity#what-is-digested</docs>
 [Category("Shard2")]
 public class AuditDigestLaneSqlTests : EFCoreTestBase {
+  private static readonly DateTimeOffset _fixedInstant = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private const string TENANT = "tenant-audit-digest";
   private const string DOMAIN_TYPE = "Probe.Contracts.DomainEventHappened, Probe.Contracts";
   private static readonly string _auditType = TypeNameFormatter.AssemblyQualifiedName(typeof(EventAudited));
@@ -145,7 +147,7 @@ public class AuditDigestLaneSqlTests : EFCoreTestBase {
       OriginalStreamId = ((Guid)TrackedGuid.New()).ToString(),
       OriginalStreamPosition = 1,
       OriginalBody = JsonSerializer.SerializeToElement(new { probe = true }),
-      Timestamp = DateTimeOffset.UtcNow,
+      Timestamp = _fixedInstant,
       TenantId = TENANT,
     };
     var payload = JsonSerializer.SerializeToElement(record, JsonContextRegistry.CreateCombinedOptions().GetTypeInfo(typeof(EventAudited)));

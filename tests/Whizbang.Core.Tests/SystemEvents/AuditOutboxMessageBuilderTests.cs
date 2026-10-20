@@ -21,6 +21,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// </summary>
 [Category("SystemEvents")]
 public class AuditOutboxMessageBuilderTests {
+  private static readonly DateTimeOffset _fixedInstant = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   [Test]
   public async Task TryBuildAuditMessage_UnresolvableEventType_LogsWarningAsync() {
     // An event type name that Type.GetType can't resolve makes the audit include/exclude decision
@@ -707,7 +709,7 @@ public class AuditOutboxMessageBuilderTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
+          Timestamp = _fixedInstant,
           CausationId = causationIdInHop,
           CorrelationId = correlationIdOnHop
         }
