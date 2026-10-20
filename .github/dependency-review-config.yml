@@ -66,9 +66,3 @@ allow-dependencies-licenses:
   - pkg:nuget/Microsoft.AspNetCore.Http.Abstractions      # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
   - pkg:nuget/Microsoft.AspNetCore.Http.Features          # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
   - pkg:nuget/RabbitMQ.Client                             # Apache-2.0 OR MPL-2.0; the SBOM splits the OR into two entries
-
-  # Provisional: not permissive, already shipping, and awaiting a decision in #1552. Kept here so the gate
-  # still catches anything new; remove each once #1552 decides it.
-  - pkg:nuget/LibGit2Sharp.NativeBinaries                 # GPL-2.0 with the libgit2 linking exception
-  - pkg:nuget/Microsoft.Data.SqlClient.SNI.runtime        # Microsoft Software License Terms
-  - pkg:nuget/ChilliCream.Nitro.App                       # ChilliCream License 1.0
