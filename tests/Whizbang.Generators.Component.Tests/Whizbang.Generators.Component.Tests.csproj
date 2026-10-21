@@ -63,5 +63,20 @@
        assemblies. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
+  </ItemGroup>
+  <!-- #1378: the suppressor guard runs the real third-party rules a consumer's build runs. Directory.Build.props
+       references both packages for every project; this exposes where restore put them. -->
+  <ItemGroup>
+    <PackageReference Update="Roslynator.Analyzers" GeneratePathProperty="true" />
+    <PackageReference Update="SonarAnalyzer.CSharp" GeneratePathProperty="true" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RoslynatorAnalyzers</_Parameter1>
+      <_Parameter2>$(PkgRoslynator_Analyzers)/analyzers/dotnet/roslyn4.7/cs</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>SonarAnalyzer</_Parameter1>
+      <_Parameter2>$(PkgSonarAnalyzer_CSharp)/analyzers</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 </Project>
