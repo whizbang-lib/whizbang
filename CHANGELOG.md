@@ -185,6 +185,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
+  rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
+  `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is
+  named by a constant string (its CLR type name), `typeof(T).FullName` or `TypeNameFormatter.FormatClrTypeName(typeof(T))`;
+  a mixed-mode perspective is left to WHIZ130. WHIZ132 (Warning) reports a receptor whose input message is ephemeral
+  and whose response returns or cascades a Sourced event, which would keep what the ephemeral message carried as a
+  durable fact. The new `[DangerouslyAllowSourcedEventsFromEphemeralInput]` attribute on the receptor silences it for
+  a deliberate case, the way `[DangerouslyAllowMixedEphemeralAndSourcedEvents]` silences WHIZ130.
 - **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
   handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
   its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
