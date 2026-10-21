@@ -344,10 +344,11 @@ public class MixedStreamGuardSqlTests : EFCoreTestBase {
     await coordinator.StoreInboxMessagesAsync(rows, partitionCount: 100);
     var conn = await _openAsync(dbContext);
     var instanceId = (Guid)TrackedGuid.New();
+    Guid[] ids = [.. rows.Select(r => r.MessageId)];
     await using (var lease = conn.CreateCommand()) {
       lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)";
       lease.Parameters.AddWithValue("inst", instanceId);
-      lease.Parameters.AddWithValue("ids", rows.Select(r => r.MessageId).ToArray());
+      lease.Parameters.AddWithValue("ids", ids);
       if (await lease.ExecuteNonQueryAsync() != rows.Length) {
         throw new InvalidOperationException("the received rows were not all stored in the inbox; the probe proves nothing");
       }
