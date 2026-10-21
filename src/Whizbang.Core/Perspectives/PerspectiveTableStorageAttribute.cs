@@ -5,7 +5,8 @@ namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// Storage options for a perspective's table as a whole: the compression of its <c>data</c> document, the row
-/// size past which PostgreSQL starts compressing and moving values out of line, and when autovacuum runs.
+/// size past which PostgreSQL starts compressing and moving values out of line, when autovacuum runs, and how full
+/// each page is filled.
 /// </summary>
 /// <remarks>
 /// <para>

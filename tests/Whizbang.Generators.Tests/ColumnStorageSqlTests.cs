@@ -217,9 +217,10 @@ public class ColumnStorageSqlTests {
     var efSql = registration.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
     var schema = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source), "PerspectiveSchemas.g.sql.cs") ?? "";
 
-    foreach (var sql in new[] { efSql, schema }) {
-      await Assert.That(sql).Contains("SET (fillfactor = 90);");
-      await Assert.That(sql).Contains("wh_request_table_rewrite('wh_per_filter_model');")
+    // Each generator names the table its own way; the request names whichever table the statement altered.
+    foreach (var (sql, table) in new[] { (efSql, "wh_per_filter"), (schema, "wh_per_filter_perspective") }) {
+      await Assert.That(sql).Contains($"{table} SET (fillfactor = 90);");
+      await Assert.That(sql).Contains($"wh_request_table_rewrite('{table}');")
         .Because("the rewrite request names the bare table, as the rewriter lists the tables it measures.");
     }
   }
@@ -233,8 +234,9 @@ public class ColumnStorageSqlTests {
     var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
 
     await Assert.That(sql).Contains("SET (autovacuum_vacuum_threshold = 500);");
-    await Assert.That(sql).DoesNotContain("fillfactor");
-    await Assert.That(sql).DoesNotContain("wh_request_table_rewrite");
+    await Assert.That(sql).DoesNotContain(".wh_per_filter SET (fillfactor")
+      .Because("the embedded framework migrations set a fillfactor on their own tables only.");
+    await Assert.That(sql).DoesNotContain("wh_request_table_rewrite('wh_per_filter')");
   }
 
   /// <summary>

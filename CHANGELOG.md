@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EventTypeSamplePercent` of the event body table's pages every `EventTypeSampleInterval`, claiming the window in
   `wh_unique_emission_claims`; other instances clear their reading. The largest `MaxEventTypes` types are named, the
   rest reported as `other`. The `Whizbang:TableStatistics` settings are now validated at host start.
+
+- **A perspective table can reserve page space for in-place updates (#1592).** `[PerspectiveTableStorage(FillFactor =
+  90)]` sets the table's `fillfactor` (10 to 100), so an update that changes no indexed column can stay on its page
+  (a HOT update) and write no index entries. A changed fillfactor applies only to new pages, so the schema pass also
+  queues a rewrite request for a table that already holds rows; a restart that finds the value in place queues
+  nothing. `wh_perspective_cursors` gets fillfactor 90 in migration 223, queued for a rewrite the same way.
+- **Out-of-range table storage values are reported at build time (#1592).** The new error WHIZ804 reports a
+  `[PerspectiveTableStorage]` value PostgreSQL would refuse: a `FillFactor` outside 10 to 100, a `ToastTupleTarget`
+  outside 128 to 8160, or an autovacuum scale factor above 100. The schema generators leave such a value out, where
+  it used to fail the schema pass at startup.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
