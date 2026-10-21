@@ -250,6 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Audit records from the system-event emitter are written on the tenant's audit ledger (#1555). Behavior change.**
+  `SystemEventEmitter.EmitEventAuditedAsync`, `EmitCommandAuditedAsync` (used by the command-audit pipeline behavior)
+  and an `EventAudited` or `CommandAudited` given to `EmitAsync` now append to `AuditLedger.StreamFor(tenant)`, the
+  stream the outbox path has written audit records on since #1485, instead of the global `$wb-system` stream.
+  `$wb-system` now holds only the global kinds: the security records and the perspective advisories.
+  `SystemEventStreams.StreamFor(systemEvent)` names the stream for any system event. **Upgrade:** a reader that
+  looked for audit records on `$wb-system` (`SystemEventStreams.StreamId`) reads the tenant's ledger instead;
+  perspectives that consume `EventAudited` by type are unaffected.
 - **Breaking (observability): the work-batch instruments are retired, and flush and claim timing is recorded
   (#1535).** `whizbang.work_coordinator.process_batch.*`, `batch.*` and `returned.*` described a single SQL call
   that no longer exists, and nothing recorded them. They are removed with their `WorkCoordinatorMetrics`
@@ -430,6 +438,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Concurrent appends to one stream no longer fail or retry (#1555).** `IEventStore.AppendAsync` on both PostgreSQL
+  drivers read the stream's last version and inserted the next in separate round trips, so two writers on one
+  stream collided on its unique version: the EF Core store threw `Concurrent modification detected` and the Dapper
+  store retried up to ten times. Both now call `wh_append_event` (migration 224), which takes the stream's advisory
+  lock, the one the outbox and inbox emit paths take, and assigns the version in the database, so writers wait their
+  turn and get consecutive versions; a direct append and an emit on one stream serialize too. The EF Core append runs
+  on the context's connection and in its current transaction, and still saves the context's other pending changes
+  first. A duplicate event id now fails at once as "an event with this id is already stored" instead of being
+  reported or retried as a race.
+- **A fire-and-forget security record that fails to store is logged and counted (#1555).** The `AccessDenied`
+  record of a denied lens read was emitted with its task discarded, so a store failure lost it silently. Such emits
+  now go through `SystemEventFireAndForget.Emit`, which never blocks or faults the caller and, on failure, logs a
+  warning naming the event type, tenant and stream and increments `whizbang.system_events.emit_failures`
+  (tag `event_type`) on the `Whizbang.EventCategories` meter.
 - **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
   (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
   it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the
