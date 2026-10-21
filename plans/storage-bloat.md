@@ -96,6 +96,8 @@ Each slice is one red-then-green increment and its own commit.
    rights. RED: unit tests for ordering, budget and "not cleared when not improved"; integration
    test on an image with pg_squeeze, which needs a new mirrored CI image
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
+   Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
+   bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
@@ -136,6 +138,12 @@ Each slice is one red-then-green increment and its own commit.
    rewrite request (`wh_request_table_rewrite`) for the table. RED: generator tests for the
    statement and the out-of-range diagnostic; integration test reading `reloptions` and the queued
    request. Docs: physical-fields page, with the HOT explanation above.
+   **Status (2026-10-21):** ships in #1592. The fillfactor went into a new migration (223) rather than
+   slice 6's 222, which had already shipped. The range diagnostic is WHIZ804 (analyzer
+   `PerspectiveTableStorageAnalyzer`), covering `FillFactor`, `ToastTupleTarget` and the three scale
+   factors; the generators leave an out-of-range value out. The rewrite is queued only when the value
+   changes on a table that has pages. `wh_tables_needing_rewrite` still offers a requested table only
+   once it crosses the bloat threshold, so a queued request is a hint, not a forced rewrite.
 9. **Defect 7 investigation: what updates `wh_event_store`.** Code search found these writers:
 
    | Writer | Columns | When |

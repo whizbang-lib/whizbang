@@ -202,6 +202,77 @@ public class ColumnStorageSqlTests {
       .Because("a scale factor is written in the invariant round-trip form, which PostgreSQL parses and stores as written.");
   }
 
+  /// <summary>
+  /// Issue #1592: a declared fillfactor reaches both schema generators as a statement that sets it when the table
+  /// does not already hold it, and queues a rewrite of the table, because a changed fillfactor applies only to the
+  /// pages written from then on.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task FillFactor_ReachesBothSchemaGenerators_WithARewriteRequestAsync() {
+    var source = MODEL.Replace(
+      "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
+      "[PerspectiveTableStorage(FillFactor = 90)]", StringComparison.Ordinal);
+    var registration = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var efSql = registration.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+    var schema = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source), "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    // Each generator names the table its own way; the request names whichever table the statement altered.
+    foreach (var (sql, table) in new[] { (efSql, "wh_per_filter"), (schema, "wh_per_filter_perspective") }) {
+      await Assert.That(sql).Contains($"{table} SET (fillfactor = 90);");
+      await Assert.That(sql).Contains($"wh_request_table_rewrite('{table}');")
+        .Because("the rewrite request names the bare table, as the rewriter lists the tables it measures.");
+    }
+  }
+
+  [Test]
+  public async Task FillFactor_NotDeclared_EmitsNothingAsync() {
+    var source = MODEL.Replace(
+      "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
+      "[PerspectiveTableStorage(FillFactor = -1, AutovacuumVacuumThreshold = 500)]", StringComparison.Ordinal);
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    await Assert.That(sql).Contains("SET (autovacuum_vacuum_threshold = 500);");
+    await Assert.That(sql).DoesNotContain(".wh_per_filter SET (fillfactor")
+      .Because("the embedded framework migrations set a fillfactor on their own tables only.");
+    await Assert.That(sql).DoesNotContain("wh_request_table_rewrite('wh_per_filter')");
+  }
+
+  /// <summary>
+  /// The rewrite is queued only inside the branch that changes the fillfactor, and only when the table has pages
+  /// to rewrite: a restart that finds the value in place queues nothing, and neither does a table just created.
+  /// </summary>
+  [Test]
+  public async Task SetFillFactor_QueuesARewriteOnlyWhenTheValueChangesOnATableWithPagesAsync() {
+    var sql = ColumnStorageSql.SetFillFactor("\"svc\".wh_per_order", 85);
+
+    await Assert.That(sql).Contains("'fillfactor=85' = ANY (coalesce(reloptions, ARRAY[]::text[]))");
+    await Assert.That(sql).Contains("ALTER TABLE \"svc\".wh_per_order SET (fillfactor = 85);");
+    await Assert.That(sql).Contains("IF pg_relation_size('\"svc\".wh_per_order'::regclass) > 0 THEN");
+    await Assert.That(sql).Contains("PERFORM \"svc\".wh_request_table_rewrite('wh_per_order');")
+      .Because("the request goes to the framework function in the table's own schema.");
+    await Assert.That(sql.IndexOf("PERFORM", StringComparison.Ordinal))
+      .IsGreaterThan(sql.IndexOf("ALTER TABLE", StringComparison.Ordinal))
+      .Because("the request is inside the branch that found a different value, never before the comparison.");
+  }
+
+  [Test]
+  public async Task SetFillFactor_OnAnUnqualifiedTable_CallsTheFunctionUnqualifiedAsync() {
+    var sql = ColumnStorageSql.SetFillFactor("wh_per_order", 70);
+
+    await Assert.That(sql).Contains("PERFORM wh_request_table_rewrite('wh_per_order');");
+  }
+
+  [Test]
+  public async Task ForTable_EmitsTheFillFactorAfterTheToastTargetAsync() {
+    var statements = ColumnStorageSql.ForTable("t", new TableStorageInfo(null, 512, FillFactor: 80)).ToList();
+
+    await Assert.That(statements.Count).IsEqualTo(2);
+    await Assert.That(statements[0]).Contains("SET (toast_tuple_target = 512);");
+    await Assert.That(statements[1]).Contains("SET (fillfactor = 80);");
+  }
+
   private static PhysicalFieldInfo _field() =>
     new("P", "p", "string", IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null);
