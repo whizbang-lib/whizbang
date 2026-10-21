@@ -17,17 +17,17 @@ public class AuditEventRegistryTests {
 
   /// <summary>Declared public so the generator in this test assembly registers it.</summary>
   [AuditEvent(Reason = "registered by the generator", Level = AuditLevel.Critical)]
-  public sealed record GeneratedAuditProbe : IEvent;
+  public sealed record GeneratedAuditProbe([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>Inherits its base's [AuditEvent], as the attribute declares Inherited = true.</summary>
-  public sealed record InheritedAuditProbe : AuditedProbeBase;
+  public sealed record InheritedAuditProbe(Guid Id) : AuditedProbeBase(Id);
 
   /// <summary>The base that carries the attribute.</summary>
   [AuditEvent(Exclude = true)]
-  public abstract record AuditedProbeBase : IEvent;
+  public abstract record AuditedProbeBase([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>A type with no audit attribute.</summary>
-  public sealed record UnattributedProbe : IEvent;
+  public sealed record UnattributedProbe([property: StreamId] Guid Id) : IEvent;
 
   [Test]
   public async Task AttributeOf_ATypeTheGeneratorRegistered_ReturnsItsDeclaredValuesAsync() {

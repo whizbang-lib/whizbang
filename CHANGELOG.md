@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Whizbang:Workers:Maintenance:Retention` (`LogDays`, `ScheduleRunDays`, `StreamPurgeAuditDays`,
   `IntegrityLedgerMaxEntries`) and published to `wh_settings` by the retention settings bridge.
 
+#### Audit
+- **Audit decisions read `[AuditEvent]` from a generated registry, not reflection (#1580).** A generator registers
+  every type that carries the attribute, directly or through a base class, with its values into `AuditEventRegistry`
+  at module load, and `AuditEligibility` reads from it, so Whizbang.Core no longer reads the attribute by reflection.
+  A type generated code cannot name (a private nested type) is reported with the new warning WHIZ180 instead of
+  silently losing its audit settings; make it internal or public, or register it with `AuditEventRegistry.Register`.
+
 #### Startup
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and

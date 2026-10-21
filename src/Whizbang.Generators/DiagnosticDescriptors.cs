@@ -890,6 +890,26 @@ public static class DiagnosticDescriptors {
   );
 
   // ==========================================================================
+  // WHIZ180: Audit settings the generator cannot register
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ180: Warning - an event type carries [AuditEvent] but generated code cannot name it, so its audit settings are
+  /// not registered.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz180</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/AuditEventRegistryGeneratorTests.cs:Generator_AnUnreachableType_IsReportedNotRegisteredAsync</tests>
+  public static readonly DiagnosticDescriptor AuditEventTypeNotRegistrable = new(
+      id: "WHIZ180",
+      title: "Audit settings of an unreachable event type are not registered",
+      messageFormat: "{0} carries [AuditEvent], but generated code cannot name it, so audit decisions will treat it as unattributed. Make it internal or public, or register it with AuditEventRegistry.Register.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Audit decisions read each event type's [AuditEvent] from a registry the generator fills at module load, because Whizbang.Core reads no attribute by reflection. A private or protected nested type cannot be named from the generated registration."
+  );
+
+  // ==========================================================================
   // WHIZ900: Perspective sync in receptor safety
   // ==========================================================================
 

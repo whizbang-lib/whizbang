@@ -49,12 +49,12 @@ namespace Whizbang.Core.Tests.SystemEvents;
 public class AuditDecisionHookTests {
 
   [AuditEvent(Reason = "field edits are audited only when a person made them")]
-  private sealed record RecordFieldEdited : IEvent {
+  internal sealed record RecordFieldEdited : IEvent {
     public bool FromImport { get; init; }
   }
 
   [AuditEvent(Reason = "activity boundary")]
-  private sealed record FakeBulkImportStarted : IEvent {
+  internal sealed record FakeBulkImportStarted : IEvent {
     public int RecordCount { get; init; }
   }
 
