@@ -18,7 +18,7 @@ namespace Whizbang.Data.Postgres;
 /// <docs>operations/diagnostics/whiz133</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/MixedStreamRefusalTests.cs</tests>
 internal static class MixedStreamRefusal {
-  /// <summary>The SQLSTATE <c>_wh_refuse_mixed_stream_events</c> raises (migration 223).</summary>
+  /// <summary>The SQLSTATE <c>_wh_refuse_mixed_stream_outbox_events</c> raises (migration 225).</summary>
   internal const string SQL_STATE = "WH133";
 
   private const string STREAM_MARKER = "stream ";

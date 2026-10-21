@@ -229,7 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the kind the stream holds, and keeps nothing of the write. Every other write (the batch flushes, handler
   commits, the inbox claim) dead-letters only the refused row, with the new reason
   `MessageFailureReason.MixedStreamRefused` (held for review), and stores the rest. `OutboxMessage.RaiseOnMixedStream`
-  carries the choice to the store (migration 223).
+  carries the choice to the store (migration 225).
 - **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
   handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
   its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
