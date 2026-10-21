@@ -35,6 +35,10 @@ public class RetentionSettingsValidationTests {
   [Arguments("InstanceEvictionTombstoneHours")]
   [Arguments("OrphanPerspectiveEventGraceHours")]
   [Arguments("CollectiveOrderingHeadDays")]
+  [Arguments("LogDays")]
+  [Arguments("ScheduleRunDays")]
+  [Arguments("StreamPurgeAuditDays")]
+  [Arguments("IntegrityLedgerMaxEntries")]
   public async Task ANegativeMaintenanceRetention_IsRejectedByNameAsync(string property) {
     var retention = new MaintenanceRetentionOptions();
     switch (property) {
@@ -44,6 +48,10 @@ public class RetentionSettingsValidationTests {
       case "AbandonedStreamHours": retention.AbandonedStreamHours = -1; break;
       case "InstanceEvictionTombstoneHours": retention.InstanceEvictionTombstoneHours = -1; break;
       case "OrphanPerspectiveEventGraceHours": retention.OrphanPerspectiveEventGraceHours = -1; break;
+      case "LogDays": retention.LogDays = -1; break;
+      case "ScheduleRunDays": retention.ScheduleRunDays = -1; break;
+      case "StreamPurgeAuditDays": retention.StreamPurgeAuditDays = -1; break;
+      case "IntegrityLedgerMaxEntries": retention.IntegrityLedgerMaxEntries = -1; break;
       default: retention.CollectiveOrderingHeadDays = -1; break;
     }
 
