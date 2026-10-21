@@ -13,7 +13,7 @@ using Whizbang.Generators.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Roslyn analyzer for the ephemeral virality rules (WHIZ130, WHIZ131 and WHIZ134). Ephemeral is <em>viral</em>: a
+/// Roslyn analyzer for the ephemeral virality rules (WHIZ130, WHIZ131, WHIZ132 and WHIZ134). Ephemeral is <em>viral</em>: a
 /// perspective fed by an ephemeral event is authoritative state, not a rebuildable cache. Nobody in the
 /// industry <em>enforces</em> that; Whizbang does, safe by construction at build time. Each diagnostic
 /// is an ordinary <see cref="DiagnosticAnalyzer"/> diagnostic, so it surfaces in both the IDE (squiggle)
@@ -23,7 +23,8 @@ namespace Whizbang.Generators;
 /// Compile-time guards: <c>WHIZ130</c> (mixed-mode Apply) and <c>WHIZ134</c> (ambiguous composition),
 /// both statically resolvable from type symbols, and <c>WHIZ131</c> (a rebuild or rewind of an ephemeral-only
 /// perspective), resolvable when the call site names the perspective by a compile-time constant or by
-/// <c>typeof</c>. A rebuild or rewind that names a perspective by a runtime string, a stream given as a runtime
+/// <c>typeof</c>, and <c>WHIZ132</c> (a receptor that turns an ephemeral message into a Sourced event), resolvable
+/// from the receptor's declared response type. A rebuild or rewind that names a perspective by a runtime string, a stream given as a runtime
 /// id, and re-emit dataflow are not statically resolvable, so they are enforced by the runtime guard rather
 /// than by a diagnostic here.
 /// </remarks>
@@ -50,6 +51,13 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
   private const string FULL_NAME = "FullName";
   private const string TYPE_NAME_FORMATTER = "Whizbang.Core.TypeNameFormatter";
   private const string FORMAT_CLR_TYPE_NAME = "FormatClrTypeName";
+
+  // WHIZ132: the receptors with a response, what a response unwraps to, and the opt-in.
+  private const string RECEPTOR = "Whizbang.Core.IReceptor<TMessage, TResponse>";
+  private const string SYNC_RECEPTOR = "Whizbang.Core.ISyncReceptor<TMessage, TResponse>";
+  private const string EVENT = "Whizbang.Core.IEvent";
+  private const string ROUTED = "Whizbang.Core.Dispatch.Routed<T>";
+  private const string LAUNDERING_OPT_IN = "DangerouslyAllowSourcedEventsFromEphemeralInputAttribute";
 
   /// <summary>
   /// WHIZ130: Warning — a perspective whose <c>Apply</c> methods span both modes (a viral ephemeral
@@ -96,6 +104,30 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
       + "rebuilder call or a rewind request that names it is refused at run time and does nothing.");
 
   /// <summary>
+  /// WHIZ132: Warning. A receptor whose input message is ephemeral returns or cascades a Sourced event, so what the
+  /// ephemeral message carried becomes a durable fact in the event store (ephemeral-to-Sourced laundering). The rule is
+  /// the simple one: any statically known Sourced event in the response, whether or not it copies the input. A
+  /// Warning, matching WHIZ130; <c>[DangerouslyAllowSourcedEventsFromEphemeralInput]</c> on the receptor accepts a
+  /// deliberate case. There is no runtime backstop.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz132</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralLaunderingAnalyzerTests.cs:EphemeralInput_ReturningASourcedEvent_ReportsWHIZ132WarningAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralLaunderingAnalyzerTests.cs:CascadedShapes_TupleArrayListAndRouted_ReportOnlyTheSourcedEventsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EphemeralLaunderingAnalyzerTests.cs:DeliberateReceptor_WithTheOptIn_NoWHIZ132Async</tests>
+  public static readonly DiagnosticDescriptor EphemeralToSourcedLaundering = new(
+    id: "WHIZ132",
+    title: "Receptor turns an ephemeral message into a Sourced event",
+    messageFormat: "Receptor '{0}' handles ephemeral message '{1}' and returns or cascades Sourced event(s) ({2}). "
+      + "The ephemeral message self-destructs, but what it carried becomes a durable fact in the event store: return "
+      + "an ephemeral event instead, or mark the receptor [DangerouslyAllowSourcedEventsFromEphemeralInput] if keeping "
+      + "it is deliberate.",
+    category: CATEGORY,
+    defaultSeverity: DiagnosticSeverity.Warning,
+    isEnabledByDefault: true,
+    description: "An event is declared ephemeral because what it carries must not be kept. A Sourced event returned "
+      + "from its receptor is cascaded into the event store and never reaped, which defeats that declaration.");
+
+  /// <summary>
   /// WHIZ134: Error — a type inherits its ephemeral mode from two or more sibling profile interfaces
   /// that disagree, with no more-specific override to break the tie. Resolve it by declaring an explicit
   /// <c>[Ephemeral]</c> on the type. Error (not warning): the generator would otherwise pick one silently,
@@ -116,7 +148,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
 
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    [MixedModePerspective, ReplayOfEphemeralOnlyPerspective, AmbiguousComposition];
+    [MixedModePerspective, ReplayOfEphemeralOnlyPerspective, EphemeralToSourcedLaundering, AmbiguousComposition];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -133,6 +165,7 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
       return;
     }
     _checkMixedModePerspective(context, symbol);   // WHIZ130
+    _checkLaundering(context, symbol);             // WHIZ132
     _checkAmbiguousComposition(context, symbol);   // WHIZ134
   }
 
@@ -166,6 +199,86 @@ public class EphemeralAnalyzer : DiagnosticAnalyzer {
         symbol.Name));
     }
   }
+
+  /// <summary>
+  /// WHIZ132: one diagnostic per receptor interface whose message is ephemeral and whose response holds a Sourced
+  /// event. Void receptors return nothing to cascade, so only the two response-carrying shapes are read.
+  /// </summary>
+  private static void _checkLaundering(SymbolAnalysisContext context, INamedTypeSymbol symbol) {
+    foreach (var receptor in symbol.AllInterfaces) {
+      if (!_isResponseReceptor(receptor) || !EphemeralResolver.IsEphemeral(receptor.TypeArguments[0])) {
+        continue;
+      }
+      var sourced = new List<string>();
+      _collectSourcedEvents(receptor.TypeArguments[1], sourced);
+      if (sourced.Count > 0 && !_hasLaunderingOptIn(symbol)) {
+        context.ReportDiagnostic(Diagnostic.Create(
+          EphemeralToSourcedLaundering,
+          LocationUtilities.FirstOrNone(symbol),
+          symbol.Name,
+          receptor.TypeArguments[0].Name,
+          string.Join(", ", sourced.Distinct(System.StringComparer.Ordinal))));
+      }
+    }
+  }
+
+  private static bool _isResponseReceptor(INamedTypeSymbol iface) =>
+    TypeNameUtilities.IsNamed(iface.OriginalDefinition, RECEPTOR)
+    || TypeNameUtilities.IsNamed(iface.OriginalDefinition, SYNC_RECEPTOR);
+
+  /// <summary>
+  /// The Sourced events a response cascades, unwrapped the way the cascade unwraps them: tuple elements (nested
+  /// tuples too), array and collection elements, <c>Routed&lt;T&gt;</c> and nullable values. Only a concrete event
+  /// counts: an interface or an abstract base may stand for either mode, so it is not guessed at.
+  /// </summary>
+  private static void _collectSourcedEvents(ITypeSymbol type, List<string> sourced) {
+    switch (type) {
+      case INamedTypeSymbol { IsTupleType: true } tuple:
+        foreach (var element in tuple.TupleElements) {
+          _collectSourcedEvents(element.Type, sourced);
+        }
+        break;
+      case IArrayTypeSymbol array:
+        _collectSourcedEvents(array.ElementType, sourced);
+        break;
+      case INamedTypeSymbol named when _isEvent(named):
+        if (!named.IsAbstract && !EphemeralResolver.IsEphemeral(named)) {
+          sourced.Add(named.Name);
+        }
+        break;
+      case INamedTypeSymbol wrapper:
+        var inner = _wrappedType(wrapper);
+        if (inner is not null) {
+          _collectSourcedEvents(inner, sourced);
+        }
+        break;
+    }
+  }
+
+  private static bool _isEvent(INamedTypeSymbol type) =>
+    type.AllInterfaces.Any(i => TypeNameUtilities.IsNamed(i, EVENT));
+
+  /// <summary>The value a <c>Nullable&lt;T&gt;</c> or <c>Routed&lt;T&gt;</c> holds, or an enumerable's element; else null.</summary>
+  private static ITypeSymbol? _wrappedType(INamedTypeSymbol type) {
+    var definition = type.OriginalDefinition;
+    if (definition.SpecialType == SpecialType.System_Nullable_T || TypeNameUtilities.IsNamed(definition, ROUTED)) {
+      return type.TypeArguments[0];
+    }
+    return _enumerableOf(type)?.TypeArguments[0];
+  }
+
+  private static INamedTypeSymbol? _enumerableOf(INamedTypeSymbol type) =>
+    type.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T
+      ? type
+      : type.AllInterfaces.FirstOrDefault(i => i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T);
+
+  /// <summary>
+  /// True when the receptor carries <c>[DangerouslyAllowSourcedEventsFromEphemeralInput]</c>, matched by simple name
+  /// like WHIZ130's opt-in so it holds when the attribute does not bind.
+  /// </summary>
+  private static bool _hasLaunderingOptIn(INamedTypeSymbol receptor) =>
+    receptor.GetAttributes().Any(a =>
+      TypeNameUtilities.SimpleNameOrNull(a.AttributeClass) is LAUNDERING_OPT_IN or "DangerouslyAllowSourcedEventsFromEphemeralInput");
 
   /// <summary>
   /// WHIZ131 at <c>new RebuildPerspectiveCommand(...)</c>: each name in <c>PerspectiveNames</c>, given positionally,
