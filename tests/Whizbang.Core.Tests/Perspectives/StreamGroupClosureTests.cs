@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// both groups, but an eviction RECEIVED through one group crosses into the other only when its
 /// membership bridges.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 public class StreamGroupClosureTests {
 
   private sealed class A;

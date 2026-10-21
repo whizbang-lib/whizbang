@@ -14,7 +14,8 @@ namespace Whizbang.Core.Lifecycle;
 /// Runs the receptors declared at the destruction lifecycle stages (#1381): <see cref="LifecycleStage.PreDestructionDetached"/>
 /// and <see cref="LifecycleStage.PreDestructionInline"/> before an event's data is deleted, and
 /// <see cref="LifecycleStage.PostDestructionDetached"/> and <see cref="LifecycleStage.PostDestructionInline"/> after the
-/// delete commits. Before this, those stages could be declared and registered but nothing ran them.
+/// delete commits. Before this, those stages could be declared and registered but nothing ran them. Both operations that
+/// destroy stored events use it: the ephemeral reap and a period close (#1504).
 /// </summary>
 /// <remarks>
 /// <para>Receptors are typed by message, so the events about to be deleted are loaded before the delete and the same
@@ -25,6 +26,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/DestructionStageReceptorComponentTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamCloserDestructionStageComponentTests.cs</tests>
 public static partial class DestructionStageReceptors {
   private static readonly LifecycleStage[] _stages = [
     LifecycleStage.PreDestructionDetached, LifecycleStage.PreDestructionInline,

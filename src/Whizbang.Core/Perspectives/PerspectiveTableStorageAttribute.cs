@@ -5,7 +5,8 @@ namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// Storage options for a perspective's table as a whole: the compression of its <c>data</c> document, the row
-/// size past which PostgreSQL starts compressing and moving values out of line, and when autovacuum runs.
+/// size past which PostgreSQL starts compressing and moving values out of line, when autovacuum runs, and how full
+/// each page is filled.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -84,4 +85,19 @@ public sealed class PerspectiveTableStorageAttribute : Attribute {
   /// <c>toast.autovacuum_vacuum_scale_factor</c>. Between 0 and 100; negative keeps the server's value.
   /// </summary>
   public double ToastAutovacuumVacuumScaleFactor { get; init; } = -1;
+
+  /// <summary>
+  /// The table's <c>fillfactor</c>: the percentage of each page that an insert fills, leaving the rest for the new
+  /// versions of rows updated later. Between 10 and 100; negative keeps the server's value (100).
+  /// </summary>
+  /// <remarks>
+  /// An update writes a new row version. When it fits on the same page and changes no indexed column, PostgreSQL
+  /// writes no index entries and prunes the old version inside the page (a HOT update); otherwise every index gains
+  /// an entry, which grows the indexes, the WAL and the vacuum work. 70 to 90 suits a table whose rows are updated.
+  /// A changed fillfactor applies only to pages written from then on, so the schema pass also queues a rewrite of a
+  /// table that already holds rows.
+  /// </remarks>
+  /// <docs>fundamentals/perspectives/physical-fields#perspective-fillfactor</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs:AChangedFillFactor_OnATableWithRows_QueuesOneRewriteAsync</tests>
+  public int FillFactor { get; init; } = -1;
 }

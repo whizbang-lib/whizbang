@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Lineage;
 /// missing driver query and a throwing query are stated conditions with reasons, never empty
 /// lists — and that the flow view is computed only when an anchor is requested.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 public class ApplyStackReporterTests {
 
   private sealed class FixedQuery(IReadOnlyList<ApplyPathSignature> signatures) : IApplyStackQuery {

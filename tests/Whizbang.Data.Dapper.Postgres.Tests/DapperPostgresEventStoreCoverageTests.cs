@@ -15,22 +15,11 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Coverage for <see cref="DapperPostgresEventStore"/>'s retry-exhaustion path (the throw after
-/// <c>MAX_RETRIES</c> attempts). <see cref="DapperPostgresEventStoreRetryTests.AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync"/>
-/// aims at the same lines but only PROBABILISTICALLY reaches them — its own comment says "success
-/// rate varies widely" under load — so this file drives the same throw deterministically instead.
-/// <para>
-/// <c>event_id</c> is <c>wh_event_store</c>'s primary key, independent of <c>stream_id</c>/
-/// <c>version</c>. Re-appending the SAME envelope reuses the SAME <c>event_id</c> on every retry
-/// attempt: a genuine concurrent writer's conflict clears once it commits, but this one never
-/// clears no matter how many times the loop recomputes the next sequence number — guaranteeing
-/// exhaustion instead of racing for it.
-/// </para>
-/// <para>
-/// A caller stuck retrying forever behind a conflict that can never resolve would look
-/// indistinguishable from a hang. The retry budget exists so that failure surfaces loudly
-/// instead — losing this path turns a diagnosable error into a silent stall.
-/// </para>
+/// Coverage for <see cref="DapperPostgresEventStore"/>'s duplicate-event path. Since #1555 the database
+/// assigns the version under the stream's lock, so a unique violation can only be the event id
+/// (<c>wh_event_store</c>'s primary key): re-appending the SAME envelope must fail at once, naming the
+/// duplicate, with the Postgres conflict preserved. It used to be retried ten times as if it were a
+/// concurrent writer, and then reported as an exhausted retry budget.
 /// </summary>
 public class DapperPostgresEventStoreCoverageTests : PostgresTestBase {
 
@@ -73,7 +62,7 @@ public class DapperPostgresEventStoreCoverageTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task AppendAsync_ReusingTheSameEnvelope_ThrowsAfterMaxRetriesAsync() {
+  public async Task AppendAsync_ReusingTheSameEnvelope_FailsAtOnceAsADuplicateAsync() {
     var store = _newStore();
     var streamId = Guid.NewGuid();
     var envelope = _buildEnvelope(streamId, MessageId.New());
@@ -81,16 +70,11 @@ public class DapperPostgresEventStoreCoverageTests : PostgresTestBase {
     // First append lands normally and claims this envelope's event_id.
     await store.AppendAsync(streamId, envelope);
 
-    // Re-appending the IDENTICAL envelope object collides on the same event_id on every single
-    // retry attempt, regardless of the sequence number each attempt recomputes — deterministic
-    // exhaustion instead of a race that a real concurrent writer would eventually clear.
     var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
       async () => await store.AppendAsync(streamId, envelope));
 
-    await Assert.That(thrown).IsNotNull()
-      .Because("a conflict that can never clear must surface as a real failure, not hang or vanish silently");
-    await Assert.That(thrown!.Message).Contains("after 10 attempts")
-      .Because("the message must name the exhausted retry budget so an operator reading logs knows this isn't a one-off timeout");
+    await Assert.That(thrown!.Message).Contains("an event with this id is already stored")
+      .Because("the message must name the duplicate so an operator does not chase a race that cannot happen");
     await Assert.That(thrown.InnerException).IsNotNull()
       .Because("the underlying Postgres conflict must be preserved as the inner exception, not swallowed");
   }

@@ -3,6 +3,7 @@
 
 #pragma warning disable CA1707
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -17,8 +18,10 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// apply path must fold into the persisted signatures STRICTLY BEFORE the truncate — fold-after
 /// would fold a path the close already destroyed. The stream dies; its shape survives.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#folding</docs>
 public class StreamCloserFoldOrderTests {
+  // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
+  private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
   private sealed class OrderRecordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<string> Calls { get; } = [];
@@ -39,7 +42,7 @@ public class StreamCloserFoldOrderTests {
   [Test]
   public async Task Close_FoldsTheApplyPath_BeforeTheTruncateAsync() {
     var coordinator = new OrderRecordingCoordinator();
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, NoOpDestructionHook.Instance);
+    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, NoOpDestructionHook.Instance, _noServices);
 
     var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 3);
 

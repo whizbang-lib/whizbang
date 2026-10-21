@@ -172,38 +172,168 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
   them from there, not from the last hop. The scope is folded over every Current hop into one delta.
   `ServiceInstance` stays `required`; a missing `si` reads as `ServiceInstanceInfo.Unknown`.
 
-### S9. A3b: slim at write time
+### S9. A3b: slim at write time, full metadata staged, route hash stamped
 
-- **Changes.** A new migration redefines both emit chains (149:469 outbox, 162:1918 inbox) to build
-  the slim form when `wh_settings.metadata_write_form = 'slim'`. Full hops stay on the outbox and
-  inbox rows for delivery. The direct append paths slim in C# before writing
-  (`src/Whizbang.Data.Dapper.Postgres/DapperPostgresEventStore.cs:194`,
-  `src/Whizbang.Data.EFCore.Postgres/EFCoreEventStore.cs:161`). The emit chain is hot-path SQL:
-  measure on a copied table first.
-- **RED first.** SQL tests per chain: setting `slim` stores only must-keep fields; setting `full`
-  stores today's shape; a missing setting row behaves as the default. C# tests for each direct path.
-- **Docs.** `v1.0.0/data/event-store.md` (Event Stream Schema); configuration reference
-  (Database-side settings).
-- **Config.** `Whizbang:EventStore:Metadata:WriteForm`
-  (`Whizbang__EventStore__Metadata__WriteForm`, default per open question; values `Full`, `Slim`),
-  synced to `metadata_write_form` by a bridge modeled on
-  `src/Whizbang.Core/Workers/DebugRetentionBridge.cs:31`. New options class
-  `EventStoreMetadataOptions` bound from a literal `GetSection("Whizbang:EventStore:Metadata")`.
+Decided 2026-10-21 (#1493). Stored metadata is split the way bodies are split from pointers: the event
+row keeps a slim form for good, and the full form is kept for a short staging window in a separate,
+time-partitioned table, from which S9b distills it.
 
-### S10. A3c: metadata retention for history
+**Vocabulary.** A **route** is a normalized path an event takes (which services, receptors, topics and
+policies it passed through), stored once and potentially kept for good. A **trace** is one occurrence of
+a route: one event's actual trip, with the values that vary per message (instance, trace parent,
+partition, sequence, duration, timestamps). In a stable architecture the set of routes settles and
+stops growing; only traces and counters grow.
 
-- **Changes.** A batched task in `perform_maintenance` (latest definition
-  `209_SnapshotsCarryTheirStreamVersion.sql:103`, beside the ephemeral body reaper at :364) rewrites
-  `wh_event_body.metadata` to the slim form for rows older than N days when the policy is
-  `SlimAfter`. A one-time rewrite of history costs WAL and dead tuples roughly equal to the metadata
-  it touches; batch it and let WS-4 reclaim the space.
-- **RED first.** `KeepAll` touches nothing; `SlimAfter` slims only rows past the horizon; a slimmed
-  row is not touched again; debug mode skips the task; the task reports `rows_affected`.
-- **Docs.** Configuration reference (MaintenanceWorkerOptions and Database-side settings).
-- **Config.** `Whizbang:EventStore:Metadata:Retention` (`Whizbang__EventStore__Metadata__Retention`,
-  default `KeepAll`; values `KeepAll`, `SlimAfter`) and `Whizbang:EventStore:Metadata:SlimAfterDays`
-  (`Whizbang__EventStore__Metadata__SlimAfterDays`, default `30`), synced to
-  `metadata_retention_policy` and `metadata_slim_after_days`.
+- **Write path (both emit chains, 149:469 outbox and 162:1918 inbox, latest definitions in 216, and
+  both direct append paths, `DapperPostgresEventStore`, `EFCoreEventStore` via `wh_append_event` from
+  #1555).** In one pass over data already in hand, with no extra lookup:
+  1. `wh_event_body.metadata` gets the **slim** form (`EnvelopeMetadata.ToSlim()`, S8) plus two keys:
+     the first hop's trace parent (`tp`, so perspective spans and perspective-stage receptor spans keep
+     joining the originating trace) and the **route id** (below).
+  2. The full metadata is appended to a new table, `wh_event_metadata_staging`, declaratively
+     partitioned by day on `recorded_at`, append-only, primary key `(event_id, recorded_at)` (a unique
+     key must include the partition key) with a per-partition index on `event_id`. No unique-index
+     probe, conflict check or update on the hot path.
+- **Route id, computed at write time (decided: option b).** A hash of the event's hops normalized to
+  their route form. Normalization keeps, per hop and in order: hop type, **service name** (never the
+  instance id, so pods and deployments do not multiply routes), topic, execution strategy, the
+  receptor or caller as **class and member** (no file path, no line number, so a release that moves a
+  line does not create a new route), and the policy decisions. It drops everything that varies by
+  message: ids, timestamps, durations, partition, sequence, trace parent, the hop metadata dictionary's
+  per-message values. Pure CPU on bytes already in hand; the same normalization runs in SQL (emit
+  chains) and C# (direct appends), pinned to each other by a shared-corpus test like the type-name
+  mirror tests. Stamping at write time means no event row is ever rewritten to link it to its route.
+- **What stays Full in the row.** An event type keeps its full metadata in `wh_event_body` permanently
+  when:
+  - debug mode is on (everything is full);
+  - its type or a namespace prefix is listed in `Whizbang:EventStore:Metadata:FullFor`;
+  - or the type, a base type or an interface carries `[StoredMetadata(StoredMetadataForm.Full)]`.
+  Precedence: debug mode > configuration list > attribute > default. The resolved rules are synced to
+  `wh_settings` as type-name prefixes so the SQL write path decides with a prefix match.
+- **Readers.** Every framework reader of stored metadata uses fields the slim form keeps (traced
+  2026-10-21: apply-stack view and fold, cascade identity, scope, correlation and causation, the TTL
+  reaper and digest exclusion, receptor and perspective span parents). Hot-path behavior changes: for
+  receptors invoked at perspective stages, `CallerInfo` is null and the "called from" log and the
+  source-service log field read as unknown; nothing on the hot path rehydrates. The public envelope
+  accessors that read hop detail (`GetCallerInfo`, `GetCausationHops`, `GetCurrentTopic`,
+  `GetCurrentPartitionIndex`, `GetCurrentSequenceNumber`, `GetAllPolicyDecisions`, `GetAllMetadata`,
+  the auto-populate readers) are not called by framework code on stored events; on a stored event they
+  return what the slim form carries, and the full picture comes from the trace store (S9b) on demand.
+  `PerspectiveMetadata.Timestamp` becomes the first hop's (origin) time instead of the last hop's.
+- **Partition management.** Staging partitions are created ahead and dropped behind by the WS-5 S4
+  partition manager (`plans/storage-ledger-retention.md`, decisions in #1577): only the instance holding
+  the maintainer duty runs partition DDL, with a default partition as the safety net. **Depends on WS-5
+  S4.**
+- **Measure first.** The emit chain is hot-path SQL. Before the default switches, compare today's
+  write shape with this one on a copied table at a realistic batch size: emit-batch latency, WAL bytes,
+  table and index size.
+- **RED first.**
+  - SQL tests per chain: the slim row carries exactly the must-keep keys plus `tp` and the route id;
+    the full form lands in staging; a Full-listed type keeps full metadata in the row; debug mode keeps
+    full; a missing settings row behaves as the default.
+  - The route-id normalization corpus agrees between SQL and C#.
+  - Routes are stable across instance ids, line numbers and per-message values, and differ when a
+    service, receptor member, topic or policy differs.
+  - C# tests for each direct append path.
+- **Docs.** `v1.0.0/data/event-store.md` (stored form, routes and traces); configuration reference;
+  `fundamentals/persistence/caller-info-capture.md` (caller info on stored events).
+- **Config.**
+  - `Whizbang:EventStore:Metadata:WriteForm`, values `Full`, `Slim`, `Linked`, default `Linked`
+    (slim row, staged full form, route and trace distillation by S9b). `Slim` drops the staged form
+    without distilling it.
+  - `Whizbang:EventStore:Metadata:FullFor`, a list of event types or namespace prefixes.
+  - Both bound by a new `EventStoreMetadataOptions` from a literal `GetSection("Whizbang:EventStore:Metadata")`,
+    synced to `metadata_write_form` and `metadata_full_for` by a bridge modeled on
+    `src/Whizbang.Core/Workers/DebugRetentionBridge.cs:31`.
+
+### S9b. Routes and traces: distill staged metadata, and the persistent trace store
+
+- **Tables.**
+  - `wh_routes`: one row per route id. The normalized hop sequence (service names, receptor class and
+    member, topics, strategies, policy decisions), `first_seen`, `last_seen`, `occurrences`, and
+    duration statistics (count, sum, min, max and a few histogram buckets). Bounded by the
+    architecture, not by traffic.
+  - `wh_traces`: one row per event while within its window: `event_id`, `route_id`, `occurred_at`,
+    and only the per-message values (instance ids, trace parent, partition, sequence, duration per
+    hop). Partitioned by day; dropped by partition.
+- **Distillation (maintenance, idle-gated, maintainer duty).** For each staging partition past the
+  catch-up point:
+  1. Insert any new routes.
+  2. Add occurrences and duration statistics with one aggregated `UPDATE` per route per batch. The
+     counters never take a per-event write.
+  3. Write the trace rows.
+  4. Drop the staging partition.
+  No event row is touched: the route id was stamped at write time.
+- **Reconstruction.** Slim row + trace + route rebuilds an event's full metadata losslessly while its
+  trace is retained. After that, slim row + route still gives the event's full route, without that
+  message's instance, trace parent and timings.
+- **Two stores that work together: `IRouteStore` and `ITraceStore`.**
+  - **`IRouteStore`** (new, `Whizbang.Core.Observability`): the architecture view, long-lived.
+    - `GetRouteAsync(routeId)`: the normalized path.
+    - `GetRoutesAsync(eventType)`: the routes a type takes.
+    - `GetRoutesForApplyPathAsync(...)`: the routes behind an apply path (`wh_apply_paths`).
+    - Each route comes with its statistics: occurrences, first and last seen, durations.
+    - Read by dashboards and the apply-stack view, so routes extend the existing lineage view rather
+      than standing beside it.
+  - **`ITraceStore`** (existing, `src/Whizbang.Core/Observability/ITraceStore.cs`): individual
+    occurrences, short-lived.
+    - Its contract is unchanged: by message, correlation, causal chain and time range, returning full
+      envelopes. The in-memory implementation and any custom one stay valid.
+    - One addition, `GetRouteIdAsync(messageId)`, steps from a trace to its route. It is a default
+      interface method returning null, so existing implementations need no change.
+  - **How they combine.** Trace reconstruction depends on routes, never the reverse:
+    - The Postgres `ITraceStore` rebuilds a full envelope from the staged form while it exists, then
+      from the slim row + the trace + `IRouteStore.GetRouteAsync(routeId)`, then from the slim row
+      alone.
+    - After a trace ages out, the slim row's route id still answers "how did this event get here"
+      through `IRouteStore` alone.
+  - **Implementation and registration.**
+    - One Postgres class implements both over the same tables, registered separately so a host can use
+      either alone. Examples: the in-memory trace store with no routes, or Postgres routes with no
+      trace store.
+    - Both are filled where events are stored (the emit chains and direct appends), not from
+      `Dispatcher.StoreAsync`, which most stored events never pass through.
+  - **Why separate.** Different lifetimes (routes about a year after last seen, traces about 30 days),
+    different readers (architecture questions and message debugging), and `ITraceStore` keeps its
+    existing shape.
+- **Retention**, each its own window, all configurable (defaults shown). Reaped by
+  `reap_unbounded_ledgers` (migration 221) and the partition manager. Skipped under debug mode.
+  Settings bridged by `RetentionSettingsBridge`.
+  - Staging: 2 days (`Whizbang:EventStore:Metadata:StagingDays`); only needs to outlast maintenance
+    catching up.
+  - Traces: 30 days (`Whizbang:Workers:Maintenance:Retention:TraceDays`).
+  - Routes: dropped 365 days after `last_seen` (`Whizbang:Workers:Maintenance:Retention:RouteIdleDays`),
+    so routes that left with old code age out while live routes stay.
+- **RED first.**
+  - Distillation of a staged partition yields the right routes, counters and traces and drops the
+    partition.
+  - A repeated route only increments counters.
+  - Reconstruction is lossless within the trace window and route-level after it.
+  - Each retention window deletes only what is past it.
+  - Debug mode skips reaping.
+  - The Postgres `ITraceStore` answers every query of the in-memory one on the same corpus.
+  - `IRouteStore` returns the same route, with the same counts, whether the trace is still retained or has aged out.
+  - A host can register either store alone and the other is never required.
+- **Docs.** `v1.0.0/fundamentals/persistence/observability.md` (`IRouteStore` and `ITraceStore`, routes
+  and traces); configuration reference; the apply-stack page (routes behind a path).
+- **Related defect.** `InMemoryTraceStore` is registered by default, every dispatch adds a whole
+  envelope, nothing evicts or reads it: unbounded memory in every service. Tracked in #1601; the
+  Postgres store becomes the production option.
+
+### S10. A3c: history
+
+Existing rows written full before S9 are converted once by a batched maintenance task:
+
+- staged-form distillation into routes and traces;
+- slim plus the route id written into the row.
+
+This is the only place event rows are rewritten. It costs WAL and dead tuples roughly equal to the
+metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the space.
+
+- **RED first.** Only rows without a route id are touched; a converted row is not touched again;
+  Full-listed types are skipped; debug mode skips the task; the task reports `rows_affected`.
+- **Config.** `Whizbang:EventStore:Metadata:ConvertHistory` (default `true` when `WriteForm` is
+  `Linked` or `Slim`).
 
 ### S11. A6: `toast_tuple_target` on `wh_event_body`, measured first
 
@@ -252,14 +382,15 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 - Before/after on a representative database: bytes per event (body, metadata), share of bodies
   compressed (`pg_column_size` against `octet_length`), audit bytes per record, digest equality
   between origin and subscriber after S1, S7 and S12.
-- Expected: about 400 B saved per event from S9 (about 2 GB in the busiest service), audit bytes
+- Expected: about 400 B saved per event row from S9 (about 2 GB in the busiest service), with route
+  storage bounded by the architecture and trace storage bounded by its window, audit bytes
   falling by the share the evidence attributes to bodies, ephemeral churn types leaving durable
   history after S2.
 
 ## Open questions
 
-1. Default for `WriteForm`: `Slim` from 1.0 (smaller everywhere) or `Full` with opt-in (no behavior
-   change)? Same for `AuditBodyDefault = Omit`, which changes what subscribers receive.
+1. ~~Default for `WriteForm`.~~ Decided 2026-10-21: `Linked` (S9, S9b). `AuditBodyDefault = Omit`
+   shipped in #1588.
 2. Audited ephemeral types: when the origin reaps the event, the audit pointer dangles. Keep the
    body for audited ephemeral types, or exclude ephemeral types from audit by default?
 3. `OriginalStreamPosition` on the outbox path: nullable, filled at emit, or dropped from the

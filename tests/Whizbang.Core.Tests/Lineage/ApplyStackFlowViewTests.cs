@@ -15,7 +15,7 @@ namespace Whizbang.Core.Tests.Lineage;
 /// <c>+</c> suffix matching the plain anchor, weight merging across signatures, radius bounds, and
 /// the per-column long-tail collapse into <c>(others)</c>.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#flow-view</docs>
 public class ApplyStackFlowViewTests {
 
   private static ApplyPathSignature _sig(long streams, params string[] path) =>

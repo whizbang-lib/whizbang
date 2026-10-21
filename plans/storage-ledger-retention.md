@@ -150,6 +150,9 @@ signal sweep ship in #1574; the four SQL ledgers ship in #1572.
 
 ### S4. B4 part 1: time-partitioned work ledgers, managed by the maintenance worker
 
+**Also needed by WS-2 S9/S9b** (`plans/storage-event-slimming.md`): the staged full-metadata table and the trace
+table are daily partitions created ahead and dropped behind by this partition manager, so S4 lands first.
+
 - **Change.** A built-in partition manager registered as an `IMaintenanceStep`
   (`src/Whizbang.Core/Workers/IMaintenanceStep.cs:24`) and backed by one SQL function
   (`wh_partition_maintain(table, interval, ahead, keep)`): create partitions ahead, detach and drop
