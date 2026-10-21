@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema
   pass of both drivers sets each as a storage parameter where the catalog differs, so a restart takes no lock; a
   negative value (the default) keeps the server's setting.
+
+- **A slim stored form for event metadata (#1586).** `EnvelopeMetadata.ToSlim()` keeps what readers take from a stored
+  event (message id, ephemeral TTL, message timestamp, correlation, causation, stream id, and the scope folded over
+  every hop) and drops the delivery-time detail. A hop without a service instance now reads as
+  `ServiceInstanceInfo.Unknown` instead of failing, and the writer leaves an unknown instance out. Nothing stores the
+  slim form yet; this lets readers accept it before any writer produces it.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
