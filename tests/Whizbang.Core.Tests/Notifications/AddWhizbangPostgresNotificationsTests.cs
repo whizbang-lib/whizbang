@@ -110,4 +110,40 @@ public class AddWhizbangPostgresNotificationsTests {
     await Assert.That(opts.SignalingMode).IsEqualTo(WorkSignalingMode.ListenNotify);
     await Assert.That(opts.ConnectionStringKey).IsEqualTo("bff-db");
   }
+
+  [Test]
+  public async Task AddWhizbangPostgresNotifications_BindsTheSignalRetentionWindowAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Database:SignalRetention"] = "1.12:00:00"
+    }).Build());
+    services.AddWhizbangPostgresNotifications();
+    var sp = services.BuildServiceProvider();
+
+    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>().Value;
+    await Assert.That(opts.SignalRetention).IsEqualTo(TimeSpan.FromHours(36))
+      .Because("the durable-signal window is read from Whizbang:Database like the other notification settings (#1574)");
+  }
+
+  [Test]
+  public async Task SignalRetention_DefaultsToSevenDaysAsync() {
+    await Assert.That(new WhizbangNotificationOptions().SignalRetention).IsEqualTo(TimeSpan.FromDays(7));
+  }
+
+  [Test]
+  [Arguments("0.00:00:00")]
+  [Arguments("-1.00:00:00")]
+  public async Task AddWhizbangPostgresNotifications_ANonPositiveSignalRetention_IsRejectedAsync(string window) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Database:SignalRetention"] = window
+    }).Build());
+    services.AddWhizbangPostgresNotifications();
+    var sp = services.BuildServiceProvider();
+
+    var thrown = await Assert.That(() => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhizbangNotificationOptions>>().Value)
+      .Throws<Microsoft.Extensions.Options.OptionsValidationException>();
+    await Assert.That(thrown!.Message).Contains("Whizbang:Database:SignalRetention")
+      .Because("a window of zero or less would delete every signal a pod has already read, so it is refused by name");
+  }
 }
