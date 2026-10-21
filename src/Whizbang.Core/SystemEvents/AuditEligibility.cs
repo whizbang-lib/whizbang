@@ -23,8 +23,8 @@ public static class AuditEligibility {
   /// </summary>
   /// <param name="eventType">The event's CLR type.</param>
   /// <returns>The attribute, or null when the type declares none.</returns>
-  internal static AuditEventAttribute? AttributeOf(Type eventType) =>
-    eventType.GetCustomAttributes(typeof(AuditEventAttribute), inherit: true).FirstOrDefault() as AuditEventAttribute;
+  /// <remarks>Read from <see cref="AuditEventRegistry"/>, which the generator fills at module load (#1580).</remarks>
+  internal static AuditEventAttribute? AttributeOf(Type eventType) => AuditEventRegistry.Find(eventType);
 
   /// <summary>Decides whether this occurrence is audited, and how it should be labelled.</summary>
   /// <param name="payload">The event instance, or null when only the type is known.</param>

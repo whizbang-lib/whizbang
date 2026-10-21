@@ -552,11 +552,11 @@ public class AuditingEventStoreDecoratorTests {
   }
 
   [AuditEvent(Exclude = true, Reason = "Test excluded event")]
-  private sealed record ExcludedEvent : IEvent {
+  internal sealed record ExcludedEvent : IEvent {
   }
 
   [AuditEvent(Reason = "Explicitly marked for audit")]
-  private sealed record MarkedEvent : IEvent {
+  internal sealed record MarkedEvent : IEvent {
   }
 
   #endregion

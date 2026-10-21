@@ -774,7 +774,7 @@ public class SystemEventEmitterCoverageTests {
   }
 
   [AuditEvent(Reason = "Emitter reason", Level = Whizbang.Core.Audit.AuditLevel.Warning)]
-  private sealed record EmitterMarkedEvent : IEvent;
+  internal sealed record EmitterMarkedEvent : IEvent;
 
   #endregion
 

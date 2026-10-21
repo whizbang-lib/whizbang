@@ -460,6 +460,7 @@ internal static class DiagnosticDescriptors {
 | WHIZ100-106 | Perspective purity (Apply methods) |
 | WHIZ110-122 | Pinned type identity and the pinned-type ledger |
 | WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
+| WHIZ180 | Audit settings the generator cannot register |
 | WHIZ200 | Perspective model shape |
 | WHIZ300-309 | Perspective model consistency and indexes |
 | WHIZ400-402 | Lens queries (EF Core) |

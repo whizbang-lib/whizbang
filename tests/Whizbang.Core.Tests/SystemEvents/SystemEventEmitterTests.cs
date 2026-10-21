@@ -529,16 +529,16 @@ public class SystemEventEmitterTests {
   }
 
   [AuditEvent(Exclude = true)]
-  private sealed record ExcludedEvent {
+  internal sealed record ExcludedEvent {
     public required string Name { get; init; }
   }
 
   [AuditEvent(Reason = "Compliance")]
-  private sealed record AuditedEvent {
+  internal sealed record AuditedEvent {
   }
 
   [AuditEvent(Exclude = false)]
-  private sealed record ExplicitlyIncludedEvent {
+  internal sealed record ExplicitlyIncludedEvent {
   }
 
   private sealed record TestCommand {
@@ -546,7 +546,7 @@ public class SystemEventEmitterTests {
   }
 
   [AuditEvent(Exclude = true)]
-  private sealed record ExcludedCommand {
+  internal sealed record ExcludedCommand {
     public required string Name { get; init; }
   }
 

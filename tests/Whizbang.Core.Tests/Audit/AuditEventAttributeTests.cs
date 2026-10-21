@@ -148,7 +148,7 @@ public class AuditEventAttributeTests {
 
   // Test event types
   [AuditEvent(Reason = "Customer data viewed", Level = AuditLevel.Warning)]
-  private sealed record TestAuditedEvent(Guid CustomerId, string ViewedBy);
+  internal sealed record TestAuditedEvent(Guid CustomerId, string ViewedBy);
 
   private sealed record TestNonAuditedEvent(Guid OrderId);
 }
