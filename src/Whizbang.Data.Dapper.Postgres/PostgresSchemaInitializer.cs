@@ -52,12 +52,16 @@ public sealed class PostgresSchemaInitializer {
   /// </remarks>
   internal static int MaxBatchPasses { get; set; } = 10_000;
 
-  private readonly IMigrationProvider _migrationProvider;
+  // The migrations, rendered for public until initialization learns the target schema; a provider the caller passed
+  // is kept as given.
+  private IMigrationProvider _migrationProvider;
+  private readonly bool _rendersForTargetSchema;
   private readonly string? _applicationVersion;
   private readonly IApplicationSchemaObjects? _applicationObjects;
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql = null)
     : this(connectionString, perspectiveSchemaSql, new PostgresMigrationProvider()) {
+    _rendersForTargetSchema = true;
   }
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql, IMigrationProvider migrationProvider) {
@@ -84,6 +88,7 @@ public sealed class PostgresSchemaInitializer {
       IApplicationSchemaObjects? applicationObjects = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
     ArgumentNullException.ThrowIfNull(perspectiveEntries);
+    _rendersForTargetSchema = migrationProvider is null;
     _perspectiveEntries = perspectiveEntries;
     _applicationVersion = applicationVersion;
     _applicationObjects = applicationObjects;
@@ -139,9 +144,9 @@ public sealed class PostgresSchemaInitializer {
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
-    string schema;
-    await using (var current = new NpgsqlCommand("SELECT current_schema()", connection)) {
-      schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    if (_rendersForTargetSchema) {
+      _migrationProvider = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema);
     }
 
     // Everything up to the managed-object reconcile runs under the schema initialization lock, the key the EF Core
@@ -163,6 +168,23 @@ public sealed class PostgresSchemaInitializer {
         }
       }
     }
+  }
+
+  /// <summary>
+  /// The schema this initialization installs into, taken as the coordinator takes it (#1547): the first schema the
+  /// connection string's Search Path names, created when it does not exist yet, so the session's unqualified DDL lands
+  /// there; otherwise the session's <c>current_schema()</c>. The migrations are rendered for the same schema, so the
+  /// functions read the tables they are installed beside.
+  /// </summary>
+  private async Task<string> _targetSchemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+    if (DapperCoordinatorSchema.FromConnectionString(_connectionString) is { } named) {
+      await using var create = connection.CreateCommand();
+#pragma warning disable S2077 // A schema name cannot be a bind parameter; PgIdentifier.Quote quotes it.
+      create.CommandText = $"CREATE SCHEMA IF NOT EXISTS {PgIdentifier.Quote(named)}";
+#pragma warning restore S2077
+      await create.ExecuteNonQueryAsync(cancellationToken);
+    }
+    return await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken);
   }
 
   /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
@@ -311,7 +333,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
       AND table_name LIKE '%\_bak\_%' ESCAPE '\'
       ORDER BY table_name DESC
       LIMIT 1";
@@ -482,7 +504,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
       AND table_name LIKE '%\_bak\_%' ESCAPE '\'";
     cmd.CommandTimeout = 10;
 
@@ -921,7 +943,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = @tableName
+      WHERE table_schema = current_schema() AND table_name = @tableName
       ORDER BY ordinal_position";
     cmd.Parameters.AddWithValue(nameof(tableName), tableName);
     cmd.CommandTimeout = 10;
