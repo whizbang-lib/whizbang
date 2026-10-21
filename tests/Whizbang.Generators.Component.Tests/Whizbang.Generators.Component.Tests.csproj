@@ -63,5 +63,15 @@
        assemblies. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
+  </ItemGroup>
+  <!-- #1378: the suppressor guard runs the real third-party rules a consumer's build runs. Directory.Build.props
+       references both packages for every project; their analyzer assemblies are copied into the output so the
+       test finds them on a runner that has the build artifacts but no package cache. -->
+  <ItemGroup>
+    <PackageReference Update="Roslynator.Analyzers" GeneratePathProperty="true" />
+    <PackageReference Update="SonarAnalyzer.CSharp" GeneratePathProperty="true" />
+    <None Include="$(PkgRoslynator_Analyzers)/analyzers/dotnet/roslyn4.7/cs/*.dll" Link="ThirdPartyAnalyzers/Roslynator/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(PkgSonarAnalyzer_CSharp)/analyzers/*.dll" Link="ThirdPartyAnalyzers/Sonar/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 </Project>

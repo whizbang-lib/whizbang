@@ -468,6 +468,7 @@ internal static class DiagnosticDescriptors {
 | WHIZ701-703 | EF Core generator notices |
 | WHIZ801-833 | Perspective storage: vector and physical fields, model shapes, identifier lengths, stored-form migrations |
 | WHIZ900 | Perspective sync in receptors |
+| WHIZS001-004 | Suppressions (`DiagnosticSuppressor`) of third-party unused-parameter rules on parameters the framework requires on convention-bound methods (#1378) |
 
 Take the next free number in your area's band (`git grep 'id: "WHIZ' -- src` lists every taken ID). Never reuse
 an ID in `DiagnosticDescriptors.RETIRED_IDS`. Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`

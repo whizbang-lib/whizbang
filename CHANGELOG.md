@@ -151,6 +151,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
+  handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
+  its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
+  (WHIZS001-004) that suppresses those four rules on exactly that parameter, in the IDE and in the build. The
+  `ICollectiveQuery` parameter was already optional; `[CollectiveApplyFor]` now documents both accepted shapes, so a
+  handler that does not read the query leaves it out. The type registry and the collective generator now share one
+  definition of a handler, so a method the generator rejects no longer has its first parameter listed as an event.
 - **OpenTelemetry metrics** — instrumentation across the dispatch, workers, coordinator, perspectives,
   transport, and lifecycle meters.
 - **`whizbang migrate` CLI** — Marten/Wolverine migration analyzers + transformers (JSONB LINQ,

@@ -428,6 +428,48 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_LeavesOutAnAttributedMethodTheCollectiveGeneratorRejectsAsync() {
+    // #1378: the registry and CollectiveApplyDiscoveryGenerator must agree on what a collective handler is.
+    // A method that carries the attribute but has the wrong return type, or a first parameter that is not a
+    // collective event, is never invoked, so its first parameter is not an event the sink loads.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Messaging;
+using System;
+
+namespace TestNamespace {
+  public record OrderModel {
+    [StreamId] public Guid OrderId { get; init; }
+  }
+  public record OrderCreatedEvent : IEvent {
+    [StreamId] public Guid OrderId { get; init; }
+  }
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
+  public record NotACollectiveEvent { }
+  public record WrongReturnCollectiveEvent : CollectiveEventBase { }
+
+  public class Handlers {
+    [CollectiveApplyFor]
+    public ICollectiveSpec<OrderModel> Apply(NotACollectiveEvent e) => null!;
+
+    [CollectiveApplyFor]
+    public object Other(WrongReturnCollectiveEvent e) => null!;
+  }
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).DoesNotContain("NotACollectiveEvent");
+    await Assert.That(registrySource).DoesNotContain("WrongReturnCollectiveEvent");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_AllEventTypesContainsTypeofExpressionsAsync() {
     // Arrange - Perspective with multiple events
     const string source = @"

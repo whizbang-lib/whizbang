@@ -20,7 +20,6 @@ namespace Whizbang.Generators;
 public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
-  private const string COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN = "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
@@ -61,7 +60,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// For a method carrying <c>[CollectiveApplyFor]</c>, returns the fully-qualified type name of its first
+  /// For a collective-event handler the framework binds (<see cref="CollectiveApplyShape"/>), returns the fully-qualified type name of its first
   /// parameter (the collective event it applies). Returns null otherwise. The event type resolves through
   /// the semantic model, so it's correct even when the event lives in a referenced contracts assembly.
   /// </summary>
@@ -71,10 +70,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     var methodDecl = (MethodDeclarationSyntax)context.Node;
     // The bind guard shares the "not a [CollectiveApplyFor] method" exit: a method Roslyn cannot bind
     // exposes no attributes and no parameters, so it fails the same test without being dereferenced.
+    // The same test CollectiveApplyDiscoveryGenerator applies (#1378): a method it rejects is never invoked, so
+    // its first parameter is not an event the sink loads.
     if (context.SemanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is not IMethodSymbol methodSymbol
-        || !methodSymbol.GetAttributes()
-              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN))
-        || methodSymbol.Parameters.Length < 1) {
+        || CollectiveApplyShape.BoundModel(methodSymbol) is null) {
       return null;
     }
     return TypeNameUtilities.FullyQualified(methodSymbol.Parameters[0].Type);
