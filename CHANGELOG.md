@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in batches and are skipped under `debug_mode`. Each window is settable under
   `Whizbang:Workers:Maintenance:Retention` (`LogDays`, `ScheduleRunDays`, `StreamPurgeAuditDays`,
   `IntegrityLedgerMaxEntries`) and published to `wh_settings` by the retention settings bridge.
+- **The durable-signal retention window is configurable (#1574).** `WhizbangNotificationOptions.SignalRetention`
+  (`Whizbang:Database:SignalRetention`, env `Whizbang__Database__SignalRetention`, default `7.00:00:00`) replaces the
+  fixed seven days, and a window of zero or less is rejected at startup. The sweep now deletes in batches; it still
+  never removes a signal some pod has not delivered.
 
 #### Audit
 - **Audit decisions read `[AuditEvent]` from a generated registry, not reflection (#1580).** A generator registers

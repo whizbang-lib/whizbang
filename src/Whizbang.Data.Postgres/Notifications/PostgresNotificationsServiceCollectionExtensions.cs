@@ -82,6 +82,9 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<
       IConfigureOptions<WhizbangNotificationOptions>,
       ConfigureWhizbangNotificationOptionsFromConfiguration>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IValidateOptions<WhizbangNotificationOptions>,
+      WhizbangNotificationOptionsValidator>());
 
     // NotifyMetrics: counters + UpDownCounter for the LISTEN/NOTIFY work-signaling path.
     // Registered as singleton so the same instances are observed across the connection
@@ -508,6 +511,9 @@ internal sealed class ConfigureWhizbangNotificationOptionsFromConfiguration(ICon
 
     if (TimeSpan.TryParse(section["PollingFallbackInterval"], CultureInfo.InvariantCulture, out var pollFallback)) {
       options.PollingFallbackInterval = pollFallback;
+    }
+    if (TimeSpan.TryParse(section["SignalRetention"], CultureInfo.InvariantCulture, out var signalRetention)) {
+      options.SignalRetention = signalRetention;
     }
 
     if (TimeSpan.TryParse(section["ListenKeepaliveInterval"], CultureInfo.InvariantCulture, out var keepalive)) {

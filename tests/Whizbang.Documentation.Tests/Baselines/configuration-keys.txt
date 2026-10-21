@@ -67,6 +67,7 @@ Whizbang:Database:RoleAssignment:HoldLegacySessionLock
 Whizbang:Database:RoleAssignment:MissedRenewalsBeforeLapse
 Whizbang:Database:RoleAssignment:OwedWorkRetryBase
 Whizbang:Database:RoleAssignment:RenewInterval
+Whizbang:Database:SignalRetention
 Whizbang:Database:SignalingMode
 Whizbang:Database:Stamper
 Whizbang:Database:Stamper:AdvisoryLockKey
