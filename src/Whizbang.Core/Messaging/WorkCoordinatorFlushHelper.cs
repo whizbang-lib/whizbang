@@ -41,7 +41,8 @@ internal readonly record struct FlushContext(
   OutboxMessage[]? PendingAuditMessages,
   bool SkipLifecycle = false,
   WorkCoordinatorMetrics? Metrics = null,
-  string Strategy = "");
+  string Strategy = "",
+  bool RaiseOnMixedStream = false);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush

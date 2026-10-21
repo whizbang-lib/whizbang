@@ -81,6 +81,19 @@ public class DefaultDeadLetterRecoveryPolicyTests {
     await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
   }
 
+  /// <summary>
+  /// A WHIZ133 refusal is the same event on the same stream every time it is re-driven, so recovery holds it for
+  /// review instead of retrying it (#1546).
+  /// </summary>
+  [Test]
+  public async Task GetPolicy_MixedStreamRefused_HoldsForReviewWithoutRetryAsync() {
+    var policy = _newPolicy();
+    var result = policy.GetPolicy(_entry(MessageFailureReason.MixedStreamRefused));
+    await Assert.That(result.Name).IsEqualTo("HoldForReview");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(0);
+    await Assert.That(result.HoldForReviewAfterExhaustion).IsTrue();
+  }
+
   [Test]
   public async Task GetPolicy_ValidationError_HoldsForReviewWithoutRetryAsync() {
     var policy = _newPolicy();

@@ -3091,6 +3091,16 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherKeyedCollectiveStreamTests.cs:PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync</tests>
   public string? CollectiveLinkType { get; init; }
+
+  /// <summary>
+  /// Whether a refusal of this event by the mixed-stream guard (<c>WHIZ133</c>: one stream never holds both ephemeral
+  /// and Sourced events) fails the store with <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+  /// Set by the flushes whose caller awaits the store (the immediate and scoped strategies); false (the default) on
+  /// every background write, where only the refused row is dead-lettered and the rest of the write is stored.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz133</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_DirectCommitOfASourcedEventOnAnEphemeralStream_ThrowsMixedStreamEventExceptionAsync</tests>
+  public bool RaiseOnMixedStream { get; init; }
 }
 /// <summary>
 /// Per-group view over coalesce-pending outbox rows, returned by
