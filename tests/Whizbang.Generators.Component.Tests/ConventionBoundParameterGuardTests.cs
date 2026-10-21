@@ -70,7 +70,7 @@ public class ConventionBoundParameterGuardTests {
   [RequiresAssemblyFiles()]
   private static async Task<ImmutableArray<Diagnostic>> _unusedParameterFindingsAsync(bool withSuppressor) {
     var compilation = AnalyzerTestHelper.CreateCompilationWithFrameworkReferences(CONSUMER);
-    var analyzers = _load("RoslynatorAnalyzers").AddRange(_load("SonarAnalyzer"));
+    var analyzers = _load("Roslynator").AddRange(_load("Sonar"));
     if (withSuppressor) {
       analyzers = analyzers.Add(new ConventionBoundParameterSuppressor());
     }
@@ -81,10 +81,8 @@ public class ConventionBoundParameterGuardTests {
     return diagnostics.Where(d => _unusedParameterRules.Contains(d.Id)).ToImmutableArray();
   }
 
-  private static ImmutableArray<DiagnosticAnalyzer> _load(string metadataKey) {
-    var directory = typeof(ConventionBoundParameterGuardTests).Assembly
-      .GetCustomAttributes<AssemblyMetadataAttribute>()
-      .Single(a => a.Key == metadataKey).Value!;
+  private static ImmutableArray<DiagnosticAnalyzer> _load(string package) {
+    var directory = Path.Combine(AppContext.BaseDirectory, "ThirdPartyAnalyzers", package);
     var loader = new DirectoryLoader(directory);
     return Directory.EnumerateFiles(directory, "*.dll")
       .SelectMany(path => new AnalyzerFileReference(path, loader).GetAnalyzers(LanguageNames.CSharp))
