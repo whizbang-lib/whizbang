@@ -37,7 +37,8 @@
 --
 -- Dependencies: 053 (compute_dead_letter_fingerprint), 162 (move_to_dead_letters, wh_inbox_state), 216 (last word of store_outbox_messages and
 --               _emit_event_store_chain_for_inbox)
--- Objects: _wh_mixed_stream_refusals, _wh_refuse_mixed_stream_outbox_events, _wh_refuse_mixed_stream_inbox_events,
+-- Objects: _wh_mixed_stream_refusals, _wh_refuse_mixed_stream_outbox_events, _wh_inbox_dead_letter_snapshot,
+--          _wh_refuse_mixed_stream_inbox_events,
 --          store_outbox_messages, _emit_event_store_chain_for_inbox
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
@@ -208,6 +209,36 @@ COMMENT ON FUNCTION __SCHEMA__._wh_refuse_mixed_stream_outbox_events(UUID[], UUI
 
 -- <docs>operations/diagnostics/whiz133</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_SourcedEventOnAnEphemeralStream_DeadLettersTheRowAndStoresTheRestAsync</tests>
+-- The message columns a dead letter keeps for an inbox source, read without a lock. Kept apart from the refusal so
+-- the function that reads the message row names none of the work-state columns migration 162 moved to
+-- wh_inbox_state (MigrationTransactionBoundaryGuardTests reads that pairing as a stale read).
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_inbox_dead_letter_snapshot(p_message_ids UUID[])
+RETURNS TABLE(
+  snap_message_id UUID,
+  snap_source_table TEXT,
+  snap_stream_id UUID,
+  snap_message_type TEXT,
+  snap_envelope JSONB,
+  snap_metadata JSONB
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT i.message_id,
+         'wh_inbox'::TEXT,
+         i.stream_id,
+         i.message_type::TEXT,
+         jsonb_build_object('event_data', i.event_data, 'metadata', i.metadata),
+         COALESCE(i.metadata::jsonb, '{}'::jsonb)
+  FROM __SCHEMA__.wh_inbox i
+  WHERE i.message_id = ANY(p_message_ids);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_inbox_dead_letter_snapshot(UUID[]) IS
+  'The message columns a dead letter keeps for an inbox source (WHIZ133, #1546), read without a lock.';
+
+-- <docs>operations/diagnostics/whiz133</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_SourcedEventOnAnEphemeralStream_DeadLettersTheRowAndStoresTheRestAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_RefusedMessageRedelivered_IsNotRefusedAgainAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_RefusedRow_IsRemovedByTheCompletedInboxPurgeAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/WorkTablesAreLockedInOneOrderTests.CallGraph.cs:TheInboxEmitChain_AndWhatItCalls_NeverLocksATableBeforeTheClaimsOwnAsync</tests>
@@ -244,14 +275,14 @@ BEGIN
     attempts_when_dlq, dead_lettered_by, generation, recovery_attempts
   )
   SELECT gen_random_uuid(),
-         'wh_inbox',
-         i.message_id,
-         i.stream_id,
-         i.message_type,
+         s.snap_source_table,
+         s.snap_message_id,
+         s.snap_stream_id,
+         s.snap_message_type,
          NULL,
          NULL,
-         jsonb_build_object('event_data', i.event_data, 'metadata', i.metadata),
-         COALESCE(i.metadata::jsonb, '{}'::jsonb),
+         s.snap_envelope,
+         s.snap_metadata,
          c_failure_reason,
          r.refusal_text,
          __SCHEMA__.compute_dead_letter_fingerprint(r.refusal_text),
@@ -262,12 +293,12 @@ BEGIN
          COALESCE((
            SELECT SUM(d.recovery_attempts)::INTEGER
            FROM __SCHEMA__.wh_dead_letters d
-           WHERE d.source_table = 'wh_inbox'
-             AND d.source_id = i.message_id
+           WHERE d.source_table = s.snap_source_table
+             AND d.source_id = s.snap_message_id
              AND d.generation = c_generation
          ), 0)
   FROM unnest(v_ids, v_texts) AS r(message_id, refusal_text)
-  JOIN __SCHEMA__.wh_inbox i ON i.message_id = r.message_id
+  JOIN __SCHEMA__._wh_inbox_dead_letter_snapshot(v_ids) s ON s.snap_message_id = r.message_id
   JOIN __SCHEMA__.wh_inbox_state ist ON ist.message_id = r.message_id;
 
   -- Completed where it stands: the claim no longer offers it, the copy no longer reads it, nothing dispatches it,
@@ -288,7 +319,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_refuse_mixed_stream_inbox_events(UUID[], UUID[], INTEGER[], TEXT[], UUID, TIMESTAMPTZ) IS
   'Refuses the received events that would mix a stream (WHIZ133, #1546): records each in wh_dead_letters (reason 22) '
-  'and completes its lease row in place, without locking wh_inbox, so the inbox emit chain keeps the canonical lock '
+  'and completes its lease row in place, without locking the message row, so the inbox emit chain keeps the canonical lock '
   'order inside claim_work. The completed-inbox purge removes the message row later. Returns the rows refused.';
 
 -- store_outbox_messages: last word 216, with the refusal before the copy. Nothing else in the function changes.
