@@ -354,6 +354,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   That builder now describes a vector field's index with the method the field names (`hnsw` or `ivfflat`), and no
   index for `None`, as the table DDL does; an EF Core table with such a field reports schema drift once after upgrading,
   as its recorded description is corrected.
+
+- **Turning on `ReconcileHistoricalOnStartup` after a type became ephemeral reclassified nothing (#1578).** The
+  reconciler acted only on the boot that first detected the drift, and only if the flag was on then; the warning told
+  operators to enable the flag, which then had no effect. A boot with the flag on now reclassifies the history of
+  every ephemeral event type, whenever its drift was detected (the reclassification is idempotent). With the flag
+  off, nothing changes.
 - **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
   origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
   as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.
