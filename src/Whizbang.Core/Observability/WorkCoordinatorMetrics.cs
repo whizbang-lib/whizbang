@@ -21,54 +21,14 @@ public sealed class WorkCoordinatorMetrics {
   // Timing
 
   /// <summary>
-  /// Not recorded by the framework. It timed the single work-batch SQL call, which was split into
-  /// focused functions (claim, store, complete); no caller records it since. Kept registered so
-  /// dashboards that query it keep resolving.
+  /// Time one flush spends storing what a strategy queued (outbox and inbox rows, completions,
+  /// failures) and running its distribute lifecycle stages, in milliseconds, tagged <c>strategy</c>.
+  /// Recorded by every strategy for each flush that had work; an empty flush records nothing here
+  /// and counts in <see cref="EmptyFlushCalls"/> instead.
   /// </summary>
-  public Histogram<double> ProcessBatchDuration { get; }
-
-  /// <summary>Total FlushAsync time including lifecycle.</summary>
   public Histogram<double> FlushDuration { get; }
 
-  // Batch composition (IN)
-
-  /// <summary>
-  /// Not recorded by the framework. It counted the outbox messages handed to the single work-batch
-  /// SQL call; outbox messages are now stored by <c>store_outbox_messages</c> during a flush, which
-  /// does not record this instrument.
-  /// </summary>
-  public Histogram<int> BatchOutboxMessages { get; }
-
-  /// <summary>Inbox messages sent.</summary>
-  public Histogram<int> BatchInboxMessages { get; }
-
-  /// <summary>Completions sent.</summary>
-  public Histogram<int> BatchCompletions { get; }
-
-  /// <summary>Failures sent.</summary>
-  public Histogram<int> BatchFailures { get; }
-
-  // Work returned (OUT)
-
-  /// <summary>Outbox work items returned.</summary>
-  public Histogram<int> ReturnedOutboxWork { get; }
-
-  /// <summary>Inbox work items returned.</summary>
-  public Histogram<int> ReturnedInboxWork { get; }
-
-  /// <summary>Perspective work items returned.</summary>
-  public Histogram<int> ReturnedPerspectiveWork { get; }
-
   // Counters
-
-  /// <summary>
-  /// Not recorded by the framework. It counted calls to the single work-batch SQL call, which no
-  /// longer exists; the focused functions that replaced it do not record this counter.
-  /// </summary>
-  public PassiveCounter<long> ProcessBatchCalls { get; }
-
-  /// <summary>SQL errors.</summary>
-  public PassiveCounter<long> ProcessBatchErrors { get; }
 
   /// <summary>
   /// Handler-commit batches that fell back from the bulk tier to the per-handler savepoint
@@ -88,7 +48,7 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>Total FlushAsync calls.</summary>
   public PassiveCounter<long> FlushCalls { get; }
 
-  /// <summary>Flushes with no queued work.</summary>
+  /// <summary>Flushes that found nothing queued, tagged <c>strategy</c>. Every strategy counts them.</summary>
   public PassiveCounter<long> EmptyFlushCalls { get; }
 
   // Publisher worker
@@ -142,23 +102,8 @@ public sealed class WorkCoordinatorMetrics {
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 
-    // The process_batch.* and batch.* instrument names are kept as they are although the SQL call they
-    // were named for is gone: renaming an instrument breaks every dashboard and alert built on it, so only
-    // the descriptions were corrected to say what each records today (#1463).
-    ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Not recorded: the single work-batch SQL call it timed was split into focused functions");
-    FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");
+    FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Time one flush spends storing queued work and running its distribute lifecycle stages; tagged by strategy");
 
-    BatchOutboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Not recorded: outbox messages handed to the single work-batch SQL call, which was split into focused functions");
-    BatchInboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.inbox_messages", description: "Inbox messages sent");
-    BatchCompletions = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.completions", description: "Completions sent");
-    BatchFailures = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.failures", description: "Failures sent");
-
-    ReturnedOutboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.outbox_work", description: "Outbox work items returned");
-    ReturnedInboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
-    ReturnedPerspectiveWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
-
-    ProcessBatchCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Not recorded: calls to the single work-batch SQL call, which was split into focused functions");
-    ProcessBatchErrors = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
     CommitHandlerFallbacks = meter.CreatePassiveCounter<long>(
       "whizbang.work_coordinator.commit_handler.fallbacks",
       description: "Handler-commit batches that fell back from the bulk tier to the per-handler savepoint loop");
@@ -166,7 +111,7 @@ public sealed class WorkCoordinatorMetrics {
       "whizbang.work_coordinator.outbox.emission_deduplicated",
       description: "Outbox rows skipped because the same message id was already stored: republishes a retry would have produced; tagged by message_type");
     FlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
-    EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
+    EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes that found nothing queued; tagged by strategy");
 
     PublisherLeaseRenewals = meter.CreatePassiveCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
     PublisherBufferedMessages = meter.CreatePassiveCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");

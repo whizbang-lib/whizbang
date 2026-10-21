@@ -25,6 +25,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerMetricsTests.cs:AClaim_RecordsItsDurationAsync</tests>
 public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
@@ -44,6 +45,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ClaimChurnFeedback? _churnFeedback;
   /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
   private readonly TimeProvider _time;
+  private readonly PerspectiveMetrics? _perspectiveMetrics;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
   /// <summary>
@@ -153,8 +155,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     ClaimChurnFeedback? churnFeedback = null,
     TimeProvider? timeProvider = null,
     // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
-    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
+    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null,
+    // #1535: each claim's round trip is recorded as whizbang.perspective.claim.duration.
+    PerspectiveMetrics? perspectiveMetrics = null) {
     _priorityHooks = priorityHooks;
+    _perspectiveMetrics = perspectiveMetrics;
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -933,6 +938,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       PartitionAssignment: assignment,
       AliveLockHeld: aliveLockHeld), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
+    _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
     // #1226: the claim reads this instance's registration and never writes it, because a write inside
     // the claim's transaction held the row until the claim committed and every heartbeat for this

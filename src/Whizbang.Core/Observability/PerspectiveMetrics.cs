@@ -24,10 +24,8 @@ public sealed class PerspectiveMetrics {
   public Histogram<double> BatchDuration { get; }
 
   /// <summary>
-  /// Not recorded by the framework. It timed the removed <c>ProcessWorkBatchAsync</c> call that once
-  /// claimed perspective work; perspective work is now claimed by <c>ClaimWorker</c> through
-  /// <c>claim_work</c>, which does not record this instrument. Kept registered so dashboards that
-  /// query it keep resolving.
+  /// Time of one <c>ClaimWorker</c> claim round trip, in milliseconds. A claim acquires outbox, inbox
+  /// and perspective work in one call, so this is the time every worker waits to be handed work.
   /// </summary>
   public Histogram<double> ClaimDuration { get; }
 
@@ -150,7 +148,7 @@ public sealed class PerspectiveMetrics {
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
 
     BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full PerspectiveWorker.ProcessChannelBatchAsync cycle");
-    ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "Not recorded: perspective work is now claimed by claim_work, which does not record this instrument");
+    ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "Time of one claim round trip, which acquires outbox, inbox and perspective work");
     EventLoadDuration = meter.CreateHistogram<double>("whizbang.perspective.event_load.duration", "ms", "GetEventsBetweenPolymorphicAsync query");
     RunnerDuration = meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
     CheckpointDuration = meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");

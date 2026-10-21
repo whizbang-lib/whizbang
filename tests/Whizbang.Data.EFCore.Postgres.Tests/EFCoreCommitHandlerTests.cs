@@ -167,7 +167,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
     long fallbacks = 0;
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument.Meter, metrics.ProcessBatchCalls.Meter)
+      if (ReferenceEquals(instrument.Meter, metrics.CommitHandlerFallbacks.Meter)
           && instrument.Name == "whizbang.work_coordinator.commit_handler.fallbacks") {
         l.EnableMeasurementEvents(instrument);
       }

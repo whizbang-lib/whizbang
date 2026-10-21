@@ -172,7 +172,8 @@ public partial class ScopedWorkCoordinatorStrategy(
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
           outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
           _logger, _dependencies.TracingOptions, _lifecycleMetrics,
-          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+          Metrics: _metrics, Strategy: STRATEGY_NAME),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
@@ -265,7 +266,8 @@ public partial class ScopedWorkCoordinatorStrategy(
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
             // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
             // shutdown's backgrounded stage halves would race process exit.
-            SkipLifecycle: true),
+            SkipLifecycle: true,
+            Metrics: _metrics, Strategy: STRATEGY_NAME),
           ct: default
         );
 

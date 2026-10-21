@@ -157,6 +157,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (observability): the work-batch instruments are retired, and flush and claim timing is recorded
+  (#1535).** `whizbang.work_coordinator.process_batch.*`, `batch.*` and `returned.*` described a single SQL call
+  that no longer exists, and nothing recorded them. They are removed with their `WorkCoordinatorMetrics`
+  properties. `flush.duration` is now recorded by every strategy for each flush that had work, tagged `strategy`;
+  the Immediate strategy now counts `flush.empty_calls` like the others; and `whizbang.perspective.claim.duration`
+  times each claim round trip. **Upgrade:** a dashboard or alert on a retired instrument moves to
+  `flush.duration` (flush time), `perspective.claim.duration` (claim time) or `pg_stat_statements` (per-function
+  SQL time); code that read a removed property drops the reference.
 - **Breaking (dispatch): every local receptor for a message runs, on every call (#1412).** A send or a local
   invoke ran only the first receptor for a command while a publish ran them all. Now every entry runs them all,
   in `[ReceptorPriority]` order. When a caller asks for a result and several receptors return one, the earliest

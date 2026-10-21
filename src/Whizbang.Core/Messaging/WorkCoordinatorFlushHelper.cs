@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,14 +39,18 @@ internal readonly record struct FlushContext(
   LifecycleMetrics? LifecycleMetrics,
   IWorkChannelWriter? WorkChannelWriter,
   OutboxMessage[]? PendingAuditMessages,
-  bool SkipLifecycle = false);
+  bool SkipLifecycle = false,
+  WorkCoordinatorMetrics? Metrics = null,
+  string Strategy = "");
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
 /// their queued operations through the new (post-Phase-H) work-pump path.
 /// </summary>
 /// <docs>messaging/work-coordinator#inbox-completions</docs>
+/// <docs>operations/observability/metrics#work-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperTests.cs:AFlush_RecordsItsDurationTaggedWithTheStrategyAsync</tests>
 /// <remarks>
 /// <para>
 /// The legacy implementation routed every flush through <c>process_work_batch</c> (since removed), which
@@ -78,6 +84,7 @@ internal static class WorkCoordinatorFlushHelper {
       return _empty;
     }
 
+    var flushStarted = Stopwatch.GetTimestamp();
     IServiceScope? flushScope = null;
     IWorkCoordinator coordinator;
     IServiceProvider? scopedProvider;
@@ -201,6 +208,9 @@ internal static class WorkCoordinatorFlushHelper {
       }
     } finally {
       flushScope?.Dispose();
+      ctx.Metrics?.FlushDuration.Record(
+        Stopwatch.GetElapsedTime(flushStarted).TotalMilliseconds,
+        new KeyValuePair<string, object?>("strategy", ctx.Strategy));
     }
 
     return _empty;
