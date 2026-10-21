@@ -47,4 +47,15 @@ public class TableStatisticsContractTests {
       .Because("an empty storage reading tells the collector to ask for the sizes and bloat ratios "
              + "separately, so a provider that predates the reading reports what it always did");
   }
+
+  [Test]
+  public async Task AProviderThatDoesNotSample_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    var sample = await provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("whizbang:event-type-bytes:0", 1, 50));
+
+    await Assert.That(sample).IsNull()
+      .Because("null is what an instance that did not take the window answers, so a provider that cannot "
+             + "sample is never mistaken for a store holding no events");
+  }
 }

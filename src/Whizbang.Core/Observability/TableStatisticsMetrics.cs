@@ -136,6 +136,11 @@ public sealed class TableStatisticsMetrics {
   /// Test seam: reads back a published ratio. Observable gauges are only sampled by an active
   /// meter listener, so asserting on the cache is the direct way to prove the value was fed.
   /// </summary>
+  /// <summary>Replaces the event-type sample; an empty one clears it.</summary>
+  /// <param name="sample">The latest sample per event type.</param>
+  public void UpdateEventTypeBytes(IReadOnlyDictionary<string, EventTypeBytes> sample) {
+  }
+
   internal double? GetBloatRatioForTest(string table) =>
     _tableBloat.TryGetValue(table, out var v) ? v : null;
 }

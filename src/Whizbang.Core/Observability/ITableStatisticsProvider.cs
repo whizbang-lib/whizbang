@@ -67,6 +67,36 @@ public interface ITableStatisticsProvider {
       new Dictionary<string, TableStorageStatistics>());
 
   /// <summary>
+  /// Samples the event store and reports its stored bytes by event type, when this instance takes the
+  /// window's claim.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The table sizes say how large the event store is; this says which event types the bytes belong to,
+  /// and how much of each event is payload and how much is metadata. That is what decides whether a type
+  /// should be excluded from audit, marked ephemeral or slimmed, a decision otherwise made with ad-hoc SQL.
+  /// </para>
+  /// <para>
+  /// Reading every row would cost as much as the table is large, so the reading is a sample of the table's
+  /// pages, and the totals are extrapolated from it. One instance of the fleet takes it per window: the
+  /// claim is <see cref="EventTypeSampleRequest.ClaimKey"/>, and an instance that does not get it answers
+  /// null without reading anything.
+  /// </para>
+  /// <para>Defaults to null, so a provider that does not sample reports nothing.</para>
+  /// </remarks>
+  /// <param name="request">The window's claim, the share of the table to read, and the cap on types.</param>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>
+  /// The sample per event type, or null where another instance holds the window or the provider does not sample.
+  /// </returns>
+  /// <docs>operations/observability/metrics#event-type-bytes</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:SampleEventTypeBytesAsync_AtAFullSample_ReportsEachTypesBytesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderThatDoesNotSample_AnswersNullAsync</tests>
+  Task<IReadOnlyDictionary<string, EventTypeBytes>?> SampleEventTypeBytesAsync(
+      EventTypeSampleRequest request, CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, EventTypeBytes>?>(null);
+
+  /// <summary>
   /// Returns, per table, how much reading has been done by sequential scan rather than by index.
   /// </summary>
   /// <remarks>
@@ -167,3 +197,30 @@ public readonly record struct TableStorageStatistics(
   /// <summary>The table's whole size on disk: heap, TOAST and indexes together.</summary>
   public long TotalBytes => HeapBytes + ToastBytes + IndexBytes;
 }
+
+/// <summary>What one sample of the event store by event type reads.</summary>
+/// <param name="ClaimKey">The window's claim; the instance that takes it samples, the others do not.</param>
+/// <param name="SamplePercent">The share of the table's pages read, greater than 0 and at most 100.</param>
+/// <param name="MaxEventTypes">
+/// The most event types reported by name, at least 1; the rest are summed under
+/// <see cref="TableStatisticsOptions.OTHER_EVENT_TYPES"/>.
+/// </param>
+/// <docs>operations/observability/metrics#event-type-bytes</docs>
+public readonly record struct EventTypeSampleRequest(string ClaimKey, double SamplePercent, int MaxEventTypes) {
+  /// <summary>The bytes the whole table holds, estimated from the bytes the sample read.</summary>
+  /// <param name="sampledBytes">The bytes the sample read.</param>
+  /// <returns>The sampled bytes scaled up by the share of the table that was not read.</returns>
+  public long Extrapolate(long sampledBytes) => 0;
+}
+
+/// <summary>The stored bytes of one event type, from a sample of the event store.</summary>
+/// <param name="SampledRows">How many of the type's events the sample read.</param>
+/// <param name="MeanDataBytes">The mean stored size of the payload, after any compression.</param>
+/// <param name="MeanMetadataBytes">The mean stored size of the metadata, after any compression.</param>
+/// <param name="EstimatedTotalBytes">
+/// The payload and metadata bytes of every event of the type, extrapolated from the share sampled.
+/// </param>
+/// <docs>operations/observability/metrics#event-type-bytes</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsEventTypeTests.cs</tests>
+public readonly record struct EventTypeBytes(
+    long SampledRows, double MeanDataBytes, double MeanMetadataBytes, long EstimatedTotalBytes);

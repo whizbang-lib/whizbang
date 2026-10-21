@@ -18,6 +18,7 @@ namespace Whizbang.Core.Tests.Observability;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Observability/TableStatisticsServiceCollectionExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Observability/TableStatisticsOptions.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Observability/TableStatisticsOptionsValidator.cs</code-under-test>
 /// <docs>operations/observability/metrics#table-statistics</docs>
 [Category("Core")]
 [Category("Observability")]
@@ -80,6 +81,79 @@ public class TableStatisticsRegistrationTests {
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetRequiredService<ITableStatisticsProvider>()).IsSameReferenceAs(mine);
+  }
+
+  // ==== #1590: bytes per event type, sampled ====
+
+  [Test]
+  public async Task TheEventTypeSample_BindsFromTheTableStatisticsSectionAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:TableStatistics:EventTypeSampleInterval"] = "00:05:00",
+      ["Whizbang:TableStatistics:EventTypeSamplePercent"] = "2.5",
+      ["Whizbang:TableStatistics:MaxEventTypes"] = "7",
+    });
+
+    await Assert.That(options.EventTypeSampleInterval).IsEqualTo(TimeSpan.FromMinutes(5));
+    await Assert.That(options.EventTypeSamplePercent).IsEqualTo(2.5);
+    await Assert.That(options.MaxEventTypes).IsEqualTo(7)
+      .Because("a documented key that binds to nothing is a setting that silently does nothing (#646)");
+  }
+
+  [Test]
+  public async Task WithoutConfiguration_OnePercentEveryFifteenMinutes_FiftyTypesAsync() {
+    var options = _bound([]);
+
+    await Assert.That(options.EventTypeSampleInterval).IsEqualTo(TimeSpan.FromMinutes(15));
+    await Assert.That(options.EventTypeSamplePercent).IsEqualTo(1d);
+    await Assert.That(options.MaxEventTypes).IsEqualTo(50);
+  }
+
+  [Test]
+  [Arguments("EventTypeSampleInterval", "-00:00:01")]
+  [Arguments("EventTypeSamplePercent", "0")]
+  [Arguments("EventTypeSamplePercent", "100.5")]
+  [Arguments("MaxEventTypes", "0")]
+  [Arguments("MaxTrackedTables", "0")]
+  public async Task AValueNoReadingCouldHonor_IsRefusedNamingItsKeyAsync(string setting, string value) {
+    var exception = Assert.Throws<OptionsValidationException>(() => _bound(new Dictionary<string, string?> {
+      ["Whizbang:TableStatistics:" + setting] = value,
+    }));
+
+    await Assert.That(exception.Message).Contains("Whizbang:TableStatistics:" + setting)
+      .Because("the operator has to be told which key to fix, at start rather than on the first sample");
+  }
+
+  [Test]
+  public async Task AZeroInterval_IsAcceptedAsTheWayToTurnTheSampleOffAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:TableStatistics:EventTypeSampleInterval"] = "00:00:00",
+      ["Whizbang:TableStatistics:EventTypeSamplePercent"] = "100",
+    });
+
+    await Assert.That(options.EventTypeSampleInterval).IsEqualTo(TimeSpan.Zero);
+    await Assert.That(options.EventTypeSamplePercent).IsEqualTo(100d)
+      .Because("a full sample is the largest share there is, and still a share");
+  }
+
+  [Test]
+  public async Task RegisteringTwice_RunsOneSamplerAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
+    services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<IHostedService>().OfType<EventTypeBytesSampler>().Count()).IsEqualTo(1)
+      .Because("two samplers would each try to claim the same window, and one is all a fleet needs");
+    await Assert.That(provider.GetServices<IValidateOptions<TableStatisticsOptions>>().Count()).IsEqualTo(1);
+  }
+
+  private static TableStatisticsOptions _bound(Dictionary<string, string?> settings) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(settings).Build());
+    services.AddWhizbangTableStatistics((_, _) => new EmptyProvider());
+    using var provider = services.BuildServiceProvider();
+    return provider.GetRequiredService<IOptions<TableStatisticsOptions>>().Value;
   }
 
   private sealed class EmptyProvider : ITableStatisticsProvider {
