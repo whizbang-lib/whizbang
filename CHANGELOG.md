@@ -109,6 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A period close runs the destruction-stage receptors around its truncate (#1504).** `IStreamCloser.CloseAsync`
+  now does what the ephemeral reap does: the events at or below the close version whose type has a receptor at a
+  destruction stage are loaded first, `PreDestructionDetached`/`PreDestructionInline` run before the truncate (a
+  throwing `PreDestructionInline` receptor aborts the close, as a throwing `IDestructionHook` does) and
+  `PostDestructionDetached`/`PostDestructionInline` run with the same envelopes after a close that truncated. With no
+  destruction-stage receptor registered nothing extra is read. `IWorkCoordinator.GetStreamCloseTargetsAsync` lists a
+  close's range (EF Core Postgres; the default is empty), and `StreamCloser` takes an `IServiceScopeFactory`.
 - **Lifecycle coordinator** — `LifecycleCoordinator` with `PostLifecycle` / `PostAllPerspectives` /
   `ImmediateAsync` / `FireAt` stages that fire once after all perspectives complete.
 - **NOTIFY-first work coordination** — zero-idle-polling claim loop with NOTIFY reconnect + startup

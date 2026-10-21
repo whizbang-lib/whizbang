@@ -1755,6 +1755,37 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamCloseTargetsAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var store = BuildSchemaQualifiedName(schema, EVENT_STORE_TABLE);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+    // close_stream's own range (084): this stream, at or below the close point
+#pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
+    cmd.CommandText =
+      $"SELECT event_id, stream_id, event_type FROM {store} WHERE stream_id = @sid AND version <= @through ORDER BY version";
+#pragma warning restore S2077
+    var pStream = cmd.CreateParameter();
+    pStream.ParameterName = "sid";
+    pStream.Value = streamId;
+    cmd.Parameters.Add(pStream);
+    var pThrough = cmd.CreateParameter();
+    pThrough.ParameterName = "through";
+    pThrough.Value = throughVersion;
+    cmd.Parameters.Add(pThrough);
+    var list = new List<EphemeralDestructionTarget>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      list.Add(new EphemeralDestructionTarget(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
+    }
+    return list;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<ArchivedEvent>> GetArchivedEventsAsync(
     Guid streamId, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

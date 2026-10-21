@@ -22,17 +22,26 @@ public interface IStreamCloser {
   /// hook that cancels or defers vetoes the close; a throwing pre-hook aborts it (durable detail is never
   /// truncated when the preserve-work failed).
   /// </summary>
+  /// <remarks>
+  /// The destruction lifecycle stages run around the truncate as they do around the ephemeral reap: the events at
+  /// or below <paramref name="throughVersion"/> whose type has a destruction-stage receptor are loaded first, the
+  /// <c>PreDestructionDetached</c> and <c>PreDestructionInline</c> receptors run before the truncate (a throwing Pre
+  /// Inline receptor aborts the close, as a throwing pre-hook does), and the <c>PostDestructionDetached</c> and
+  /// <c>PostDestructionInline</c> receptors run with the same envelopes after a close that truncated.
+  /// </remarks>
   Task<StreamCloseResult> CloseAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Default <see cref="IStreamCloser"/>: orchestrates the E2 destruction hook around
-/// <see cref="IWorkCoordinator.CloseStreamAsync"/>. Inert-friendly — with no <see cref="IDestructionHook"/>
-/// registered it is a thin pass-through to the gated truncate.
+/// Default <see cref="IStreamCloser"/>: orchestrates the E2 destruction hook and the destruction lifecycle
+/// stages (#1504) around <see cref="IWorkCoordinator.CloseStreamAsync"/>. Inert-friendly — with no
+/// <see cref="IDestructionHook"/> and no destruction-stage receptor registered it is a thin pass-through to the
+/// gated truncate.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-/// <remarks>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</remarks>
+/// <remarks>Creates a closer over the coordinator, with its destruction hook (the default proceeds and observes nothing) and
+/// the scope factory each close resolves its destruction-stage receptors, event store and invoker from.</remarks>
 public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook,
     IServiceScopeFactory scopeFactory) : IStreamCloser {
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
@@ -42,9 +51,9 @@ public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<S
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamCloserDestructionStageComponentTests.cs</tests>
   public async Task<StreamCloseResult> CloseAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
-    _ = _scopeFactory;
     // A1-6b full-history guard: a DISCARD close (archive:false) that would strand a [FullHistory] projection —
     // one that consumes an event in the truncated range and cannot resume from the closing event — is refused
     // (it could never rebuild). An archiving close is always safe (detail retrievable), so it skips the check.
@@ -63,12 +72,29 @@ public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<S
       StreamId = streamId,
     };
 
+    // The destruction-stage receptors (#1504) run around the truncate the way they run around the ephemeral
+    // reap: the events through the close point whose type has a receptor are loaded before anything is
+    // destroyed, and the Post stages get the same envelopes once the stored data is gone.
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var services = scope.ServiceProvider;
+    var envelopes = await _loadDestructionStageEnvelopesAsync(services, streamId, throughVersion, cancellationToken)
+      .ConfigureAwait(false);
+
     // PreDestruction (awaited, critical path): the hook commits the carry-forward / archive BEFORE the
     // truncate. Cancel or Defer vetoes the close (nothing is truncated). A THROWING pre-hook aborts the
     // close — durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
     // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
     if (await _vetoedByPreDestructionAsync(context, streamId, cancellationToken).ConfigureAwait(false) is { } veto) {
       return veto;
+    }
+
+    // The Pre stages, after the hook proceeded: a throwing Pre Inline receptor aborts the close exactly as a
+    // throwing pre-hook does
+    try {
+      await DestructionStageReceptors.FirePreAsync(services, envelopes, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogPreStageFailed(_logger, ex, streamId);
+      throw;
     }
 
     // Fold-before-discard (apply-stack lineage): the close is about to truncate this stream's
@@ -91,9 +117,38 @@ public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<S
       } catch (Exception ex) {
         LogPostCloseFailed(_logger, ex, streamId);
       }
+      // The Post stages, with the envelopes loaded before the truncate. The close committed, so a failing
+      // receptor is reported, never thrown
+      try {
+        await DestructionStageReceptors.FirePostAsync(services, envelopes, cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogPostStageFailed(_logger, ex, streamId);
+      }
     }
     return result;
   }
+
+  /// <summary>
+  /// The events the close is about to truncate whose type has a destruction-stage receptor, loaded before the
+  /// truncate. With no destruction-stage receptor registered, the close range is not even listed.
+  /// </summary>
+  private async Task<IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>>> _loadDestructionStageEnvelopesAsync(
+      IServiceProvider services, Guid streamId, long throughVersion, CancellationToken cancellationToken) {
+    var stageTypes = DestructionStageReceptors.TypesWithReceptors(services);
+    if (stageTypes.Count == 0) {
+      return [];
+    }
+    var targets = await _coordinator.GetStreamCloseTargetsAsync(streamId, throughVersion, cancellationToken).ConfigureAwait(false);
+    return await DestructionStageReceptors.LoadAsync(services, targets, stageTypes, cancellationToken).ConfigureAwait(false);
+  }
+
+  [LoggerMessage(EventId = 44, Level = LogLevel.Error,
+    Message = "A PreDestructionInline receptor threw for stream {StreamId}; close aborted (detail not truncated)")]
+  static partial void LogPreStageFailed(ILogger logger, Exception ex, Guid streamId);
+
+  [LoggerMessage(EventId = 45, Level = LogLevel.Warning,
+    Message = "A PostDestructionInline receptor threw for stream {StreamId}; close already committed")]
+  static partial void LogPostStageFailed(ILogger logger, Exception ex, Guid streamId);
 
   [LoggerMessage(EventId = 40, Level = LogLevel.Error,
     Message = "PreDestruction close hook threw for stream {StreamId}; close aborted (detail not truncated)")]
