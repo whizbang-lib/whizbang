@@ -380,6 +380,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operators to enable the flag, which then had no effect. A boot with the flag on now reclassifies the history of
   every ephemeral event type, whenever its drift was detected (the reclassification is idempotent). With the flag
   off, nothing changes.
+
+- **The Dapper driver could not install into a named schema (#1547).** `AddWhizbangPostgres` rendered the migrations for
+  `public` while the tables went wherever the session's search path pointed, and the startup readiness check looked
+  only in `public`. The initializer now takes the schema the way the Dapper work coordinator does: the first schema the
+  connection string's Search Path names (created if it does not exist), otherwise `current_schema()`. It renders the
+  migrations for that schema, and its catalog queries and the readiness check look there, so tables, functions and the
+  coordinator agree.
 - **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
   origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
   as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.
