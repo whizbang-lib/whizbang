@@ -132,10 +132,14 @@ public class EventTypeBytesSamplerTests {
 
   [Test]
   public async Task BeforeTheSchemaIsReady_NothingIsSampled_AndStoppingEndsTheWaitAsync() {
+    // Stopped only once the sampler is waiting on the gate: stopped any earlier, the host cancels the task before
+    // it starts, which proves nothing about the wait and ends the task canceled rather than returned.
     var provider = new ScriptedProvider(_sample);
-    await using var host = new SamplerHost(provider, new TableStatisticsOptions(), new SchemaReadyGate());
+    var gate = new NeverReadyGate();
+    await using var host = new SamplerHost(provider, new TableStatisticsOptions(), gate);
 
     await host.StartAsync();
+    await gate.Waiting.WaitAsync(_wait);
     await host.StopAsync();
 
     await Assert.That(host.Sampler.ExecuteTask!.IsCompletedSuccessfully).IsTrue();
@@ -290,6 +294,20 @@ public class EventTypeBytesSamplerTests {
 
     public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
+  }
+
+  /// <summary>A schema gate that never opens, and reports when something starts waiting on it.</summary>
+  private sealed class NeverReadyGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Waiting => _waiting.Task;
+
+    public bool IsReady => false;
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waiting.TrySetResult();
+      return Task.Delay(Timeout.Infinite, cancellationToken);
+    }
   }
 
   /// <summary>A fake clock that reports each timer the sampler arms, with its due time.</summary>
