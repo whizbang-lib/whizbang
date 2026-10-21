@@ -3724,7 +3724,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var sql = $"SELECT message_id, was_newly_created FROM {functionName}(@p_messages::jsonb, NULL::uuid, NULL::timestamptz, @p_now, @p_partition_count)";
 #pragma warning restore S2077
 
-    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+    // #1546: a WHIZ133 refusal of an event this write's caller awaits reaches it as MixedStreamEventException.
+    await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => PostgresDeadlockRetry.ExecuteAsync(async () => {
       var now = DateTime.UtcNow;
       // The store reports which rows it skipped because the same message id already existed. With
       // deterministic emission identity (EmissionIdentity) a skipped row is the republish a retry would
@@ -3757,7 +3758,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       if (cmd.Transaction is null) {
         await DoorbellRinger.RingAsync(connectionScope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
       }
-    }, logger: _logger, cancellationToken: cancellationToken);
+    }, logger: _logger, cancellationToken: cancellationToken));
   }
 
   /// <summary>
