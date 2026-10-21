@@ -199,7 +199,7 @@ public sealed partial class TypeDefinitionReconciler(
       LogReclassifyPending(_logger, entry.ClrTypeName);
     }
 
-    // Schema drift: upcasting is the event-versioning phase's job — surface it for now.
+    // Schema drift: upcasting is the event-versioning phase's job, so it is surfaced for now.
     if (schemaChanged) {
       LogSchemaDrift(_logger, entry.ClrTypeName);
     }
