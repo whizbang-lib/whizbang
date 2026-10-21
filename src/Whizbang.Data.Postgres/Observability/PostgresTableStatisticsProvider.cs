@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Npgsql;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Data.Postgres.Observability;
@@ -227,6 +228,86 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   public async Task<IReadOnlyDictionary<string, long>> GetEstimatedTableSizesAsync(CancellationToken ct = default) {
     var storage = await GetTableStorageAsync(ct).ConfigureAwait(false);
     return storage.ToDictionary(table => table.Key, table => table.Value.TotalBytes, StringComparer.Ordinal);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// <para>
+  /// The window is claimed in <c>wh_unique_emission_claims</c> on the same connection the sample reads through,
+  /// so the claim and the events are in the same schema.
+  /// </para>
+  /// <para>
+  /// <c>TABLESAMPLE SYSTEM</c> reads whole pages of <c>wh_event_body</c>, each with the requested probability, and
+  /// joins them to <c>wh_event_store</c> for the type. <c>pg_column_size</c> is the size the row stores, after
+  /// compression, which is what the disk pays for. A stored type name carrying its assembly version is the same
+  /// type as one without, so names are normalized before the types are ranked and the smallest folded under
+  /// <see cref="TableStatisticsOptions.OTHER_EVENT_TYPES"/>.
+  /// </para>
+  /// </remarks>
+  /// <exception cref="ArgumentOutOfRangeException">
+  /// The share is not greater than 0 and at most 100, or the cap is less than 1.
+  /// </exception>
+  public async Task<IReadOnlyDictionary<string, EventTypeBytes>?> SampleEventTypeBytesAsync(
+      EventTypeSampleRequest request, CancellationToken ct = default) {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(request.SamplePercent);
+    ArgumentOutOfRangeException.ThrowIfGreaterThan(request.SamplePercent, 100d);
+    ArgumentOutOfRangeException.ThrowIfLessThan(request.MaxEventTypes, 1);
+
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    var quotedSchema = _schema is null
+      ? await _currentSchemaAsync(connection, ct).ConfigureAwait(false)
+      : SqlText.Identifier(_schema);
+    if (!await PhysicalColumnFill.TryClaimAsync(connection, quotedSchema, request.ClaimKey, ct).ConfigureAwait(false)) {
+      return null;
+    }
+
+    var perType = new Dictionary<string, (long Rows, long Data, long Metadata)>(StringComparer.Ordinal);
+    await using var cmd = new NpgsqlCommand($"""
+      SELECT es.event_type,
+             count(*)::bigint,
+             COALESCE(sum(pg_catalog.pg_column_size(b.event_data)), 0)::bigint,
+             COALESCE(sum(pg_catalog.pg_column_size(b.metadata)), 0)::bigint
+      FROM {quotedSchema}.wh_event_body b TABLESAMPLE SYSTEM (@percent)
+      JOIN {quotedSchema}.wh_event_store es ON es.event_id = b.event_id
+      GROUP BY es.event_type
+      """, connection);
+    cmd.Parameters.AddWithValue("percent", request.SamplePercent);
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      var type = EventTypeMatchingHelper.NormalizeTypeName(reader.GetString(0));
+      perType.TryGetValue(type, out var sum);
+      perType[type] = (sum.Rows + reader.GetInt64(1), sum.Data + reader.GetInt64(2), sum.Metadata + reader.GetInt64(3));
+    }
+
+    return _fold(perType, request);
+  }
+
+  /// <summary>The largest types by bytes under their names, the rest summed under the other name.</summary>
+  private static Dictionary<string, EventTypeBytes> _fold(
+      Dictionary<string, (long Rows, long Data, long Metadata)> perType, EventTypeSampleRequest request) {
+    var folded = new Dictionary<string, (long Rows, long Data, long Metadata)>(StringComparer.Ordinal);
+    var rank = 0;
+    foreach (var (type, sum) in perType
+        .OrderByDescending(t => t.Value.Data + t.Value.Metadata)
+        .ThenBy(t => t.Key, StringComparer.Ordinal)) {
+      var name = rank++ < request.MaxEventTypes ? type : TableStatisticsOptions.OTHER_EVENT_TYPES;
+      folded.TryGetValue(name, out var total);
+      folded[name] = (total.Rows + sum.Rows, total.Data + sum.Data, total.Metadata + sum.Metadata);
+    }
+    return folded.ToDictionary(
+      t => t.Key,
+      t => new EventTypeBytes(
+        SampledRows: t.Value.Rows,
+        MeanDataBytes: (double)t.Value.Data / t.Value.Rows,
+        MeanMetadataBytes: (double)t.Value.Metadata / t.Value.Rows,
+        EstimatedTotalBytes: request.Extrapolate(t.Value.Data + t.Value.Metadata)),
+      StringComparer.Ordinal);
+  }
+
+  /// <summary>The connection's current schema, quoted, where the provider was given none.</summary>
+  private static async Task<string> _currentSchemaAsync(NpgsqlConnection connection, CancellationToken ct) {
+    await using var cmd = new NpgsqlCommand("SELECT pg_catalog.quote_ident(current_schema())", connection);
+    return (string)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false))!;
   }
 
   /// <summary>Adds the schema as text, so that null reaches the statement as a typed null.</summary>

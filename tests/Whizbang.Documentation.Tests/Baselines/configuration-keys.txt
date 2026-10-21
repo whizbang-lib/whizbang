@@ -300,6 +300,9 @@ Whizbang:SystemEvents:AuditShipMaxBatchCount
 Whizbang:SystemEvents:AuditShipMaxDelaySeconds
 Whizbang:SystemEvents:AuditShipSlideSeconds
 Whizbang:SystemEvents:LocalOnly
+Whizbang:TableStatistics:EventTypeSampleInterval
+Whizbang:TableStatistics:EventTypeSamplePercent
+Whizbang:TableStatistics:MaxEventTypes
 Whizbang:TableStatistics:MaxTrackedTables
 Whizbang:Tags
 Whizbang:Tags:Coalesce

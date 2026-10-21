@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every hop) and drops the delivery-time detail. A hop without a service instance now reads as
   `ServiceInstanceInfo.Unknown` instead of failing, and the writer leaves an unknown instance out. Nothing stores the
   slim form yet; this lets readers accept it before any writer produces it.
+
+- **Stored bytes by event type (#1590).** The `Whizbang.TableStatistics` meter gains
+  `whizbang.event_store.sampled_bytes_per_event` (mean stored payload and metadata bytes per event, tag `part`) and
+  `whizbang.event_store.estimated_type_bytes` (extrapolated total per type). One instance per window samples
+  `EventTypeSamplePercent` of the event body table's pages every `EventTypeSampleInterval`, claiming the window in
+  `wh_unique_emission_claims`; other instances clear their reading. The largest `MaxEventTypes` types are named, the
+  rest reported as `other`. The `Whizbang:TableStatistics` settings are now validated at host start.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
