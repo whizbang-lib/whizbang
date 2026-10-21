@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Storage
+- **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
+  (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
+  schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
+  integrity ledger (`integrity_ledger_max_entries`, default 100000, through the trim that had no caller). Deletes run
+  in batches and are skipped under `debug_mode`. Each window is settable under
+  `Whizbang:Workers:Maintenance:Retention` (`LogDays`, `ScheduleRunDays`, `StreamPurgeAuditDays`,
+  `IntegrityLedgerMaxEntries`) and published to `wh_settings` by the retention settings bridge.
+
 #### Startup
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and
