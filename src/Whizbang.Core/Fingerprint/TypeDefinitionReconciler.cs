@@ -149,47 +149,60 @@ public sealed partial class TypeDefinitionReconciler(
       var reg = await coordinator.RegisterTypeDefinitionAsync(
         entry.ClrTypeName, entry.SettingsHash, entry.SchemaHash, schemaVersion: 0, cancellationToken).ConfigureAwait(false);
 
+      var isEphemeralEvent = entry.Ephemeral is not null && string.Equals(entry.Kind, "event", StringComparison.Ordinal);
+
       // Not new (already the current definition) — or new but first-ever (no prior to drift from).
-      if (!reg.IsNew || reg.PreviousDefinitionId is not int prevId || !byId.TryGetValue(prevId, out var prev)) {
-        continue;
+      if (reg.IsNew && reg.PreviousDefinitionId is int prevId && byId.TryGetValue(prevId, out var prev)) {
+        driftDetected++;
+        await _recordDriftAsync(coordinator, entry, reg.DefinitionId, prevId, prev, isEphemeralEvent, cancellationToken)
+          .ConfigureAwait(false);
       }
 
-      driftDetected++;
-      var settingsChanged = !string.Equals(prev.SettingsHashHex, entry.SettingsHash, StringComparison.OrdinalIgnoreCase);
-      var schemaChanged = !string.Equals(prev.SchemaHashHex, entry.SchemaHash, StringComparison.OrdinalIgnoreCase);
-      var isEphemeral = entry.Ephemeral is not null;
-
-      var relationship = (schemaChanged, isEphemeral) switch {
-        (true, _) => DefinitionRelationship.SchemaUpgradedTo,
-        (false, true) => DefinitionRelationship.ReclassifiedTo,
-        _ => DefinitionRelationship.MetadataChangedTo,
-      };
-      await coordinator.RecordDefinitionLineageAsync(
-        prevId, reg.DefinitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
-      LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());
-
-      // Settings drift toward Ephemeral: reclassify historical events (act-opt-in).
-      if (settingsChanged && isEphemeral && string.Equals(entry.Kind, "event", StringComparison.Ordinal)) {
-        if (_options.ReconcileHistoricalOnStartup) {
-          var names = new List<string>(1 + entry.FormerNames.Count) { entry.ClrTypeName };
-          names.AddRange(entry.FormerNames);
-          var result = await coordinator.ReclassifyEventsEphemeralAsync(names, cancellationToken).ConfigureAwait(false);
-          if (result.EventsReclassified > 0) {
-            typesReclassified++;
-          }
+      // The flag reclaims the history of every ephemeral event type on the boot it is on, not only on the boot that
+      // first saw the type turn ephemeral: that boot may have run with the flag off, and every later boot sees the
+      // definition as current (#1578). The reclassification is idempotent, so a type whose history is already
+      // ephemeral costs one lookup.
+      if (isEphemeralEvent && _options.ReconcileHistoricalOnStartup) {
+        var names = new List<string>(1 + entry.FormerNames.Count) { entry.ClrTypeName };
+        names.AddRange(entry.FormerNames);
+        var result = await coordinator.ReclassifyEventsEphemeralAsync(names, cancellationToken).ConfigureAwait(false);
+        if (result.EventsReclassified > 0) {
+          typesReclassified++;
           LogReclassified(_logger, entry.ClrTypeName, result.EventsReclassified, result.StreamsBlocked);
-        } else {
-          LogReclassifyPending(_logger, entry.ClrTypeName);
         }
-      }
-
-      // Schema drift: upcasting is the event-versioning phase's job — surface it for now.
-      if (schemaChanged) {
-        LogSchemaDrift(_logger, entry.ClrTypeName);
       }
     }
 
     return new TypeDefinitionReconcileSummary(driftDetected, typesReclassified, typesRegistered);
+  }
+
+  // Records a definition's drift from the prior one: the lineage edge, the drift warning, and what is owed, since
+  // reclassification is the caller's and upcasting is the event-versioning phase's.
+  private async Task _recordDriftAsync(
+      IWorkCoordinator coordinator, MessageTypeCatalogEntry entry, int definitionId, int prevId, TypeDefinitionInfo prev,
+      bool isEphemeralEvent, CancellationToken cancellationToken) {
+    var settingsChanged = !string.Equals(prev.SettingsHashHex, entry.SettingsHash, StringComparison.OrdinalIgnoreCase);
+    var schemaChanged = !string.Equals(prev.SchemaHashHex, entry.SchemaHash, StringComparison.OrdinalIgnoreCase);
+    var isEphemeral = entry.Ephemeral is not null;
+
+    var relationship = (schemaChanged, isEphemeral) switch {
+      (true, _) => DefinitionRelationship.SchemaUpgradedTo,
+      (false, true) => DefinitionRelationship.ReclassifiedTo,
+      _ => DefinitionRelationship.MetadataChangedTo,
+    };
+    await coordinator.RecordDefinitionLineageAsync(
+      prevId, definitionId, relationship, relationship.ToString(), cancellationToken).ConfigureAwait(false);
+    LogDrift(_logger, entry.ClrTypeName, settingsChanged, schemaChanged, relationship.ToString());
+
+    // Settings drift toward Ephemeral with the flag off: the history stays Sourced until a boot with the flag on.
+    if (settingsChanged && isEphemeralEvent && !_options.ReconcileHistoricalOnStartup) {
+      LogReclassifyPending(_logger, entry.ClrTypeName);
+    }
+
+    // Schema drift: upcasting is the event-versioning phase's job, so it is surfaced for now.
+    if (schemaChanged) {
+      LogSchemaDrift(_logger, entry.ClrTypeName);
+    }
   }
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Debug,
