@@ -308,6 +308,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pipeline change now merges through the merge queue like any other change.
 
 ### Fixed
+- **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
+  origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
+  as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.
 - **A subscriber's integrity digests reported drift for every audit record it received (#1492).** A received audit
   composite is fanned out into its records, which are stored as events under the origin's id, so the inbox emit chain
   folded them into the origin's digest lane. The origin never stores the audit records it publishes, so reconciliation
