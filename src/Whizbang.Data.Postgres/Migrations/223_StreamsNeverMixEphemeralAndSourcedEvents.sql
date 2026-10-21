@@ -19,60 +19,70 @@
 --                a write its caller awaits   an outbox element carrying RaiseOnMixedStream (set by the immediate and
 --                                            scoped strategies' flush) raises SQLSTATE WH133. The whole write rolls
 --                                            back and the caller gets the error.
---                every other write           the refused row alone is dead-lettered through move_to_dead_letters with
---                                            reason 22 (MessageFailureReason.MixedStreamRefused) and error text
---                                            starting WHIZ133, and the rest of the write is stored. The batch flushes,
---                                            the handler commit and the inbox claim are these. The row leaves its
---                                            queue, so it is neither published nor redelivered.
+--                every other write           the refused row alone is dead-lettered with reason 22
+--                                            (MessageFailureReason.MixedStreamRefused) and error text starting
+--                                            WHIZ133, and the rest of the write is stored. The batch flushes, the
+--                                            handler commit and the inbox claim are these. A refused outbox row is
+--                                            moved to wh_dead_letters, so it is never published. A refused inbox row
+--                                            is recorded in wh_dead_letters and its lease row completed in place, so
+--                                            it is never applied or offered again; the completed-inbox purge removes
+--                                            it later, and until then a redelivery of it is deduplicated. The inbox
+--                                            refusal runs inside claim_work after the stream ledger, so it must not
+--                                            lock wh_inbox (see the section below).
 --
 --              store_outbox_messages and _emit_event_store_chain_for_inbox are copied forward from their last word,
 --              216_AuditRecordPositionAndDigestExemption.sql, with the refusal added before the copy. Nothing else
 --              in either function changes. _emit_event_store_chain is unchanged: store_outbox_messages refuses before
 --              it calls the copy, and commit_handler_result's second call finds no outbox row for a refused event.
 --
--- Dependencies: 162 (move_to_dead_letters), 216 (last word of store_outbox_messages and
+-- Dependencies: 053 (compute_dead_letter_fingerprint), 162 (move_to_dead_letters, wh_inbox_state), 216 (last word of store_outbox_messages and
 --               _emit_event_store_chain_for_inbox)
--- Objects: _wh_refuse_mixed_stream_events, store_outbox_messages, _emit_event_store_chain_for_inbox
+-- Objects: _wh_mixed_stream_refusals, _wh_refuse_mixed_stream_outbox_events, _wh_refuse_mixed_stream_inbox_events,
+--          store_outbox_messages, _emit_event_store_chain_for_inbox
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- ===========================================================================================
--- _wh_refuse_mixed_stream_events: the refusal both copies share.
+-- The refusal: one finder, and one way to refuse per queue.
 -- ===========================================================================================
--- Given the events a copy is about to store (parallel arrays, one element per event), finds those whose kind
--- differs from the kind their stream holds, and either raises (an event in p_raise_ids) or dead-letters the
--- source row (every other event). Returns the ids it dead-lettered, so the caller leaves them out of the copy.
--- The source table is the queue the rows live in: 'wh_outbox' or 'wh_inbox'.
+-- _wh_mixed_stream_refusals finds the events a copy is about to store (parallel arrays, one element per event)
+-- whose kind differs from the kind their stream holds, and words each refusal. What is done with a refusal
+-- depends on the queue, because each queue's refusal must keep the work tables in the canonical lock order
+-- (wh_outbox, wh_inbox, wh_inbox_state, wh_perspective_events, wh_active_streams):
+--
+--   the outbox  _wh_refuse_mixed_stream_outbox_events, called by store_outbox_messages. The refused outbox rows
+--               were inserted by this same call, so moving them to wh_dead_letters (move_to_dead_letters) deletes
+--               rows this transaction already holds. Raises instead for an event the caller awaits.
+--   the inbox   _wh_refuse_mixed_stream_inbox_events, called by the inbox emit chain inside claim_work. By then
+--               the claim has leased wh_inbox_state and written wh_active_streams, so it must not touch wh_inbox:
+--               deleting the message row there inverts the order against store_inbox_messages, which takes
+--               wh_inbox and then wh_active_streams. The refusal is recorded in wh_dead_letters from a read of the
+--               message row (no lock) and the lease row is completed where it stands, the same write the chain
+--               already makes to it. The completed row leaves wh_inbox with the other completed rows, in the
+--               maintenance pass and in the canonical order; until then it keeps the message id, so a
+--               redelivery of the refused message is deduplicated rather than refused again.
 
 -- <docs>operations/diagnostics/whiz133</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_SourcedEventOnAnEphemeralStream_DeadLettersTheSourcedEventAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_EphemeralEventOnASourcedStream_DeadLettersTheEphemeralEventAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_FirstWriteMixesBothKinds_KeepsTheFirstKindAndDeadLettersTheOtherAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_SourcedEventOnACompactedStream_IsStoredAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_DirectCommitOfASourcedEventOnAnEphemeralStream_ThrowsMixedStreamEventExceptionAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_SourcedEventOnAnEphemeralStream_DeadLettersTheRowAndStoresTheRestAsync</tests>
-CREATE OR REPLACE FUNCTION __SCHEMA__._wh_refuse_mixed_stream_events(
-  p_source_table TEXT,
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_FirstClaimMixesBothKinds_KeepsTheFirstKindAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_mixed_stream_refusals(
   p_event_ids UUID[],
   p_stream_ids UUID[],
   p_flags INTEGER[],
-  p_event_types TEXT[],
-  p_raise_ids UUID[],
-  p_instance_id UUID
-) RETURNS UUID[] AS $$
+  p_event_types TEXT[]
+) RETURNS TABLE(
+  refused_event_id UUID,
+  refused_stream_id UUID,
+  refusal_text TEXT,
+  refusal_detail JSONB
+) AS $$
 DECLARE
   c_flag_ephemeral CONSTANT INTEGER := 8;     -- EventFlags.Ephemeral (1 << 3); Compacted (1 << 4) is not compared
-  c_failure_reason CONSTANT INTEGER := 22;    -- MessageFailureReason.MixedStreamRefused
-  -- The dead-letter generation of a refusal made here, where no build version is in hand. The reason is held for
-  -- review (the same event on the same stream is refused every time), so generation replay never re-drives it.
-  c_generation CONSTANT TEXT := 'whizbang/event-store-copy';
-  v_refusal RECORD;
-  v_event_kind TEXT;
-  v_stream_kind TEXT;
-  v_text TEXT;
-  v_refused UUID[] := ARRAY[]::UUID[];
 BEGIN
   IF p_event_ids IS NULL OR cardinality(p_event_ids) = 0 THEN
-    RETURN v_refused;
+    RETURN;
   END IF;
 
   -- The copy's own per-stream lock, taken in the copy's order (stream id ascending). Held to commit, so the kind
@@ -86,82 +96,200 @@ BEGIN
     ORDER BY u.sid
   ) AS s;
 
-  FOR v_refusal IN
-    WITH candidate AS (
-      SELECT c.event_id,
-             c.stream_id,
-             (COALESCE(c.flags, 0) & c_flag_ephemeral) <> 0 AS is_ephemeral,
-             __SCHEMA__.normalize_event_type(c.event_type) AS event_type
-      FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types) AS c(event_id, stream_id, flags, event_type)
-      WHERE c.stream_id IS NOT NULL
-    ),
-    -- Each stream's first event in this write (version order is message id order), one sort over the write.
-    opener AS (
-      SELECT DISTINCT ON (candidate.stream_id) candidate.stream_id, candidate.is_ephemeral, candidate.event_type
-      FROM candidate
-      ORDER BY candidate.stream_id, candidate.event_id
-    ),
-    stream_kind AS (
-      SELECT o.stream_id,
-             COALESCE(stored.is_ephemeral, o.is_ephemeral) AS is_ephemeral,
-             COALESCE(stored.event_type, o.event_type) AS event_type
-      FROM opener o
-      -- The newest stored event, read backward through idx_event_store_stream (stream_id, version): one index
-      -- lookup per stream. A stream with nothing stored takes the kind of its first event in this write.
-      LEFT JOIN LATERAL (
-        SELECT (es.flags & c_flag_ephemeral) <> 0 AS is_ephemeral, es.event_type
-        FROM __SCHEMA__.wh_event_store es
-        WHERE es.stream_id = o.stream_id
-        ORDER BY es.version DESC
-        LIMIT 1
-      ) AS stored ON TRUE
-    )
+  RETURN QUERY
+  WITH candidate AS (
+    SELECT c.event_id,
+           c.stream_id,
+           (COALESCE(c.flags, 0) & c_flag_ephemeral) <> 0 AS is_ephemeral,
+           __SCHEMA__.normalize_event_type(c.event_type) AS event_type
+    FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types) AS c(event_id, stream_id, flags, event_type)
+    WHERE c.stream_id IS NOT NULL
+  ),
+  -- Each stream's first event in this write (version order is message id order), one sort over the write.
+  opener AS (
+    SELECT DISTINCT ON (candidate.stream_id) candidate.stream_id, candidate.is_ephemeral, candidate.event_type
+    FROM candidate
+    ORDER BY candidate.stream_id, candidate.event_id
+  ),
+  stream_kind AS (
+    SELECT o.stream_id,
+           COALESCE(stored.is_ephemeral, o.is_ephemeral) AS is_ephemeral,
+           COALESCE(stored.event_type, o.event_type) AS event_type
+    FROM opener o
+    -- The newest stored event, read backward through idx_event_store_stream (stream_id, version): one index
+    -- lookup per stream. A stream with nothing stored takes the kind of its first event in this write.
+    LEFT JOIN LATERAL (
+      SELECT (es.flags & c_flag_ephemeral) <> 0 AS is_ephemeral, es.event_type
+      FROM __SCHEMA__.wh_event_store es
+      WHERE es.stream_id = o.stream_id
+      ORDER BY es.version DESC
+      LIMIT 1
+    ) AS stored ON TRUE
+  ),
+  refused AS (
     SELECT c.event_id,
            c.stream_id,
            c.event_type,
-           c.is_ephemeral,
+           CASE WHEN c.is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END AS event_kind,
            k.event_type AS stream_event_type,
-           k.is_ephemeral AS stream_is_ephemeral
+           CASE WHEN k.is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END AS stream_kind
     FROM candidate c
     JOIN stream_kind k ON k.stream_id = c.stream_id
     WHERE c.is_ephemeral <> k.is_ephemeral
-    ORDER BY c.stream_id, c.event_id
-  LOOP
-    v_event_kind := CASE WHEN v_refusal.is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END;
-    v_stream_kind := CASE WHEN v_refusal.stream_is_ephemeral THEN 'ephemeral' ELSE 'Sourced' END;
-    v_text := format(
-      'WHIZ133: stream %s holds %s events (%s), so the %s event %s (event %s) was refused. '
-        || 'A stream never mixes ephemeral and Sourced events: publish the ephemeral events on their own stream.',
-      v_refusal.stream_id, v_stream_kind, v_refusal.stream_event_type,
-      v_event_kind, v_refusal.event_type, v_refusal.event_id);
+  )
+  SELECT r.event_id,
+         r.stream_id,
+         format(
+           'WHIZ133: stream %s holds %s events (%s), so the %s event %s (event %s) was refused. '
+             || 'A stream never mixes ephemeral and Sourced events: publish the ephemeral events on their own stream.',
+           r.stream_id, r.stream_kind, r.stream_event_type, r.event_kind, r.event_type, r.event_id),
+         jsonb_build_object(
+           'stream_id', r.stream_id,
+           'event_id', r.event_id,
+           'event_type', r.event_type,
+           'event_kind', r.event_kind,
+           'stream_event_type', r.stream_event_type,
+           'stream_kind', r.stream_kind)
+  FROM refused r
+  ORDER BY r.stream_id, r.event_id;
+END;
+$$ LANGUAGE plpgsql;
 
-    IF v_refusal.event_id = ANY(COALESCE(p_raise_ids, ARRAY[]::UUID[])) THEN
+COMMENT ON FUNCTION __SCHEMA__._wh_mixed_stream_refusals(UUID[], UUID[], INTEGER[], TEXT[]) IS
+  'Finds the events that would make a stream hold both ephemeral and Sourced events (WHIZ133, #1546), under the '
+  'event store copy''s per-stream advisory locks, and words each refusal. Locks no work table.';
+
+-- <docs>operations/diagnostics/whiz133</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_RefusedEventInABatch_LeavesTheOtherStreamsStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_DirectCommitOfASourcedEventOnAnEphemeralStream_ThrowsMixedStreamEventExceptionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:CommitHandlerResult_HandlerEmitsASourcedEventOnAnEphemeralStream_CommitsAndDeadLettersTheEventAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_refuse_mixed_stream_outbox_events(
+  p_event_ids UUID[],
+  p_stream_ids UUID[],
+  p_flags INTEGER[],
+  p_event_types TEXT[],
+  p_raise_ids UUID[],
+  p_instance_id UUID
+) RETURNS UUID[] AS $$
+DECLARE
+  c_failure_reason CONSTANT INTEGER := 22;    -- MessageFailureReason.MixedStreamRefused
+  -- The dead-letter generation of a refusal made here, where no build version is in hand. The reason is held for
+  -- review (the same event on the same stream is refused every time), so generation replay never re-drives it.
+  c_generation CONSTANT TEXT := 'whizbang/event-store-copy';
+  v_refusal RECORD;
+  v_refused UUID[] := ARRAY[]::UUID[];
+BEGIN
+  FOR v_refusal IN
+    SELECT r.refused_event_id, r.refusal_text, r.refusal_detail
+    FROM __SCHEMA__._wh_mixed_stream_refusals(p_event_ids, p_stream_ids, p_flags, p_event_types) r
+  LOOP
+    IF v_refusal.refused_event_id = ANY(COALESCE(p_raise_ids, ARRAY[]::UUID[])) THEN
       RAISE EXCEPTION USING
         ERRCODE = 'WH133',
-        MESSAGE = v_text,
-        DETAIL = jsonb_build_object(
-          'stream_id', v_refusal.stream_id,
-          'event_id', v_refusal.event_id,
-          'event_type', v_refusal.event_type,
-          'event_kind', v_event_kind,
-          'stream_event_type', v_refusal.stream_event_type,
-          'stream_kind', v_stream_kind)::TEXT,
+        MESSAGE = v_refusal.refusal_text,
+        DETAIL = v_refusal.refusal_detail::TEXT,
         HINT = 'Publish the ephemeral events on their own stream.';
     END IF;
 
+    -- The outbox row was inserted by this same call, so the move deletes a row this transaction already holds.
     PERFORM __SCHEMA__.move_to_dead_letters(
-      gen_random_uuid(), p_source_table, v_refusal.event_id, c_failure_reason, v_text, p_instance_id, c_generation);
-    v_refused := array_append(v_refused, v_refusal.event_id);
+      gen_random_uuid(), 'wh_outbox', v_refusal.refused_event_id, c_failure_reason, v_refusal.refusal_text,
+      p_instance_id, c_generation);
+    v_refused := array_append(v_refused, v_refusal.refused_event_id);
   END LOOP;
 
   RETURN v_refused;
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._wh_refuse_mixed_stream_events(TEXT, UUID[], UUID[], INTEGER[], TEXT[], UUID[], UUID) IS
-  'Refuses the events that would make a stream hold both ephemeral and Sourced events (WHIZ133, #1546): raises '
-  'SQLSTATE WH133 for an event the caller awaits, and dead-letters every other refused source row (reason 22). '
-  'Returns the dead-lettered ids.';
+COMMENT ON FUNCTION __SCHEMA__._wh_refuse_mixed_stream_outbox_events(UUID[], UUID[], INTEGER[], TEXT[], UUID[], UUID) IS
+  'Refuses the outbox events that would mix a stream (WHIZ133, #1546): raises SQLSTATE WH133 for an event the caller '
+  'awaits, and moves every other refused outbox row to wh_dead_letters (reason 22). Returns the dead-lettered ids.';
+
+-- <docs>operations/diagnostics/whiz133</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_SourcedEventOnAnEphemeralStream_DeadLettersTheRowAndStoresTheRestAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_RefusedMessageRedelivered_IsNotRefusedAgainAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_RefusedRow_IsRemovedByTheCompletedInboxPurgeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/WorkTablesAreLockedInOneOrderTests.CallGraph.cs:TheInboxEmitChain_AndWhatItCalls_NeverLocksATableBeforeTheClaimsOwnAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__._wh_refuse_mixed_stream_inbox_events(
+  p_event_ids UUID[],
+  p_stream_ids UUID[],
+  p_flags INTEGER[],
+  p_event_types TEXT[],
+  p_instance_id UUID,
+  p_now TIMESTAMPTZ
+) RETURNS INTEGER AS $$
+DECLARE
+  c_failure_reason CONSTANT INTEGER := 22;    -- MessageFailureReason.MixedStreamRefused
+  c_flag_failed CONSTANT INTEGER := 32768;    -- MessageProcessingStatus.Failed (1 << 15)
+  c_generation CONSTANT TEXT := 'whizbang/event-store-copy';  -- see _wh_refuse_mixed_stream_outbox_events
+  v_ids UUID[];
+  v_texts TEXT[];
+  v_count INTEGER;
+BEGIN
+  SELECT array_agg(r.refused_event_id), array_agg(r.refusal_text)
+    INTO v_ids, v_texts
+  FROM __SCHEMA__._wh_mixed_stream_refusals(p_event_ids, p_stream_ids, p_flags, p_event_types) r;
+
+  IF v_ids IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  -- The dead letter, with the columns move_to_dead_letters records for a wh_inbox source, read from the message
+  -- and lease rows without locking either. The retry budget is the message's, cumulative within the generation,
+  -- as move_to_dead_letters keeps it (#518).
+  INSERT INTO __SCHEMA__.wh_dead_letters (
+    dead_letter_id, source_table, source_id, stream_id, message_type, destination, perspective_name,
+    envelope, metadata, failure_reason, error_text, error_fingerprint, error_fingerprint_version,
+    attempts_when_dlq, dead_lettered_by, generation, recovery_attempts
+  )
+  SELECT gen_random_uuid(),
+         'wh_inbox',
+         i.message_id,
+         i.stream_id,
+         i.message_type,
+         NULL,
+         NULL,
+         jsonb_build_object('event_data', i.event_data, 'metadata', i.metadata),
+         COALESCE(i.metadata::jsonb, '{}'::jsonb),
+         c_failure_reason,
+         r.refusal_text,
+         __SCHEMA__.compute_dead_letter_fingerprint(r.refusal_text),
+         __SCHEMA__.current_dead_letter_fingerprint_version(),
+         ist.attempts,
+         p_instance_id,
+         c_generation,
+         COALESCE((
+           SELECT SUM(d.recovery_attempts)::INTEGER
+           FROM __SCHEMA__.wh_dead_letters d
+           WHERE d.source_table = 'wh_inbox'
+             AND d.source_id = i.message_id
+             AND d.generation = c_generation
+         ), 0)
+  FROM unnest(v_ids, v_texts) AS r(message_id, refusal_text)
+  JOIN __SCHEMA__.wh_inbox i ON i.message_id = r.message_id
+  JOIN __SCHEMA__.wh_inbox_state ist ON ist.message_id = r.message_id;
+
+  -- Completed where it stands: the claim no longer offers it, the copy no longer reads it, nothing dispatches it,
+  -- and the completed-inbox purge removes it. Failed, with the reason and the refusal, for anyone reading the row.
+  UPDATE __SCHEMA__.wh_inbox_state ist
+  SET processed_at = p_now,
+      chain_emitted_at = p_now,
+      status = ist.status | c_flag_failed,
+      failure_reason = c_failure_reason,
+      error = r.refusal_text
+  FROM unnest(v_ids, v_texts) AS r(message_id, refusal_text)
+  WHERE ist.message_id = r.message_id;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  RETURN v_count;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__._wh_refuse_mixed_stream_inbox_events(UUID[], UUID[], INTEGER[], TEXT[], UUID, TIMESTAMPTZ) IS
+  'Refuses the received events that would mix a stream (WHIZ133, #1546): records each in wh_dead_letters (reason 22) '
+  'and completes its lease row in place, without locking wh_inbox, so the inbox emit chain keeps the canonical lock '
+  'order inside claim_work. The completed-inbox purge removes the message row later. Returns the rows refused.';
 
 -- store_outbox_messages: last word 216, with the refusal before the copy. Nothing else in the function changes.
 
@@ -410,8 +538,8 @@ BEGIN
   -- copy. A refusal the caller awaits raises (the whole call rolls back); any other is dead-lettered, which moves its
   -- outbox row out of the queue, and is left out of the copy so the rest of the write is stored.
   IF cardinality(v_inserted_event_ids) > 0 THEN
-    v_refused_event_ids := __SCHEMA__._wh_refuse_mixed_stream_events(
-      'wh_outbox', v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types,
+    v_refused_event_ids := __SCHEMA__._wh_refuse_mixed_stream_outbox_events(
+      v_inserted_event_ids, v_inserted_event_streams, v_inserted_event_flags, v_inserted_event_types,
       v_raise_event_ids, p_instance_id);
     IF cardinality(v_refused_event_ids) > 0 THEN
       v_inserted_event_ids := ARRAY(
@@ -545,9 +673,11 @@ BEGIN
   ) AS streams_to_lock;
 
   -- 223 (#1546): a received event that would make its stream hold both ephemeral and Sourced events is refused
-  -- before the copy. Nobody awaits a claim, so every refusal here is dead-lettered: the row leaves the inbox (its
-  -- lease row with it), the copy below no longer sees it, and the claim never offers it again. The rows are the
-  -- ones the copy reads, by the same predicate, under the locks taken above.
+  -- before the copy. Nobody awaits a claim, so every refusal here is dead-lettered: recorded in wh_dead_letters and
+  -- its lease row completed in place, so the copy below no longer sees it and the claim never offers it again. The
+  -- message row is not touched here: this runs inside claim_work after the stream ledger, and wh_inbox comes first
+  -- in the canonical lock order. The rows are the ones the copy reads, by the same predicate, under the locks taken
+  -- above.
   SELECT array_agg(ist.message_id), array_agg(ist.stream_id), array_agg(i.flags), array_agg(i.message_type)
     INTO v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types
   FROM __SCHEMA__.wh_inbox_state ist
@@ -562,8 +692,8 @@ BEGIN
       SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
     );
   IF v_candidate_ids IS NOT NULL THEN
-    PERFORM __SCHEMA__._wh_refuse_mixed_stream_events(
-      'wh_inbox', v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types, NULL, p_instance_id);
+    PERFORM __SCHEMA__._wh_refuse_mixed_stream_inbox_events(
+      v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types, p_instance_id, p_now);
   END IF;
 
   -- Auto-create event_store rows for inbox rows owned by this instance that:
