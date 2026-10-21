@@ -60,7 +60,7 @@ public class DapperNamedSchemaRegistrationTests {
       "WHERE n.nspname = @SCHEMA AND p.proname = 'claim_work' LIMIT 1", new { SCHEMA });
     await Assert.That(claimWork).IsNotNull()
       .Because("the migrations install their functions in the same schema as the tables");
-    await Assert.That(claimWork!).DoesNotContain("public.wh_")
+    await Assert.That(claimWork).DoesNotContain("public.wh_")
       .Because("a function rendered for public reads tables that are not there");
   }
 
