@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A type generated code cannot name (a private nested type) is reported with the new warning WHIZ180 instead of
   silently losing its audit settings; make it internal or public, or register it with `AuditEventRegistry.Register`.
 
+- **The large framework tables vacuum after a fixed number of changes (#1582).** Migration 222 sets autovacuum to a
+  threshold of 10000 changes with scale factor 0 on `wh_perspective_cursors`, `wh_lifecycle_completions`,
+  `wh_stream_digests` and `wh_message_deduplication`; an insert threshold of 10000 on `wh_event_store`, which keeps
+  its visibility map current for index-only scans; and the same on `wh_event_body`'s TOAST table. A scale factor
+  grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
+
 #### Startup
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and

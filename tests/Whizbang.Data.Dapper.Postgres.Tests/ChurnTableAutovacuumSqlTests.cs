@@ -30,21 +30,24 @@ public class ChurnTableAutovacuumSqlTests : PostgresTestBase {
   /// The tables the framework deletes from on the messaging hot path. Append-mostly tables
   /// (wh_dead_letters is forensic, wh_event_store keeps its pointers) are deliberately excluded —
   /// aggressive autovacuum buys nothing where rows are not being deleted.
+  /// Each entry names the vacuum trigger the table must carry: wh_message_deduplication moved
+  /// from 2% to a fixed 10,000-row threshold in migration 222, because a percentage of a
+  /// multi-million-row ledger still waits for tens of thousands of dead rows.
   /// </summary>
-  public static IEnumerable<Func<string>> ChurnTables() {
-    yield return () => "wh_inbox";
-    yield return () => "wh_outbox";
-    yield return () => "wh_perspective_events";
-    yield return () => "wh_message_deduplication";
-    yield return () => "wh_active_streams";
+  public static IEnumerable<Func<(string Table, string VacuumTrigger)>> ChurnTables() {
+    yield return () => ("wh_inbox", "autovacuum_vacuum_scale_factor=0.02");
+    yield return () => ("wh_outbox", "autovacuum_vacuum_scale_factor=0.02");
+    yield return () => ("wh_perspective_events", "autovacuum_vacuum_scale_factor=0.02");
+    yield return () => ("wh_message_deduplication", "autovacuum_vacuum_threshold=10000");
+    yield return () => ("wh_active_streams", "autovacuum_vacuum_scale_factor=0.02");
     // Already tuned when the ephemeral body reaper landed; included so the guarantee is asserted
     // in one place and cannot silently regress.
-    yield return () => "wh_event_body";
+    yield return () => ("wh_event_body", "autovacuum_vacuum_scale_factor=0.02");
   }
 
   [Test]
   [MethodDataSource(nameof(ChurnTables))]
-  public async Task ChurnTable_HasAggressiveAutovacuumSettingsAsync(string tableName) {
+  public async Task ChurnTable_HasAggressiveAutovacuumSettingsAsync(string tableName, string vacuumTrigger) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     var options = (await connection.QueryAsync<string>(@"
@@ -54,7 +57,7 @@ public class ChurnTableAutovacuumSqlTests : PostgresTestBase {
       WHERE c.relname = @tableName AND n.nspname = current_schema()",
       new { tableName })).ToList();
 
-    await Assert.That(options).Contains("autovacuum_vacuum_scale_factor=0.02");
+    await Assert.That(options).Contains(vacuumTrigger);
     await Assert.That(options).Contains("autovacuum_analyze_scale_factor=0.02");
   }
 }
