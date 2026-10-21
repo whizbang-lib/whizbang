@@ -35,7 +35,7 @@ public interface IStreamCloser {
 
 /// <summary>
 /// Default <see cref="IStreamCloser"/>: orchestrates the E2 destruction hook and the destruction lifecycle
-/// stages (#1504) around <see cref="IWorkCoordinator.CloseStreamAsync"/>. Inert-friendly — with no
+/// stages (#1504) around <see cref="IWorkCoordinator.CloseStreamAsync"/>. Inert-friendly: with no
 /// <see cref="IDestructionHook"/> and no destruction-stage receptor registered it is a thin pass-through to the
 /// gated truncate.
 /// </summary>
