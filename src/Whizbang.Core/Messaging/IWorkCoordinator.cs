@@ -953,7 +953,8 @@ public interface IWorkCoordinator {
   /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
   /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
   /// window at the current watermark) so history is never counted retroactively. At-most-once
-  /// schedule occurrences and checkpoints themselves are excluded from the counts. Default: null
+  /// schedule occurrences, checkpoints themselves and the <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/>
+  /// audit records are excluded from the counts. Default: null
   /// (engines without commit-sequence stamping cannot checkpoint).
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -967,8 +968,9 @@ public interface IWorkCoordinator {
   /// Stream-integrity Phase B, consumer side: counts the events THIS service has persisted from
   /// the given origin inside an origin commit-sequence window, per (tenant, type) — the local half
   /// of a checkpoint comparison. Keys on the origin identity every received event already persists
-  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). Default: empty (engines without
-  /// origin stamping cannot verify).
+  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). The
+  /// <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/> audit records are excluded, matching the origin's
+  /// half. Default: empty (engines without origin stamping cannot verify).
   /// </summary>
   /// <param name="originServiceId">The origin whose window is being verified.</param>
   /// <param name="fromCommitSequence">Exclusive window floor.</param>

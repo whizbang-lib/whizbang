@@ -3055,7 +3055,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var buckets = new List<CheckpointBucket>();
     if (current > prior.Value) {
       // At-most-once events (EventFlags.AtMostOnce) are excluded (non-delivery is their declared
-      // behavior, not a gap); checkpoints never count themselves. Ephemeral events stay INCLUDED,
+      // behavior, not a gap); checkpoints never count themselves; audit records are left out as every
+      // digest leaves them out (#1554), since the origin need not store what a subscriber does. Ephemeral events stay INCLUDED,
       // reaped or not: the consumer received them live and counts them too.
       await using var count = conn.CreateCommand().WithCoordinatorTimeout();
       count.CommandText = $"""
@@ -3064,6 +3065,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         WHERE es.commit_sequence > @p_from AND es.commit_sequence <= @p_to
           AND COALESCE(es.flags, 0) & {AT_MOST_ONCE_FLAG} = 0
           AND es.event_type <> @p_checkpoint_type
+          AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
         GROUP BY 1, 2
         ORDER BY 1, 2
         """;
@@ -3071,6 +3073,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", current));
       count.Parameters.Add(new Npgsql.NpgsqlParameter("p_checkpoint_type",
         TypeNameFormatter.Format(typeof(IntegrityCheckpoint))));
+      _addDigestExemptParam(count);
       await using var reader = await count.ExecuteReaderAsync(cancellationToken);
       while (await reader.ReadAsync(cancellationToken)) {
         var tenant = reader.GetString(0);
@@ -3104,18 +3107,21 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     // Received events persist the ORIGIN identity (1:1 forward stamping) — the consumer's half of
-    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence.
+    // a checkpoint comparison counts by it, windowed on the ORIGIN's commit sequence. Audit records are
+    // left out, matching the origin's half (#1554).
     cmd.CommandText = $"""
       SELECT COALESCE(es.scope->>'t', '') AS tenant, es.event_type, COUNT(*)::int
       FROM {schema}.wh_event_store es
       WHERE es.origin_service_id = @p_origin
         AND es.origin_commit_sequence > @p_from AND es.origin_commit_sequence <= @p_to
+        AND split_part(es.event_type, ',', 1) <> ALL(@p_digest_exempt::text[])
       GROUP BY 1, 2
       ORDER BY 1, 2
       """;
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_ORIGIN, NpgsqlTypes.NpgsqlDbType.Uuid) { Value = originServiceId });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_from", fromCommitSequence));
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_to", toCommitSequence));
+    _addDigestExemptParam(cmd);
 
     var results = new List<CheckpointBucket>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

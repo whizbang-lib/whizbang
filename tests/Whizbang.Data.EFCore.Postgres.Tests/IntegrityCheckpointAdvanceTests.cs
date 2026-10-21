@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Stream-integrity Phase B: <c>AdvanceIntegrityCheckpointAsync</c> baselines on first run (no
 /// retroactive history counting), then advances the watermark to the highest stamped commit
 /// sequence and returns per-(tenant, type) counts inside the advanced window — excluding
-/// at-most-once occurrences. A quiet window advances to an empty (but non-null) window, keeping
+/// at-most-once occurrences and audit records. A quiet window advances to an empty (but non-null) window, keeping
 /// the liveness beat alive.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
@@ -130,6 +130,44 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await Assert.That(byType["Contracts.TypeX"].TenantScope).IsEqualTo(TENANT_A);
     await Assert.That(byType["Contracts.TypeY"].Count).IsEqualTo(1);
     await Assert.That(counts.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task CheckpointCounts_LeaveAuditRecordsOut_OnBothSidesAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+    string[] auditTypes = [
+      Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.SystemEvents.EventAudited)),
+      Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.SystemEvents.CommandAudited)),
+    ];
+
+    await coordinator.AdvanceIntegrityCheckpointAsync();   // baseline
+
+    // The origin stores a domain event and, like any service that keeps audit records, the audit records of it.
+    var stream = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX");
+    await _seedAsync(conn, stream, 2, TENANT_A, auditTypes[0]);
+    await _seedAsync(conn, stream, 3, TENANT_A, auditTypes[1]);
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+
+    // A subscriber stores what it receives under the origin's identity, audit records included.
+    var origin = TrackedGuid.New().Value;
+    var received = TrackedGuid.New().Value;
+    await _seedReceivedAsync(conn, received, 1, TENANT_A, "Contracts.TypeX", origin, window!.FromCommitSequence + 1);
+    await _seedReceivedAsync(conn, received, 2, TENANT_A, auditTypes[0], origin, window.FromCommitSequence + 2);
+    await _seedReceivedAsync(conn, received, 3, TENANT_A, auditTypes[1], origin, window.FromCommitSequence + 3);
+    var counts = await coordinator.CountReceivedFromOriginAsync(origin, window.FromCommitSequence, window.ToCommitSequence);
+
+    await Assert.That(window.Buckets.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("the origin's checkpoint leaves audit records out, as every integrity digest does (#1492): " +
+               "the origin publishes its audit records without necessarily storing them.");
+    await Assert.That(counts.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("the subscriber's half applies the same exclusion, so audit traffic it received never reads as a " +
+               "count the origin did not declare (#1554).");
   }
 
   // ── seeding ──────────────────────────────────────────────────────────────
