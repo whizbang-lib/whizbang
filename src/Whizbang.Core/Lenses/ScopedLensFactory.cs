@@ -1,7 +1,10 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents;
@@ -22,15 +25,21 @@ namespace Whizbang.Core.Lenses;
 /// <param name="scopeContextAccessor">Accessor for current scope context.</param>
 /// <param name="lensOptions">Lens configuration options.</param>
 /// <param name="eventEmitter">System event emitter for security events.</param>
+/// <param name="logger">Where a security record that failed to store is reported; null reports to no log.</param>
+/// <param name="metrics">Where a security record that failed to store is counted; null counts nothing.</param>
 public sealed class ScopedLensFactory(
     IServiceProvider serviceProvider,
     IScopeContextAccessor scopeContextAccessor,
     LensOptions lensOptions,
-    ISystemEventEmitter eventEmitter) : IScopedLensFactory {
+    ISystemEventEmitter eventEmitter,
+    ILogger<ScopedLensFactory>? logger = null,
+    EventCategoryMetrics? metrics = null) : IScopedLensFactory {
   private readonly IServiceProvider _serviceProvider = ArgumentGuard.NotNull(serviceProvider);
   private readonly IScopeContextAccessor _scopeContextAccessor = ArgumentGuard.NotNull(scopeContextAccessor);
   private readonly LensOptions _lensOptions = ArgumentGuard.NotNull(lensOptions);
   private readonly ISystemEventEmitter _eventEmitter = ArgumentGuard.NotNull(eventEmitter);
+  private readonly ILogger _logger = logger ?? NullLogger<ScopedLensFactory>.Instance;
+  private readonly EventCategoryMetrics? _metrics = metrics;
 
   // === Legacy API (string-based scope names) ===
 
@@ -197,16 +206,18 @@ public sealed class ScopedLensFactory(
   }
 
   private void _emitAccessDenied(Permission requiredPermission, string resourceType, IScopeContext? context) {
-    // Fire-and-forget async emission - audit events shouldn't block the main flow
-    _ = _eventEmitter.EmitAsync(new AccessDenied {
+    // Fire-and-forget: the denial must not wait on its record, but a record that fails to store is
+    // logged and counted rather than lost silently (#1555).
+    var scope = context?.Scope ?? new PerspectiveScope();
+    SystemEventFireAndForget.Emit(_eventEmitter, new AccessDenied {
       ResourceType = resourceType,
       RequiredPermission = requiredPermission,
       CallerPermissions = context?.Permissions ?? new HashSet<Permission>(),
       CallerRoles = context?.Roles ?? new HashSet<string>(),
-      Scope = context?.Scope ?? new PerspectiveScope(),
+      Scope = scope,
       Reason = AccessDenialReason.InsufficientPermission,
       Timestamp = DateTimeOffset.UtcNow
-    });
+    }, scope.TenantId, _logger, _metrics);
   }
 
   private static ScopeFilters _convertScopeDefinitionToFilter(ScopeDefinition scopeDefinition) {
