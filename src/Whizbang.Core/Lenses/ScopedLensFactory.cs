@@ -18,28 +18,58 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
-/// <remarks>
-/// Creates a new ScopedLensFactory.
-/// </remarks>
-/// <param name="serviceProvider">Service provider for resolving lens instances.</param>
-/// <param name="scopeContextAccessor">Accessor for current scope context.</param>
-/// <param name="lensOptions">Lens configuration options.</param>
-/// <param name="eventEmitter">System event emitter for security events.</param>
-/// <param name="logger">Where a security record that failed to store is reported; null reports to no log.</param>
-/// <param name="metrics">Where a security record that failed to store is counted; null counts nothing.</param>
-public sealed class ScopedLensFactory(
-    IServiceProvider serviceProvider,
-    IScopeContextAccessor scopeContextAccessor,
-    LensOptions lensOptions,
-    ISystemEventEmitter eventEmitter,
-    ILogger<ScopedLensFactory>? logger = null,
-    EventCategoryMetrics? metrics = null) : IScopedLensFactory {
-  private readonly IServiceProvider _serviceProvider = ArgumentGuard.NotNull(serviceProvider);
-  private readonly IScopeContextAccessor _scopeContextAccessor = ArgumentGuard.NotNull(scopeContextAccessor);
-  private readonly LensOptions _lensOptions = ArgumentGuard.NotNull(lensOptions);
-  private readonly ISystemEventEmitter _eventEmitter = ArgumentGuard.NotNull(eventEmitter);
-  private readonly ILogger _logger = logger ?? NullLogger<ScopedLensFactory>.Instance;
-  private readonly EventCategoryMetrics? _metrics = metrics;
+public sealed class ScopedLensFactory : IScopedLensFactory {
+  private readonly IServiceProvider _serviceProvider;
+  private readonly IScopeContextAccessor _scopeContextAccessor;
+  private readonly LensOptions _lensOptions;
+  private readonly ISystemEventEmitter _eventEmitter;
+  private readonly ILogger _logger;
+  private readonly EventCategoryMetrics? _metrics;
+
+  /// <summary>
+  /// Creates a factory whose failed security records go unreported: no log and no count. The container uses the
+  /// other constructor, which reports them.
+  /// </summary>
+  public ScopedLensFactory(
+      IServiceProvider serviceProvider,
+      IScopeContextAccessor scopeContextAccessor,
+      LensOptions lensOptions,
+      ISystemEventEmitter eventEmitter)
+    : this(serviceProvider, scopeContextAccessor, lensOptions, eventEmitter, NullLogger<ScopedLensFactory>.Instance) {
+  }
+
+  /// <summary>Creates a factory that logs and counts a security record that failed to store.</summary>
+  /// <param name="serviceProvider">Service provider for resolving lens instances.</param>
+  /// <param name="scopeContextAccessor">Accessor for current scope context.</param>
+  /// <param name="lensOptions">Lens configuration options.</param>
+  /// <param name="eventEmitter">System event emitter for security events.</param>
+  /// <param name="logger">Where a security record that failed to store is reported.</param>
+  /// <param name="metrics">Where a security record that failed to store is counted.</param>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Lenses/ScopedLensFactoryEmitFailureTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs:Constructor_WithNullLoggerOrMetrics_ThrowsAsync</tests>
+  public ScopedLensFactory(
+      IServiceProvider serviceProvider,
+      IScopeContextAccessor scopeContextAccessor,
+      LensOptions lensOptions,
+      ISystemEventEmitter eventEmitter,
+      ILogger<ScopedLensFactory> logger,
+      EventCategoryMetrics metrics)
+    : this(serviceProvider, scopeContextAccessor, lensOptions, eventEmitter, ArgumentGuard.NotNull(logger)) {
+    _metrics = ArgumentGuard.NotNull(metrics);
+  }
+
+  private ScopedLensFactory(
+      IServiceProvider serviceProvider,
+      IScopeContextAccessor scopeContextAccessor,
+      LensOptions lensOptions,
+      ISystemEventEmitter eventEmitter,
+      ILogger logger) {
+    _serviceProvider = ArgumentGuard.NotNull(serviceProvider);
+    _scopeContextAccessor = ArgumentGuard.NotNull(scopeContextAccessor);
+    _lensOptions = ArgumentGuard.NotNull(lensOptions);
+    _eventEmitter = ArgumentGuard.NotNull(eventEmitter);
+    _logger = logger;
+  }
 
   // === Legacy API (string-based scope names) ===
 
