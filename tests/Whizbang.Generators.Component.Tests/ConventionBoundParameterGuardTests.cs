@@ -78,15 +78,14 @@ public class ConventionBoundParameterGuardTests {
       new AnalyzerOptions([]), onAnalyzerException: null, concurrentAnalysis: false,
       logAnalyzerExecutionTime: false, reportSuppressedDiagnostics: true);
     var diagnostics = await compilation.WithAnalyzers(analyzers, options).GetAnalyzerDiagnosticsAsync();
-    return diagnostics.Where(d => _unusedParameterRules.Contains(d.Id)).ToImmutableArray();
+    return [.. diagnostics.Where(d => _unusedParameterRules.Contains(d.Id))];
   }
 
   private static ImmutableArray<DiagnosticAnalyzer> _load(string package) {
     var directory = Path.Combine(AppContext.BaseDirectory, "ThirdPartyAnalyzers", package);
     var loader = new DirectoryLoader(directory);
-    return Directory.EnumerateFiles(directory, "*.dll")
-      .SelectMany(path => new AnalyzerFileReference(path, loader).GetAnalyzers(LanguageNames.CSharp))
-      .ToImmutableArray();
+    return [.. Directory.EnumerateFiles(directory, "*.dll")
+      .SelectMany(path => new AnalyzerFileReference(path, loader).GetAnalyzers(LanguageNames.CSharp))];
   }
 
   /// <summary>Loads an analyzer package's assemblies side by side, sharing Roslyn with the test host.</summary>

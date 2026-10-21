@@ -114,7 +114,7 @@ public class ConventionBoundParameterSuppressorTests {
       logAnalyzerExecutionTime: false, reportSuppressedDiagnostics: true);
     var withAnalyzers = compilation.WithAnalyzers(
       [new UnusedParameterStandIn(ruleId, onMethods), new ConventionBoundParameterSuppressor()], options);
-    return (await withAnalyzers.GetAnalyzerDiagnosticsAsync()).Where(d => d.Id == ruleId).ToImmutableArray();
+    return [.. (await withAnalyzers.GetAnalyzerDiagnosticsAsync()).Where(d => d.Id == ruleId)];
   }
 
   private static bool _at(Diagnostic diagnostic, string method, string parameter) {
