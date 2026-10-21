@@ -41,26 +41,20 @@ public sealed record TableStorageInfo(
       return null;
     }
 
-    var info = new TableStorageInfo(null, null);
-    foreach (var argument in attribute.NamedArguments) {
-      info = _with(info, argument.Key, argument.Value.Value);
-    }
+    var arguments = attribute.NamedArguments;
+    object? Argument(string name) => arguments.FirstOrDefault(a => a.Key == name).Value.Value;
 
-    return info;
+    // A threshold or scale factor below 0 is the attribute's "server default"; a value of another type is ignored.
+    return new TableStorageInfo(
+      ColumnStorageSql.CompressionName(Argument("DataCompression")),
+      _whole(Argument("ToastTupleTarget"), minimum: 1),
+      AutovacuumVacuumThreshold: _whole(Argument("AutovacuumVacuumThreshold"), minimum: 0),
+      AutovacuumVacuumScaleFactor: _factor(Argument("AutovacuumVacuumScaleFactor")),
+      AutovacuumInsertThreshold: _whole(Argument("AutovacuumInsertThreshold"), minimum: 0),
+      AutovacuumInsertScaleFactor: _factor(Argument("AutovacuumInsertScaleFactor")),
+      ToastAutovacuumVacuumThreshold: _whole(Argument("ToastAutovacuumVacuumThreshold"), minimum: 0),
+      ToastAutovacuumVacuumScaleFactor: _factor(Argument("ToastAutovacuumVacuumScaleFactor")));
   }
-
-  // One named argument applied. A threshold or scale factor below 0 is the attribute's "server default".
-  private static TableStorageInfo _with(TableStorageInfo info, string name, object? value) => name switch {
-    "DataCompression" => info with { DataCompression = ColumnStorageSql.CompressionName(value) },
-    "ToastTupleTarget" => info with { ToastTupleTarget = _whole(value, minimum: 1) },
-    "AutovacuumVacuumThreshold" => info with { AutovacuumVacuumThreshold = _whole(value, minimum: 0) },
-    "AutovacuumVacuumScaleFactor" => info with { AutovacuumVacuumScaleFactor = _factor(value) },
-    "AutovacuumInsertThreshold" => info with { AutovacuumInsertThreshold = _whole(value, minimum: 0) },
-    "AutovacuumInsertScaleFactor" => info with { AutovacuumInsertScaleFactor = _factor(value) },
-    "ToastAutovacuumVacuumThreshold" => info with { ToastAutovacuumVacuumThreshold = _whole(value, minimum: 0) },
-    "ToastAutovacuumVacuumScaleFactor" => info with { ToastAutovacuumVacuumScaleFactor = _factor(value) },
-    _ => info,
-  };
 
   private static int? _whole(object? value, int minimum) => value is int number && number >= minimum ? number : null;
 
