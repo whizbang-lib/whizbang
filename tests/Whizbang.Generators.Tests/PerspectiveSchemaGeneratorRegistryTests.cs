@@ -13,7 +13,7 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/PerspectiveSchemaGenerator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Generators.Shared/Utilities/PerspectiveRegistryPayload.cs</code-under-test>
-public class PerspectiveSchemaGeneratorRegistryTests {
+public partial class PerspectiveSchemaGeneratorRegistryTests {
 
   private const string NESTED_MODEL_SOURCE = """
     using Whizbang.Core;
@@ -83,7 +83,7 @@ public class PerspectiveSchemaGeneratorRegistryTests {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(NESTED_MODEL_SOURCE);
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
-    var table = Regex.Match(_line(generated, "RegistryJson ="), "TableName\\\\\":\\\\\"([a-z0-9_]+)\\\\\"").Groups[1].Value;
+    var table = _tableName().Match(_line(generated, "RegistryJson =")).Groups[1].Value;
 
     await Assert.That(table).IsNotEmpty();
     await Assert.That(generated).Contains($"CREATE TABLE IF NOT EXISTS {table} (")
@@ -93,4 +93,6 @@ public class PerspectiveSchemaGeneratorRegistryTests {
   private static string _line(string? source, string marker) =>
     source!.Split('\n').First(l => l.Contains(marker, StringComparison.Ordinal));
 
+  [GeneratedRegex("TableName\\\\\":\\\\\"([a-z0-9_]+)\\\\\"")]
+  private static partial Regex _tableName();
 }

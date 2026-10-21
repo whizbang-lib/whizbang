@@ -541,9 +541,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    /// <summary>The service this assembly's perspectives are registered under.</summary>");
     schemaBuilder.AppendLine($"    public const string ServiceName = \"{PerspectiveRegistryPayload.EscapeJsonString(serviceName)}\";");
     schemaBuilder.AppendLine();
-    schemaBuilder.AppendLine("    /// <summary>");
-    schemaBuilder.AppendLine("    /// The perspective registry payload: one entry per perspective, keyed by the model's CLR type name.");
-    schemaBuilder.AppendLine("    /// </summary>");
+    schemaBuilder.AppendLine("    /// <summary>The perspective registry payload: one entry per perspective, keyed by the model's CLR type name.</summary>");
     schemaBuilder.AppendLine($"    public const string RegistryJson = \"{json.Replace("\\", "\\\\").Replace("\"", "\\\"")}\";");
     schemaBuilder.AppendLine();
     schemaBuilder.AppendLine("    /// <summary>Registers this assembly's perspective registry payload at load.</summary>");

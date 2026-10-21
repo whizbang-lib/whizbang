@@ -132,34 +132,32 @@ public static class PerspectiveRegistryPayload {
     schemaIndexes.Add(new(PostgresIdentifiers.WithinLimit($"idx_{shortName}_scope_gin"), ["scope"], "gin", false));
 
     foreach (var field in entry.PhysicalFields) {
-      if (field.IsContainmentIndexed) {
-        schemaIndexes.Add(new(
-          PostgresIdentifiers.WithinLimit($"idx_{shortName}_{field.ColumnName}_gin"), [field.ColumnName], "gin", false));
-      }
-
-      if (!field.IsIndexed) {
-        continue;
-      }
-
-      if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
-        continue;
-      }
-
-      // A vector index is built with the method the field names, and not at all for None or a value no pgvector
-      // method maps to, as the DDL does; describing an index the table does not have reads as drift.
-      var indexType = field.IsVector ? _vectorIndexMethod(field.VectorIndexType) : "btree";
-      if (indexType is null) {
-        continue;
-      }
-      schemaIndexes.Add(new IndexSchema(
-          PostgresIdentifiers.WithinLimit($"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : "")),
-          [field.ColumnName],
-          indexType,
-          false
-      ));
+      schemaIndexes.AddRange(_fieldIndexes(field, shortName));
     }
 
     return schemaIndexes;
+  }
+
+  // The indexes one physical field asks for: its containment index, then its own index when it is indexed, built
+  // as a btree, or for a vector with the method the field names (none past 2000 dimensions, or for a method no
+  // pgvector index maps to).
+  private static IEnumerable<IndexSchema> _fieldIndexes(PhysicalFieldInfo field, string shortName) {
+    if (field.IsContainmentIndexed) {
+      yield return new(PostgresIdentifiers.WithinLimit($"idx_{shortName}_{field.ColumnName}_gin"), [field.ColumnName], "gin", false);
+    }
+
+    if (!field.IsIndexed || (field.IsVector && field.VectorDimensions is > 2000)) {
+      yield break;
+    }
+
+    var indexType = field.IsVector ? _vectorIndexMethod(field.VectorIndexType) : "btree";
+    if (indexType is not null) {
+      yield return new IndexSchema(
+          PostgresIdentifiers.WithinLimit($"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : "")),
+          [field.ColumnName],
+          indexType,
+          false);
+    }
   }
 
   private static string? _vectorIndexMethod(GeneratorVectorIndexType? indexType) => indexType switch {

@@ -33,8 +33,8 @@ public class PerspectiveRegistryPayloadTests {
 
   [Test]
   public async Task Indexes_FollowTheDocumentIndexDecisionsAsync() {
-    var none = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], false, false)).Select(i => i.Name).ToList();
-    var both = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], true, true)).Select(i => i.Name).ToList();
+    var none = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], false, false)).ConvertAll(i => i.Name);
+    var both = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], true, true)).ConvertAll(i => i.Name);
 
     await Assert.That(none).IsEquivalentTo(["idx_m_created_at", "idx_m_updated_at", "idx_m_scope_gin"]);
     await Assert.That(both).Contains("idx_m_data_gin");
