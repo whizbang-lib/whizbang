@@ -4,7 +4,7 @@
 using System.Collections.Concurrent;
 using Whizbang.Core.Messaging;
 
-// Types for DestructionStageReceptorComponentTests (#1381). An event with a receptor at each destruction stage, each
+// Types for DestructionStageReceptorComponentTests (#1381) and StreamCloserDestructionStageComponentTests (#1504). An event with a receptor at each destruction stage, each
 // recording the stage per event id. The counters are [ReceptorIdempotent] so the double-fire guard lets every call through.
 
 namespace Whizbang.Core.Component.Tests.DestructionStages;
@@ -39,6 +39,28 @@ public static class DestructionProbe {
   public static void FailPreDetachedFor(Guid id) => _failPreDetached[id] = true;
 
   public static bool ShouldFailPreDetached(Guid id) => _failPreDetached.ContainsKey(id);
+
+  private static readonly ConcurrentDictionary<Guid, bool> _failPostInline = new();
+
+  /// <summary>Makes the Post Inline receptor throw for <paramref name="id"/>, after the data is already gone.</summary>
+  public static void FailPostInlineFor(Guid id) => _failPostInline[id] = true;
+
+  public static bool ShouldFailPostInline(Guid id) => _failPostInline.ContainsKey(id);
+
+  private static readonly ConcurrentDictionary<(Guid, LifecycleStage), bool> _cancel = new();
+
+  /// <summary>Makes the Pre Inline receptor throw <see cref="OperationCanceledException"/> for <paramref name="id"/>, as a shutdown would.</summary>
+  public static void CancelPreInlineFor(Guid id) => _cancel[(id, LifecycleStage.PreDestructionInline)] = true;
+
+  /// <summary>Makes the Post Inline receptor throw <see cref="OperationCanceledException"/> for <paramref name="id"/>.</summary>
+  public static void CancelPostInlineFor(Guid id) => _cancel[(id, LifecycleStage.PostDestructionInline)] = true;
+
+  /// <summary>Throws <see cref="OperationCanceledException"/> when <paramref name="stage"/> was set to cancel for <paramref name="id"/>.</summary>
+  public static void ThrowIfCanceled(Guid id, LifecycleStage stage) {
+    if (_cancel.ContainsKey((id, stage))) {
+      throw new OperationCanceledException("the destruction stage was canceled");
+    }
+  }
 }
 
 public record DsEphemeralEvent([property: StreamId] Guid Id) : IEvent;
@@ -59,6 +81,7 @@ public sealed class DsPreDetached : IReceptor<DsEphemeralEvent> {
 [ReceptorIdempotent]
 public sealed class DsPreInline : IReceptor<DsEphemeralEvent> {
   public ValueTask HandleAsync(DsEphemeralEvent message, CancellationToken cancellationToken = default) {
+    DestructionProbe.ThrowIfCanceled(message.Id, LifecycleStage.PreDestructionInline);
     if (DestructionProbe.ShouldFailPreInline(message.Id)) {
       throw new InvalidOperationException("the preserve step failed");
     }
@@ -80,6 +103,10 @@ public sealed class DsPostDetached : IReceptor<DsEphemeralEvent> {
 [ReceptorIdempotent]
 public sealed class DsPostInline : IReceptor<DsEphemeralEvent> {
   public ValueTask HandleAsync(DsEphemeralEvent message, CancellationToken cancellationToken = default) {
+    DestructionProbe.ThrowIfCanceled(message.Id, LifecycleStage.PostDestructionInline);
+    if (DestructionProbe.ShouldFailPostInline(message.Id)) {
+      throw new InvalidOperationException("the post-destruction notification failed");
+    }
     DestructionProbe.Record(message.Id, LifecycleStage.PostDestructionInline);
     return ValueTask.CompletedTask;
   }

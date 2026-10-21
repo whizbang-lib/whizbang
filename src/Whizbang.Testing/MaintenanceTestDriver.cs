@@ -10,7 +10,7 @@ namespace Whizbang.Testing;
 /// internal (production runs it on the timer loop); integration tests that need a real cycle
 /// against a real database drive it through here instead of widening the production surface.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#testing</docs>
 public static class MaintenanceTestDriver {
   /// <summary>Runs exactly one maintenance cycle on <paramref name="worker"/>.</summary>
   /// <param name="worker">The maintenance worker under test.</param>

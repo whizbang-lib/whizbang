@@ -21,7 +21,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// FastEndpoints surfaces — the transports cannot drift apart in what they disclose: event-type
 /// topology and counts, never payloads.
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/ApplyStackQueryTests.cs</tests>
 [ExtendObjectType(OperationTypeNames.Query)]
 public sealed class WhizbangApplyStackQueries {
@@ -65,7 +65,7 @@ public sealed class WhizbangApplyStackQueries {
 }
 
 /// <summary>Registers the apply-stack query fields. Opt-in — one explicit call.</summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 public static class HotChocolateApplyStackExtensions {
   /// <summary>
   /// Adds the <c>whizbangApplyStacks</c> and <c>whizbangApplyStackStreams</c> query fields to the

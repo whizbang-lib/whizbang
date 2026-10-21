@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -18,6 +19,8 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Lifecycle/StreamCloser.cs</code-under-test>
 public class StreamCloserBranchCoverageTests {
+  // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
+  private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
   private sealed class RecordingHook(List<string> log) : IDestructionHook {
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
@@ -56,7 +59,7 @@ public class StreamCloserBranchCoverageTests {
   public async Task Close_CoordinatorDeclinesTheClose_DoesNotFireThePostDestructionHookAsync() {
     var log = new List<string>();
     var coordinator = new FixedResultCoordinator(log, new StreamCloseResult("gate_blocked", 0));
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new RecordingHook(log));
+    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new RecordingHook(log), _noServices);
 
     var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 
@@ -86,7 +89,7 @@ public class StreamCloserBranchCoverageTests {
   public async Task Close_PostDestructionHookSuspends_WaitsForTheHookThenReturnsTheClosedResultAsync() {
     var log = new List<string>();
     var coordinator = new FixedResultCoordinator(log, new StreamCloseResult("closed", 3));
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new SuspendingAfterHook(log));
+    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new SuspendingAfterHook(log), _noServices);
 
     var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 

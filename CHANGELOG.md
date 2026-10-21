@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never removes a signal some pod has not delivered.
 
 #### Audit
+- **Command audit records the length of a command's id lists, not the lists (#1525).** A command implementing the new
+  `IBoundedCommandAudit` names its id-list properties in `ListsAuditedAsLengths()`, and `CommandAudited.CommandBody`
+  keeps each one's length (a JSON number) in place of the list; null lists stay null and every other property is kept.
+  `RebuildPerspectiveCommand` (`IncludeStreamIds`, `ExcludeStreamIds`) and `RequestRedeliveryCommand` (`StreamIds`)
+  implement it, so a rebuild naming 100,000 streams no longer writes about 4 MB of audit per receiving service.
 - **Audit records point at their event; the body is opt-in (#1588). Behavior change.** `EventAudited.OriginalBody` is
   now `JsonElement?` and is null (and left out of the record) unless the type is marked
   `[AuditEvent(IncludeBody = true)]` or `Whizbang:SystemEvents:AuditBodyDefault` (`Whizbang__SystemEvents__AuditBodyDefault`)
@@ -122,6 +127,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A large rebuild selection splits into bounded commands (#1525).** `RebuildPerspectiveCommand.SplitByStreams(max)`
+  returns commands naming at most `max` streams each (default `DEFAULT_STREAMS_PER_COMMAND`, 500, the stream
+  redelivery bound), in order and without duplicates, each with `RequestId = ChunkRequestId(requestId, chunkIndex)`, a
+  name-based id of the chunk index within the caller's request id. `IncludeStreamIds` documents the size guidance: the
+  list travels whole through the outbox, the transport and each inbox, and more than about 6,500 ids exceeds the Azure
+  Service Bus Standard message limit.
+- **A period close runs the destruction-stage receptors around its truncate (#1504).** `IStreamCloser.CloseAsync`
+  now does what the ephemeral reap does: the events at or below the close version whose type has a receptor at a
+  destruction stage are loaded first, `PreDestructionDetached`/`PreDestructionInline` run before the truncate (a
+  throwing `PreDestructionInline` receptor aborts the close, as a throwing `IDestructionHook` does) and
+  `PostDestructionDetached`/`PostDestructionInline` run with the same envelopes after a close that truncated. With no
+  destruction-stage receptor registered nothing extra is read. `IWorkCoordinator.GetStreamCloseTargetsAsync` lists a
+  close's range (EF Core Postgres; the default is empty), and `StreamCloser` takes an `IServiceScopeFactory`.
 - **Lifecycle coordinator** — `LifecycleCoordinator` with `PostLifecycle` / `PostAllPerspectives` /
   `ImmediateAsync` / `FireAt` stages that fire once after all perspectives complete.
 - **NOTIFY-first work coordination** — zero-idle-polling claim loop with NOTIFY reconnect + startup

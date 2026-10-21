@@ -637,6 +637,15 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task GetStreamCloseTargetsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStreamCloseTargetsAsync(Guid.Empty, 0L);
+
+    await Assert.That(result).IsEmpty();
+  }
+
+  [Test]
   public async Task GetArchivedEventsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
