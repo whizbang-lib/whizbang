@@ -15,8 +15,9 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
-/// Default implementation of <see cref="ISystemEventEmitter"/> that emits system events
-/// to the dedicated <c>$wb-system</c> stream.
+/// Default implementation of <see cref="ISystemEventEmitter"/>. An audit record is appended to its
+/// tenant's audit ledger (<see cref="AuditLedger.StreamFor"/>); every other system event to the global
+/// <c>$wb-system</c> stream (see <see cref="SystemEventStreams.StreamFor"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -113,7 +114,7 @@ public sealed class SystemEventEmitter(
       Scope = scope
     };
 
-    // Emit to the system stream
+    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it)
     await EmitAsync(auditEvent, cancellationToken);
   }
 
@@ -148,6 +149,10 @@ public sealed class SystemEventEmitter(
 
     // Serialize command to JsonElement in AOT-compatible way
     var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions, _logger);
+    // A command that carries id lists of unbounded length keeps their lengths in the audit record, not the lists (#1525)
+    if (command is Whizbang.Core.Audit.IBoundedCommandAudit bounded) {
+      commandJson = AuditBodyProjection.ListLengths(commandJson, bounded.ListsAuditedAsLengths());
+    }
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
@@ -165,7 +170,7 @@ public sealed class SystemEventEmitter(
       Scope = scope.Count > 0 ? scope : null
     };
 
-    // Emit to the system stream
+    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it)
     await EmitAsync(auditEvent, cancellationToken);
   }
 
@@ -208,8 +213,9 @@ public sealed class SystemEventEmitter(
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
     };
 
-    // Append to the system stream
-    await _systemEventStore.AppendAsync(SystemEventStreams.StreamId, envelope, cancellationToken);
+    // One envelope construction for every kind; only the stream differs. An audit record goes to its
+    // tenant's ledger, as on the outbox path (#1485); the global kinds stay on $wb-system (#1555).
+    await _systemEventStore.AppendAsync(SystemEventStreams.StreamFor(systemEvent), envelope, cancellationToken);
   }
 
   /// <inheritdoc />

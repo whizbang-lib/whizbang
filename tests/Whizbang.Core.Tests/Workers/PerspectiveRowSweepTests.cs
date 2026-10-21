@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// defers (fail-safe, never fail-open), a throwing guard gets the retry ladder, the cap sweep is
 /// fleet-claimed, and OnAfterReap fires with the released set after the sweeps.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds</docs>
 public class PerspectiveRowSweepTests {
 
   private sealed class GuardedModel;

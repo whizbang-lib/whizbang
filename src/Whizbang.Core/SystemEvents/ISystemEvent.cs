@@ -10,7 +10,9 @@ namespace Whizbang.Core.SystemEvents;
 /// <remarks>
 /// <para>
 /// System events flow through the same event infrastructure as domain events but are
-/// stored in a dedicated system stream (<see cref="SystemEventStream.Name"/>).
+/// stored apart from them: the global kinds on the dedicated system stream
+/// (<see cref="SystemEventStreams.Name"/>), audit records on their tenant's audit ledger
+/// (<see cref="SystemEventStreams.StreamFor"/>).
 /// </para>
 /// <para>
 /// System events are opt-in per host via <c>options.SystemEvents.EnableXxx()</c> methods.

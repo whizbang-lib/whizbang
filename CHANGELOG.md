@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EventTypeSamplePercent` of the event body table's pages every `EventTypeSampleInterval`, claiming the window in
   `wh_unique_emission_claims`; other instances clear their reading. The largest `MaxEventTypes` types are named, the
   rest reported as `other`. The `Whizbang:TableStatistics` settings are now validated at host start.
+
+- **A perspective table can reserve page space for in-place updates (#1592).** `[PerspectiveTableStorage(FillFactor =
+  90)]` sets the table's `fillfactor` (10 to 100), so an update that changes no indexed column can stay on its page
+  (a HOT update) and write no index entries. A changed fillfactor applies only to new pages, so the schema pass also
+  queues a rewrite request for a table that already holds rows; a restart that finds the value in place queues
+  nothing. `wh_perspective_cursors` gets fillfactor 90 in migration 223, queued for a rewrite the same way.
+- **Out-of-range table storage values are reported at build time (#1592).** The new error WHIZ804 reports a
+  `[PerspectiveTableStorage]` value PostgreSQL would refuse: a `FillFactor` outside 10 to 100, a `ToastTupleTarget`
+  outside 128 to 8160, or an autovacuum scale factor above 100. The schema generators leave such a value out, where
+  it used to fail the schema pass at startup.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
@@ -45,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never removes a signal some pod has not delivered.
 
 #### Audit
+- **Command audit records the length of a command's id lists, not the lists (#1525).** A command implementing the new
+  `IBoundedCommandAudit` names its id-list properties in `ListsAuditedAsLengths()`, and `CommandAudited.CommandBody`
+  keeps each one's length (a JSON number) in place of the list; null lists stay null and every other property is kept.
+  `RebuildPerspectiveCommand` (`IncludeStreamIds`, `ExcludeStreamIds`) and `RequestRedeliveryCommand` (`StreamIds`)
+  implement it, so a rebuild naming 100,000 streams no longer writes about 4 MB of audit per receiving service.
 - **Audit records point at their event; the body is opt-in (#1588). Behavior change.** `EventAudited.OriginalBody` is
   now `JsonElement?` and is null (and left out of the record) unless the type is marked
   `[AuditEvent(IncludeBody = true)]` or `Whizbang:SystemEvents:AuditBodyDefault` (`Whizbang__SystemEvents__AuditBodyDefault`)
@@ -122,6 +137,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A large rebuild selection splits into bounded commands (#1525).** `RebuildPerspectiveCommand.SplitByStreams(max)`
+  returns commands naming at most `max` streams each (default `DEFAULT_STREAMS_PER_COMMAND`, 500, the stream
+  redelivery bound), in order and without duplicates, each with `RequestId = ChunkRequestId(requestId, chunkIndex)`, a
+  name-based id of the chunk index within the caller's request id. `IncludeStreamIds` documents the size guidance: the
+  list travels whole through the outbox, the transport and each inbox, and more than about 6,500 ids exceeds the Azure
+  Service Bus Standard message limit.
+- **A period close runs the destruction-stage receptors around its truncate (#1504).** `IStreamCloser.CloseAsync`
+  now does what the ephemeral reap does: the events at or below the close version whose type has a receptor at a
+  destruction stage are loaded first, `PreDestructionDetached`/`PreDestructionInline` run before the truncate (a
+  throwing `PreDestructionInline` receptor aborts the close, as a throwing `IDestructionHook` does) and
+  `PostDestructionDetached`/`PostDestructionInline` run with the same envelopes after a close that truncated. With no
+  destruction-stage receptor registered nothing extra is read. `IWorkCoordinator.GetStreamCloseTargetsAsync` lists a
+  close's range (EF Core Postgres; the default is empty), and `StreamCloser` takes an `IServiceScopeFactory`.
 - **Lifecycle coordinator** — `LifecycleCoordinator` with `PostLifecycle` / `PostAllPerspectives` /
   `ImmediateAsync` / `FireAt` stages that fire once after all perspectives complete.
 - **NOTIFY-first work coordination** — zero-idle-polling claim loop with NOTIFY reconnect + startup
@@ -222,6 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Audit records from the system-event emitter are written on the tenant's audit ledger (#1555). Behavior change.**
+  `SystemEventEmitter.EmitEventAuditedAsync`, `EmitCommandAuditedAsync` (used by the command-audit pipeline behavior)
+  and an `EventAudited` or `CommandAudited` given to `EmitAsync` now append to `AuditLedger.StreamFor(tenant)`, the
+  stream the outbox path has written audit records on since #1485, instead of the global `$wb-system` stream.
+  `$wb-system` now holds only the global kinds: the security records and the perspective advisories.
+  `SystemEventStreams.StreamFor(systemEvent)` names the stream for any system event. **Upgrade:** a reader that
+  looked for audit records on `$wb-system` (`SystemEventStreams.StreamId`) reads the tenant's ledger instead;
+  perspectives that consume `EventAudited` by type are unaffected.
 - **Breaking (observability): the work-batch instruments are retired, and flush and claim timing is recorded
   (#1535).** `whizbang.work_coordinator.process_batch.*`, `batch.*` and `returned.*` described a single SQL call
   that no longer exists, and nothing recorded them. They are removed with their `WorkCoordinatorMetrics`
@@ -402,6 +438,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Concurrent appends to one stream no longer fail or retry (#1555).** `IEventStore.AppendAsync` on both PostgreSQL
+  drivers read the stream's last version and inserted the next in separate round trips, so two writers on one
+  stream collided on its unique version: the EF Core store threw `Concurrent modification detected` and the Dapper
+  store retried up to ten times. Both now call `wh_append_event` (migration 224), which takes the stream's advisory
+  lock, the one the outbox and inbox emit paths take, and assigns the version in the database, so writers wait their
+  turn and get consecutive versions; a direct append and an emit on one stream serialize too. The EF Core append runs
+  on the context's connection and in its current transaction, and still saves the context's other pending changes
+  first. A duplicate event id now fails at once as "an event with this id is already stored" instead of being
+  reported or retried as a race.
+- **A fire-and-forget security record that fails to store is logged and counted (#1555).** The `AccessDenied`
+  record of a denied lens read was emitted with its task discarded, so a store failure lost it silently. Such emits
+  now go through `SystemEventFireAndForget.Emit`, which never blocks or faults the caller and, on failure, logs a
+  warning naming the event type, tenant and stream and increments `whizbang.system_events.emit_failures`
+  (tag `event_type`) on the `Whizbang.EventCategories` meter.
 - **The default outbox publisher ignored `ITransportReadinessCheck` (#1558).** `OutboxDrainWorker` sent to a transport
   that reported not ready, and each failure then counted as an attempt. It now asks the publish strategy before each
   pass. While the transport is not ready it publishes nothing, renews the leases of every row it holds on the offered
@@ -414,7 +464,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it as it writes a message's outbox copy (send, publish, their batch forms, a cascade and a deferred publish), and the
   coalesce worker stamps the composites it writes, both from the registered `TimeProvider`. The stored copy, and so
   the delivered one, carries the time. The message a local handler runs before the copy is written is not stamped.
-
 - **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
   (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
   it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the

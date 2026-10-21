@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -52,13 +53,13 @@ public class EFCoreEventStoreCoverageTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// If this wrapping regressed, a raw <see cref="DbUpdateException"/> would leak out of
-  /// <c>AppendAsync</c> on any unique-constraint collision, breaking every caller that catches
-  /// <see cref="InvalidOperationException"/> specifically to detect "someone already appended this"
-  /// — the optimistic-concurrency contract <c>AppendAsync</c>'s own doc comment documents.
+  /// If this wrapping regressed, a raw <see cref="PostgresException"/> would leak out of
+  /// <c>AppendAsync</c> on a duplicate event id, breaking every caller that catches
+  /// <see cref="InvalidOperationException"/> to detect "this event is already stored". Since #1555 the
+  /// version is assigned under the stream's lock, so the message names a duplicate, not a race.
   /// </summary>
   [Test]
-  public async Task AppendAsync_DuplicateEventId_WrapsDbUpdateExceptionAsInvalidOperationAsync() {
+  public async Task AppendAsync_DuplicateEventId_WrapsTheUniqueViolationAsInvalidOperationAsync() {
     var streamId = Guid.NewGuid();
     var duplicateId = (Guid)TrackedGuid.New();   // MessageId.From requires UUIDv7
 
@@ -103,10 +104,10 @@ public class EFCoreEventStoreCoverageTests : EFCoreTestBase {
                "never the raw DbUpdateException/PostgresException.");
     await Assert.That(caught!.Message).Contains(streamId.ToString())
       .Because("the message must name the stream the caller was appending to.");
-    await Assert.That(caught.Message).Contains("Another process has already appended to this stream")
-      .Because("the message must say WHY this looks like a race, not just that something failed.");
+    await Assert.That(caught.Message).Contains("an event with this id is already stored")
+      .Because("the message must say WHY the append failed, not just that something failed.");
     await Assert.That(caught.InnerException).IsNotNull()
-      .Because("the original DbUpdateException must be preserved as the inner exception, not " +
+      .Because("the original PostgresException must be preserved as the inner exception, not " +
                "swallowed -- it carries the actual Postgres diagnostics.");
   }
 

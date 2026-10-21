@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -25,6 +26,9 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 public class StreamCloserTests {
+  // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
+  private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
   private sealed class RecordingHook(List<string> log, DestructionResult? result = null,
       bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null,
       Exception? afterThrows = null) : IDestructionHook {
@@ -93,7 +97,7 @@ public class StreamCloserTests {
   }
 
   private static StreamCloser _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>
-    new(coord, NullLogger<StreamCloser>.Instance, hook ?? NoOpDestructionHook.Instance);
+    new(coord, NullLogger<StreamCloser>.Instance, hook ?? NoOpDestructionHook.Instance, _noServices);
 
   [Test]
   public async Task Close_NoHook_PassesThroughToCoordinatorAsync() {
@@ -249,7 +253,7 @@ public class StreamCloserTests {
     var coord = new FakeCloseCoordinator(log);
     var logger = new CapturingCloserLogger();
     var closer = new StreamCloser(
-      coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()));
+      coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()), _noServices);
 
     await Assert.That(async () => await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10))
       .Throws<OperationCanceledException>()

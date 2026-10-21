@@ -43,26 +43,23 @@ public class DapperPostgresEventStore(
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
 
-  private const int MAX_RETRIES = 10;
-
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.
-  /// Splits envelope into 3 JSONB columns, validates size, handles concurrent writes with retry.
+  /// Splits envelope into 3 JSONB columns and validates size. The database assigns the version under the
+  /// stream's advisory lock (<c>wh_append_event</c>, migration 224), so concurrent appends to one stream
+  /// serialize instead of colliding, and nothing is retried (#1555).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
+  /// <docs>fundamentals/events/event-store#appending-and-concurrency</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
     var jsonb = await _prepareJsonbAsync(envelope);
 
-    await _executeWithRetryAsync(
-      streamId, envelope, jsonb, cancellationToken);
+    await _insertEventAsync(streamId, envelope, jsonb, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -77,8 +74,7 @@ public class DapperPostgresEventStore(
   /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Reconstructs envelope from 3 JSONB columns.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
@@ -186,19 +182,15 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// Returns the PostgreSQL-specific SQL for inserting events with 3-column JSONB structure.
+  /// Returns the PostgreSQL-specific SQL for appending an event: one call to <c>wh_append_event</c>
+  /// (migration 224), which takes the stream's advisory lock, inserts the pointer row at the next version
+  /// and the body into <c>wh_event_body</c>, and returns the version it assigned.
   /// </summary>
-  /// <tests>No tests found</tests>
-  // Full split (E1 #13b4-3, migration 078): the pointer is narrow — the body goes to wh_event_body.
-  // Two statements in one Dapper batch; the same parameter set serves both.
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
   protected override string GetAppendSql() => @"
-    INSERT INTO wh_event_store
-      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
-    VALUES
-      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType, @Scope::jsonb, @CreatedAt);
-    INSERT INTO wh_event_body (event_id, event_data, metadata)
-    VALUES (@EventId, @EventData::jsonb, @Metadata::jsonb)
-    ON CONFLICT DO NOTHING";
+    SELECT wh_append_event(
+      @EventId, @StreamId, @AggregateId, @AggregateType, @EventType,
+      @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for reading events from a stream by sequence number.
@@ -302,32 +294,6 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// Executes the append operation with retry logic for concurrent write conflicts.
-  /// </summary>
-  private async Task _executeWithRetryAsync<TMessage>(
-    Guid streamId,
-    MessageEnvelope<TMessage> envelope,
-    JsonbPersistenceModel jsonb,
-    CancellationToken cancellationToken) {
-
-    var lastException = default(Exception);
-
-    for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        await _insertEventAsync(streamId, envelope, jsonb, cancellationToken);
-        return;
-      } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
-        lastException = ex;
-        await Task.Delay(10 * (attempt + 1), cancellationToken);
-      }
-    }
-
-    throw new InvalidOperationException(
-      $"Failed to append event to stream '{streamId}' after {MAX_RETRIES} attempts due to concurrent writes.",
-      lastException);
-  }
-
-  /// <summary>
   /// Inserts a single event into the event store.
   /// </summary>
   private async Task _insertEventAsync<TMessage>(
@@ -339,16 +305,22 @@ public class DapperPostgresEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
-    var nextSequence = lastSequence + 1;
+    var parameters = _buildAppendParameters(streamId, envelope, jsonb);
 
-    var parameters = _buildAppendParameters(streamId, envelope, jsonb, nextSequence);
-
-    await Executor.ExecuteAsync(
-      connection,
-      GetAppendSql(),
-      parameters,
-      cancellationToken: cancellationToken);
+    try {
+      await Executor.ExecuteScalarAsync<int>(
+        connection,
+        GetAppendSql(),
+        parameters,
+        cancellationToken: cancellationToken);
+    } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
+      // The version is assigned under the stream's lock and can no longer collide, so a unique violation is
+      // the event id: this event is already stored. Retrying would only fail the same way.
+      throw new InvalidOperationException(
+        $"Event {envelope.MessageId.Value} was not appended to stream '{streamId}': an event with this id is already stored. " +
+        "Versions are assigned by the database under the stream's lock, so this is not a concurrent append.",
+        ex);
+    }
   }
 
   /// <summary>
@@ -357,8 +329,7 @@ public class DapperPostgresEventStore(
   private static object _buildAppendParameters<TMessage>(
     Guid streamId,
     MessageEnvelope<TMessage> envelope,
-    JsonbPersistenceModel jsonb,
-    long nextSequence) {
+    JsonbPersistenceModel jsonb) {
 
     return new {
       EventId = envelope.MessageId.Value,
@@ -368,7 +339,6 @@ public class DapperPostgresEventStore(
       // EF Core store and matchable by IEventTypeRenameTool's clr_type_name UPDATE. Previously this
       // wrote the bare simple name (typeof(TMessage).Name), diverging from EF Core and the rename tool.
       AggregateType = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
-      Version = (int)nextSequence,
       EventType = TypeNameFormatter.Format(typeof(TMessage)),
       EventData = jsonb.DataJson,
       Metadata = jsonb.MetadataJson,

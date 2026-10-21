@@ -15,7 +15,7 @@ namespace Whizbang.Core.Lineage;
 /// <param name="StreamCount">How many streams share this exact collapsed shape.</param>
 /// <param name="FirstSeen">The earliest head-event time among streams with this shape.</param>
 /// <param name="LastSeen">The latest head-event time among streams with this shape.</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#signatures</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
 public sealed record ApplyPathSignature(
   IReadOnlyList<string> Path,
@@ -27,7 +27,7 @@ public sealed record ApplyPathSignature(
 /// Filters for the apply-stack query. Every filter narrows the event rows that form the
 /// per-stream paths; a stream none of whose events survive the filters contributes no path.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#query</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
 public sealed record ApplyStackQueryOptions {
   /// <summary>
@@ -54,7 +54,7 @@ public sealed record ApplyStackQueryOptions {
 /// extension's direct-DB mode) consumes this one contract so the transports cannot drift in what
 /// they disclose.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#query</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
 public interface IApplyStackQuery {
   /// <summary>

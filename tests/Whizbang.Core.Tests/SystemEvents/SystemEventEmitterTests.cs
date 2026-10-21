@@ -627,7 +627,7 @@ public class SystemEventEmitterTests {
   }
 
   [Test]
-  public async Task EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToSystemStreamAsync() {
+  public async Task EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToTheNoTenantAuditLedgerAsync() {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
@@ -647,11 +647,11 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
   }
 
   [Test]
-  public async Task EmitAsync_WithCommandAudited_WhenAuditEnabled_AppendsToSystemStreamAsync() {
+  public async Task EmitAsync_WithCommandAudited_WhenAuditEnabled_AppendsToTheNoTenantAuditLedgerAsync() {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
@@ -671,7 +671,7 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
   }
 
   [Test]
@@ -707,7 +707,7 @@ public class SystemEventEmitterTests {
   #region EmitEventAuditedAsync Happy Path Tests
 
   [Test]
-  public async Task EmitEventAuditedAsync_WithEnabledAudit_EmitsEventAuditedToSystemStreamAsync() {
+  public async Task EmitEventAuditedAsync_WithEnabledAudit_EmitsEventAuditedToTheAuditLedgerAsync() {
     // Arrange - Use string as TEvent since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
@@ -722,7 +722,7 @@ public class SystemEventEmitterTests {
 
     // Assert - EventAudited was emitted to the system stream
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
 
     var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
     await Assert.That(emittedEnvelope).IsNotNull();
@@ -895,7 +895,7 @@ public class SystemEventEmitterTests {
   #region EmitCommandAuditedAsync Happy Path Tests
 
   [Test]
-  public async Task EmitCommandAuditedAsync_WithEnabledAudit_EmitsCommandAuditedToSystemStreamAsync() {
+  public async Task EmitCommandAuditedAsync_WithEnabledAudit_EmitsCommandAuditedToTheAuditLedgerAsync() {
     // Arrange - Use string as TCommand since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
@@ -906,7 +906,7 @@ public class SystemEventEmitterTests {
 
     // Assert
     await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
-    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(AuditLedger.StreamFor(null));
 
     var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
     await Assert.That(emittedEnvelope).IsNotNull();

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
@@ -314,6 +315,24 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => new ScopedLensFactory(provider, accessor, options, null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullLoggerOrMetrics_ThrowsAsync() {
+    // The reporting constructor is the one the container uses; a missing logger or meter there is a wiring
+    // fault, not a request for silence (the four-argument constructor is how a caller asks for that).
+    var provider = new ServiceCollection().BuildServiceProvider();
+    var accessor = new ScopeContextAccessor();
+    var options = new LensOptions();
+    var emitter = new NullSystemEventEmitter();
+    var metrics = new EventCategoryMetrics(new WhizbangMetrics(
+      meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>()));
+
+    await Assert.That(() => new ScopedLensFactory(provider, accessor, options, emitter, null!, metrics))
+      .ThrowsExactly<ArgumentNullException>();
+    await Assert.That(() => new ScopedLensFactory(provider, accessor, options, emitter,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ScopedLensFactory>.Instance, null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 

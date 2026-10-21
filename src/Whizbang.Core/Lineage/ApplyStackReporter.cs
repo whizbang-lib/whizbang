@@ -13,7 +13,7 @@ namespace Whizbang.Core.Lineage;
 /// <param name="Reason">Why it did not, when <paramref name="Available"/> is false.</param>
 /// <param name="Signatures">The path signatures, heaviest first, when available.</param>
 /// <param name="Flow">The anchored flow view, when an anchor was requested and the query answered.</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#unavailable</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackReporterTests.cs</tests>
 public sealed record ApplyStackReport(
   bool Available,
@@ -28,7 +28,7 @@ public sealed record ApplyStackReport(
 /// <param name="Available">Whether the query surface answered.</param>
 /// <param name="Reason">Why it did not, when <paramref name="Available"/> is false.</param>
 /// <param name="Streams">The stream ids behind the path, when available.</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#unavailable</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackReporterTests.cs</tests>
 public sealed record ApplyStackStreamsReport(
   bool Available,
@@ -40,7 +40,7 @@ public sealed record ApplyStackStreamsReport(
 /// projection behind the minimal-API, FastEndpoints, and HotChocolate surfaces, so the transports
 /// cannot drift apart in what they disclose (the same pattern the startup status surface uses).
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackReporterTests.cs</tests>
 public static class ApplyStackReporter {
   /// <summary>

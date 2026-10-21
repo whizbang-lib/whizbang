@@ -358,6 +358,34 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("An unknown event id has no version.");
   }
 
+  [Test]
+  public async Task GetStreamCloseTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync() {
+    // #1504: the closer reads the events a close is about to truncate before it truncates them, so the
+    // destruction-stage receptors can be handed them. Exactly the close's range: this stream, at/below the point.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+    var coordinator = _coordinator(dbContext);
+
+    var streamId = Guid.NewGuid();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    await _commitAsync(connection, first, streamId, "Whizbang.Tests.LedgerEntry");                    // v1
+    await _commitAsync(connection, second, streamId, "Whizbang.Tests.LedgerAdjusted");                // v2
+    await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");           // v3, survives
+    await _commitAsync(connection, Guid.NewGuid(), Guid.NewGuid(), "Whizbang.Tests.LedgerEntry");     // another stream
+
+    var targets = await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamCloseTargetsAsync(streamId, throughVersion: 2);
+
+    await Assert.That(targets.Select(t => t.EventId)).IsEquivalentTo([first, second], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Every event at or below the close point, in version order, and nothing above it or from another stream.");
+    await Assert.That(targets.Select(t => t.EventType)).IsEquivalentTo(
+      ["Whizbang.Tests.LedgerEntry", "Whizbang.Tests.LedgerAdjusted"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Each target carries its stored type name, which picks the destruction-stage receptors.");
+    await Assert.That(targets.All(t => t.StreamId == streamId)).IsTrue();
+    await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamCloseTargetsAsync(Guid.NewGuid(), throughVersion: 2)).IsEmpty()
+      .Because("A stream with no events has nothing to close.");
+  }
+
   private static async Task<long> _eventExistsAsync(NpgsqlConnection connection, Guid eventId) {
     await using var v = connection.CreateCommand();
     v.CommandText = "SELECT count(*) FROM wh_event_store WHERE event_id = @id";

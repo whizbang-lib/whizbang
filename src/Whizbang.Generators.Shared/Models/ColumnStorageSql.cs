@@ -20,6 +20,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// <param name="AutovacuumInsertScaleFactor">The table's <c>autovacuum_vacuum_insert_scale_factor</c>, or null.</param>
 /// <param name="ToastAutovacuumVacuumThreshold">The TOAST relation's <c>autovacuum_vacuum_threshold</c>, or null.</param>
 /// <param name="ToastAutovacuumVacuumScaleFactor">The TOAST relation's <c>autovacuum_vacuum_scale_factor</c>, or null.</param>
+/// <param name="FillFactor">The table's <c>fillfactor</c>, or null.</param>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
 public sealed record TableStorageInfo(
     string? DataCompression,
@@ -29,7 +30,8 @@ public sealed record TableStorageInfo(
     int? AutovacuumInsertThreshold = null,
     double? AutovacuumInsertScaleFactor = null,
     int? ToastAutovacuumVacuumThreshold = null,
-    double? ToastAutovacuumVacuumScaleFactor = null) {
+    double? ToastAutovacuumVacuumScaleFactor = null,
+    int? FillFactor = null) {
   private const string ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveTableStorageAttribute";
 
   /// <summary>The model's declared table storage, or null when it declares none.</summary>
@@ -44,26 +46,31 @@ public sealed record TableStorageInfo(
     var arguments = attribute.NamedArguments;
     object? Argument(string name) => arguments.FirstOrDefault(a => a.Key == name).Value.Value;
 
-    // A threshold or scale factor below 0 is the attribute's "server default"; a value of another type is ignored.
+    // Only a value PostgreSQL accepts is read: a negative one is the attribute's "server default", one out of range
+    // is reported by the analyzer (WHIZ804) rather than failing the schema pass, and one of another type is ignored.
     return new TableStorageInfo(
       ColumnStorageSql.CompressionName(Argument("DataCompression")),
-      _whole(Argument("ToastTupleTarget"), minimum: 1),
-      AutovacuumVacuumThreshold: _whole(Argument("AutovacuumVacuumThreshold"), minimum: 0),
-      AutovacuumVacuumScaleFactor: _factor(Argument("AutovacuumVacuumScaleFactor")),
-      AutovacuumInsertThreshold: _whole(Argument("AutovacuumInsertThreshold"), minimum: 0),
-      AutovacuumInsertScaleFactor: _factor(Argument("AutovacuumInsertScaleFactor")),
-      ToastAutovacuumVacuumThreshold: _whole(Argument("ToastAutovacuumVacuumThreshold"), minimum: 0),
-      ToastAutovacuumVacuumScaleFactor: _factor(Argument("ToastAutovacuumVacuumScaleFactor")));
+      _whole(Argument, TableStorageRange.ToastTupleTarget),
+      AutovacuumVacuumThreshold: _whole(Argument, TableStorageRange.AutovacuumVacuumThreshold),
+      AutovacuumVacuumScaleFactor: _factor(Argument, TableStorageRange.AutovacuumVacuumScaleFactor),
+      AutovacuumInsertThreshold: _whole(Argument, TableStorageRange.AutovacuumInsertThreshold),
+      AutovacuumInsertScaleFactor: _factor(Argument, TableStorageRange.AutovacuumInsertScaleFactor),
+      ToastAutovacuumVacuumThreshold: _whole(Argument, TableStorageRange.ToastAutovacuumVacuumThreshold),
+      ToastAutovacuumVacuumScaleFactor: _factor(Argument, TableStorageRange.ToastAutovacuumVacuumScaleFactor),
+      FillFactor: _whole(Argument, TableStorageRange.FillFactor));
   }
 
-  private static int? _whole(object? value, int minimum) => value is int number && number >= minimum ? number : null;
+  private static int? _whole(System.Func<string, object?> argument, TableStorageRange range) =>
+    argument(range.Property) is int number && range.Accepts(number) ? number : null;
 
-  private static double? _factor(object? value) => value is double factor && factor >= 0 ? factor : null;
+  private static double? _factor(System.Func<string, object?> argument, TableStorageRange range) =>
+    argument(range.Property) is double factor && range.Accepts(factor) ? factor : null;
 }
 
 /// <summary>
 /// The schema-pass statements that apply a column's or a table's declared storage options: <c>SET STORAGE</c>,
-/// <c>SET COMPRESSION</c>, <c>toast_tuple_target</c>, and a size budget as a check constraint.
+/// <c>SET COMPRESSION</c>, <c>toast_tuple_target</c>, <c>fillfactor</c>, the autovacuum settings, and a size budget
+/// as a check constraint.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -72,7 +79,8 @@ public sealed record TableStorageInfo(
 /// </para>
 /// <para>
 /// None of these rewrites existing rows: storage and compression apply to values written from then on, and the
-/// size constraint is added <c>NOT VALID</c>, so rows already stored are not scanned.
+/// size constraint is added <c>NOT VALID</c>, so rows already stored are not scanned. A changed fillfactor queues a
+/// rewrite request for the maintenance worker instead of rewriting the table during the pass.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
@@ -157,6 +165,10 @@ public static class ColumnStorageSql {
       yield return SetToastTupleTarget(qualifiedTable, target);
     }
 
+    if (storage?.FillFactor is { } fillFactor) {
+      yield return SetFillFactor(qualifiedTable, fillFactor);
+    }
+
     if (storage is null) {
       yield break;
     }
@@ -220,7 +232,37 @@ public static class ColumnStorageSql {
   /// <param name="name">The parameter, such as <c>autovacuum_vacuum_threshold</c> or <c>toast.autovacuum_vacuum_threshold</c>.</param>
   /// <param name="value">The value, rendered as PostgreSQL stores it.</param>
   /// <returns>The statement.</returns>
-  public static string SetStorageParameter(string qualifiedTable, string name, string value) {
+  public static string SetStorageParameter(string qualifiedTable, string name, string value) =>
+    _setStorageParameter(qualifiedTable, name, value, whenChanged: "");
+
+  /// <summary>
+  /// The table's <c>fillfactor</c>, when its storage parameters do not already say so, and then a rewrite request
+  /// for a table that has pages: a changed fillfactor applies only to the pages written from then on, so the rows
+  /// already stored stay packed to the old value until the table is rewritten.
+  /// </summary>
+  /// <remarks>
+  /// The request goes through <c>wh_request_table_rewrite</c> in the table's own schema and names the bare table, as
+  /// the rewriter lists the tables it measures. A restart that finds the value in place queues nothing, and neither
+  /// does a table created empty.
+  /// </remarks>
+  /// <param name="qualifiedTable">The table as the statement names it, with or without its schema.</param>
+  /// <param name="fillFactor">The fillfactor, 10 to 100.</param>
+  /// <returns>The statement.</returns>
+  /// <docs>fundamentals/perspectives/physical-fields#perspective-fillfactor</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ColumnStorageSqlTests.cs:SetFillFactor_QueuesARewriteOnlyWhenTheValueChangesOnATableWithPagesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/JsonbColumnStorageIntegrationTests.cs:AChangedFillFactor_OnATableWithRows_QueuesOneRewriteAsync</tests>
+  public static string SetFillFactor(string qualifiedTable, int fillFactor) {
+    // The schema prefix, if any, ends at the last dot: generated table names never contain one.
+    var split = qualifiedTable.LastIndexOf('.') + 1;
+    var schemaPrefix = qualifiedTable[..split];
+    var table = qualifiedTable[split..];
+    return _setStorageParameter(qualifiedTable, "fillfactor", fillFactor.ToString(CultureInfo.InvariantCulture),
+      whenChanged: $"    IF pg_relation_size('{qualifiedTable}'::regclass) > 0 THEN\n"
+        + $"      PERFORM {schemaPrefix}wh_request_table_rewrite('{table}');\n"
+        + "    END IF;\n");
+  }
+
+  private static string _setStorageParameter(string qualifiedTable, string name, string value, string whenChanged) {
     const string TOAST_PREFIX = "toast.";
     var held = name.StartsWith(TOAST_PREFIX, System.StringComparison.Ordinal)
       ? $"  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_class toast ON toast.oid = c.reltoastrelid WHERE c.oid = '{qualifiedTable}'::regclass\n"
@@ -230,6 +272,7 @@ public static class ColumnStorageSql {
     return DO_BEGIN
       + held
       + $"    ALTER TABLE {qualifiedTable} SET ({name} = {value});\n"
+      + whenChanged
       + END_IF
       + DO_END;
   }

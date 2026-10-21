@@ -64,6 +64,10 @@ public sealed record CommandAudited : ISystemEvent {
   /// <summary>
   /// JSON representation of the command body.
   /// </summary>
+  /// <remarks>
+  /// A command implementing <see cref="IBoundedCommandAudit"/> is recorded with the length of each id list it names
+  /// in place of the list (#1525).
+  /// </remarks>
   public required JsonElement CommandBody { get; init; }
 
   /// <summary>

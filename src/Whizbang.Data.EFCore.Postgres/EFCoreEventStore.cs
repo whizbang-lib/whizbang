@@ -7,8 +7,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
+using NpgsqlTypes;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
@@ -33,6 +36,8 @@ public sealed class EFCoreEventStore<TDbContext>(
   JsonSerializerOptions? jsonOptions = null,
   ILogger<EFCoreEventStore<TDbContext>>? logger = null) : IEventStore
   where TDbContext : DbContext {
+
+  private const string APPEND_EVENT_FUNCTION = "wh_append_event";
 
   private readonly TDbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
@@ -91,9 +96,12 @@ public sealed class EFCoreEventStore<TDbContext>(
 
   /// <summary>
   /// Appends an event to the specified stream.
-  /// Assigns the next sequence number automatically.
-  /// Ensures optimistic concurrency through unique constraint on (StreamId, Sequence).
+  /// The database assigns the next version under the stream's advisory lock (<c>wh_append_event</c>,
+  /// migration 224), so concurrent appends to one stream serialize rather than collide (#1555).
+  /// Pending changes tracked by the context are saved first, as the append always flushed them.
   /// </summary>
+  /// <docs>fundamentals/events/event-store#appending-and-concurrency</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreConcurrentAppendTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
   public Task AppendAsync<TMessage>(
@@ -130,56 +138,63 @@ public sealed class EFCoreEventStore<TDbContext>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken) {
-    // Get the next sequence number for this stream
-    var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
-    var nextSequence = lastSequence + 1;
-
-    // Serialize envelope.Payload to JsonElement for type-erased storage
+    // Serialize envelope.Payload for type-erased storage
     var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
     var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
-    var eventData = JsonDocument.Parse(eventDataJson).RootElement;
 
-    // Create envelope metadata directly - EF Core will serialize via POCO mapping
+    // Envelope metadata is bound as the same POCO EF Core's jsonb mapping wrote, so the stored
+    // document is produced by the same serializer as before (the data source's JSON options).
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
       Hops = envelope.Hops?.ToList() ?? []
     };
 
-    var record = new EventStoreRecord {
-      Id = envelope.MessageId.Value,  // Use MessageId from envelope as event_id (matches outbox message_id)
-      StreamId = streamId,
-      AggregateId = streamId,  // Backwards compatibility: AggregateId = StreamId
-      // CLR full type name (no assembly, '+'-nested) via the shared formatter — identical across
-      // EF Core and Dapper stores and matchable by IEventTypeRenameTool's clr_type_name UPDATE.
-      AggregateType = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)),
-      Version = (int)nextSequence,  // Version for optimistic concurrency
-      // Use centralized formatter for consistent type name format across all event stores
-      // Format: "TypeName, AssemblyName" (medium form)
-      // This matches wh_message_associations format and enables auto-checkpoint creation
-      // Fuzzy matching in migration 006 handles AssemblyQualifiedName (long form) differences
-      EventType = TypeNameFormatter.Format(typeof(TMessage)),
-      // Full split (#13b4-2 / migration 077): the pointer is narrow — the body lives in wh_event_body.
-      EventData = null,
-      Metadata = null,
-      CreatedAt = DateTime.UtcNow
-    };
-    var body = new EventBodyRecord {
-      EventId = record.Id,
-      EventData = eventData,
-      Metadata = metadata,
-    };
-
-    await _context.Set<EventStoreRecord>().AddAsync(record, cancellationToken);
-    await _context.Set<EventBodyRecord>().AddAsync(body, cancellationToken);
-
-    try {
+    // The append used to ride SaveChangesAsync, which also flushed whatever else the shared, scoped
+    // context was tracking. Callers may depend on that, so pending changes are still saved first.
+    if (_context.ChangeTracker.HasChanges()) {
       await _context.SaveChangesAsync(cancellationToken);
-    } catch (DbUpdateException ex) when (_isDuplicateKeyException(ex)) {
-      // Concurrent append detected - optimistic concurrency failure
+    }
+
+    var eventId = envelope.MessageId.Value;  // event_id = the envelope's MessageId (matches outbox message_id)
+    var functionName = EFCoreWorkCoordinator<TDbContext>.BuildSchemaQualifiedName(
+      EFCoreWorkCoordinator<TDbContext>.ResolveSchema(_context.Model, typeof(EventStoreRecord), logger: null),
+      APPEND_EVENT_FUNCTION);
+
+    // The database assigns the version under the stream's advisory lock, the lock the emit chain
+    // takes (migration 224, #1555), so concurrent appends to one stream serialize instead of
+    // colliding on (stream_id, version). The command runs on the context's connection and in its
+    // current transaction, so an ambient transaction covers the append.
+    await _context.Database.OpenConnectionAsync(cancellationToken);
+    try {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
+#pragma warning disable S2077 // The function name is schema-qualified from the EF model, never from input.
+      command.CommandText = $"SELECT {functionName}(@p_event_id, @p_stream_id, @p_aggregate_id, @p_aggregate_type, @p_event_type, @p_event_data, @p_metadata, @p_scope, @p_created_at)";
+#pragma warning restore S2077
+      command.Parameters.Add(new NpgsqlParameter("p_event_id", NpgsqlDbType.Uuid) { Value = eventId });
+      command.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlDbType.Uuid) { Value = streamId });
+      // Backwards compatibility: AggregateId = StreamId
+      command.Parameters.Add(new NpgsqlParameter("p_aggregate_id", NpgsqlDbType.Uuid) { Value = streamId });
+      // CLR full type name (no assembly, '+'-nested) via the shared formatter: identical across
+      // EF Core and Dapper stores and matchable by IEventTypeRenameTool's clr_type_name UPDATE.
+      command.Parameters.Add(new NpgsqlParameter("p_aggregate_type", NpgsqlDbType.Text) { Value = TypeNameFormatter.FormatClrTypeName(typeof(TMessage)) });
+      // "TypeName, AssemblyName" (medium form), matching wh_message_associations.
+      command.Parameters.Add(new NpgsqlParameter("p_event_type", NpgsqlDbType.Text) { Value = TypeNameFormatter.Format(typeof(TMessage)) });
+      command.Parameters.Add(new NpgsqlParameter("p_event_data", NpgsqlDbType.Jsonb) { Value = eventDataJson });
+      command.Parameters.Add(new NpgsqlParameter("p_metadata", NpgsqlDbType.Jsonb) { Value = metadata });
+      // This store never wrote the scope column; the scope travels in the hops.
+      command.Parameters.Add(new NpgsqlParameter("p_scope", NpgsqlDbType.Jsonb) { Value = DBNull.Value });
+      command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
+      await command.ExecuteScalarAsync(cancellationToken);
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
+      // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(
-        $"Concurrent modification detected for stream {streamId} at sequence {nextSequence}. " +
-        "Another process has already appended to this stream.",
+        $"Event {eventId} was not appended to stream {streamId}: it violates unique constraint '{ex.ConstraintName}'. " +
+        "Versions are assigned by the database under the stream's lock, so this is not a concurrent append; " +
+        "an event with this id is already stored.",
         ex);
+    } finally {
+      await _context.Database.CloseConnectionAsync();
     }
 
     // NOTE: Inline perspective invocation removed - perspectives are now processed via PerspectiveWorker
@@ -621,17 +636,6 @@ public sealed class EFCoreEventStore<TDbContext>(
     HostName = Environment.MachineName,
     ProcessId = Environment.ProcessId,
   };
-
-  /// <summary>
-  /// Checks if the exception is due to a duplicate key constraint violation.
-  /// PostgreSQL uses error code 23505 for unique constraint violations.
-  /// </summary>
-  private static bool _isDuplicateKeyException(DbUpdateException ex) {
-    // Check for PostgreSQL unique constraint violation
-    // The error message typically contains "23505" or "duplicate key"
-    return ex.InnerException?.Message.Contains("23505") == true ||
-           ex.InnerException?.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true;
-  }
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeserializeStreamEventsTests.cs:DeserializeStreamEvents_WhenEventDataIsCorrupt_LogsWarningAndKeepsGoodEventsAsync</tests>
