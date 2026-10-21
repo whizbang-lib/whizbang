@@ -304,6 +304,8 @@ public class EventTypeBytesSamplerTests {
 
     public bool IsReady => false;
 
+    public void MarkReady() => throw new NotSupportedException("this gate never opens");
+
     public Task WaitForReadyAsync(CancellationToken cancellationToken) {
       _waiting.TrySetResult();
       return Task.Delay(Timeout.Infinite, cancellationToken);
