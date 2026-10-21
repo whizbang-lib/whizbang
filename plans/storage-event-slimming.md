@@ -267,15 +267,35 @@ stops growing; only traces and counters grow.
 - **Reconstruction.** Slim row + trace + route rebuilds an event's full metadata losslessly while its
   trace is retained. After that, slim row + route still gives the event's full route, without that
   message's instance, trace parent and timings.
-- **The persistent `ITraceStore`.** `ITraceStore` (`src/Whizbang.Core/Observability/ITraceStore.cs`)
-  already has the read contract: by message, correlation, causal chain and time range, returning full
-  envelopes. Its only implementation is in memory. A Postgres implementation reads staging, then
-  traces + routes, then slim, so correlation and causal-chain queries work across instances and
-  restarts. It is filled where events are stored (the emit chains and direct appends), not from
-  `Dispatcher.StoreAsync`, which most stored events never pass through. Route queries ("which routes
-  does this event type take, how often, how fast") are new read methods on the same store, and the
-  apply-stack view links an apply path (`wh_apply_paths`) to the routes behind it, so routes extend
-  the existing lineage view rather than standing beside it.
+- **Two stores that work together: `IRouteStore` and `ITraceStore`.**
+  - **`IRouteStore`** (new, `Whizbang.Core.Observability`): the architecture view, long-lived.
+    - `GetRouteAsync(routeId)`: the normalized path.
+    - `GetRoutesAsync(eventType)`: the routes a type takes.
+    - `GetRoutesForApplyPathAsync(...)`: the routes behind an apply path (`wh_apply_paths`).
+    - Each route comes with its statistics: occurrences, first and last seen, durations.
+    - Read by dashboards and the apply-stack view, so routes extend the existing lineage view rather
+      than standing beside it.
+  - **`ITraceStore`** (existing, `src/Whizbang.Core/Observability/ITraceStore.cs`): individual
+    occurrences, short-lived.
+    - Its contract is unchanged: by message, correlation, causal chain and time range, returning full
+      envelopes. The in-memory implementation and any custom one stay valid.
+    - One addition, `GetRouteIdAsync(messageId)`, steps from a trace to its route. It is a default
+      interface method returning null, so existing implementations need no change.
+  - **How they combine.** Trace reconstruction depends on routes, never the reverse:
+    - The Postgres `ITraceStore` rebuilds a full envelope from the staged form while it exists, then
+      from the slim row + the trace + `IRouteStore.GetRouteAsync(routeId)`, then from the slim row
+      alone.
+    - After a trace ages out, the slim row's route id still answers "how did this event get here"
+      through `IRouteStore` alone.
+  - **Implementation and registration.**
+    - One Postgres class implements both over the same tables, registered separately so a host can use
+      either alone. Examples: the in-memory trace store with no routes, or Postgres routes with no
+      trace store.
+    - Both are filled where events are stored (the emit chains and direct appends), not from
+      `Dispatcher.StoreAsync`, which most stored events never pass through.
+  - **Why separate.** Different lifetimes (routes about a year after last seen, traces about 30 days),
+    different readers (architecture questions and message debugging), and `ITraceStore` keeps its
+    existing shape.
 - **Retention**, each its own window, all configurable (defaults shown). Reaped by
   `reap_unbounded_ledgers` (migration 221) and the partition manager. Skipped under debug mode.
   Settings bridged by `RetentionSettingsBridge`.
@@ -292,8 +312,10 @@ stops growing; only traces and counters grow.
   - Each retention window deletes only what is past it.
   - Debug mode skips reaping.
   - The Postgres `ITraceStore` answers every query of the in-memory one on the same corpus.
-- **Docs.** `v1.0.0/fundamentals/persistence/observability.md` (persistent trace store, routes and
-  traces); configuration reference; the apply-stack page (routes behind a path).
+  - `IRouteStore` returns the same route, with the same counts, whether the trace is still retained or has aged out.
+  - A host can register either store alone and the other is never required.
+- **Docs.** `v1.0.0/fundamentals/persistence/observability.md` (`IRouteStore` and `ITraceStore`, routes
+  and traces); configuration reference; the apply-stack page (routes behind a path).
 - **Related defect.** `InMemoryTraceStore` is registered by default, every dispatch adds a whole
   envelope, nothing evicts or reads it: unbounded memory in every service. Tracked in #1601; the
   Postgres store becomes the production option.
