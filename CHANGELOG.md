@@ -13,13 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
-  handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
-  its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
-  (WHIZS001-004) that suppresses those four rules on exactly that parameter, in the IDE and in the build. The
-  `ICollectiveQuery` parameter was already optional; `[CollectiveApplyFor]` now documents both accepted shapes, so a
-  handler that does not read the query leaves it out. The type registry and the collective generator now share one
-  definition of a handler, so a method the generator rejects no longer has its first parameter listed as an event.
+#### Storage
+- **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
+  (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
+  schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
+  integrity ledger (`integrity_ledger_max_entries`, default 100000, through the trim that had no caller). Deletes run
+  in batches and are skipped under `debug_mode`. Each window is settable under
+  `Whizbang:Workers:Maintenance:Retention` (`LogDays`, `ScheduleRunDays`, `StreamPurgeAuditDays`,
+  `IntegrityLedgerMaxEntries`) and published to `wh_settings` by the retention settings bridge.
+
 #### Startup
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and
@@ -142,6 +144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
+  handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
+  its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
+  (WHIZS001-004) that suppresses those four rules on exactly that parameter, in the IDE and in the build. The
+  `ICollectiveQuery` parameter was already optional; `[CollectiveApplyFor]` now documents both accepted shapes, so a
+  handler that does not read the query leaves it out. The type registry and the collective generator now share one
+  definition of a handler, so a method the generator rejects no longer has its first parameter listed as an event.
 - **OpenTelemetry metrics** — instrumentation across the dispatch, workers, coordinator, perspectives,
   transport, and lifecycle meters.
 - **`whizbang migrate` CLI** — Marten/Wolverine migration analyzers + transformers (JSONB LINQ,
@@ -344,6 +353,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
+  (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
+  it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the
+  perspective tables, as the EF Core driver does. Declared retention windows are now adopted and swept, and the
+  row-eviction cleanup finds each model's perspectives. The payload is built by one shared builder for both drivers.
+  That builder now describes a vector field's index with the method the field names (`hnsw` or `ivfflat`), and no
+  index for `None`, as the table DDL does; an EF Core table with such a field reports schema drift once after upgrading,
+  as its recorded description is corrected.
 - **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
   origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
   as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.

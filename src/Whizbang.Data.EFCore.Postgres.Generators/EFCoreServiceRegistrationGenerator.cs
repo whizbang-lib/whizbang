@@ -44,8 +44,6 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
-  // The column type every timestamp column in the emitted schema uses.
-  private const string TIMESTAMPTZ = "timestamptz";
 
   private const string DIAGNOSTIC_CATEGORY = "Whizbang.Generator";
   private const string EFCORE_GENERATOR_ERROR_TITLE = "EFCore Generator Error";
@@ -3780,7 +3778,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates perspective registry JSON for CLR type → table name tracking.
   /// Used by reconcile_perspective_registry() function for schema drift detection, and to record which
-  /// perspectives fold each model (one entry per perspective, issue #1483).
+  /// perspectives fold each model (one entry per perspective, issue #1483). Built by the shared
+  /// <see cref="PerspectiveRegistryPayload"/>, so the Dapper driver registers the same hashes.
   /// </summary>
   /// <param name="perspectives">List of perspectives to register</param>
   /// <param name="serviceName">Assembly name for service identification</param>
@@ -3793,127 +3792,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return "\"[]\"";  // Empty JSON array as C# string literal
     }
 
-    var sb = new StringBuilder();
-    sb.Append('[');
-
-    for (int i = 0; i < perspectives.Count; i++) {
-      if (i > 0) {
-        sb.Append(',');
-      }
-      _appendPerspectiveRegistryEntry(sb, perspectives[i], serviceName);
-    }
-
-    sb.Append(']');
+    var entries = perspectives.ConvertAll(p => new PerspectiveRegistryEntry(
+      p.ModelClrTypeName, p.TableName, p.PerspectiveClrTypeName, p.PhysicalFields,
+      p.DocumentMatching.BuildsDataIndex, p.DocumentMatching.BuildsMetadataIndex));
+    var json = PerspectiveRegistryPayload.ToJson(entries, serviceName, _getPostgresColumnType);
 
     // Escape for C# string literal (double the quotes)
-    var json = sb.ToString().Replace("\"", "\\\"");
-    return $"\"{json}\"";
-  }
-
-  private static void _appendPerspectiveRegistryEntry(StringBuilder sb, PerspectiveModelInfo perspective, string serviceName) {
-    var schemaColumns = _buildPerspectiveSchemaColumns(perspective);
-    var schemaIndexes = _buildPerspectiveSchemaIndexes(perspective);
-
-    var tableSchema = new PerspectiveTableSchema(schemaColumns, schemaIndexes);
-    var schemaJson = SchemaHashUtilities.ToCanonicalJson(tableSchema);
-    var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
-
-    sb.Append('{');
-    // The registry key is the CLR form (Outer+Model), the same form the runtime looks it up by
-    // (TypeNameFormatter.FormatClrTypeName). A display-string rendering (Outer.Model) matched
-    // nothing for nested models and left row retention silently un-enrolled (issue #697).
-    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelClrTypeName)}\",");
-    sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
-    sb.Append($"\"SchemaJson\":{schemaJson},");
-    sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
-    sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\",");
-    // The perspective that folds this model, in the CLR form its cursors and snapshots are keyed by
-    // (TypeNameUtilities.BuildClrTypeName at discovery). One entry per perspective, so a model folded by
-    // two perspectives names both; the reconcile records them for the row-eviction cleanup (issue #1483).
-    sb.Append($"\"PerspectiveName\":\"{_escapeJsonString(perspective.PerspectiveClrTypeName)}\"");
-    sb.Append('}');
-  }
-
-  private static List<ColumnSchema> _buildPerspectiveSchemaColumns(PerspectiveModelInfo perspective) {
-    var schemaColumns = new List<ColumnSchema> {
-      new("id", "uuid", false, true, false, null),
-      new("data", "jsonb", false, false, false, null),
-      new("metadata", "jsonb", false, false, false, null),
-      new("scope", "jsonb", false, false, false, null),
-      new("created_at", TIMESTAMPTZ, false, false, false, null),
-      new("updated_at", TIMESTAMPTZ, false, false, false, null),
-      new("sys_created_at", TIMESTAMPTZ, true, false, false, null),
-      new("sys_updated_at", TIMESTAMPTZ, true, false, false, null),
-      new("expires_at", TIMESTAMPTZ, true, false, false, null),
-      new("version", "integer", false, false, false, null)
-    };
-
-    foreach (var field in perspective.PhysicalFields) {
-      var postgresType = _getPostgresColumnType(field).ToLowerInvariant();
-      schemaColumns.Add(new ColumnSchema(
-          field.ColumnName,
-          postgresType,
-          true,
-          false,
-          field.IsVector,
-          field.VectorDimensions
-      ));
-    }
-
-    return schemaColumns;
-  }
-
-  private static List<IndexSchema> _buildPerspectiveSchemaIndexes(PerspectiveModelInfo perspective) {
-    var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-    var schemaIndexes = new List<IndexSchema> {
-      new(_indexName($"idx_{shortName}_created_at"), ["created_at"], "btree", false),
-      new(_indexName($"idx_{shortName}_updated_at"), ["updated_at"], "btree", false),
-    };
-    // The same decisions the DDL makes (_standardIndexStatements), so drift detection expects the
-    // indexes the table is meant to have rather than ones this release no longer builds.
-    if (perspective.DocumentMatching.BuildsDataIndex) {
-      schemaIndexes.Add(new(_indexName($"idx_{shortName}_data_gin"), ["data"], "gin", false));
-    }
-    if (perspective.DocumentMatching.BuildsMetadataIndex) {
-      schemaIndexes.Add(new(_indexName($"idx_{shortName}_metadata_gin"), ["metadata"], "gin", false));
-    }
-    schemaIndexes.Add(new(_indexName($"idx_{shortName}_scope_gin"), ["scope"], "gin", false));
-
-    foreach (var field in perspective.PhysicalFields) {
-      if (field.IsContainmentIndexed) {
-        schemaIndexes.Add(new(_indexName($"idx_{shortName}_{field.ColumnName}_gin"), [field.ColumnName], "gin", false));
-      }
-
-      if (!field.IsIndexed) {
-        continue;
-      }
-
-      if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
-        continue;
-      }
-
-      var indexType = field.IsVector ? "ivfflat" : "btree";
-      schemaIndexes.Add(new IndexSchema(
-          _indexName($"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : "")),
-          [field.ColumnName],
-          indexType,
-          false
-      ));
-    }
-
-    return schemaIndexes;
-  }
-
-  /// <summary>
-  /// Escapes a string for use in JSON (handles special characters).
-  /// </summary>
-  private static string _escapeJsonString(string value) {
-    return value
-        .Replace("\\", "\\\\")
-        .Replace("\"", "\\\"")
-        .Replace("\n", "\\n")
-        .Replace("\r", "\\r")
-        .Replace("\t", "\\t");
+    return $"\"{json.Replace("\"", "\\\"")}\"";
   }
 }
 

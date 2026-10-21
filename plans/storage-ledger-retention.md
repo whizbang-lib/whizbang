@@ -126,6 +126,11 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S3. Retention for unbounded ledgers
 
+**Status (2026-10-21):** the four SQL ledgers (`wh_log`, `wh_schedule_runs`, the stream-purge audit, the
+integrity ledger trim) ship in #1572 as migration 221 (`reap_unbounded_ledgers`, called by `perform_maintenance`).
+The `PgDurableSignalRetentionWorker` window is still open as a follow-up.
+
+
 - **Change.** Batched deletes in `perform_maintenance` (edit the latest definition in place;
   `debug_mode`-guarded) for `wh_log` (`log_retention_days`, default 14) and `wh_schedule_runs`
   (`schedule_run_retention_days`, default 30, always keeping the newest run per schedule).

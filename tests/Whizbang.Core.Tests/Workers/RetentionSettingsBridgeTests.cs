@@ -35,6 +35,7 @@ public class RetentionSettingsBridgeTests {
     "debug_mode",
     "dedup_retention_days", "stuck_inbox_retention_days", "dead_letter_retention_days", "abandoned_stream_hours",
     "instance_eviction_retention_hours", "orphan_perspective_grace_hours", "collective_ordering_head_retention_days",
+    "log_retention_days", "schedule_run_retention_days", "stream_purge_audit_retention_days", "integrity_ledger_max_entries",
     "ephemeral_rewind_grace_seconds", "ephemeral_deep_maintenance_enabled",
     "ephemeral_pointer_retention_days", "ephemeral_pointer_prune_interval_days",
   ];
@@ -47,6 +48,10 @@ public class RetentionSettingsBridgeTests {
     InstanceEvictionTombstoneHours = 15,
     OrphanPerspectiveEventGraceHours = 16,
     CollectiveOrderingHeadDays = 17,
+    LogDays = 21,
+    ScheduleRunDays = 22,
+    StreamPurgeAuditDays = 23,
+    IntegrityLedgerMaxEntries = 24,
   };
 
   private static EphemeralOptions _allEphemeralSet() => new() {
@@ -69,6 +74,10 @@ public class RetentionSettingsBridgeTests {
   [Arguments("instance_eviction_retention_hours", "15", "Whizbang:Workers:Maintenance:Retention:InstanceEvictionTombstoneHours")]
   [Arguments("orphan_perspective_grace_hours", "16", "Whizbang:Workers:Maintenance:Retention:OrphanPerspectiveEventGraceHours")]
   [Arguments("collective_ordering_head_retention_days", "17", "Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays")]
+  [Arguments("log_retention_days", "21", "Whizbang:Workers:Maintenance:Retention:LogDays")]
+  [Arguments("schedule_run_retention_days", "22", "Whizbang:Workers:Maintenance:Retention:ScheduleRunDays")]
+  [Arguments("stream_purge_audit_retention_days", "23", "Whizbang:Workers:Maintenance:Retention:StreamPurgeAuditDays")]
+  [Arguments("integrity_ledger_max_entries", "24", "Whizbang:Workers:Maintenance:Retention:IntegrityLedgerMaxEntries")]
   [Arguments("ephemeral_rewind_grace_seconds", "18", "Whizbang:Ephemeral:RewindGraceSeconds")]
   [Arguments("ephemeral_pointer_retention_days", "19", "Whizbang:Ephemeral:PointerPrune:RetentionDays")]
   [Arguments("ephemeral_pointer_prune_interval_days", "20", "Whizbang:Ephemeral:PointerPrune:IntervalDays")]
