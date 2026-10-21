@@ -124,6 +124,9 @@ Each slice is one red-then-green increment and its own commit.
    for each property and for omission; an integration test that the reloptions land. Docs:
    `fundamentals/perspectives/physical-fields.md` (`#jsonb-storage`, where the attribute is
    documented).
+   **Status (2026-10-21):** ships in #1584. A value out of PostgreSQL's range (a scale factor above
+   100) fails the schema pass with the server's error; slice 8's range diagnostic covers these
+   properties too.
 
 ### C3: fillfactor and event-store churn
 

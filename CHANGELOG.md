@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **A perspective table can declare when autovacuum runs (#1584).** `[PerspectiveTableStorage]` gains
+  `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold`,
+  `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema
+  pass of both drivers sets each as a storage parameter where the catalog differs, so a restart takes no lock; a
+  negative value (the default) keeps the server's setting.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the

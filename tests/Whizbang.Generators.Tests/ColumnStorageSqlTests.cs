@@ -165,12 +165,14 @@ public class ColumnStorageSqlTests {
   public async Task NegativeAutovacuumSettings_KeepTheServerDefaultsAsync() {
     var source = MODEL.Replace(
       "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
-      "[PerspectiveTableStorage(AutovacuumVacuumThreshold = -1, AutovacuumVacuumScaleFactor = -1, ToastAutovacuumVacuumThreshold = -5)]",
+      "[PerspectiveTableStorage(AutovacuumVacuumThreshold = -1, AutovacuumVacuumScaleFactor = -1, AutovacuumInsertThreshold = -1, "
+      + "AutovacuumInsertScaleFactor = -0.5, ToastAutovacuumVacuumThreshold = -5, ToastAutovacuumVacuumScaleFactor = -1)]",
       StringComparison.Ordinal);
     var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
     var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
 
-    await Assert.That(sql).DoesNotContain("autovacuum");
+    await Assert.That(sql).DoesNotContain("SET (autovacuum_");
+    await Assert.That(sql).DoesNotContain("SET (toast.autovacuum_");
   }
 
   [Test]

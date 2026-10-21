@@ -14,8 +14,22 @@ namespace Whizbang.Generators.Shared.Models;
 /// </summary>
 /// <param name="DataCompression">The <c>data</c> column's compression method (<c>pglz</c> or <c>lz4</c>), or null.</param>
 /// <param name="ToastTupleTarget">The table's <c>toast_tuple_target</c>, or null.</param>
+/// <param name="AutovacuumVacuumThreshold">The table's <c>autovacuum_vacuum_threshold</c>, or null.</param>
+/// <param name="AutovacuumVacuumScaleFactor">The table's <c>autovacuum_vacuum_scale_factor</c>, or null.</param>
+/// <param name="AutovacuumInsertThreshold">The table's <c>autovacuum_vacuum_insert_threshold</c>, or null.</param>
+/// <param name="AutovacuumInsertScaleFactor">The table's <c>autovacuum_vacuum_insert_scale_factor</c>, or null.</param>
+/// <param name="ToastAutovacuumVacuumThreshold">The TOAST relation's <c>autovacuum_vacuum_threshold</c>, or null.</param>
+/// <param name="ToastAutovacuumVacuumScaleFactor">The TOAST relation's <c>autovacuum_vacuum_scale_factor</c>, or null.</param>
 /// <docs>fundamentals/perspectives/physical-fields#jsonb-storage</docs>
-public sealed record TableStorageInfo(string? DataCompression, int? ToastTupleTarget) {
+public sealed record TableStorageInfo(
+    string? DataCompression,
+    int? ToastTupleTarget,
+    int? AutovacuumVacuumThreshold = null,
+    double? AutovacuumVacuumScaleFactor = null,
+    int? AutovacuumInsertThreshold = null,
+    double? AutovacuumInsertScaleFactor = null,
+    int? ToastAutovacuumVacuumThreshold = null,
+    double? ToastAutovacuumVacuumScaleFactor = null) {
   private const string ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveTableStorageAttribute";
 
   /// <summary>The model's declared table storage, or null when it declares none.</summary>
@@ -27,18 +41,26 @@ public sealed record TableStorageInfo(string? DataCompression, int? ToastTupleTa
       return null;
     }
 
-    string? compression = null;
-    int? target = null;
+    var info = new TableStorageInfo(null, null);
     foreach (var argument in attribute.NamedArguments) {
-      if (argument.Key == "DataCompression") {
-        compression = ColumnStorageSql.CompressionName(argument.Value.Value);
-      } else if (argument.Key == "ToastTupleTarget" && argument.Value.Value is int value && value > 0) {
-        target = value;
-      }
+      info = _with(info, argument.Key, argument.Value.Value);
     }
 
-    return new TableStorageInfo(compression, target);
+    return info;
   }
+
+  // One named argument applied. A threshold or scale factor below 0 is the attribute's "server default".
+  private static TableStorageInfo _with(TableStorageInfo info, string name, object? value) => (name, value) switch {
+    ("DataCompression", _) => info with { DataCompression = ColumnStorageSql.CompressionName(value) },
+    ("ToastTupleTarget", int target) when target > 0 => info with { ToastTupleTarget = target },
+    ("AutovacuumVacuumThreshold", int n) when n >= 0 => info with { AutovacuumVacuumThreshold = n },
+    ("AutovacuumVacuumScaleFactor", double f) when f >= 0 => info with { AutovacuumVacuumScaleFactor = f },
+    ("AutovacuumInsertThreshold", int n) when n >= 0 => info with { AutovacuumInsertThreshold = n },
+    ("AutovacuumInsertScaleFactor", double f) when f >= 0 => info with { AutovacuumInsertScaleFactor = f },
+    ("ToastAutovacuumVacuumThreshold", int n) when n >= 0 => info with { ToastAutovacuumVacuumThreshold = n },
+    ("ToastAutovacuumVacuumScaleFactor", double f) when f >= 0 => info with { ToastAutovacuumVacuumScaleFactor = f },
+    _ => info,
+  };
 }
 
 /// <summary>
@@ -136,7 +158,31 @@ public static class ColumnStorageSql {
     if (storage?.ToastTupleTarget is { } target) {
       yield return SetToastTupleTarget(qualifiedTable, target);
     }
+
+    if (storage is null) {
+      yield break;
+    }
+
+    foreach (var (name, value) in _autovacuumParameters(storage)) {
+      if (value is not null) {
+        yield return SetStorageParameter(qualifiedTable, name, value);
+      }
+    }
   }
+
+  // The declared autovacuum parameters in emission order, each rendered as PostgreSQL stores it, or null.
+  private static IEnumerable<(string Name, string? Value)> _autovacuumParameters(TableStorageInfo storage) {
+    yield return ("autovacuum_vacuum_threshold", _render(storage.AutovacuumVacuumThreshold));
+    yield return ("autovacuum_vacuum_scale_factor", _render(storage.AutovacuumVacuumScaleFactor));
+    yield return ("autovacuum_vacuum_insert_threshold", _render(storage.AutovacuumInsertThreshold));
+    yield return ("autovacuum_vacuum_insert_scale_factor", _render(storage.AutovacuumInsertScaleFactor));
+    yield return ("toast.autovacuum_vacuum_threshold", _render(storage.ToastAutovacuumVacuumThreshold));
+    yield return ("toast.autovacuum_vacuum_scale_factor", _render(storage.ToastAutovacuumVacuumScaleFactor));
+  }
+
+  private static string? _render(int? value) => value?.ToString(CultureInfo.InvariantCulture);
+
+  private static string? _render(double? value) => value?.ToString("R", CultureInfo.InvariantCulture);
 
   /// <summary><c>SET STORAGE</c>, when the column's strategy differs.</summary>
   public static string SetStorage(string qualifiedTable, string column, string storage) =>
@@ -165,12 +211,27 @@ public static class ColumnStorageSql {
     + DO_END;
 
   /// <summary>The table's <c>toast_tuple_target</c>, when its storage parameters do not already say so.</summary>
-  public static string SetToastTupleTarget(string qualifiedTable, int target) {
-    var setting = "toast_tuple_target=" + target.ToString(CultureInfo.InvariantCulture);
+  public static string SetToastTupleTarget(string qualifiedTable, int target) =>
+    SetStorageParameter(qualifiedTable, "toast_tuple_target", target.ToString(CultureInfo.InvariantCulture));
+
+  /// <summary>
+  /// One storage parameter, when the catalog does not already hold that value. A <c>toast.</c> parameter is
+  /// compared against the TOAST relation, where PostgreSQL keeps it without the prefix.
+  /// </summary>
+  /// <param name="qualifiedTable">The table as the statement names it.</param>
+  /// <param name="name">The parameter, such as <c>autovacuum_vacuum_threshold</c> or <c>toast.autovacuum_vacuum_threshold</c>.</param>
+  /// <param name="value">The value, rendered as PostgreSQL stores it.</param>
+  /// <returns>The statement.</returns>
+  public static string SetStorageParameter(string qualifiedTable, string name, string value) {
+    const string TOAST_PREFIX = "toast.";
+    var held = name.StartsWith(TOAST_PREFIX, System.StringComparison.Ordinal)
+      ? $"  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_class toast ON toast.oid = c.reltoastrelid WHERE c.oid = '{qualifiedTable}'::regclass\n"
+        + $"    AND '{name.Substring(TOAST_PREFIX.Length)}={value}' = ANY (coalesce(toast.reloptions, ARRAY[]::text[]))) THEN\n"
+      : $"  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = '{qualifiedTable}'::regclass\n"
+        + $"    AND '{name}={value}' = ANY (coalesce(reloptions, ARRAY[]::text[]))) THEN\n";
     return DO_BEGIN
-      + $"  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = '{qualifiedTable}'::regclass\n"
-      + $"    AND '{setting}' = ANY (coalesce(reloptions, ARRAY[]::text[]))) THEN\n"
-      + $"    ALTER TABLE {qualifiedTable} SET ({setting.Replace("=", " = ")});\n"
+      + held
+      + $"    ALTER TABLE {qualifiedTable} SET ({name} = {value});\n"
       + END_IF
       + DO_END;
   }
