@@ -442,6 +442,12 @@ namespace TestNamespace {
   public record OrderModel {
     [StreamId] public Guid OrderId { get; init; }
   }
+  public record OrderCreatedEvent : IEvent {
+    [StreamId] public Guid OrderId { get; init; }
+  }
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
   public record NotACollectiveEvent { }
   public record WrongReturnCollectiveEvent : CollectiveEventBase { }
 
