@@ -16,17 +16,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 
 /// <summary>
 /// Branch coverage for <see cref="EFCoreEventStore{TDbContext}"/>'s append failure classification
-/// and commit-sequence lookup: only a save failure whose inner error names a unique violation
-/// (by SQLSTATE or by its "duplicate key" text) becomes the concurrent-append error; any other save
-/// failure, with or without an inner error, surfaces unchanged. The commit sequence reads back the
-/// stamped value, or null for an unknown event.
+/// and commit-sequence lookup: only a unique violation (SQLSTATE 23505) becomes the duplicate-event
+/// error, since the database assigns versions under the stream's lock (#1555); any other database
+/// failure, and a failure saving the context's pending changes, surfaces unchanged. The commit
+/// sequence reads back the stamped value, or null for an unknown event.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreEventStore.cs</code-under-test>
 [Category("Shard1")]
 public class EventStoreAppendFailureTests : EFCoreTestBase {
 
   [Test]
-  public async Task Append_RealDuplicateEventId_IsReportedAsAConcurrentAppendAsync() {
+  public async Task Append_RealDuplicateEventId_IsReportedAsADuplicateEvent_NotARaceAsync() {
     await using var context = CreateDbContext();
     var store = new EFCoreEventStore<WorkCoordinationDbContext>(context);
     var streamId = Guid.CreateVersion7();
@@ -37,38 +37,38 @@ public class EventStoreAppendFailureTests : EFCoreTestBase {
     var ex = await Assert.ThrowsAsync<InvalidOperationException>(
       async () => await new EFCoreEventStore<WorkCoordinationDbContext>(second).AppendAsync(streamId, envelope));
 
-    await Assert.That(ex!.Message).Contains("Another process has already appended to this stream");
+    await Assert.That(ex!.Message).Contains("an event with this id is already stored");
+    await Assert.That(ex.Message).DoesNotContain("Concurrent modification")
+      .Because("versions are assigned under the stream's lock, so a unique violation is never a race (#1555)");
+    await Assert.That((ex.InnerException as PostgresException)?.SqlState).IsEqualTo(PostgresErrorCodes.UniqueViolation);
   }
 
-  // A provider whose unique-violation message carries the words but not the SQLSTATE is still a
-  // concurrent append, not an unexplained failure.
+  // Any other database failure is not dressed up as a duplicate.
   [Test]
-  public async Task Append_InnerErrorSaysDuplicateKey_IsReportedAsAConcurrentAppendAsync() {
-    var failure = new DbUpdateException("save failed", new InvalidOperationException("Duplicate KEY value violates unique constraint"));
+  public async Task Append_NonUniqueDatabaseError_SurfacesUnchangedAsync() {
+    await using (var connection = new NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var drop = connection.CreateCommand();
+      drop.CommandText = "SELECT drop_all_overloads('wh_append_event')";
+      await drop.ExecuteNonQueryAsync();
+    }
+    await using var context = CreateDbContext();
 
-    var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await _appendThroughAsync(failure));
+    var ex = await Assert.ThrowsAsync<PostgresException>(
+      async () => await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(Guid.CreateVersion7(), _envelope(Guid.CreateVersion7())));
 
-    await Assert.That(ex!.InnerException).IsSameReferenceAs(failure)
-      .Because("the original save failure is preserved for its diagnostics");
+    await Assert.That(ex!.SqlState).IsEqualTo(PostgresErrorCodes.UndefinedFunction);
   }
 
+  // The append saves the context's pending changes first; when that save fails, it fails as itself.
   [Test]
-  public async Task Append_UnrelatedInnerError_SurfacesUnchangedAsync() {
+  public async Task Append_PendingChangesFailToSave_SurfacesUnchangedAsync() {
     var failure = new DbUpdateException("save failed", new InvalidOperationException("connection reset by peer"));
 
     var ex = await Assert.ThrowsAsync<DbUpdateException>(async () => await _appendThroughAsync(failure));
 
     await Assert.That(ex).IsSameReferenceAs(failure)
-      .Because("a failure that is not a unique violation must not be dressed up as a race");
-  }
-
-  [Test]
-  public async Task Append_NoInnerError_SurfacesUnchangedAsync() {
-    var failure = new DbUpdateException("save failed without an inner error");
-
-    var ex = await Assert.ThrowsAsync<DbUpdateException>(async () => await _appendThroughAsync(failure));
-
-    await Assert.That(ex).IsSameReferenceAs(failure);
+      .Because("a failure that is not the append's own must not be dressed up as one");
   }
 
   [Test]
@@ -97,6 +97,8 @@ public class EventStoreAppendFailureTests : EFCoreTestBase {
       .AddInterceptors(new FailingSaveInterceptor(failure))
       .Options;
     await using var context = new WorkCoordinationDbContext(options);
+    // A pending change, so the append's flush of the context's tracked changes runs and fails.
+    context.Set<MessageDeduplicationRecord>().Add(new MessageDeduplicationRecord { MessageId = Guid.CreateVersion7(), FirstSeenAt = DateTimeOffset.UnixEpoch });
     await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(Guid.CreateVersion7(), _envelope(Guid.CreateVersion7()));
   }
 
