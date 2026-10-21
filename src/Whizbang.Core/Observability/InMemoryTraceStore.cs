@@ -25,6 +25,21 @@ namespace Whizbang.Core.Observability;
 public class InMemoryTraceStore : ITraceStore {
   private readonly ConcurrentDictionary<MessageId, IMessageEnvelope> _traces = new();
 
+  /// <summary>The number of envelopes a store keeps when no capacity is given.</summary>
+  public const int DEFAULT_CAPACITY = 10_000;
+
+  /// <summary>Creates a store that keeps the most recent <see cref="DEFAULT_CAPACITY"/> envelopes.</summary>
+  public InMemoryTraceStore() : this(DEFAULT_CAPACITY) { }
+
+  /// <summary>Creates a store that keeps the most recent <paramref name="capacity"/> envelopes.</summary>
+  public InMemoryTraceStore(int capacity) => throw new NotImplementedException();
+
+  /// <summary>The most envelopes this store keeps.</summary>
+  public int Capacity { get; }
+
+  /// <summary>The number of envelopes held now.</summary>
+  public int Count => _traces.Count;
+
   /// <summary>
   /// Stores a message envelope in the trace store.
   /// </summary>
