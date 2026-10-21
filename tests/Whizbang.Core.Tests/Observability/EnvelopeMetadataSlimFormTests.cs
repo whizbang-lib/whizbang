@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
-using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Observability;
@@ -22,13 +24,18 @@ namespace Whizbang.Core.Tests.Observability;
 /// <docs>messaging/message-envelopes#stored-form</docs>
 [Category("Observability")]
 public class EnvelopeMetadataSlimFormTests {
+  // The options stored metadata is written and read with: the generated contexts plus the id converters.
+  private static readonly JsonSerializerOptions _stored = JsonContextRegistry.CreateCombinedOptions();
   private static readonly DateTimeOffset _sent = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
   private static readonly MessageId _id = MessageId.From(Guid.Parse("01900000-0000-7000-8000-000000000001"));
   private static readonly MessageId _cause = MessageId.From(Guid.Parse("01900000-0000-7000-8000-000000000002"));
   private static readonly CorrelationId _correlation = CorrelationId.FromExternal(Guid.Parse("01900000-0000-7000-8000-000000000003"));
 
   private static readonly ServiceInstanceInfo _instance = new() {
-    ServiceName = "orders", InstanceId = Guid.Parse("01900000-0000-7000-8000-000000000004"), HostName = "host-1", ProcessId = 42,
+    ServiceName = "orders",
+    InstanceId = Guid.Parse("01900000-0000-7000-8000-000000000004"),
+    HostName = "host-1",
+    ProcessId = 42,
   };
 
   private static EnvelopeMetadata _full() => new() {
@@ -38,18 +45,34 @@ public class EnvelopeMetadataSlimFormTests {
     ReceptorInvocations = [],
     Hops = [
       new MessageHop {
-        Type = HopType.Current, ServiceInstance = _instance, Timestamp = _sent, Topic = "orders", StreamId = "order-1",
-        CorrelationId = _correlation, CausationId = _cause, TraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-        CallerMemberName = "Place", CallerFilePath = "/src/Orders.cs", CallerLineNumber = 10, ExecutionStrategy = "Serial",
-        PartitionIndex = 3, SequenceNumber = 7, Duration = TimeSpan.FromMilliseconds(5),
+        Type = HopType.Current,
+        ServiceInstance = _instance,
+        Timestamp = _sent,
+        Topic = "orders",
+        StreamId = "order-1",
+        CorrelationId = _correlation,
+        CausationId = _cause,
+        TraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        CallerMemberName = "Place",
+        CallerFilePath = "/src/Orders.cs",
+        CallerLineNumber = 10,
+        ExecutionStrategy = "Serial",
+        PartitionIndex = 3,
+        SequenceNumber = 7,
+        Duration = TimeSpan.FromMilliseconds(5),
         Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "tenant-a" }),
       },
       new MessageHop {
-        Type = HopType.Causation, ServiceInstance = _instance, Timestamp = _sent.AddSeconds(1),
+        Type = HopType.Causation,
+        ServiceInstance = _instance,
+        Timestamp = _sent.AddSeconds(1),
         Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "causation-tenant" }),
       },
       new MessageHop {
-        Type = HopType.Current, ServiceInstance = _instance, Timestamp = _sent.AddSeconds(2), StreamId = "order-1",
+        Type = HopType.Current,
+        ServiceInstance = _instance,
+        Timestamp = _sent.AddSeconds(2),
+        StreamId = "order-1",
         Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "tenant-a", UserId = "user-b" }),
       },
     ],
@@ -91,18 +114,18 @@ public class EnvelopeMetadataSlimFormTests {
     await Assert.That(slim.DispatchContext).IsNull();
     await Assert.That(slim.ReceptorInvocations).IsNull();
 
-    var json = JsonSerializer.Serialize(slim, InfrastructureJsonContext.Default.EnvelopeMetadata);
+    var json = JsonSerializer.Serialize(slim, _metadataInfo);
     await Assert.That(json).DoesNotContain("\"si\"")
       .Because("an unknown service instance is not written, which is most of a hop's bytes");
-    await Assert.That(json.Length).IsLessThan(JsonSerializer.Serialize(_full(), InfrastructureJsonContext.Default.EnvelopeMetadata).Length / 2);
+    await Assert.That(json.Length).IsLessThan(JsonSerializer.Serialize(_full(), _metadataInfo).Length / 2);
   }
 
   [Test]
   public async Task SlimDocument_RoundTripsThroughTheGeneratedContextAsync() {
     var slim = _full().ToSlim();
 
-    var json = JsonSerializer.Serialize(slim, InfrastructureJsonContext.Default.EnvelopeMetadata);
-    var read = JsonSerializer.Deserialize(json, InfrastructureJsonContext.Default.EnvelopeMetadata)!;
+    var json = JsonSerializer.Serialize(slim, _metadataInfo);
+    var read = JsonSerializer.Deserialize(json, _metadataInfo)!;
 
     await Assert.That(read.MessageId).IsEqualTo(_id);
     await Assert.That(read.Hops.Single().ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
@@ -115,7 +138,8 @@ public class EnvelopeMetadataSlimFormTests {
   public async Task ToSlim_NoHopsOrNoScope_KeepsTheMessageIdAloneAsync() {
     var empty = new EnvelopeMetadata { MessageId = _id, Hops = [] }.ToSlim();
     var unscoped = new EnvelopeMetadata {
-      MessageId = _id, Hops = [new MessageHop { ServiceInstance = _instance, Timestamp = _sent }],
+      MessageId = _id,
+      Hops = [new MessageHop { ServiceInstance = _instance, Timestamp = _sent }],
     }.ToSlim();
 
     await Assert.That(empty.Hops).IsEmpty();
@@ -127,10 +151,13 @@ public class EnvelopeMetadataSlimFormTests {
   public async Task ADocumentWithoutAMessageId_StillFailsAsync() {
     const string json = """{"Hops":[{"ts":"2026-01-01T12:00:00+00:00"}]}""";
 
-    await Assert.That(() => JsonSerializer.Deserialize(json, InfrastructureJsonContext.Default.EnvelopeMetadata))
+    await Assert.That(() => JsonSerializer.Deserialize(json, _metadataInfo))
       .Throws<JsonException>()
       .Because("the message id is how every reader finds the event; a document without one is corrupt, slim or not");
   }
+
+  private static JsonTypeInfo<EnvelopeMetadata> _metadataInfo =>
+    (JsonTypeInfo<EnvelopeMetadata>)_stored.GetTypeInfo(typeof(EnvelopeMetadata));
 
   private static MessageEnvelope<JsonElement> _envelope(EnvelopeMetadata metadata) => new() {
     MessageId = metadata.MessageId,

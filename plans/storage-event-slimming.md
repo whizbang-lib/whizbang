@@ -166,6 +166,11 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
   causation as over the full one; a document missing `MessageId` still fails loudly.
 - **Docs.** `v1.0.0/messaging/message-envelopes.md` (stored versus wire form).
 - **Config.** None.
+- **Status (2026-10-21):** ships in #1586 as `EnvelopeMetadata.ToSlim()`. Correction to the list above:
+  readers take the message timestamp, correlation and causation from the **first** hop
+  (`MessageEnvelope.GetMessageTimestamp`, `GetCorrelationId`, `GetCausationId`), so the slim hop copies
+  them from there, not from the last hop. The scope is folded over every Current hop into one delta.
+  `ServiceInstance` stays `required`; a missing `si` reads as `ServiceInstanceInfo.Unknown`.
 
 ### S9. A3b: slim at write time
 
