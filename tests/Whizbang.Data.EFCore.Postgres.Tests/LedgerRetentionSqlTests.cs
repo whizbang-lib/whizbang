@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,9 +25,14 @@ public class LedgerRetentionSqlTests : EFCoreTestBase {
   }
 
   private static async Task<Dictionary<string, (long Rows, string Status)>> _maintainAsync(NpgsqlConnection connection) {
-    var rows = await connection.QueryAsync<(string Task, long Rows, double Ms, string Status)>(
-      "SELECT task_name, rows_affected, duration_ms, status FROM perform_maintenance()");
-    return rows.ToDictionary(r => r.Task, r => (r.Rows, r.Status));
+    var results = new Dictionary<string, (long Rows, string Status)>(StringComparer.Ordinal);
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT task_name, rows_affected, status FROM perform_maintenance()";
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      results[reader.GetString(0)] = (reader.GetInt64(1), reader.GetString(2));
+    }
+    return results;
   }
 
   private static Task _settingAsync(NpgsqlConnection connection, string key, string value) =>
@@ -126,7 +130,7 @@ public class LedgerRetentionSqlTests : EFCoreTestBase {
 
     var results = await _maintainAsync(connection);
 
-    await Assert.That(await connection.QueryAsync<string>("SELECT event_type FROM wh_integrity_ledger WHERE origin_service_id = @origin", new { origin }))
+    await Assert.That(await connection.QueryAsync<string>($"SELECT event_type FROM wh_integrity_ledger WHERE origin_service_id = '{origin}'"))
       .IsEquivalentTo(["T1", "T2"])
       .Because("the trim keeps the configured number of entries, the most recently touched first");
     await Assert.That(results["trim_integrity_ledger"].Rows).IsEqualTo(1L);

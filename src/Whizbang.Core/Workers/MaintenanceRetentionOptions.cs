@@ -71,4 +71,30 @@ public sealed class MaintenanceRetentionOptions {
   /// <c>collective_ordering_head_retention_days</c>; the database default is 7.
   /// </summary>
   public int? CollectiveOrderingHeadDays { get; set; }
+
+  /// <summary>
+  /// Days a framework log entry (<c>wh_log</c>) is kept. Publishes <c>log_retention_days</c>; the database default
+  /// is 14.
+  /// </summary>
+  public int? LogDays { get; set; }
+
+  /// <summary>
+  /// Days a schedule run (<c>wh_schedule_runs</c>) is kept. Publishes <c>schedule_run_retention_days</c>; the
+  /// database default is 30.
+  /// </summary>
+  /// <remarks>The newest run of every schedule is kept whatever its age, so a dormant schedule keeps its last outcome.</remarks>
+  public int? ScheduleRunDays { get; set; }
+
+  /// <summary>
+  /// Days a stream-purge audit entry (<c>wh_stream_purge_audit</c>) is kept. Publishes
+  /// <c>stream_purge_audit_retention_days</c>; the database default is 0, which keeps the audit forever.
+  /// </summary>
+  /// <remarks>The audit records what a purge destroyed, so bounding it is an operator's choice.</remarks>
+  public int? StreamPurgeAuditDays { get; set; }
+
+  /// <summary>
+  /// The most entries the integrity ledger (<c>wh_integrity_ledger</c>) keeps, the most recently touched first.
+  /// Publishes <c>integrity_ledger_max_entries</c>; the database default is 100000.
+  /// </summary>
+  public int? IntegrityLedgerMaxEntries { get; set; }
 }

@@ -55,6 +55,10 @@ public static class RetentionSettingsBridge {
     new("instance_eviction_retention_hours", MAINTENANCE + nameof(MaintenanceRetentionOptions.InstanceEvictionTombstoneHours), o => o.InstanceEvictionTombstoneHours),
     new("orphan_perspective_grace_hours", MAINTENANCE + nameof(MaintenanceRetentionOptions.OrphanPerspectiveEventGraceHours), o => o.OrphanPerspectiveEventGraceHours),
     new("collective_ordering_head_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.CollectiveOrderingHeadDays), o => o.CollectiveOrderingHeadDays),
+    new("log_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.LogDays), o => o.LogDays),
+    new("schedule_run_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.ScheduleRunDays), o => o.ScheduleRunDays),
+    new("stream_purge_audit_retention_days", MAINTENANCE + nameof(MaintenanceRetentionOptions.StreamPurgeAuditDays), o => o.StreamPurgeAuditDays),
+    new("integrity_ledger_max_entries", MAINTENANCE + nameof(MaintenanceRetentionOptions.IntegrityLedgerMaxEntries), o => o.IntegrityLedgerMaxEntries),
   ];
 
   private static readonly IntegerSetting<EphemeralOptions>[] _ephemeral = [
