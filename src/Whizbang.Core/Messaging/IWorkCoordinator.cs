@@ -1953,6 +1953,23 @@ public interface IWorkCoordinator {
     Task.FromResult(new StreamCloseResult("unsupported", 0));
 
   /// <summary>
+  /// The events a period close of <paramref name="streamId"/> through <paramref name="throughVersion"/> would
+  /// truncate: every stored event of the stream at or below that version, in version order. The stream closer
+  /// reads them before the truncate so the destruction-stage receptors (#1504) can be handed the events the close
+  /// removes, the way the ephemeral reap hands them the bodies it deletes. Default: empty (engines without the
+  /// close primitive).
+  /// </summary>
+  /// <param name="streamId">The stream about to be closed.</param>
+  /// <param name="throughVersion">The inclusive per-stream version the close truncates through.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The (event, stream, type) of each event at or below the close point.</returns>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetStreamCloseTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync</tests>
+  Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamCloseTargetsAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
+
+  /// <summary>
   /// A1 — read the archived detail of a closed stream from cold storage (<c>wh_event_archive</c>), ordered by
   /// version. This is the retrieval side of an archiving close (<see cref="CloseStreamAsync"/> with
   /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.

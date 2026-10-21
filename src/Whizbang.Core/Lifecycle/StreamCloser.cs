@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 
@@ -32,15 +33,18 @@ public interface IStreamCloser {
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 /// <remarks>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</remarks>
-public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) : IStreamCloser {
+public sealed partial class StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook,
+    IServiceScopeFactory scopeFactory) : IStreamCloser {
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly ILogger<StreamCloser> _logger = ArgumentGuard.NotNull(logger);
   private readonly IDestructionHook _hook = hook;
+  private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   public async Task<StreamCloseResult> CloseAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    _ = _scopeFactory;
     // A1-6b full-history guard: a DISCARD close (archive:false) that would strand a [FullHistory] projection —
     // one that consumes an event in the truncated range and cannot resume from the closing event — is refused
     // (it could never rebuild). An archiving close is always safe (detail retrievable), so it skips the check.
