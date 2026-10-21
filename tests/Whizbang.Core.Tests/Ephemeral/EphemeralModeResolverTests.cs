@@ -33,13 +33,13 @@ public class EphemeralModeResolverTests {
 
   [Test]
   public async Task Resolve_EphemeralEvent_ReturnsItsModeAsync() {
-    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory));
+    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.TtlRow));
 
     var info = resolver.Resolve("Ns.Presence");
 
     await Assert.That(info).IsNotNull();
     await Assert.That(info!.Destruction).IsEqualTo(Destruction.WhenConsumed);
-    await Assert.That(info.Storage).IsEqualTo(TransientStorage.InMemory);
+    await Assert.That(info.Storage).IsEqualTo(TransientStorage.TtlRow);
   }
 
   [Test]
@@ -51,7 +51,7 @@ public class EphemeralModeResolverTests {
 
   [Test]
   public async Task Resolve_UnknownType_ReturnsNullAsync() {
-    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory));
+    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.TtlRow));
 
     await Assert.That(resolver.Resolve("Ns.Nonexistent")).IsNull();
   }
@@ -59,7 +59,7 @@ public class EphemeralModeResolverTests {
   [Test]
   public async Task IsEphemeral_ReflectsCatalogAsync() {
     var resolver = _resolver(
-      _ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory),
+      _ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.TtlRow),
       _sourced("Ns.OrderPlaced"));
 
     await Assert.That(resolver.IsEphemeral("Ns.Presence")).IsTrue();
@@ -70,10 +70,10 @@ public class EphemeralModeResolverTests {
   [Test]
   public async Task Resolve_MultipleEphemeralTypes_KeepsEachDistinctModeAsync() {
     var resolver = _resolver(
-      _ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory),
+      _ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.TtlRow),
       _ephemeral("Ns.DraftEdit", Destruction.AfterTtl, TransientStorage.TtlRow));
 
-    await Assert.That(resolver.Resolve("Ns.Presence")!.Storage).IsEqualTo(TransientStorage.InMemory);
+    await Assert.That(resolver.Resolve("Ns.Presence")!.Storage).IsEqualTo(TransientStorage.TtlRow);
     await Assert.That(resolver.Resolve("Ns.DraftEdit")!.Destruction).IsEqualTo(Destruction.AfterTtl);
     await Assert.That(resolver.Resolve("Ns.DraftEdit")!.Storage).IsEqualTo(TransientStorage.TtlRow);
   }
@@ -97,19 +97,19 @@ public class EphemeralModeResolverTests {
 
   [Test]
   public async Task ResolveByType_EphemeralEvent_ReturnsItsModeAsync() {
-    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory));
+    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.TtlRow));
 
     var info = resolver.Resolve(typeof(EphA));
 
     await Assert.That(info).IsNotNull();
     await Assert.That(info!.Destruction).IsEqualTo(Destruction.WhenConsumed);
-    await Assert.That(info.Storage).IsEqualTo(TransientStorage.InMemory);
+    await Assert.That(info.Storage).IsEqualTo(TransientStorage.TtlRow);
   }
 
   [Test]
   public async Task IsEphemeralByType_ReflectsCatalogAsync() {
     var resolver = _resolver(
-      _ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory),
+      _ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.TtlRow),
       _sourcedT(typeof(Src), "Ns.Src"));
 
     await Assert.That(resolver.IsEphemeral(typeof(EphA))).IsTrue();
@@ -119,7 +119,7 @@ public class EphemeralModeResolverTests {
 
   [Test]
   public async Task ResolveByType_UnknownType_ReturnsNullAsync() {
-    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.InMemory));
+    var resolver = _resolver(_ephemeralT(typeof(EphA), "Ns.EphA", Destruction.WhenConsumed, TransientStorage.TtlRow));
 
     await Assert.That(resolver.Resolve(typeof(EphB))).IsNull();
   }
@@ -131,7 +131,7 @@ public class EphemeralModeResolverTests {
   /// <summary>A null type is answered, not thrown on: it is never ephemeral and resolves to nothing.</summary>
   [Test]
   public async Task IsEphemeralAndResolve_NullType_AnswerNoAsync() {
-    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.InMemory));
+    var resolver = _resolver(_ephemeral("Ns.Presence", Destruction.WhenConsumed, TransientStorage.TtlRow));
 
     await Assert.That(resolver.IsEphemeral((Type)null!)).IsFalse();
     await Assert.That(resolver.Resolve((Type)null!)).IsNull();

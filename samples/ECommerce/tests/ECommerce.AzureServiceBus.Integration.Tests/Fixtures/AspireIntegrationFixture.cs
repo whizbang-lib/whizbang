@@ -391,7 +391,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -408,7 +408,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -532,7 +531,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register perspective runners for AOT-compatible lookup (replaces reflection)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -548,7 +546,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),

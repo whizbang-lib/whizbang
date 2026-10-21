@@ -546,10 +546,13 @@ jobs:
 
       # Exactly the release version: the tested packages carry the branch-name version, so a PR
       # title that disagrees with its branch name fails here instead of shipping a mismatch.
+      # SBOMs optional here only: a hotfix of a release from before #1440 promotes a build its release branch
+      # packed with the older workflows, which wrote none. Every release cut since carries them.
       - name: Verify the package set
         uses: ./repo/.github/actions/verify-packages
         with:
           version: ${{ needs.check-release.outputs.version }}
+          sbom: optional
 
       - name: List packages
         run: ls -la ./packages
@@ -558,7 +561,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-packages-${{ github.run_id }}
-          path: ./packages/*.nupkg
+          path: |
+            ./packages/*.nupkg
+            ./packages/*.cdx.json
           retention-days: 7
 
   publish:
@@ -627,6 +632,7 @@ jobs:
           files: |
             ./packages/*.nupkg
             ./packages/*.sha256
+            ./packages/*.cdx.json
             ./packages/*.sigstore.json
             ./packages/*.intoto.jsonl
           fail_on_unmatched_files: false

@@ -129,7 +129,7 @@ public sealed class AutoPopulateProcessor : IAutoPopulateProcessor {
   private static JsonElement? _extractTimestampElement(AutoPopulateRegistration registration, MessageHop hop) {
     return registration.TimestampKind switch {
       TimestampKind.SentAt => _serializeDateTimeOffset(hop.Timestamp),
-      TimestampKind.QueuedAt => (JsonElement?)null, // Set later by WorkCoordinatorPublisherWorker
+      TimestampKind.QueuedAt => (JsonElement?)null, // Not set here; no runtime path stamps QueuedAt yet (#1557)
       TimestampKind.DeliveredAt => (JsonElement?)null, // Set later by TransportConsumerWorker
       _ => (JsonElement?)null
     };

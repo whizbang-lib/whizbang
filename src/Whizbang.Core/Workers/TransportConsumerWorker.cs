@@ -115,8 +115,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
   // Single source of truth for partition count across this service. Read from
-  // WorkCoordinatorPublisherOptions so all three call sites — this consumer,
-  // WorkBatchCoordinator, and WorkCoordinatorPublisherWorker — agree by construction.
+  // ClaimWorkerOptions so all three call sites (this consumer, ClaimWorker, and the
+  // startup partition recompute) agree by construction.
   private readonly int _partitionCount;
   // Control class (topology arc phase 9): non-durable receive is a migration step consulted LIVE
   // off the shared options instance, so a rollback is a configuration edit, not a redeploy.
@@ -483,7 +483,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// </summary>
   /// <summary>
   /// Batch handler: ONE scope, serialize all N, ONE store_inbox_messages call, return → transport ACKs.
-  /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
+  /// Processing (Process, PostInbox, completion) is deferred: ClaimWorker leases the stored rows'
+  /// streams, InboxDrainWorker fetches them, and InboxDispatchWorker processes them.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
@@ -635,9 +636,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Direct INSERT into wh_inbox via store_inbox_messages; nothing else runs in the call.
     // Event storage + perspective creation happen when ClaimWorker's claim_work claims the
     // rows (its _emit_event_store_chain_for_inbox step).
-    // PartitionCount is sourced from WorkCoordinatorPublisherOptions — the single source
-    // of truth across this service's TransportConsumerWorker, WorkBatchCoordinator, and
-    // WorkCoordinatorPublisherWorker — preventing the partition mismatch wedge.
+    // PartitionCount is sourced from ClaimWorkerOptions, the single source of truth across
+    // this service's TransportConsumerWorker, ClaimWorker, and startup partition recompute,
+    // preventing the partition mismatch wedge.
     //
     // Topology arc phase 8.5 — poison detection LAYER 2. When a detector is wired, use the store
     // overload that also reports durable REDELIVERY OBSERVATIONS. This is not a second query: the

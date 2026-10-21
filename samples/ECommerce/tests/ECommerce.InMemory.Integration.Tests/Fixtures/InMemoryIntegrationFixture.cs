@@ -331,7 +331,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var routingStrategyInstance = new GenericTopicRoutingStrategy(topicCount: 2);
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
@@ -354,7 +353,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -494,7 +493,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
@@ -510,7 +508,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),

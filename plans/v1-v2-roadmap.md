@@ -70,7 +70,7 @@ Reconstructed from the 274 merged PRs and verified in `src/`. Each is a Done car
 > `whizbang-board` skill); this section is its narrative.
 
 ### In progress
-- **E1 ephemeral events**: `TransientStorage.InMemory` is documented but not yet enforced at runtime.
+- **E1 ephemeral events**: `TransientStorage.InMemory` was removed (#1538); a local, in-memory ephemeral event is open as #1549.
 - **E3 carry-forward tier 2**: `StreamCompactor` shipped; the reaper trigger (`Disposition.Compact`) and the
   compacted-record upgrade runner remain.
 

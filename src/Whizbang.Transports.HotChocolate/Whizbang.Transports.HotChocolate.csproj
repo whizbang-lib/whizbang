@@ -15,8 +15,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="HotChocolate.AspNetCore" />
+    <!-- HotChocolate, not HotChocolate.AspNetCore: that package also brings the Nitro IDE, which is under the
+         ChilliCream License rather than an open-source one (#1552). The transport needs only the execution
+         engine and ASP.NET Core's HttpContext; an application adds HotChocolate.AspNetCore itself to serve
+         GraphQL over HTTP (MapGraphQL). -->
+    <PackageReference Include="HotChocolate" />
     <PackageReference Include="HotChocolate.Data" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>

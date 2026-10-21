@@ -1,0 +1,71 @@
+name: Generate a software bill of materials for each package
+description: >-
+  Writes a CycloneDX SBOM beside every package in .github/nuget-packages.txt, as
+  <package id>.<version>.cdx.json, listing every NuGet dependency the package brings (direct and transitive,
+  with versions, licenses and hashes) and the other Whizbang packages it depends on (#1440). Development-only
+  references (PrivateAssets=all: analyzers, build tooling) are listed with scope "excluded", because a
+  consumer never receives them. Run it after restore, in the checkout the packages were packed from; the SBOMs then travel with the
+  packages, into the provenance attestation and onto the GitHub release.
+
+inputs:
+  version:
+    description: The version the packages were packed at
+    required: true
+  directory:
+    description: Directory holding the .nupkg files; the SBOMs are written there
+    required: false
+    default: ./packages
+
+runs:
+  using: composite
+  steps:
+    - name: Generate the SBOMs
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        PKG_DIR: ${{ inputs.directory }}
+      run: |
+        set -euo pipefail
+        dotnet tool restore
+        count=0
+        while read -r id; do
+          name="${id#SoftwareExtravaganza.}"
+          # PackageId is SoftwareExtravaganza.$(MSBuildProjectName) (Directory.Build.props); libraries live
+          # under src/, the command-line tools under tools/.
+          project=""
+          for candidate in "src/$name/$name.csproj" "tools/$name/$name.csproj"; do
+            if [ -f "$candidate" ]; then project="$candidate"; break; fi
+          done
+          if [ -z "$project" ]; then
+            echo "::error::No project found for package $id (looked for src/$name and tools/$name)."
+            exit 1
+          fi
+          # -dpr: the caller already restored with --locked-mode, so the SBOM describes exactly the locked graph.
+          dotnet CycloneDX "$project" --disable-package-restore --include-project-references --set-nuget-purl \
+            --output-format Json --set-type Library --set-name "$id" --set-version "$VERSION" \
+            --output "$PKG_DIR" --filename "$id.$VERSION.cdx.json"
+          sbom="$PKG_DIR/$id.$VERSION.cdx.json"
+          # A project reference is another Whizbang package, but the tool reads its version from the project
+          # (the local placeholder in Directory.Build.props), not the version being packed. Every Whizbang
+          # package ships at the one version, so rewrite them to it.
+          jq --arg v "$VERSION" '
+            def fix: if type == "string" then sub("^(?<p>pkg:nuget/SoftwareExtravaganza\\.[^@]+)@.*$"; "\(.p)@\($v)") else . end;
+            .components |= map(if (.name | startswith("SoftwareExtravaganza.")) then .version = $v | .purl |= fix | ."bom-ref" |= fix else . end)
+            | .dependencies |= map(.ref |= fix | if .dependsOn then .dependsOn |= map(fix) else . end)
+          ' "$sbom" > "$sbom.tmp"
+          mv "$sbom.tmp" "$sbom"
+          jq -e --arg id "$id" --arg v "$VERSION" '
+            .metadata.component.name == $id and .metadata.component.version == $v
+            and ([.. | strings | select(test("^pkg:nuget/SoftwareExtravaganza\\.")) | select(endswith("@" + $v) | not)] | length == 0)
+          ' "$sbom" > /dev/null || { echo "::error::$sbom names the wrong package or version"; exit 1; }
+          count=$((count + 1))
+        done < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' .github/nuget-packages.txt)
+        echo "Wrote $count SBOMs to $PKG_DIR"
+
+    # Every package's whole graph, not only what a pull request adds: GitHub's dependency review cannot see
+    # NuGet licenses (#1441), and a version bump can change one. The allow list is the dependency review's.
+    - name: Check the licenses the packages ship
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.directory }}
+      run: pwsh -NoProfile -File .github/scripts/Test-PackageLicenses.ps1 -Directory "$PKG_DIR"

@@ -92,7 +92,7 @@ The Azure Service Bus Emulator has several limitations that dictate our test arc
 
 ```
 Publisher (InventoryWorker):
-  Receptor → PublishAsync → Outbox → WorkCoordinatorPublisherWorker → ServiceBus Topics
+  Receptor → PublishAsync → Outbox → claim_work → OutboxDrainWorker → ServiceBus Topics
 
 Subscribers (InventoryWorker + BFF):
   ServiceBus Topics → ServiceBusConsumerWorker → Inbox → claim_work → Event Store → Perspectives

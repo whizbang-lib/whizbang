@@ -230,7 +230,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Component.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     // IntervalWorkCoordinatorStrategy handles outbox work only — skip inbox claiming
-    // to prevent stealing inbox messages from WorkCoordinatorPublisherWorker
+    // to prevent stealing inbox messages from ClaimWorker and InboxDispatchWorker
     return _flushCoreAsync(trigger: "api", skipLifecycle: false, ct);
   }
 
