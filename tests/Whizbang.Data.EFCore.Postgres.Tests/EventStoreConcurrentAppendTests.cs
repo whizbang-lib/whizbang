@@ -42,9 +42,8 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
 
     var contexts = Enumerable.Range(0, WRITERS).Select(_ => CreateDbContext()).ToList();
     try {
-      var appends = contexts
-        .Select(c => Task.Run(() => new EFCoreEventStore<WorkCoordinationDbContext>(c).AppendAsync(streamId, _envelope())))
-        .ToList();
+      var appends = contexts.ConvertAll(
+        c => Task.Run(() => new EFCoreEventStore<WorkCoordinationDbContext>(c).AppendAsync(streamId, _envelope())));
       var allWaited = await _untilWaitingOnAdvisoryLocksAsync(WRITERS, Task.WhenAll(appends));
       await holder.Transaction.CommitAsync();
       await Task.WhenAll(appends);
@@ -78,7 +77,8 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
 
     await Assert.That(waited).IsTrue()
       .Because("a direct append and a chain emit on one stream take the same lock");
-    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(new List<int> { 1, 2 })
+    int[] expectedVersions = [1, 2];
+    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(expectedVersions)
       .Because("the append read the tail after the chain's row committed");
   }
 
@@ -109,7 +109,8 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     await using var reader = CreateDbContext();
     await Assert.That(await reader.Set<MessageDeduplicationRecord>().AnyAsync(r => r.MessageId == messageId)).IsTrue()
       .Because("the append always flushed the shared context's pending changes, and callers may rely on it");
-    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(new List<int> { 0 });
+    int[] expectedVersions = [0];
+    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(expectedVersions);
   }
 
   [Test]
@@ -129,7 +130,8 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
     await using var context = CreateDbContext();
     await new EFCoreEventStore<WorkCoordinationDbContext>(context).AppendAsync(streamId, _envelope());
-    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(new List<int> { 0 })
+    int[] expectedVersions = [0];
+    await Assert.That(await _versionsAsync(streamId)).IsEquivalentTo(expectedVersions)
       .Because("the re-run function still appends; direct appends number from 0 as before");
   }
 
