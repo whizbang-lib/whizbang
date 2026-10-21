@@ -205,6 +205,18 @@ public sealed class SystemEventOptions {
   /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
   public int AuditPriority { get; set; } = Priority.WorkPriority.IDLE;
 
+  /// <summary>Stores <see cref="Security.AccessDenied"/>.</summary>
+  public bool AccessDeniedEnabled { get; set; }
+
+  /// <summary>Stores <see cref="Security.PermissionChanged"/>.</summary>
+  public bool PermissionChangedEnabled { get; set; }
+
+  /// <summary>Stores <see cref="Security.AccessGranted"/>.</summary>
+  public bool AccessGrantedEnabled { get; set; }
+
+  /// <summary>Stores <see cref="Security.ScopeContextEstablished"/>.</summary>
+  public bool ScopeContextEstablishedEnabled { get; set; }
+
   /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
   /// When enabled, an EventAudited is emitted for each domain event appended.
