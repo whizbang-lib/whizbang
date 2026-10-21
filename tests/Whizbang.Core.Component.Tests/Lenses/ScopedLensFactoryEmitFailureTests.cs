@@ -39,10 +39,10 @@ public class ScopedLensFactoryEmitFailureTests {
       }
     };
     var services = new ServiceCollection();
-    services.AddScoped<ScopedLensFactoryImplTests.ITestLensQuery, DeniedLensQuery>();
+    services.AddScoped<IDeniedLensQuery, DeniedLensQuery>();
     var factory = new ScopedLensFactory(services.BuildServiceProvider(), accessor, new LensOptions(), emitter, logger, metrics);
 
-    await Assert.That(() => factory.GetLens<ScopedLensFactoryImplTests.ITestLensQuery>(ScopeFilters.Tenant, Permission.Read("orders")))
+    await Assert.That(() => factory.GetLens<IDeniedLensQuery>(ScopeFilters.Tenant, Permission.Read("orders")))
       .Throws<AccessDeniedException>()
       .Because("the caller gets its denial whatever happens to the record of it");
     var entry = await logger.FirstEntry.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -52,7 +52,11 @@ public class ScopedLensFactoryEmitFailureTests {
     await Assert.That(SystemEventFireAndForgetTests._count(metrics, nameof(AccessDenied))).IsEqualTo(1L);
   }
 
-  private sealed class DeniedLensQuery : ScopedLensFactoryImplTests.ITestLensQuery {
+  public interface IDeniedLensQuery : ILensQuery, IFilterableLens {
+    ScopeFilterInfo? AppliedFilter { get; }
+  }
+
+  private sealed class DeniedLensQuery : IDeniedLensQuery {
     public ScopeFilterInfo? AppliedFilter { get; private set; }
     public void ApplyFilter(ScopeFilterInfo filterInfo) => AppliedFilter = filterInfo;
   }

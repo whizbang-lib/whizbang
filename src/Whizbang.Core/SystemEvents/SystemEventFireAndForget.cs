@@ -24,8 +24,8 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#fire-and-forget-emits</docs>
-/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventFireAndForgetTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryEmitFailureTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/SystemEvents/SystemEventFireAndForgetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lenses/ScopedLensFactoryEmitFailureTests.cs</tests>
 public static partial class SystemEventFireAndForget {
   /// <summary>
   /// Starts the emit and returns without waiting for it. A failure is logged and counted, never thrown.
@@ -36,8 +36,8 @@ public static partial class SystemEventFireAndForget {
   /// <param name="tenantId">The tenant the event concerns, named in the log when the emit fails; null when none.</param>
   /// <param name="logger">Where a failed emit is reported.</param>
   /// <param name="metrics">Where a failed emit is counted; null counts nothing (the log still names the loss).</param>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventFireAndForgetTests.cs:AFailedEmit_IsLoggedWithWhatWasLost_AndCountedAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventFireAndForgetTests.cs:TheCaller_IsNotBlockedWhileTheEmitIsStillRunningAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/SystemEvents/SystemEventFireAndForgetTests.cs:AFailedEmit_IsLoggedWithWhatWasLost_AndCountedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/SystemEvents/SystemEventFireAndForgetTests.cs:TheCaller_IsNotBlockedWhileTheEmitIsStillRunningAsync</tests>
   public static void Emit<TSystemEvent>(
       ISystemEventEmitter emitter,
       TSystemEvent systemEvent,
