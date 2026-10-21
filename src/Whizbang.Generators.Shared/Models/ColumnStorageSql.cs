@@ -29,7 +29,8 @@ public sealed record TableStorageInfo(
     int? AutovacuumInsertThreshold = null,
     double? AutovacuumInsertScaleFactor = null,
     int? ToastAutovacuumVacuumThreshold = null,
-    double? ToastAutovacuumVacuumScaleFactor = null) {
+    double? ToastAutovacuumVacuumScaleFactor = null,
+    int? FillFactor = null) {
   private const string ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveTableStorageAttribute";
 
   /// <summary>The model's declared table storage, or null when it declares none.</summary>
@@ -233,6 +234,9 @@ public static class ColumnStorageSql {
       + END_IF
       + DO_END;
   }
+
+  /// <summary>STUB</summary>
+  public static string SetFillFactor(string qualifiedTable, int fillFactor) => string.Empty;
 
   /// <summary>
   /// A size budget as a check constraint on <c>pg_column_size</c>, replaced when the declared budget changes.

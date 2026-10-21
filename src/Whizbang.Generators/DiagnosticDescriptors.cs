@@ -578,7 +578,7 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
-  // Physical Field Diagnostics (WHIZ801-809)
+  // Physical Field and Table Storage Diagnostics (WHIZ801-809)
   // ========================================
 
   /// <summary>
@@ -609,6 +609,21 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "The [VectorField] attribute requires a positive integer for dimensions."
+  );
+
+  /// <summary>
+  /// WHIZ804: Error - A [PerspectiveTableStorage] value is outside the range PostgreSQL accepts.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz804</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveTableStorageAnalyzerTests.cs:AValueOutOfRange_ReportsWhiz804Async</tests>
+  public static readonly DiagnosticDescriptor TableStorageValueOutOfRange = new(
+      id: "WHIZ804",
+      title: "Table storage value out of range",
+      messageFormat: "[PerspectiveTableStorage] on '{0}' sets {1} = {2}, which PostgreSQL does not accept: the range is {3} to {4}. Use a value in the range, or a negative value to keep the server's setting.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "A perspective table's storage parameters are set by the schema pass at startup, and PostgreSQL refuses a value outside its range, which would fail the pass. The schema generators leave such a value out, and this diagnostic reports it where it is declared. fillfactor accepts 10 to 100, toast_tuple_target 128 to 8160, and each autovacuum scale factor 0 to 100."
   );
 
   /// <summary>
