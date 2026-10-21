@@ -27,7 +27,7 @@ public class AuditEventRegistryGenerator : IIncrementalGenerator {
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var audited = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax t && (t.AttributeLists.Count > 0 || t.BaseList is not null),
+        predicate: static (node, _) => node is TypeDeclarationSyntax t && (t.AttributeLists.Any() || t.BaseList is not null),
         transform: static (ctx, ct) => _extract(ctx, ct)
     ).Where(static info => info is not null);
 

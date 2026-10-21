@@ -29,6 +29,12 @@ public class AuditEventRegistryGeneratorTests {
 
     public record Unattributed : IEvent;
 
+    [AuditEvent]
+    public record BareAudited : IEvent;
+
+    [AuditEvent(Exclude = false, Tag = "kept")]
+    public record ExplicitlyKept : IEvent;
+
     public static class Holder {
       [AuditEvent(Exclude = true)]
       private sealed record Hidden : IEvent;
@@ -42,7 +48,7 @@ public class AuditEventRegistryGeneratorTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "AuditEventRegistry.g.cs");
 
     await Assert.That(generated).IsNotNull();
-    await Assert.That(generated!).Contains(
+    await Assert.That(generated).Contains(
       "global::Whizbang.Core.SystemEvents.AuditEventRegistry.Register(typeof(global::MyApp.PaymentTaken), new global::Whizbang.Core.Attributes.AuditEventAttribute { Reason = \"money moved\", Level = (global::Whizbang.Core.Audit.AuditLevel)");
     await Assert.That(generated).Contains("[global::System.Runtime.CompilerServices.ModuleInitializer]");
     await Assert.That(generated).DoesNotContain("Unattributed")
@@ -55,7 +61,7 @@ public class AuditEventRegistryGeneratorTests {
     var result = GeneratorTestHelper.RunGenerator<AuditEventRegistryGenerator>(SOURCE);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "AuditEventRegistry.g.cs");
 
-    await Assert.That(generated!).Contains(
+    await Assert.That(generated).Contains(
       "Register(typeof(global::MyApp.PresencePinged), new global::Whizbang.Core.Attributes.AuditEventAttribute { Exclude = true })")
       .Because("[AuditEvent] is Inherited = true, and reflection used to find it on the base");
   }
@@ -66,12 +72,25 @@ public class AuditEventRegistryGeneratorTests {
     var result = GeneratorTestHelper.RunGenerator<AuditEventRegistryGenerator>(SOURCE);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "AuditEventRegistry.g.cs");
 
-    await Assert.That(generated!).DoesNotContain("Hidden");
+    await Assert.That(generated).DoesNotContain("Hidden");
     var warning = result.Diagnostics.SingleOrDefault(d => d.Id == "WHIZ180");
     await Assert.That(warning).IsNotNull()
       .Because("a private type cannot be named from generated code, so its audit settings would be lost without a word");
     await Assert.That(warning!.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("Hidden");
     await Assert.That(warning.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Warning);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ABareAttributeAndAnExplicitFalse_AreRegisteredAsWrittenAsync() {
+    var result = GeneratorTestHelper.RunGenerator<AuditEventRegistryGenerator>(SOURCE);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "AuditEventRegistry.g.cs");
+
+    await Assert.That(generated).Contains(
+      "Register(typeof(global::MyApp.BareAudited), new global::Whizbang.Core.Attributes.AuditEventAttribute());")
+      .Because("an attribute with no arguments registers the defaults");
+    await Assert.That(generated).Contains(
+      "Register(typeof(global::MyApp.ExplicitlyKept), new global::Whizbang.Core.Attributes.AuditEventAttribute { Exclude = false, Tag = \"kept\" });");
   }
 
   [Test]
