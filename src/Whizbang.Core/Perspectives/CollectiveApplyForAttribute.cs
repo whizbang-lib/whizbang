@@ -66,10 +66,14 @@ public enum CollectiveSpecKind {
 /// </summary>
 /// <remarks>
 /// <para>
-/// Attach to methods whose signature matches
-/// <see cref="ICollectiveApplyFor{TModel, TEvent}.Apply"/> — the
-/// generator infers <c>TModel</c> and <c>TEvent</c> from the method's
-/// return type and parameter.
+/// Attach to a method that returns <see cref="ICollectiveSpec{TModel}"/> and takes the collective event,
+/// optionally followed by the <see cref="ICollectiveQuery"/> context:
+/// <c>ICollectiveSpec&lt;TModel&gt; Name(TEvent e)</c> or
+/// <c>ICollectiveSpec&lt;TModel&gt; Name(TEvent e, ICollectiveQuery query)</c>. The generator infers
+/// <c>TModel</c> from the return type and <c>TEvent</c> from the first parameter. Declare the query only when
+/// the handler reads it (to scope by a sibling perspective); a handler that does not read it leaves it out, so
+/// no unused-parameter rule flags it. The event parameter is required even when the handler does not read it,
+/// because it names the event; the framework's analyzer package suppresses unused-parameter findings on it.
 /// </para>
 /// <para>
 /// Configure handler behavior via the two enum properties:
@@ -103,6 +107,8 @@ public enum CollectiveSpecKind {
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_CarriesScopeHandlingDefaultAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitScopeHandlingCustomAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveSpecContractTests.cs:CollectiveApplyForAttribute_AcceptsExplicitSpecKindRawSqlAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs:Generator_DiscoversDefaultAttributedMethod_EmitsRegistryEntryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs:Generator_DiscoversQueryContextHandler_PassesQueryToInvokerAsync</tests>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
 public sealed class CollectiveApplyForAttribute : Attribute {
   /// <summary>

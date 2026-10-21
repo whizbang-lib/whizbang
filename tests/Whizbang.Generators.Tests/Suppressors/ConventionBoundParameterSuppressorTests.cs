@@ -3,6 +3,7 @@
 
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -20,6 +21,8 @@ namespace Whizbang.Generators.Tests.Suppressors;
 /// </summary>
 [Category("Analyzers")]
 public class ConventionBoundParameterSuppressorTests {
+  private static readonly string[] _suppressedRules = ["CA1801", "IDE0060", "RCS1163", "S1172"];
+
   private const string HANDLERS = """
     using System;
     using Whizbang.Core;
@@ -97,10 +100,10 @@ public class ConventionBoundParameterSuppressorTests {
     var suppressions = new ConventionBoundParameterSuppressor().SupportedSuppressions;
 
     await Assert.That(suppressions.Select(s => s.SuppressedDiagnosticId).Order())
-      .IsEquivalentTo(new[] { "CA1801", "IDE0060", "RCS1163", "S1172" });
+      .IsEquivalentTo(_suppressedRules);
     await Assert.That(suppressions.Select(s => s.Id).Distinct().Count()).IsEqualTo(4);
     await Assert.That(suppressions.All(s => s.Id.StartsWith("WHIZS", StringComparison.Ordinal))).IsTrue();
-    await Assert.That(suppressions.All(s => s.Justification.ToString().Contains("[CollectiveApplyFor]", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(suppressions.All(s => s.Justification.ToString(CultureInfo.InvariantCulture).Contains("[CollectiveApplyFor]", StringComparison.Ordinal))).IsTrue();
   }
 
   [RequiresAssemblyFiles()]
@@ -125,9 +128,16 @@ public class ConventionBoundParameterSuppressorTests {
     (diagnostic.Location.SourceTree!.GetRoot().FindNode(diagnostic.Location.SourceSpan) as MethodDeclarationSyntax)?.Identifier.Text;
 
   /// <summary>Reports <paramref name="id"/> on every parameter (or every method) it sees.</summary>
+  /// <remarks>
+  /// A test stand-in run in-process by <c>CompilationWithAnalyzers</c>, never loaded by a compiler, so the
+  /// rules for shipping an analyzer (netstandard target, no Workspaces reference, constant ids) do not apply.
+  /// </remarks>
+#pragma warning disable RS1036, RS1038, RS1041
   [DiagnosticAnalyzer(LanguageNames.CSharp)]
   private sealed class UnusedParameterStandIn(string id, bool onMethods) : DiagnosticAnalyzer {
+#pragma warning disable RS1017
     private readonly DiagnosticDescriptor _rule = new(id, "unused parameter", "unused parameter", "Test", DiagnosticSeverity.Warning, isEnabledByDefault: true);
+#pragma warning restore RS1017
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => [_rule];
 
@@ -143,4 +153,5 @@ public class ConventionBoundParameterSuppressorTests {
       }
     }
   }
+#pragma warning restore RS1036, RS1038, RS1041
 }
