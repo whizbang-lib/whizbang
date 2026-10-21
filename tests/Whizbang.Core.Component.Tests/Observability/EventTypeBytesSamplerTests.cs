@@ -168,6 +168,21 @@ public class EventTypeBytesSamplerTests {
     await Assert.That(took).IsTrue();
   }
 
+  [Test]
+  public async Task WithoutOptions_TheSamplerRefusesToBeBuiltAsync() {
+    await using var container = new ServiceCollection().BuildServiceProvider();
+    using var factory = new TestMeterFactory();
+
+    await Assert.That(() => new EventTypeBytesSampler(
+        container.GetRequiredService<IServiceScopeFactory>(),
+        new TableStatisticsMetrics(new WhizbangMetrics(factory)),
+        options: null!,
+        schemaReadyGate: null,
+        logger: null))
+      .Throws<ArgumentNullException>()
+      .Because("the interval, share and cap all come from the options; there is no safe default for a missing one");
+  }
+
   /// <summary>A sampler on a fake clock, with a listener on its own meter.</summary>
   private sealed class SamplerHost : IAsyncDisposable {
     private readonly ServiceProvider _container;

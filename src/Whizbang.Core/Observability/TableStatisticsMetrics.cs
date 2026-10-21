@@ -21,6 +21,7 @@ public sealed class TableStatisticsMetrics {
 
   private const string TABLE_NAME_TAG = "table_name";
   private const string EVENT_TYPE_TAG = "event_type";
+  private const string BYTES_UNIT = "bytes";
 
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
@@ -36,7 +37,7 @@ public sealed class TableStatisticsMetrics {
       "whizbang.table.estimated_bytes",
       observeValues: () => _tableSizes.Select(kv =>
         new Measurement<long>(kv.Value, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
-      unit: "bytes",
+      unit: BYTES_UNIT,
       description: "Estimated disk size per table from database catalog");
 
     meter.CreateObservableGauge(
@@ -66,7 +67,7 @@ public sealed class TableStatisticsMetrics {
     meter.CreateObservableGauge(
       "whizbang.table.component_bytes",
       observeValues: () => _tableStorage.SelectMany(kv => _components(kv.Key, kv.Value)),
-      unit: "bytes",
+      unit: BYTES_UNIT,
       description: "Disk size per table split into heap, TOAST and indexes; the three add up to estimated_bytes");
 
     // Rows, from the planner's statistics. With bytes it is bytes per row, and both over time are growth.
@@ -83,14 +84,14 @@ public sealed class TableStatisticsMetrics {
     meter.CreateObservableGauge(
       "whizbang.event_store.sampled_bytes_per_event",
       observeValues: () => _eventTypeBytes.SelectMany(kv => _parts(kv.Key, kv.Value)),
-      unit: "bytes",
+      unit: BYTES_UNIT,
       description: "Mean stored bytes per event of each event type, split into payload and metadata, from a sample");
 
     meter.CreateObservableGauge(
       "whizbang.event_store.estimated_type_bytes",
       observeValues: () => _eventTypeBytes.Select(kv =>
         new Measurement<long>(kv.Value.EstimatedTotalBytes, new KeyValuePair<string, object?>(EVENT_TYPE_TAG, kv.Key))),
-      unit: "bytes",
+      unit: BYTES_UNIT,
       description: "Stored bytes of every event of each event type, extrapolated from a sample");
   }
 

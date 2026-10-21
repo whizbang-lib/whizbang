@@ -381,7 +381,8 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     var sample = await _provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("probe:full", 100, 50));
 
     await Assert.That(sample).IsNotNull();
-    await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(new[] { EMBEDDING_CREATED, ORDER_PLACED })
+    string[] reported = [EMBEDDING_CREATED, ORDER_PLACED];
+    await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(reported)
       .Because("the version-decorated name is the same type, so it is reported with the others rather than as a fourth series");
     var orders = stored.Where(r => r.Type.StartsWith("Shop.", StringComparison.Ordinal)).ToList();
     await Assert.That(sample[ORDER_PLACED].SampledRows).IsEqualTo(3L);
@@ -403,8 +404,9 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
 
     var sample = await _provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("probe:cap", 100, 1));
 
+    string[] reported = [TableStatisticsOptions.OTHER_EVENT_TYPES, EMBEDDING_CREATED];
     await Assert.That(sample!.Keys.Order(StringComparer.Ordinal).ToList())
-      .IsEquivalentTo(new[] { TableStatisticsOptions.OTHER_EVENT_TYPES, EMBEDDING_CREATED })
+      .IsEquivalentTo(reported)
       .Because("the largest type by bytes keeps its name; one many-times-smaller type is what other is for");
     await Assert.That(sample[TableStatisticsOptions.OTHER_EVENT_TYPES].SampledRows).IsEqualTo(2L);
     await Assert.That(sample.Values.Sum(t => t.EstimatedTotalBytes)).IsEqualTo(stored.Sum(r => r.Data + r.Metadata))
@@ -492,7 +494,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await analyze.ExecuteNonQueryAsync();
   }
 
-  private async Task _seedEventAsync(string eventType, string data) {
+  private async Task _seedEventAsync(string eventType, string payload) {
     var eventId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     await using var connection = await _dataSource.OpenConnectionAsync();
@@ -505,7 +507,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("evt", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
     cmd.Parameters.AddWithValue("type", eventType);
-    cmd.Parameters.AddWithValue("data", data);
+    cmd.Parameters.AddWithValue("data", payload);
     await cmd.ExecuteNonQueryAsync();
   }
 
