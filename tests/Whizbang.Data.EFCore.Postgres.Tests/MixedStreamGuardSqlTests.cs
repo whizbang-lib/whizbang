@@ -263,11 +263,60 @@ public class MixedStreamGuardSqlTests : EFCoreTestBase {
     await Assert.That(dead!.SourceTable).IsEqualTo("wh_inbox");
     await Assert.That(dead.FailureReason).IsEqualTo(MIXED_STREAM_REASON);
     await Assert.That(dead.ErrorText).StartsWith("WHIZ133");
+    await Assert.That(await _inboxRowIsCompletedAsync(conn, refused.MessageId)).IsTrue()
+      .Because("the refused row is completed where it stands, so the claim never offers it again");
+  }
+
+  [Test]
+  public async Task InboxChain_RefusedMessageRedelivered_IsNotRefusedAgainAsync() {
+    await using var dbContext = CreateDbContext();
+    var streamId = (Guid)TrackedGuid.New();
+    var conn = await _receiveAsync(dbContext, _received(streamId, EPHEMERAL_TYPE, EventFlags.Ephemeral));
+    var refused = _received(streamId, SOURCED_TYPE, EventFlags.None);
+    await _receiveAsync(dbContext, refused);
+
+    // The broker hands the same message back, and a claim leases and chains whatever the inbox holds for it.
+    await _coordinator(dbContext).StoreInboxMessagesAsync([refused], partitionCount: 100);
+    var instanceId = (Guid)TrackedGuid.New();
+    await using (var lease = conn.CreateCommand()) {
+      lease.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+      lease.Parameters.AddWithValue("inst", instanceId);
+      lease.Parameters.AddWithValue("id", refused.MessageId);
+      _ = await lease.ExecuteNonQueryAsync();
+    }
+    await using (var emit = conn.CreateCommand()) {
+      emit.CommandText = "SELECT _emit_event_store_chain_for_inbox(@inst, NOW() + INTERVAL '5 minutes', NOW(), 4)";
+      emit.Parameters.AddWithValue("inst", instanceId);
+      _ = await emit.ExecuteScalarAsync();
+    }
+
+    await using var count = conn.CreateCommand();
+    count.CommandText = "SELECT count(*) FROM wh_dead_letters WHERE source_id = @id";
+    count.Parameters.AddWithValue("id", refused.MessageId);
+    await Assert.That((long)(await count.ExecuteScalarAsync())!).IsEqualTo(1L)
+      .Because("a redelivered refusal is the same message, already dead-lettered; it must not cycle through the "
+        + "dead-letter queue every time the broker offers it");
+  }
+
+  [Test]
+  public async Task InboxChain_RefusedRow_IsRemovedByTheCompletedInboxPurgeAsync() {
+    await using var dbContext = CreateDbContext();
+    var streamId = (Guid)TrackedGuid.New();
+    var conn = await _receiveAsync(dbContext, _received(streamId, EPHEMERAL_TYPE, EventFlags.Ephemeral));
+    var refused = _received(streamId, SOURCED_TYPE, EventFlags.None);
+    await _receiveAsync(dbContext, refused);
+
+    await using (var maintain = conn.CreateCommand()) {
+      maintain.CommandText = "SELECT count(*) FROM perform_maintenance()";
+      _ = await maintain.ExecuteScalarAsync();
+    }
+
     await using var inbox = conn.CreateCommand();
     inbox.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = @id";
     inbox.Parameters.AddWithValue("id", refused.MessageId);
     await Assert.That((long)(await inbox.ExecuteScalarAsync())!).IsEqualTo(0L)
-      .Because("the refused row leaves the inbox, so the claim never offers it again");
+      .Because("the completed row leaves the inbox with the other completed rows, in its own transaction");
+    await Assert.That(await _deadLetterAsync(conn, refused.MessageId)).IsNotNull();
   }
 
   [Test]
@@ -403,6 +452,14 @@ public class MixedStreamGuardSqlTests : EFCoreTestBase {
       rows.Add((reader.GetGuid(0), reader.GetInt64(1)));
     }
     return rows;
+  }
+
+  // Completed rows keep their inbox row until the completed-inbox purge; a row the claim may still offer has none.
+  private static async Task<bool> _inboxRowIsCompletedAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE message_id = @id AND processed_at IS NULL";
+    cmd.Parameters.AddWithValue("id", messageId);
+    return (long)(await cmd.ExecuteScalarAsync())! == 0L;
   }
 
   private static async Task<long> _outboxCountAsync(NpgsqlConnection conn, Guid messageId) {
