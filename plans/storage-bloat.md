@@ -96,6 +96,8 @@ Each slice is one red-then-green increment and its own commit.
    rights. RED: unit tests for ordering, budget and "not cleared when not improved"; integration
    test on an image with pg_squeeze, which needs a new mirrored CI image
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
+   Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
+   bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
