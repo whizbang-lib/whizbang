@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Fingerprint;
 using Whizbang.Core.Messaging;
@@ -114,14 +115,63 @@ public class TypeDefinitionReconcilerCoverageTests {
     await Assert.That(coordinator.Recorded.Value.To).IsEqualTo(2);
   }
 
+  // #1578: the flag reclaims the history of every ephemeral event type on the boot it is on, not only on the boot
+  // that first saw the type turn ephemeral, so turning it on after that boot still reclassifies.
+
+  private static MessageTypeCatalogEntry _entry(string kind, bool ephemeral) =>
+    new(typeof(object), "Contracts.PresencePinged", kind, null) {
+      SettingsHash = "settings",
+      SchemaHash = "schema",
+      FormerNames = ["Contracts.Legacy.PresencePinged"],
+      Ephemeral = ephemeral ? new EphemeralInfo(default, default) : null,
+    };
+
+  [Test]
+  public async Task Reconcile_FlagOn_TypeAlreadyEphemeralOnAnEarlierBoot_ReclassifiesItsHistoryAsync() {
+    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew: false);
+    var reconciler = _reconciler(coordinator, new FakeCatalog(_entry("event", ephemeral: true)), reconcileHistorical: true);
+
+    var summary = await reconciler.ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Reclassified).Count().IsEqualTo(1)
+      .Because("the drift was seen on an earlier boot with the flag off; turning the flag on must still reclaim the history");
+    await Assert.That(coordinator.Reclassified[0]).IsEquivalentTo(["Contracts.PresencePinged", "Contracts.Legacy.PresencePinged"])
+      .Because("history stored under a former name belongs to the same type");
+    await Assert.That(summary.TypesReclassified).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Reconcile_FlagOn_TypeTurningEphemeralOnThisBoot_IsReclassifiedOnceAsync() {
+    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew: true);
+    var reconciler = _reconciler(coordinator, new FakeCatalog(_entry("event", ephemeral: true)), reconcileHistorical: true);
+
+    await reconciler.ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Reclassified).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  [Arguments("command", true, true)]
+  [Arguments("event", false, true)]
+  [Arguments("event", true, false)]
+  public async Task Reconcile_NonEventOrDurableTypeOrFlagOff_ReclassifiesNothingAsync(string kind, bool ephemeral, bool reconcileHistorical) {
+    var coordinator = new ReclassifyCapturingCoordinator(registersAsNew: false);
+    var reconciler = _reconciler(coordinator, new FakeCatalog(_entry(kind, ephemeral)), reconcileHistorical: reconcileHistorical);
+
+    await reconciler.ReconcileAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Reclassified).IsEmpty();
+  }
+
   private static TypeDefinitionReconciler _reconciler(
-      IWorkCoordinator coordinator, IMessageTypeCatalog catalog, ILogger<TypeDefinitionReconciler>? logger = null) {
+      IWorkCoordinator coordinator, IMessageTypeCatalog catalog, ILogger<TypeDefinitionReconciler>? logger = null,
+      bool reconcileHistorical = false) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     var provider = services.BuildServiceProvider();
     return new TypeDefinitionReconciler(
       provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new EphemeralOptions()),
+      Options.Create(new EphemeralOptions { ReconcileHistoricalOnStartup = reconcileHistorical }),
       logger ?? NullLogger<TypeDefinitionReconciler>.Instance,
       catalog);
   }
@@ -170,6 +220,31 @@ public class TypeDefinitionReconcilerCoverageTests {
         CancellationToken cancellationToken = default) {
       Recorded = (fromDefinitionId, toDefinitionId, relationship);
       return Task.CompletedTask;
+    }
+  }
+
+  /// <summary>Stores one prior definition (id 1) and registers each entry either as the current definition or as a
+  /// new one superseding it; records every reclassification it is asked for.</summary>
+  private sealed class ReclassifyCapturingCoordinator(bool registersAsNew)
+      : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, IWorkCoordinator {
+    public List<IReadOnlyList<string>> Reclassified { get; } = [];
+
+    public Task<IReadOnlyList<TypeDefinitionInfo>> GetTypeDefinitionsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyList<TypeDefinitionInfo>>([
+        new TypeDefinitionInfo(1, "Contracts.PresencePinged", "settings-durable", "schema", 0)
+      ]);
+
+    public Task<TypeDefinitionRegistration> RegisterTypeDefinitionAsync(
+        string eventTypeName, string settingsHashHex, string schemaHashHex, int schemaVersion,
+        CancellationToken cancellationToken = default) =>
+      Task.FromResult(registersAsNew
+        ? new TypeDefinitionRegistration(DefinitionId: 2, IsNew: true, PreviousDefinitionId: 1)
+        : new TypeDefinitionRegistration(DefinitionId: 1, IsNew: false, PreviousDefinitionId: null));
+
+    public Task<EphemeralReclassificationResult> ReclassifyEventsEphemeralAsync(
+        IReadOnlyList<string> eventTypeNames, CancellationToken cancellationToken = default) {
+      Reclassified.Add([.. eventTypeNames]);
+      return Task.FromResult(new EphemeralReclassificationResult(EventsReclassified: 3, StreamsReclassified: 1, StreamsBlocked: 0));
     }
   }
 
