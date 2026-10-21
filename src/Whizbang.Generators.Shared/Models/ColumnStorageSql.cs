@@ -50,17 +50,21 @@ public sealed record TableStorageInfo(
   }
 
   // One named argument applied. A threshold or scale factor below 0 is the attribute's "server default".
-  private static TableStorageInfo _with(TableStorageInfo info, string name, object? value) => (name, value) switch {
-    ("DataCompression", _) => info with { DataCompression = ColumnStorageSql.CompressionName(value) },
-    ("ToastTupleTarget", int target) when target > 0 => info with { ToastTupleTarget = target },
-    ("AutovacuumVacuumThreshold", int n) when n >= 0 => info with { AutovacuumVacuumThreshold = n },
-    ("AutovacuumVacuumScaleFactor", double f) when f >= 0 => info with { AutovacuumVacuumScaleFactor = f },
-    ("AutovacuumInsertThreshold", int n) when n >= 0 => info with { AutovacuumInsertThreshold = n },
-    ("AutovacuumInsertScaleFactor", double f) when f >= 0 => info with { AutovacuumInsertScaleFactor = f },
-    ("ToastAutovacuumVacuumThreshold", int n) when n >= 0 => info with { ToastAutovacuumVacuumThreshold = n },
-    ("ToastAutovacuumVacuumScaleFactor", double f) when f >= 0 => info with { ToastAutovacuumVacuumScaleFactor = f },
+  private static TableStorageInfo _with(TableStorageInfo info, string name, object? value) => name switch {
+    "DataCompression" => info with { DataCompression = ColumnStorageSql.CompressionName(value) },
+    "ToastTupleTarget" => info with { ToastTupleTarget = _whole(value, minimum: 1) },
+    "AutovacuumVacuumThreshold" => info with { AutovacuumVacuumThreshold = _whole(value, minimum: 0) },
+    "AutovacuumVacuumScaleFactor" => info with { AutovacuumVacuumScaleFactor = _factor(value) },
+    "AutovacuumInsertThreshold" => info with { AutovacuumInsertThreshold = _whole(value, minimum: 0) },
+    "AutovacuumInsertScaleFactor" => info with { AutovacuumInsertScaleFactor = _factor(value) },
+    "ToastAutovacuumVacuumThreshold" => info with { ToastAutovacuumVacuumThreshold = _whole(value, minimum: 0) },
+    "ToastAutovacuumVacuumScaleFactor" => info with { ToastAutovacuumVacuumScaleFactor = _factor(value) },
     _ => info,
   };
+
+  private static int? _whole(object? value, int minimum) => value is int number && number >= minimum ? number : null;
+
+  private static double? _factor(object? value) => value is double factor && factor >= 0 ? factor : null;
 }
 
 /// <summary>
@@ -226,7 +230,7 @@ public static class ColumnStorageSql {
     const string TOAST_PREFIX = "toast.";
     var held = name.StartsWith(TOAST_PREFIX, System.StringComparison.Ordinal)
       ? $"  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_class toast ON toast.oid = c.reltoastrelid WHERE c.oid = '{qualifiedTable}'::regclass\n"
-        + $"    AND '{name.Substring(TOAST_PREFIX.Length)}={value}' = ANY (coalesce(toast.reloptions, ARRAY[]::text[]))) THEN\n"
+        + $"    AND '{name[TOAST_PREFIX.Length..]}={value}' = ANY (coalesce(toast.reloptions, ARRAY[]::text[]))) THEN\n"
       : $"  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = '{qualifiedTable}'::regclass\n"
         + $"    AND '{name}={value}' = ANY (coalesce(reloptions, ARRAY[]::text[]))) THEN\n";
     return DO_BEGIN

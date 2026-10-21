@@ -193,6 +193,31 @@ public class SharedHelpersBranchTests {
     await Assert.That(TableStorageInfo.From(plain)).IsNull();
   }
 
+  /// <summary>
+  /// #1584: a look-alike attribute whose properties have other types, or an extra property, declares nothing for
+  /// them; only a value of the declared type and range is read.
+  /// </summary>
+  [Test]
+  public async Task TableStorage_AValueOfAnotherTypeOrAnUnknownName_DeclaresNothingAsync() {
+    var model = _compile("""
+      namespace Whizbang.Core.Perspectives {
+        public sealed class PerspectiveTableStorageAttribute : System.Attribute {
+          public string ToastTupleTarget { get; set; } = "";
+          public string AutovacuumVacuumThreshold { get; set; } = "";
+          public string AutovacuumVacuumScaleFactor { get; set; } = "";
+          public int Unrelated { get; set; }
+        }
+      }
+      namespace Sample {
+        [Whizbang.Core.Perspectives.PerspectiveTableStorage(ToastTupleTarget = "1", AutovacuumVacuumThreshold = "2",
+          AutovacuumVacuumScaleFactor = "0.1", Unrelated = 3)]
+        public class Model { }
+      }
+      """).GetTypeByMetadataName("Sample.Model");
+
+    await Assert.That(TableStorageInfo.From(model)).IsEqualTo(new TableStorageInfo(null, null));
+  }
+
   [Test]
   [Arguments(1, "pglz")]
   [Arguments(2, "lz4")]
