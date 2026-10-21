@@ -157,6 +157,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (observability): the work-batch instruments are retired, and flush and claim timing is recorded
+  (#1535).** `whizbang.work_coordinator.process_batch.*`, `batch.*` and `returned.*` described a single SQL call
+  that no longer exists, and nothing recorded them. They are removed with their `WorkCoordinatorMetrics`
+  properties. `flush.duration` is now recorded by every strategy for each flush that had work, tagged `strategy`;
+  the Immediate strategy now counts `flush.empty_calls` like the others; and `whizbang.perspective.claim.duration`
+  times each claim round trip. **Upgrade:** a dashboard or alert on a retired instrument moves to
+  `flush.duration` (flush time), `perspective.claim.duration` (claim time) or `pg_stat_statements` (per-function
+  SQL time); code that read a removed property drops the reference.
 - **Breaking (configuration): `MessageProcessingOptions.InboxBatchSize`, `InboxBatchSlideMs` and
   `InboxBatchMaxWaitMs` are removed (#1536).** Nothing read them: inbox batching is configured on
   `SlidingWindowInboxOptions`, so tuning them changed nothing. **Upgrade:** set

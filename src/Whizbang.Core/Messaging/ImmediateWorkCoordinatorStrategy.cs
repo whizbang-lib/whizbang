@@ -45,6 +45,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
+  private const string STRATEGY_NAME = "immediate";
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
@@ -126,7 +127,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
   public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "immediate"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "api"));
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
@@ -142,6 +143,10 @@ public partial class ImmediateWorkCoordinatorStrategy(
         _queues.OutboxMessages.Insert(index++, _queues.Stamp(deferred));
       }
       LogDeferredChannelDrained(_logger, deferredMessages.Count);
+    }
+
+    if (_queues.IsEmpty) {
+      _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
     }
 
     // Immediate strategy flushes all queued operations at once (WorkCoordinatorFlushHelper)
@@ -172,7 +177,8 @@ public partial class ImmediateWorkCoordinatorStrategy(
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
           outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _lifecycleMetrics,
-          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+          Metrics: _metrics, Strategy: STRATEGY_NAME),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {

@@ -14,6 +14,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -345,6 +346,35 @@ public class WorkCoordinatorFlushHelperTests {
 
   // ===== Helpers =====
 
+  [Test]
+  public async Task AFlush_RecordsItsDurationTaggedWithTheStrategyAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: new CapturingWorkCoordinator(), outboxMessages: [_outbox()], metrics: metrics, strategy: "scoped"), default);
+
+    var durations = helper.GetByName("whizbang.work_coordinator.flush.duration");
+    await Assert.That(durations).Count().IsEqualTo(1)
+      .Because("#1535: flush.duration was declared and documented and nothing recorded it");
+    await Assert.That(durations[0].Tags["strategy"]).IsEqualTo("scoped");
+  }
+
+  [Test]
+  public async Task AnEmptyFlush_RecordsNoDurationAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: new CapturingWorkCoordinator(), metrics: metrics, strategy: "scoped"), default);
+
+    await Assert.That(helper.Measurements.Where(m => m.Value > 0 || m.InstrumentName.Contains(".duration", StringComparison.Ordinal)))
+      .IsEmpty()
+      .Because("an empty flush sends nothing; the strategies count it as flush.empty_calls instead");
+  }
+
   private static FlushContext _ctx(
     IWorkCoordinator? coordinator = null,
     IServiceScopeFactory? scopeFactory = null,
@@ -357,7 +387,9 @@ public class WorkCoordinatorFlushHelperTests {
     MessageFailure[]? inboxFailures = null,
     IWorkChannelWriter? workChannelWriter = null,
     OutboxMessage[]? pendingAudit = null,
-    bool skipLifecycle = true
+    bool skipLifecycle = true,
+    WorkCoordinatorMetrics? metrics = null,
+    string strategy = ""
   ) => new(
     coordinator,
     scopeFactory,
@@ -375,7 +407,9 @@ public class WorkCoordinatorFlushHelperTests {
     LifecycleMetrics: null,
     WorkChannelWriter: workChannelWriter,
     PendingAuditMessages: pendingAudit,
-    SkipLifecycle: skipLifecycle);
+    SkipLifecycle: skipLifecycle,
+    Metrics: metrics,
+    Strategy: strategy);
 
   private static OutboxMessage _outbox() {
     var id = Guid.CreateVersion7();

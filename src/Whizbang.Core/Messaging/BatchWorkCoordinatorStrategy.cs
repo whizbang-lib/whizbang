@@ -328,7 +328,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
           outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
-          SkipLifecycle: skipLifecycle),
+          SkipLifecycle: skipLifecycle,
+          Metrics: _metrics, Strategy: STRATEGY_NAME),
         ct
       );
 
