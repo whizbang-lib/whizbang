@@ -403,6 +403,7 @@ public class AuditOutboxMessageBuilderTests {
     var eventBody = JsonSerializer.SerializeToElement(new { OrderId = "abc", Amount = 42 });
     var message = _createOutboxMessage(isEvent: true, payload: eventBody);
     var options = _createOptions(auditEnabled: true);
+    options.AuditBodyDefault = AuditBodyDefault.Include; // the body is kept only when asked for (#1588)
 
     // Act
     var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);

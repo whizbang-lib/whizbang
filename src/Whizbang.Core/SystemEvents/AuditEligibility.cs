@@ -26,6 +26,16 @@ public static class AuditEligibility {
   /// <remarks>Read from <see cref="AuditEventRegistry"/>, which the generator fills at module load (#1580).</remarks>
   internal static AuditEventAttribute? AttributeOf(Type eventType) => AuditEventRegistry.Find(eventType);
 
+  /// <summary>
+  /// Whether an audit record of <paramref name="eventType"/> keeps the event's body: when the type asks for it
+  /// with <see cref="AuditEventAttribute.IncludeBody"/>, or when the default is <see cref="AuditBodyDefault.Include"/>.
+  /// </summary>
+  /// <param name="eventType">The event's CLR type, or null when it could not be resolved.</param>
+  /// <param name="bodyDefault">The configured default.</param>
+  /// <returns>True when the body is kept.</returns>
+  internal static bool IncludesBody(Type? eventType, AuditBodyDefault bodyDefault) =>
+    bodyDefault == AuditBodyDefault.Include || (eventType is not null && AttributeOf(eventType)?.IncludeBody == true);
+
   /// <summary>Decides whether this occurrence is audited, and how it should be labelled.</summary>
   /// <param name="payload">The event instance, or null when only the type is known.</param>
   /// <param name="eventType">The event's CLR type.</param>

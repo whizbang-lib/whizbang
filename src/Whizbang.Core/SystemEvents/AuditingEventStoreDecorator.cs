@@ -143,8 +143,10 @@ public sealed class AuditingEventStoreDecorator(
     // Extract audit attribute metadata
     var attr = AuditEligibility.AttributeOf(typeof(TMessage));
 
-    // Serialize payload to JsonElement (AOT-compatible)
-    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
+    // The body only when kept (#1588); otherwise the record points at the event and is not serialized at all
+    JsonElement? payloadJson = AuditEligibility.IncludesBody(typeof(TMessage), _options.AuditBodyDefault)
+      ? AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger)
+      : null;
 
     return new EventAudited {
       Id = TrackedGuid.New(),

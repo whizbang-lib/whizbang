@@ -80,4 +80,17 @@ public sealed class AuditEventAttribute : MessageTagAttribute {
   /// </code>
   /// </example>
   public bool Exclude { get; init; }
+
+  /// <summary>
+  /// When <c>true</c>, audit records of this type keep a copy of the event's body as it was when audited.
+  /// Default is <c>false</c>: the record points at the event and carries its scope, unless
+  /// <c>Whizbang:SystemEvents:AuditBodyDefault</c> is <c>Include</c>.
+  /// </summary>
+  /// <remarks>
+  /// Keep the body for types whose audit must show the data as it was, independent of the event store (for
+  /// example, when the origin may later remove the event). Every other type is better served by the pointer:
+  /// the body is already stored with the event, and copying it doubles the storage of large payloads.
+  /// </remarks>
+  /// <docs>fundamentals/events/system-events#audit-body</docs>
+  public bool IncludeBody { get; init; }
 }

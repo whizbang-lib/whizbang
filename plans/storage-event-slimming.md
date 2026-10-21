@@ -100,6 +100,9 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S5. A2c: pointer + scope by default, body opt-in
 
+**Status (2026-10-21):** the registry half ships in #1580; the body opt-in (`IncludeBody`,
+`AuditBodyDefault`, nullable `OriginalBody`, all three writers) ships in #1588.
+
 - **Changes.** Add `IncludeBody` to `AuditEventAttribute`
   (`src/Whizbang.Core/Attributes/AuditEventAttribute.cs:39`, beside `Exclude` at :82). The three
   writers omit `OriginalBody` unless the type opts in or the global default says include.

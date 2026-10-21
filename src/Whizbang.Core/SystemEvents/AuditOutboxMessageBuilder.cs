@@ -82,7 +82,8 @@ public static partial class AuditOutboxMessageBuilder {
       // The event has no version yet: the emit chain assigns it when the event is stored. 0 here, and
       // store_outbox_messages fills the stored version in (migration 216).
       OriginalStreamPosition = 0,
-      OriginalBody = eventMessage.Envelope.Payload,
+      // The body only when kept (#1588); otherwise the record points at the event.
+      OriginalBody = AuditEligibility.IncludesBody(eventType, options.AuditBodyDefault) ? eventMessage.Envelope.Payload : null,
       Timestamp = DateTimeOffset.UtcNow,
       ActivityName = auditDecision.Name,
       ActivityDescription = auditDecision.Description,

@@ -86,8 +86,10 @@ public sealed class SystemEventEmitter(
 
     var scope = EventAuditScope.Build(scopeContext, correlationId);
 
-    // Serialize payload to JsonElement in AOT-compatible way
-    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
+    // The body only when kept (#1588); otherwise the record points at the event and is not serialized at all
+    JsonElement? payloadJson = AuditEligibility.IncludesBody(typeof(TEvent), _options.AuditBodyDefault)
+      ? AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger)
+      : null;
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
