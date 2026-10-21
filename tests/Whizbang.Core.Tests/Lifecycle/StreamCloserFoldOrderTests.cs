@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// apply path must fold into the persisted signatures STRICTLY BEFORE the truncate — fold-after
 /// would fold a path the close already destroyed. The stream dies; its shape survives.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#folding</docs>
 public class StreamCloserFoldOrderTests {
   // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
   private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();

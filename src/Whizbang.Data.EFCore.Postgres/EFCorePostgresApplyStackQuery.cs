@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// JSONB containment on each event's scope. Both narrow the rows that form the paths, so a stream
 /// none of whose events survive contributes no path at all.
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#query</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyStackQuerySqlTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
 public sealed class EFCorePostgresApplyStackQuery : IApplyStackQuery {

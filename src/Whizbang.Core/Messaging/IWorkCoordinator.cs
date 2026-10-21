@@ -1202,7 +1202,7 @@ public interface IWorkCoordinator {
   /// <param name="clrTypeNames">The guarded perspective models' CLR type names.</param>
   /// <param name="perTableLimit">Bound per perspective table per cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
     IReadOnlyCollection<string> clrTypeNames,
@@ -1218,7 +1218,7 @@ public interface IWorkCoordinator {
   /// <param name="rows">The rows to hold.</param>
   /// <param name="holdUntil">When the hold lapses and the row is re-offered.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task HoldPerspectiveRowDestructionAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1230,7 +1230,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="rows">The rows to release.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task ReleasePerspectiveRowHoldsAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1248,7 +1248,7 @@ public interface IWorkCoordinator {
   /// <param name="maxRetries">Retry cap before the failure policy applies.</param>
   /// <param name="onDestroyFailure">The policy applied past the cap.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#failures</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<int> RecordPerspectiveRowDestructionFailureAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1263,7 +1263,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="batchSize">Rows deleted per perspective per cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
     int batchSize = 5000,
@@ -1275,7 +1275,7 @@ public interface IWorkCoordinator {
   /// (window function), intended for a slower, fleet-claimed cadence. Default: unsupported no-op.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
     int batchSize = 5000,
@@ -1288,7 +1288,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="claimWindow">Minimum interval between cap sweeps service-wide.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<bool> TryClaimRowCapSweepAsync(
     TimeSpan claimWindow,
@@ -1301,7 +1301,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeName">The perspective model's CLR type name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#adoption-is-automatic</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task AcknowledgeRetentionEnforcementAsync(
     string clrTypeName,
@@ -1313,7 +1313,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeName">The perspective model's CLR type name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#adoption-is-automatic</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<long> CountPerspectiveRetentionBacklogAsync(
     string clrTypeName,
@@ -1343,7 +1343,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="limit">Maximum journal entries claimed this cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>> DrainRowEvictionJournalAsync(
     int limit = 1000,
@@ -1356,7 +1356,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="rows">The origin (table, row) pairs to re-journal.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#cascades</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task RequeueRowEvictionsAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1368,7 +1368,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeNames">The perspective models to resolve.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
     IReadOnlyCollection<string> clrTypeNames,
@@ -1383,7 +1383,7 @@ public interface IWorkCoordinator {
   /// <param name="tableName">The perspective's physical table.</param>
   /// <param name="rowIds">The rows to load.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#cascades</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
     string clrTypeName,
@@ -1399,7 +1399,7 @@ public interface IWorkCoordinator {
   /// <param name="tableName">The member perspective's physical table.</param>
   /// <param name="rowIds">The rows the closure marked for eviction.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> CascadeDeletePerspectiveRowsAsync(
     string tableName,
@@ -1413,7 +1413,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="streamIds">The streams about to lose their pointers.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   Task<int> FoldStreamApplyPathsAsync(
@@ -1428,7 +1428,7 @@ public interface IWorkCoordinator {
   /// <param name="idleWindow">How long a stream must be idle to count as settled.</param>
   /// <param name="limit">Streams folded per invocation.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   Task<int> FoldSettledApplyPathsAsync(
     TimeSpan idleWindow,
@@ -1441,7 +1441,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="claimWindow">Minimum interval between settled folds service-wide.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   Task<bool> TryClaimSettledFoldSweepAsync(
     TimeSpan claimWindow,
@@ -1456,7 +1456,7 @@ public interface IWorkCoordinator {
   /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
   /// <param name="announcerTables">Its groups' announcer tables.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> ReconcileFollowerPresenceAsync(
     string followerTable,
@@ -1472,7 +1472,7 @@ public interface IWorkCoordinator {
   /// <param name="announcerTables">Its groups' announcer tables.</param>
   /// <param name="streamIds">The streams rebuilt, or null for the whole table.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> ReconcileFollowerPresenceAsync(
     string followerTable,
@@ -2695,7 +2695,7 @@ public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 /// <summary>Outcome of one perspective-row retention sweep invocation.</summary>
 /// <param name="RowsAffected">Rows destroyed by the sweep.</param>
 /// <param name="Status">The sweep's status string (<c>ok</c>, <c>skipped (debug_mode=true)</c>, <c>unsupported</c>, …).</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
 public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
 
@@ -2712,7 +2712,7 @@ public sealed record PerspectiveRetentionAdoption(string ClrTypeName, long Backl
 /// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
 /// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
 /// <param name="TableName">The perspective's physical table.</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 

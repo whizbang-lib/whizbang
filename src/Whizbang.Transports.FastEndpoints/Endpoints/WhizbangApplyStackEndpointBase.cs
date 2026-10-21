@@ -8,7 +8,7 @@ using Whizbang.Core.Lineage;
 namespace Whizbang.Transports.FastEndpoints;
 
 /// <summary>The apply-stack signatures/flow request, bound from the query string.</summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 public sealed class ApplyStackApiRequest {
   /// <summary>Restrict paths to this perspective's event types (association registry). Null = all.</summary>
   public string? Perspective { get; set; }
@@ -40,7 +40,7 @@ public sealed class ApplyStackApiRequest {
 /// <see cref="ApplyStackReporter"/> — the surfaces cannot drift apart in what they disclose:
 /// event-type topology and counts, never payloads.
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/WhizbangApplyStackEndpointBaseTests.cs</tests>
 /// <example>
 /// // The consumer's endpoint — declaring it IS the opt-in:
@@ -80,7 +80,7 @@ public abstract class WhizbangApplyStackEndpointBase : Endpoint<ApplyStackApiReq
 }
 
 /// <summary>The apply-stack drill-in request, bound from the query string.</summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 public sealed class ApplyStackStreamsApiRequest {
   /// <summary>The exact collapsed path, one <c>step</c> parameter per element.</summary>
   public List<string> Step { get; set; } = [];
@@ -100,7 +100,7 @@ public sealed class ApplyStackStreamsApiRequest {
 /// FastEndpoints flavor — same opt-in-by-declaration and security posture as
 /// <see cref="WhizbangApplyStackEndpointBase"/>.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#serving-the-view</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/WhizbangApplyStackEndpointBaseTests.cs</tests>
 public abstract class WhizbangApplyStackStreamsEndpointBase : Endpoint<ApplyStackStreamsApiRequest, ApplyStackStreamsReport> {
 

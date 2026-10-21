@@ -7,7 +7,7 @@ namespace Whizbang.Core.Lineage;
 /// <param name="Offset">Steps from the anchor: negative = before, 0 = the anchor column, positive = after.</param>
 /// <param name="EventType">The collapsed path element at this offset (may carry the run-length <c>+</c> suffix, or be the <c>(others)</c> collapse node).</param>
 /// <param name="StreamCount">Total streams whose path passes through this (offset, type) cell.</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#flow-view</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackFlowViewTests.cs</tests>
 public sealed record ApplyStackFlowNode(int Offset, string EventType, long StreamCount);
 
@@ -16,7 +16,7 @@ public sealed record ApplyStackFlowNode(int Offset, string EventType, long Strea
 /// <param name="FromEventType">The source node's event type.</param>
 /// <param name="ToEventType">The target node's event type.</param>
 /// <param name="StreamCount">Total streams whose path takes this transition at this offset.</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#flow-view</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackFlowViewTests.cs</tests>
 public sealed record ApplyStackFlowEdge(int FromOffset, string FromEventType, string ToEventType, long StreamCount);
 
@@ -28,7 +28,7 @@ public sealed record ApplyStackFlowEdge(int FromOffset, string FromEventType, st
 /// <param name="AnchorEventType">The anchor the view is centered on.</param>
 /// <param name="Nodes">Cells of the view, ordered by (offset, weight desc, type).</param>
 /// <param name="Edges">Transitions between adjacent columns, ordered by (offset, weight desc, from, to).</param>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#flow-view</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackFlowViewTests.cs</tests>
 public sealed record ApplyStackFlowGraph(
   string AnchorEventType,
@@ -53,7 +53,7 @@ public sealed record ApplyStackFlowGraph(
 /// <see cref="OTHERS"/> node; edges touching merged nodes re-target it with their weights summed.
 /// </para>
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+/// <docs>operations/observability/apply-stacks#flow-view</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lineage/ApplyStackFlowViewTests.cs</tests>
 public static class ApplyStackFlowView {
   /// <summary>The label of the per-column long-tail collapse node.</summary>

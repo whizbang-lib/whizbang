@@ -17,7 +17,7 @@ namespace Whizbang.Core.Lifecycle;
 /// <param name="Scope">The row's scope JSON, when present.</param>
 /// <param name="Data">The row's model payload JSON.</param>
 /// <param name="Reason">Which sweep selected it: <c>ttl</c> (expiry ladder) or <c>cap</c> (per-scope overflow).</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public sealed record PerspectiveRowDestructionTarget(
   string ClrTypeName,
@@ -30,11 +30,11 @@ public sealed record PerspectiveRowDestructionTarget(
 /// <summary>A (table, row) reference for hold and failure bookkeeping.</summary>
 /// <param name="TableName">The perspective's physical table.</param>
 /// <param name="RowId">The row id.</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
 public readonly record struct PerspectiveRowRef(string TableName, Guid RowId);
 
 /// <summary>How a guard disposed of one offered row.</summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
 public enum PerspectiveRowDispositionKind {
   /// <summary>The row may be destroyed — external cleanup is verified complete.</summary>
   Proceed = 0,
@@ -49,7 +49,7 @@ public enum PerspectiveRowDispositionKind {
 /// <summary>A guard's per-row decision: proceed, defer until an instant, or cancel.</summary>
 /// <param name="Kind">The disposition.</param>
 /// <param name="DeferUntil">The re-offer instant, when <paramref name="Kind"/> is <see cref="PerspectiveRowDispositionKind.Defer"/>.</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public readonly record struct PerspectiveRowDecision(
   PerspectiveRowDispositionKind Kind,
@@ -83,7 +83,7 @@ public readonly record struct PerspectiveRowDecision(
 /// cannot slip out through a path the guard didn't cover.
 /// </para>
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveRowSweepTests.cs</tests>
 public interface IPerspectiveRowDestructionGuard {
   /// <summary>The perspective model types this guard protects.</summary>
