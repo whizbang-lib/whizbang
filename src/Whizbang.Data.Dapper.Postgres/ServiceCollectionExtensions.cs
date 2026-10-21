@@ -124,6 +124,8 @@ public static class ServiceCollectionExtensions {
     // reconcile settings (a value that is not one fails the attempt) and the host's logger.
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
+        // The registry rows row retention enrolls from, for every perspective the host's assemblies declared (#1548).
+        PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
         ManagedObjects = managedObjects is null
           ? null
           : ManagedSchemaHostPass.Declared(ManagedSchemaObjectSet.FromDeclarations(managedObjects), sp),
@@ -288,6 +290,7 @@ public static class ServiceCollectionExtensions {
     // Registration records what to initialize; the shared schema initializer does it at host start.
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql) {
+        PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });

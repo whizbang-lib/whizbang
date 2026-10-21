@@ -188,8 +188,8 @@ public partial class DapperWorkCoordinator {
   }
 
   /// <summary>
-  /// A declaration that matched no registry row: a key drift, or (on this driver, which does not write the registry) a
-  /// perspective whose row nothing has written yet. Either way the perspective is not enrolled, so it is reported.
+  /// A declaration that matched no registry row: a key drift, or a perspective whose assembly registered no payload
+  /// for the startup reconcile to write (#1548). Either way the perspective is not enrolled, so it is reported.
   /// </summary>
   private void _reportUnmatchedRetentionDeclaration(string clrTypeName) {
     if (_logger is not null) {

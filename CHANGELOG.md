@@ -337,6 +337,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
+  (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
+  it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the
+  perspective tables, as the EF Core driver does. Declared retention windows are now adopted and swept, and the
+  row-eviction cleanup finds each model's perspectives. The payload is built by one shared builder for both drivers.
+  That builder now describes a vector field's index with the method the field names (`hnsw` or `ivfflat`), and no
+  index for `None`, as the table DDL does; an EF Core table with such a field reports schema drift once after upgrading,
+  as its recorded description is corrected.
 - **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
   origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
   as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.
