@@ -402,6 +402,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **The default outbox publisher ignored `ITransportReadinessCheck` (#1558).** `OutboxDrainWorker` sent to a transport
+  that reported not ready, and each failure then counted as an attempt. It now asks the publish strategy before each
+  pass. While the transport is not ready it publishes nothing, renews the leases of every row it holds on the offered
+  streams (by `LeaseRenewalWorkerOptions.LeaseSeconds`) and reports no failure, so no attempt is charged; the claim
+  offers the streams again and they publish once the transport is ready. The new `OnOutboxPublishHeld` event fires
+  after each held pass with the streams and the rows kept.
+
 - **`[PopulateTimestamp(TimestampKind.QueuedAt)]` was never stamped (#1557).** Nothing called the QueuedAt populator
   after the publisher that once did was removed, so a property marked this way stayed null. The dispatcher now stamps
   it as it writes a message's outbox copy (send, publish, their batch forms, a cascade and a deferred publish), and the
