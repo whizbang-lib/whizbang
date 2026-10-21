@@ -293,6 +293,7 @@ Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow
 Whizbang:StreamRateLimiter:StaleEntryTimeout
 Whizbang:StreamRateLimiter:WindowDuration
+Whizbang:SystemEvents:AuditBodyDefault
 Whizbang:SystemEvents:AuditMode
 Whizbang:SystemEvents:AuditPriority
 Whizbang:SystemEvents:AuditShipMaxBatchCount

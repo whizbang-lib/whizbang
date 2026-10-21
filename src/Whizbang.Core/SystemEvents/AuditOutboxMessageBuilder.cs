@@ -59,18 +59,7 @@ public static partial class AuditOutboxMessageBuilder {
       }
     }
 
-    // Extract correlation ID from envelope hops: the hop's metadata dictionary (older producers) or
-    // the hop's own correlation (the envelope's accessor), whichever is present.
-    string? correlationId = null;
-    if (eventMessage.Metadata.Hops is { Count: > 0 }) {
-      var firstHop = eventMessage.Metadata.Hops[0];
-      if (firstHop.Metadata != null &&
-          firstHop.Metadata.TryGetValue("CorrelationId", out var corrElem) &&
-          corrElem.ValueKind == JsonValueKind.String) {
-        correlationId = corrElem.GetString();
-      }
-    }
-    correlationId ??= eventMessage.Envelope.GetCorrelationId()?.ToString();
+    var correlationId = _correlationIdOf(eventMessage);
     var attribute = eventType is null ? null : AuditEligibility.AttributeOf(eventType);
 
     // Build the EventAudited payload
@@ -82,7 +71,8 @@ public static partial class AuditOutboxMessageBuilder {
       // The event has no version yet: the emit chain assigns it when the event is stored. 0 here, and
       // store_outbox_messages fills the stored version in (migration 216).
       OriginalStreamPosition = 0,
-      OriginalBody = eventMessage.Envelope.Payload,
+      // The body only when kept (#1588); otherwise the record points at the event.
+      OriginalBody = AuditEligibility.IncludesBody(eventType, options.AuditBodyDefault) ? eventMessage.Envelope.Payload : null,
       Timestamp = DateTimeOffset.UtcNow,
       ActivityName = auditDecision.Name,
       ActivityDescription = auditDecision.Description,
@@ -185,4 +175,19 @@ public static partial class AuditOutboxMessageBuilder {
   private static string _extractFullTypeName(string messageType) =>
     TypeNameFormatter.GetFullName(messageType);
 
+  /// <summary>
+  /// The correlation id from the envelope hops: the first hop's metadata dictionary (older producers) or the hop's
+  /// own correlation (the envelope's accessor), whichever is present.
+  /// </summary>
+  private static string? _correlationIdOf(OutboxMessage eventMessage) {
+    if (eventMessage.Metadata.Hops is { Count: > 0 }) {
+      var firstHop = eventMessage.Metadata.Hops[0];
+      if (firstHop.Metadata != null &&
+          firstHop.Metadata.TryGetValue("CorrelationId", out var corrElem) &&
+          corrElem.ValueKind == JsonValueKind.String) {
+        return corrElem.GetString();
+      }
+    }
+    return eventMessage.Envelope.GetCorrelationId()?.ToString();
+  }
 }

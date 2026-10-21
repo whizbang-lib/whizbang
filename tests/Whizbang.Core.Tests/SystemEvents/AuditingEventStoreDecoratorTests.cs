@@ -559,6 +559,49 @@ public class AuditingEventStoreDecoratorTests {
   internal sealed record MarkedEvent : IEvent {
   }
 
+  [AuditEvent(IncludeBody = true)]
+  internal sealed record BodyKeptEvent([property: StreamId] Guid Id, string Note) : IEvent;
+
+  #endregion
+
+  #region Audit body (#1588)
+
+  [Test]
+  public async Task AppendAsync_ByDefault_TheAuditRecordPointsAtTheEventWithoutItsBodyAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new TestEvent { Name = "Test" }));
+
+    var payload = channel.QueuedMessages.Single().Envelope.Payload;
+    await Assert.That(payload.TryGetProperty("OriginalBody", out _)).IsFalse()
+      .Because("a record points at the event it audits; the body is stored only when a type or the default asks for it");
+    await Assert.That(payload.GetProperty("OriginalEventType").GetString()).IsEqualTo(nameof(TestEvent));
+    await Assert.That(payload.GetProperty("OriginalEventId").GetGuid()).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task AppendAsync_ATypeThatAsksForItsBody_IsRecordedWithItAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new BodyKeptEvent(Guid.Empty, "kept")));
+
+    // Present, as an object; this test type is in no registered JSON context, so its content serializes as {}.
+    var body = channel.QueuedMessages.Single().Envelope.Payload.GetProperty("OriginalBody");
+    await Assert.That(body.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Object);
+  }
+
+  [Test]
+  public async Task AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => {
+      opts.EnableEventAudit();
+      opts.AuditBodyDefault = AuditBodyDefault.Include;
+    });
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new TestEvent { Name = "everything" }));
+
+    await Assert.That(channel.QueuedMessages.Single().Envelope.Payload.TryGetProperty("OriginalBody", out _)).IsTrue();
+  }
+
   #endregion
 
   #region Helper Methods

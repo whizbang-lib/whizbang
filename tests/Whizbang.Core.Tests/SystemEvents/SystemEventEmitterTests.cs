@@ -840,9 +840,9 @@ public class SystemEventEmitterTests {
 
   [Test]
   public async Task EmitEventAuditedAsync_SerializesPayloadToJsonElementAsync() {
-    // Arrange
+    // Arrange - the body is kept only when asked for (#1588)
     var eventStore = new MockEventStore();
-    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var options = Options.Create(new SystemEventOptions { AuditBodyDefault = AuditBodyDefault.Include }.EnableEventAudit());
     var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
 
     var envelope = _createTestEnvelope("SerializeMe");
@@ -853,7 +853,21 @@ public class SystemEventEmitterTests {
     // Assert - OriginalBody should contain serialized payload
     var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
     await Assert.That(emittedEnvelope).IsNotNull();
-    await Assert.That(emittedEnvelope!.Payload.OriginalBody.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+    await Assert.That(emittedEnvelope!.Payload.OriginalBody!.Value.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_ByDefault_RecordsNoBodyAsync() {
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _createTestEnvelope("NotKept"));
+
+    var emitted = (MessageEnvelope<EventAudited>)eventStore.AppendedEnvelopes[0];
+    await Assert.That(emitted.Payload.OriginalBody).IsNull()
+      .Because("an audit record points at its event; the body is opt-in (#1588)");
+    await Assert.That(emitted.Payload.OriginalEventType).IsNotEmpty();
   }
 
   [Test]

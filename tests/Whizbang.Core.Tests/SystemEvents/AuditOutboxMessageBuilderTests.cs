@@ -403,6 +403,7 @@ public class AuditOutboxMessageBuilderTests {
     var eventBody = JsonSerializer.SerializeToElement(new { OrderId = "abc", Amount = 42 });
     var message = _createOutboxMessage(isEvent: true, payload: eventBody);
     var options = _createOptions(auditEnabled: true);
+    options.AuditBodyDefault = AuditBodyDefault.Include; // the body is kept only when asked for (#1588)
 
     // Act
     var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
@@ -642,6 +643,10 @@ public class AuditOutboxMessageBuilderTests {
   // Event without any AuditEvent attribute (unmarked)
   internal sealed record TestUnmarkedEvent : IEvent;
 
+  // Event whose audit records keep its body
+  [AuditEvent(IncludeBody = true)]
+  internal sealed record TestBodyKeptEvent : IEvent;
+
   // Event explicitly excluded from audit
   [AuditEvent(Exclude = true, Reason = "High frequency")]
   internal sealed record TestExcludedFromAuditEvent : IEvent;
@@ -653,6 +658,40 @@ public class AuditOutboxMessageBuilderTests {
   #endregion
 
   #region Helper Methods
+
+  #region Audit body (#1588)
+
+  [Test]
+  public async Task TryBuildAuditMessage_ByDefault_LeavesTheBodyOutAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.TryGetProperty("OriginalBody", out _)).IsFalse();
+    await Assert.That(result.Envelope.Payload.GetProperty("OriginalEventId").GetGuid()).IsEqualTo(message.MessageId);
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_ATypeThatAsksForItsBody_KeepsItAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestBodyKeptEvent).AssemblyQualifiedName);
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _createOptions(auditEnabled: true));
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
+  }
+
+  [Test]
+  public async Task TryBuildAuditMessage_TheDefaultSetToInclude_KeepsEveryBodyAsync() {
+    var message = _createOutboxMessage(isEvent: true, messageType: typeof(TestUnmarkedEvent).AssemblyQualifiedName);
+    var options = _createOptions(auditEnabled: true);
+    options.AuditBodyDefault = AuditBodyDefault.Include;
+
+    var result = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, options);
+
+    await Assert.That(result!.Envelope.Payload.GetProperty("OriginalBody").GetProperty("test").GetString()).IsEqualTo("data");
+  }
+
+  #endregion
 
   private static OutboxMessage _createOutboxMessage(
       bool isEvent,

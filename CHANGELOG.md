@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never removes a signal some pod has not delivered.
 
 #### Audit
+- **Audit records point at their event; the body is opt-in (#1588). Behavior change.** `EventAudited.OriginalBody` is
+  now `JsonElement?` and is null (and left out of the record) unless the type is marked
+  `[AuditEvent(IncludeBody = true)]` or `Whizbang:SystemEvents:AuditBodyDefault` (`Whizbang__SystemEvents__AuditBodyDefault`)
+  is `Include`; the default is `Omit`. The record still carries the original event's id, type, stream, position and
+  scope, which is all the built-in audit view stores. A consumer that reads `OriginalBody` sets `Include` (or marks
+  its types) to keep receiving it.
 - **Audit decisions read `[AuditEvent]` from a generated registry, not reflection (#1580).** A generator registers
   every type that carries the attribute, directly or through a base class, with its values into `AuditEventRegistry`
   at module load, and `AuditEligibility` reads from it, so Whizbang.Core no longer reads the attribute by reflection.

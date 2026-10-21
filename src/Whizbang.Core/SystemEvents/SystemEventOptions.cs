@@ -24,6 +24,23 @@ public enum AuditMode {
 }
 
 /// <summary>
+/// Whether an audit record keeps the body of the event it audits, for types that do not say so themselves with
+/// <c>[AuditEvent(IncludeBody = true)]</c>.
+/// </summary>
+/// <docs>fundamentals/events/system-events#audit-body</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync</tests>
+public enum AuditBodyDefault {
+  /// <summary>
+  /// The record points at the event (id, type, stream, position) and carries its scope, but not its body.
+  /// The default: the body is already stored with the event itself.
+  /// </summary>
+  Omit,
+
+  /// <summary>Every audit record keeps a copy of the event's body as it was when audited.</summary>
+  Include
+}
+
+/// <summary>
 /// Configuration options for system events.
 /// Controls which system events are enabled and their transport behavior.
 /// </summary>
@@ -81,6 +98,15 @@ public sealed class SystemEventOptions {
   /// events unless excluded, <see cref="AuditMode.OptIn"/> audits only explicitly marked events.
   /// </summary>
   public AuditMode AuditMode { get; set; } = AuditMode.OptOut;
+
+  /// <summary>
+  /// Whether audit records keep the audited event's body: <see cref="AuditBodyDefault.Omit"/> (default) records a
+  /// pointer to the event and its scope; <see cref="AuditBodyDefault.Include"/> copies every body. A type marked
+  /// <c>[AuditEvent(IncludeBody = true)]</c> keeps its body either way.
+  /// Configuration key <c>Whizbang:SystemEvents:AuditBodyDefault</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#audit-body</docs>
+  public AuditBodyDefault AuditBodyDefault { get; set; } = AuditBodyDefault.Omit;
 
   /// <summary>
   /// Custom function to humanize event type names for the audit trail.

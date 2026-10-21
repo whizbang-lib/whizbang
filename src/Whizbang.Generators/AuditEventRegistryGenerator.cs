@@ -77,8 +77,8 @@ public class AuditEventRegistryGenerator : IIncrementalGenerator {
         case "Level" when value.Value is not null:
           parts.Add($"Level = (global::Whizbang.Core.Audit.AuditLevel){Convert.ToInt32(value.Value, CultureInfo.InvariantCulture)}");
           break;
-        case "Exclude" when value.Value is bool exclude:
-          parts.Add($"Exclude = {(exclude ? "true" : "false")}");
+        case "Exclude" or "IncludeBody" when value.Value is bool flag:
+          parts.Add($"{argument.Key} = {(flag ? "true" : "false")}");
           break;
       }
     }

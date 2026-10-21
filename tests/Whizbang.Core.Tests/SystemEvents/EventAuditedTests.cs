@@ -75,8 +75,8 @@ public class EventAuditedTests {
     };
 
     // Assert
-    await Assert.That(audited.OriginalBody.GetProperty("OrderId").GetString()).IsEqualTo("abc123");
-    await Assert.That(audited.OriginalBody.GetProperty("Amount").GetDecimal()).IsEqualTo(99.99m);
+    await Assert.That(audited.OriginalBody!.Value.GetProperty("OrderId").GetString()).IsEqualTo("abc123");
+    await Assert.That(audited.OriginalBody.Value.GetProperty("Amount").GetDecimal()).IsEqualTo(99.99m);
   }
 
   [Test]

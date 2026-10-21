@@ -35,6 +35,9 @@ public class AuditEventRegistryGeneratorTests {
     [AuditEvent(Exclude = false, Tag = "kept")]
     public record ExplicitlyKept : IEvent;
 
+    [AuditEvent(IncludeBody = true)]
+    public record BodyKept : IEvent;
+
     public static class Holder {
       [AuditEvent(Exclude = true)]
       private sealed record Hidden : IEvent;
@@ -91,6 +94,17 @@ public class AuditEventRegistryGeneratorTests {
       .Because("an attribute with no arguments registers the defaults");
     await Assert.That(generated).Contains(
       "Register(typeof(global::MyApp.ExplicitlyKept), new global::Whizbang.Core.Attributes.AuditEventAttribute { Exclude = false, Tag = \"kept\" });");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IncludeBody_IsRegisteredAsync() {
+    var result = GeneratorTestHelper.RunGenerator<AuditEventRegistryGenerator>(SOURCE);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "AuditEventRegistry.g.cs");
+
+    await Assert.That(generated).Contains(
+      "Register(typeof(global::MyApp.BodyKept), new global::Whizbang.Core.Attributes.AuditEventAttribute { IncludeBody = true });")
+      .Because("audit writers read IncludeBody from the registry, so the generator must carry it (#1588)");
   }
 
   [Test]
