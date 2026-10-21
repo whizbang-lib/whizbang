@@ -51,8 +51,8 @@ public sealed partial class PgDurableSignalRetentionWorker(
   /// Init-settable so tests can observe the gate/sweep sequencing in test time.</summary>
   internal TimeSpan SweepInterval { get; init; } = TimeSpan.FromHours(1);
 
-  /// <summary>Retention window — signals older than this are eligible for deletion.</summary>
-  private static readonly TimeSpan _retentionAge = TimeSpan.FromDays(7);
+  /// <summary>Rows one delete removes; the sweep repeats until a batch comes back short. Init-settable for tests.</summary>
+  internal int BatchSize { get; init; } = 5000;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -98,12 +98,24 @@ public sealed partial class PgDurableSignalRetentionWorker(
       return 0;
     }
     await using var conn = await plan.OpenAsync(cancellationToken);
-    await using var cmd = new NpgsqlCommand(@"
-      DELETE FROM wh_signals
-      WHERE created_at < NOW() - @retention
-        AND id <= COALESCE((SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors), 0)", conn);
-    cmd.Parameters.AddWithValue("retention", _retentionAge);
-    var deleted = await cmd.ExecuteNonQueryAsync(cancellationToken);
+    // In batches, so a large backlog is never one long delete; each batch keeps both guards (the age window and the
+    // slowest pod's cursor), and the loop ends on a short batch (#1574).
+    var deleted = 0;
+    int batch;
+    do {
+      await using var cmd = new NpgsqlCommand(@"
+        DELETE FROM wh_signals
+        WHERE id IN (
+          SELECT s.id FROM wh_signals s
+          WHERE s.created_at < NOW() - @retention
+            AND s.id <= COALESCE((SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors), 0)
+          ORDER BY s.id
+          LIMIT @batch)", conn);
+      cmd.Parameters.AddWithValue("retention", _options.SignalRetention);
+      cmd.Parameters.AddWithValue("batch", BatchSize);
+      batch = await cmd.ExecuteNonQueryAsync(cancellationToken);
+      deleted += batch;
+    } while (batch == BatchSize);
     if (deleted > 0) {
       LogSweepDeleted(_logger, deleted);
     }
