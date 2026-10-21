@@ -43,7 +43,7 @@ public sealed class PerspectiveTableStorageAnalyzer : DiagnosticAnalyzer {
     var location = LocationUtilities.ApplicationOrFallback(attribute, Location.None, context.CancellationToken);
     foreach (var argument in attribute.NamedArguments) {
       var range = TableStorageRange.All.FirstOrDefault(r => r.Property == argument.Key);
-      if (range is null || !range.IsOutOfRange(argument.Value.Value)) {
+      if (range?.IsOutOfRange(argument.Value.Value) != true) {
         continue;
       }
 

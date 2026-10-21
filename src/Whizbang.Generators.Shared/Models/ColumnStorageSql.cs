@@ -254,8 +254,8 @@ public static class ColumnStorageSql {
   public static string SetFillFactor(string qualifiedTable, int fillFactor) {
     // The schema prefix, if any, ends at the last dot: generated table names never contain one.
     var split = qualifiedTable.LastIndexOf('.') + 1;
-    var schemaPrefix = qualifiedTable.Substring(0, split);
-    var table = qualifiedTable.Substring(split);
+    var schemaPrefix = qualifiedTable.Remove(split);
+    var table = qualifiedTable.Remove(0, split);
     return _setStorageParameter(qualifiedTable, "fillfactor", fillFactor.ToString(CultureInfo.InvariantCulture),
       whenChanged: $"    IF pg_relation_size('{qualifiedTable}'::regclass) > 0 THEN\n"
         + $"      PERFORM {schemaPrefix}wh_request_table_rewrite('{table}');\n"
