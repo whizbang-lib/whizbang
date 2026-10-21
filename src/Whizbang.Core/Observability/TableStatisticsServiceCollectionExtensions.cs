@@ -53,6 +53,10 @@ public static class TableStatisticsServiceCollectionExtensions {
       });
     }));
 
+    services.AddOptions<TableStatisticsOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<TableStatisticsOptions>, TableStatisticsOptionsValidator>(
+      _ => new TableStatisticsOptionsValidator()));
+
     services.AddMetrics();
     services.TryAddSingleton(sp => new WhizbangMetrics(sp.GetRequiredService<IMeterFactory>()));
     services.TryAddSingleton(sp => new TableStatisticsMetrics(sp.GetRequiredService<WhizbangMetrics>()));
@@ -66,6 +70,14 @@ public static class TableStatisticsServiceCollectionExtensions {
         sp.GetRequiredService<TableStatisticsMetrics>(),
         sp.GetService<ISchemaReadyGate>()!,
         sp.GetService<ILogger<TableStatisticsCollector>>()!)));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, EventTypeBytesSampler>(sp =>
+      new EventTypeBytesSampler(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<TableStatisticsMetrics>(),
+        sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
+        sp.GetService<ISchemaReadyGate>(),
+        sp.GetService<ILogger<EventTypeBytesSampler>>(),
+        sp.GetService<TimeProvider>())));
 
     return services;
   }

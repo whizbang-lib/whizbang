@@ -210,7 +210,12 @@ public readonly record struct EventTypeSampleRequest(string ClaimKey, double Sam
   /// <summary>The bytes the whole table holds, estimated from the bytes the sample read.</summary>
   /// <param name="sampledBytes">The bytes the sample read.</param>
   /// <returns>The sampled bytes scaled up by the share of the table that was not read.</returns>
-  public long Extrapolate(long sampledBytes) => 0;
+  /// <remarks>
+  /// A sample of pages reads each page with the same probability, so the bytes it reads are, in expectation, the
+  /// table's bytes times that share.
+  /// </remarks>
+  public long Extrapolate(long sampledBytes) =>
+    (long)Math.Round(sampledBytes * 100d / SamplePercent, MidpointRounding.AwayFromZero);
 }
 
 /// <summary>The stored bytes of one event type, from a sample of the event store.</summary>

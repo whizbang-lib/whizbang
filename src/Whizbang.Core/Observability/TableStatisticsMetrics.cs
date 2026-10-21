@@ -20,11 +20,13 @@ public sealed class TableStatisticsMetrics {
 #pragma warning restore CA1707
 
   private const string TABLE_NAME_TAG = "table_name";
+  private const string EVENT_TYPE_TAG = "event_type";
 
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
   private readonly ConcurrentDictionary<string, double> _tableBloat = new();
   private readonly ConcurrentDictionary<string, TableStorageStatistics> _tableStorage = new();
+  private readonly ConcurrentDictionary<string, EventTypeBytes> _eventTypeBytes = new();
 
   /// <summary>Initializes table statistics meters on the shared Whizbang meter.</summary>
   public TableStatisticsMetrics(WhizbangMetrics whizbangMetrics) {
@@ -74,7 +76,33 @@ public sealed class TableStatisticsMetrics {
         new Measurement<long>(kv.Value.LiveRows, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
       unit: "rows",
       description: "Estimated live rows per table from the planner statistics");
+
+    // Which event types the event store's bytes belong to, and how much of each event is payload and how much
+    // metadata: the reading that decides what to exclude from audit, mark ephemeral or slim. Sampled on one
+    // instance per window, so at most one instance reports it at a time.
+    meter.CreateObservableGauge(
+      "whizbang.event_store.sampled_bytes_per_event",
+      observeValues: () => _eventTypeBytes.SelectMany(kv => _parts(kv.Key, kv.Value)),
+      unit: "bytes",
+      description: "Mean stored bytes per event of each event type, split into payload and metadata, from a sample");
+
+    meter.CreateObservableGauge(
+      "whizbang.event_store.estimated_type_bytes",
+      observeValues: () => _eventTypeBytes.Select(kv =>
+        new Measurement<long>(kv.Value.EstimatedTotalBytes, new KeyValuePair<string, object?>(EVENT_TYPE_TAG, kv.Key))),
+      unit: "bytes",
+      description: "Stored bytes of every event of each event type, extrapolated from a sample");
   }
+
+  private static IEnumerable<Measurement<double>> _parts(string eventType, EventTypeBytes bytes) {
+    yield return _part(bytes.MeanDataBytes, eventType, "data");
+    yield return _part(bytes.MeanMetadataBytes, eventType, "metadata");
+  }
+
+  private static Measurement<double> _part(double bytes, string eventType, string part) =>
+    new(bytes,
+      new KeyValuePair<string, object?>(EVENT_TYPE_TAG, eventType),
+      new KeyValuePair<string, object?>("part", part));
 
   private static IEnumerable<Measurement<long>> _components(string table, TableStorageStatistics storage) {
     yield return _component(storage.HeapBytes, table, "heap");
@@ -138,8 +166,7 @@ public sealed class TableStatisticsMetrics {
   /// </summary>
   /// <summary>Replaces the event-type sample; an empty one clears it.</summary>
   /// <param name="sample">The latest sample per event type.</param>
-  public void UpdateEventTypeBytes(IReadOnlyDictionary<string, EventTypeBytes> sample) {
-  }
+  public void UpdateEventTypeBytes(IReadOnlyDictionary<string, EventTypeBytes> sample) => _replace(_eventTypeBytes, sample);
 
   internal double? GetBloatRatioForTest(string table) =>
     _tableBloat.TryGetValue(table, out var v) ? v : null;
