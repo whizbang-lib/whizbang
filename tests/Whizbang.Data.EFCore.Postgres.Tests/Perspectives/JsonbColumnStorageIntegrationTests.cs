@@ -50,6 +50,11 @@ public class JsonbColumnStorageIntegrationTests {
       .IsEqualTo("l").Because("the document is compressed with lz4.");
     await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
       .Contains("toast_tuple_target=512");
+    await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
+      .Contains("autovacuum_vacuum_threshold=500").And.Contains("autovacuum_vacuum_scale_factor=0");
+    await Assert.That(await _scalarAsync(
+        $"SELECT array_to_string(t.reloptions, ',') FROM pg_class c JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = '{TABLE}'::regclass"))
+      .IsEqualTo("autovacuum_vacuum_threshold=300").Because("a toast.* setting lands on the TOAST relation (#1584).");
     await Assert.That(await _scalarAsync($"SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_{TABLE}_grid_filter_size'"))
       .Contains("pg_column_size(grid_filter) <= 4096");
   }
@@ -64,7 +69,8 @@ public class JsonbColumnStorageIntegrationTests {
       "GridFilter", "grid_filter", "x", IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null,
       ColumnType: "jsonb", Storage: "MAIN", MaxBytes: 4096);
-    var statements = ColumnStorageSql.ForTable(TABLE, new TableStorageInfo("lz4", 512))
+    var statements = ColumnStorageSql.ForTable(TABLE, new TableStorageInfo("lz4", 512,
+        AutovacuumVacuumThreshold: 500, AutovacuumVacuumScaleFactor: 0, ToastAutovacuumVacuumThreshold: 300))
       .Concat(ColumnStorageSql.ForColumn(TABLE, TABLE, field));
 
     await _execAsync("""

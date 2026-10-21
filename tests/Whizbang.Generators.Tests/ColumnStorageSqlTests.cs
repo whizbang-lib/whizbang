@@ -130,6 +130,76 @@ public class ColumnStorageSqlTests {
     await Assert.That(sql).Contains("ADD CONSTRAINT ck_t_c_size CHECK (pg_column_size(c) <= 2048) NOT VALID;");
   }
 
+  private const string AUTOVACUUM = """
+    [PerspectiveTableStorage(AutovacuumVacuumThreshold = 500, AutovacuumVacuumScaleFactor = 0,
+      AutovacuumInsertThreshold = 2000, AutovacuumInsertScaleFactor = 0.05,
+      ToastAutovacuumVacuumThreshold = 300, ToastAutovacuumVacuumScaleFactor = 0.01)]
+    """;
+
+  /// <summary>
+  /// Issue #1584: each autovacuum setting a model declares reaches both schema generators as a statement that sets
+  /// the table's storage parameter, and a TOAST setting is compared against the TOAST relation, where PostgreSQL
+  /// keeps it.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AutovacuumSettings_ReachBothSchemaGeneratorsAsync() {
+    var source = MODEL.Replace(
+      "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]", AUTOVACUUM,
+      StringComparison.Ordinal);
+    var registration = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var efSql = registration.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+    var schema = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source), "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    foreach (var sql in new[] { efSql, schema }) {
+      await Assert.That(sql).Contains("SET (autovacuum_vacuum_threshold = 500);");
+      await Assert.That(sql).Contains("SET (autovacuum_vacuum_scale_factor = 0);");
+      await Assert.That(sql).Contains("SET (autovacuum_vacuum_insert_threshold = 2000);");
+      await Assert.That(sql).Contains("SET (autovacuum_vacuum_insert_scale_factor = 0.05);");
+      await Assert.That(sql).Contains("SET (toast.autovacuum_vacuum_threshold = 300);");
+      await Assert.That(sql).Contains("SET (toast.autovacuum_vacuum_scale_factor = 0.01);");
+    }
+  }
+
+  [Test]
+  public async Task NegativeAutovacuumSettings_KeepTheServerDefaultsAsync() {
+    var source = MODEL.Replace(
+      "[PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]",
+      "[PerspectiveTableStorage(AutovacuumVacuumThreshold = -1, AutovacuumVacuumScaleFactor = -1, ToastAutovacuumVacuumThreshold = -5)]",
+      StringComparison.Ordinal);
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var sql = result.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
+
+    await Assert.That(sql).DoesNotContain("autovacuum");
+  }
+
+  [Test]
+  public async Task StorageParameter_ComparesTheTableOrItsToastRelationAsync() {
+    var table = ColumnStorageSql.SetStorageParameter("t", "autovacuum_vacuum_threshold", "500");
+    var toast = ColumnStorageSql.SetStorageParameter("t", "toast.autovacuum_vacuum_threshold", "300");
+
+    await Assert.That(table).Contains("'autovacuum_vacuum_threshold=500' = ANY (coalesce(reloptions, ARRAY[]::text[]))");
+    await Assert.That(table).Contains("ALTER TABLE t SET (autovacuum_vacuum_threshold = 500);");
+    await Assert.That(toast).Contains("JOIN pg_class toast ON toast.oid = c.reltoastrelid")
+      .Because("PostgreSQL keeps a toast.* parameter on the TOAST relation, without the prefix.");
+    await Assert.That(toast).Contains("'autovacuum_vacuum_threshold=300' = ANY (coalesce(toast.reloptions, ARRAY[]::text[]))");
+    await Assert.That(toast).Contains("ALTER TABLE t SET (toast.autovacuum_vacuum_threshold = 300);");
+  }
+
+  [Test]
+  public async Task ForTable_EmitsEachDeclaredParameterInOrderAsync() {
+    var storage = new TableStorageInfo(null, null, AutovacuumVacuumThreshold: 1, AutovacuumVacuumScaleFactor: 0.5,
+      AutovacuumInsertThreshold: 2, AutovacuumInsertScaleFactor: 0, ToastAutovacuumVacuumThreshold: 3,
+      ToastAutovacuumVacuumScaleFactor: 1e-05);
+
+    var statements = ColumnStorageSql.ForTable("t", storage).ToList();
+
+    await Assert.That(statements.Count).IsEqualTo(6);
+    await Assert.That(statements[1]).Contains("SET (autovacuum_vacuum_scale_factor = 0.5);");
+    await Assert.That(statements[5]).Contains("SET (toast.autovacuum_vacuum_scale_factor = 1E-05);")
+      .Because("a scale factor is written in the invariant round-trip form, which PostgreSQL parses and stores as written.");
+  }
+
   private static PhysicalFieldInfo _field() =>
     new("P", "p", "string", IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null);
