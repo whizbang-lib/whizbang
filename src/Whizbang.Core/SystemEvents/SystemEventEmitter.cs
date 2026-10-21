@@ -148,6 +148,10 @@ public sealed class SystemEventEmitter(
 
     // Serialize command to JsonElement in AOT-compatible way
     var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions, _logger);
+    // A command that carries id lists of unbounded length keeps their lengths in the audit record, not the lists (#1525)
+    if (command is Whizbang.Core.Audit.IBoundedCommandAudit bounded) {
+      commandJson = AuditBodyProjection.ListLengths(commandJson, bounded.ListsAuditedAsLengths());
+    }
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
