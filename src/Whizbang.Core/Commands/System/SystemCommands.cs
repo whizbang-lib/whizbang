@@ -49,7 +49,24 @@ public record RebuildPerspectiveCommand(
     long? FromEventId = null,
     Guid? RequestId = null,
     string? RequestedBy = null
-) : ICommand, Messaging.IControlPlaneMessage;
+) : ICommand, Messaging.IControlPlaneMessage, Audit.IBoundedCommandAudit {
+  /// <summary>The most streams one command names when <see cref="SplitByStreams"/> splits a selection.</summary>
+  public const int DEFAULT_STREAMS_PER_COMMAND = Messaging.StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST;
+
+  /// <summary>The request id of chunk <paramref name="chunkIndex"/> of a split request.</summary>
+  /// <param name="requestId">The caller's request id.</param>
+  /// <param name="chunkIndex">The chunk's zero-based index.</param>
+  /// <returns>The chunk's request id.</returns>
+  public static Guid ChunkRequestId(Guid requestId, int chunkIndex) => Guid.Empty;
+
+  /// <summary>Splits the stream selection into several commands.</summary>
+  /// <param name="maxStreamsPerCommand">The most streams one command names.</param>
+  /// <returns>The commands.</returns>
+  public IReadOnlyList<RebuildPerspectiveCommand> SplitByStreams(int maxStreamsPerCommand = DEFAULT_STREAMS_PER_COMMAND) => [this];
+
+  /// <inheritdoc />
+  public IReadOnlyCollection<string> ListsAuditedAsLengths() => [];
+}
 
 /// <summary>
 /// Command to cancel an in-progress perspective rebuild.
