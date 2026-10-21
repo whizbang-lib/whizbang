@@ -308,7 +308,10 @@ public class EventTypeBytesSamplerTests {
 
     public Task WaitForReadyAsync(CancellationToken cancellationToken) {
       _waiting.TrySetResult();
-      return Task.Delay(Timeout.Infinite, cancellationToken);
+      // Ends only when the wait is canceled, which is the transition the test drives.
+      var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      cancellationToken.Register(() => stopped.TrySetCanceled(cancellationToken));
+      return stopped.Task;
     }
   }
 
