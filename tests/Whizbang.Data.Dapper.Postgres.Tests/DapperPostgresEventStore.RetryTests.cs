@@ -32,13 +32,15 @@ public record PostgresRetryTestEvent : IEvent {
 }
 
 /// <summary>
-/// PostgreSQL-specific tests for DapperPostgresEventStore retry logic and error handling.
+/// PostgreSQL-specific tests for DapperPostgresEventStore's append concurrency and error handling.
+/// Since #1555 the database assigns the version under the stream's lock, so concurrent appends
+/// never collide and are never retried; a duplicate event id fails at once.
 /// These tests cover implementation-specific paths not exercised by contract tests.
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
 
-  private PostgresTestBase _testBase = null!;
+  private TestFixture _testBase = null!;
   private DapperPostgresEventStore _store = null!;
 
   [Before(Test)]
@@ -74,120 +76,82 @@ public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
     GC.SuppressFinalize(this);
   }
 
+  /// <summary>
+  /// Twenty writers append to one stream at once and all succeed with versions 0..19 (#1555). The
+  /// database assigns each version under the stream's lock, so nothing collides and nothing is retried.
+  /// Deterministic: a peer holds the stream's lock until every append is observed waiting on it.
+  /// </summary>
   [Test]
-  public async Task AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync() {
-    // Arrange
-    var streamId = Guid.NewGuid();
-    const int concurrency = 8; // Moderate concurrency to force retries but succeed
-    var envelopes = Enumerable.Range(0, concurrency)
-      .Select(_ => _createTestEnvelope(streamId))
+  public async Task AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync() {
+    const int writers = 20;
+    var streamId = Guid.CreateVersion7();
+    await using var holder = new NpgsqlConnection(_testBase.PublicConnectionString);
+    await holder.OpenAsync();
+    await using var holding = await holder.BeginTransactionAsync();
+    await using (var take = holder.CreateCommand()) {
+      take.Transaction = holding;
+      take.CommandText = "SELECT pg_advisory_xact_lock(hashtext('wh_event_store:' || @sid::text))";
+      take.Parameters.AddWithValue("sid", streamId);
+      await take.ExecuteNonQueryAsync();
+    }
+
+    var appends = Enumerable.Range(0, writers)
+      .Select(_ => Task.Run(() => _store.AppendAsync(streamId, _createTestEnvelope(streamId))))
       .ToList();
+    var allWaited = await _untilWaitingOnAdvisoryLocksAsync(writers, Task.WhenAll(appends));
+    await holding.CommitAsync();
+    await Task.WhenAll(appends);
 
-    // Act - Fire off many concurrent appends to the same stream
-    var tasks = envelopes.Select(env => _store.AppendAsync(streamId, env));
-    await Task.WhenAll(tasks);
-
-    // Assert - All events should eventually succeed despite conflicts
-    var lastSequence = await _store.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(concurrency - 1L);
-
-    // Verify all events were stored
-    var events = new List<IMessageEnvelope>();
-    await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
-      events.Add(e);
-    }
-    await Assert.That(events).Count().IsEqualTo(concurrency);
-  }
-
-  [Test]
-  public async Task AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync() {
-    // Arrange - Create a scenario that will force many retries
-    var streamId = Guid.NewGuid();
-    const int concurrency = 10;
-    var envelopes = Enumerable.Range(0, concurrency)
-      .Select(_ => _createTestEnvelope(streamId))
-      .ToList();
-
-    // Act - Maximum concurrent pressure
-    var tasks = envelopes.Select(env => Task.Run(async () => await _store.AppendAsync(streamId, env)));
-    await Task.WhenAll(tasks);
-
-    // Assert - Despite extreme concurrency, all should eventually succeed
-    var lastSequence = await _store.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(concurrency - 1L);
-  }
-
-  [Test]
-  public async Task AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync() {
-    // Arrange
-    var streamId = Guid.NewGuid();
-
-    // Act - Start 10 threads all trying to append at the same time
-    var tasks = Enumerable.Range(0, 10)
-      .Select(_ => Task.Run(async () => {
-        var envelope = _createTestEnvelope(streamId);
-        await _store.AppendAsync(streamId, envelope);
-      }))
-      .ToArray();
-
-    await Task.WhenAll(tasks);
-
-    // Assert - All 10 events should be stored with sequential sequence numbers
-    var events = new List<IMessageEnvelope>();
-    await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
-      events.Add(e);
-    }
-    await Assert.That(events).Count().IsEqualTo(10);
-
-    var lastSequence = await _store.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(9L);
-  }
-
-  [Test]
-  public async Task AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync() {
-    // Arrange - Use moderate concurrency to observe retry behavior
-    var streamId = Guid.NewGuid();
-    const int count = 8;
-
-    // Act - All appends happen simultaneously to force conflicts
-    await Task.WhenAll(
-      Enumerable.Range(0, count).Select(_ =>
-        _store.AppendAsync(streamId, _createTestEnvelope(streamId))));
-
-    // Assert - All should succeed after retries
-    var lastSequence = await _store.GetLastSequenceAsync(streamId);
-    await Assert.That(lastSequence).IsEqualTo(count - 1L);
-  }
-
-  [Test]
-  public async Task AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync() {
-    // Arrange - Create extreme contention to potentially hit max retries
-    var streamId = Guid.NewGuid();
-
-    // Pre-insert many events to create a starting point
-    for (int i = 0; i < 50; i++) {
-      await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
-    }
-
-    // Act - Launch 30 concurrent appends to create maximum conflict
-    var exceptionCount = 0;
-    var successCount = 0;
-    var tasks = Enumerable.Range(0, 30).Select(_ => Task.Run(async () => {
-      try {
-        await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
-        Interlocked.Increment(ref successCount);
-      } catch (InvalidOperationException ex) when (ex.Message.Contains("after 10 attempts")) {
-        Interlocked.Increment(ref exceptionCount);
+    await Assert.That(allWaited).IsTrue()
+      .Because("every append must queue on the stream's lock, or the versions below were not decided under it");
+    await using var reader = new NpgsqlConnection(_testBase.PublicConnectionString);
+    await reader.OpenAsync();
+    await using var query = reader.CreateCommand();
+    query.CommandText = "SELECT version FROM wh_event_store WHERE stream_id = @sid ORDER BY version";
+    query.Parameters.AddWithValue("sid", streamId);
+    var versions = new List<int>();
+    await using (var rows = await query.ExecuteReaderAsync()) {
+      while (await rows.ReadAsync()) {
+        versions.Add(rows.GetInt32(0));
       }
-    })).ToArray();
+    }
+    await Assert.That(versions).IsEquivalentTo(Enumerable.Range(0, writers).ToList());
+  }
 
-    await Task.WhenAll(tasks);
+  /// <summary>
+  /// A duplicate event id fails at once and says so: it is not retried as a concurrent write.
+  /// </summary>
+  [Test]
+  public async Task AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync() {
+    var streamId = Guid.CreateVersion7();
+    var envelope = _createTestEnvelope(streamId);
+    await _store.AppendAsync(streamId, envelope);
 
-    // Assert - Some should succeed and some may hit max retries under extreme contention.
-    // This test validates the error path exists and is reachable.
-    // Under resource pressure (CI, containers), success rate varies widely.
-    await Assert.That(successCount + exceptionCount).IsEqualTo(30); // All tasks completed
-    await Assert.That(successCount).IsGreaterThan(0); // At least one succeeded
+    var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await _store.AppendAsync(streamId, envelope));
+
+    await Assert.That(ex!.Message).Contains("an event with this id is already stored");
+    await Assert.That(ex.Message).DoesNotContain("concurrent writes");
+    await Assert.That((ex.InnerException as PostgresException)?.SqlState).IsEqualTo(PostgresErrorCodes.UniqueViolation);
+    await Assert.That(await _store.GetLastSequenceAsync(streamId)).IsEqualTo(0L)
+      .Because("the failed append stored nothing");
+  }
+
+  /// <summary>Returns once the given number of this database's backends wait on an advisory lock (false if the calls finish first).</summary>
+  private async Task<bool> _untilWaitingOnAdvisoryLocksAsync(int expected, Task calls) {
+    await using var observer = new NpgsqlConnection(_testBase.PublicConnectionString);
+    await observer.OpenAsync();
+    await using var command = observer.CreateCommand();
+    command.CommandText = """
+      SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory' AND NOT l.granted AND a.datname = current_database()
+      """;
+    while (!calls.IsCompleted) {
+      if (Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) >= expected) {
+        return true;
+      }
+      await Task.Yield();
+    }
+    return false;
   }
 
   [Test]
@@ -239,5 +203,7 @@ public sealed class DapperPostgresEventStoreRetryTests : IDisposable {
     return envelope;
   }
 
-  private sealed class TestFixture : PostgresTestBase;
+  private sealed class TestFixture : PostgresTestBase {
+    public string PublicConnectionString => ConnectionString;
+  }
 }

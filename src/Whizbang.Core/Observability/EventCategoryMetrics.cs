@@ -77,6 +77,14 @@ public sealed class EventCategoryMetrics {
   /// </summary>
   public PassiveCounter<long> Errors { get; }
 
+  /// <summary>
+  /// Counter of system events a fire-and-forget emit failed to store (#1555), so a lost security
+  /// record is visible even where its log line is not. Instrument
+  /// <c>whizbang.system_events.emit_failures</c>; tag: <c>event_type</c> (the system event's type
+  /// name). See <c>SystemEventFireAndForget</c>.
+  /// </summary>
+  public PassiveCounter<long> SystemEventEmitFailures { get; }
+
   private static readonly string[] _categories = [Categories.COLLECTIVE, Categories.COMPOSITE];
 
   /// <summary>
@@ -103,6 +111,10 @@ public sealed class EventCategoryMetrics {
     Errors = meter.CreatePassiveCounter<long>(
       "whizbang.event_category.errors",
       description: "Dispatch failures per category");
+
+    SystemEventEmitFailures = meter.CreatePassiveCounter<long>(
+      "whizbang.system_events.emit_failures",
+      description: "System events a fire-and-forget emit failed to store, by event type");
 
     // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
     Dispatched.Touch(Tags.CATEGORY, _categories);
