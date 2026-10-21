@@ -37,20 +37,18 @@ public class MessageHopCoverageTests {
   }
 
   /// <summary>
-  /// Operator impact: ServiceInstance is the one truly required field on a hop (everything else
-  /// degrades gracefully). A hop record missing it must fail fast with a message naming exactly
-  /// what is missing, rather than deserializing into a hop with a garbage/default service
-  /// identity that then poisons trace/causation attribution downstream.
+  /// #1586: a hop without a service instance is the slim stored form, which keeps only what readers take from a
+  /// stored event. It reads as <see cref="ServiceInstanceInfo.Unknown"/>, the same value the writer leaves out.
   /// </summary>
   [Test]
-  public async Task Read_MissingServiceInstance_ThrowsJsonExceptionAsync() {
+  public async Task Read_MissingServiceInstance_ReadsAsUnknownAsync() {
     var options = InfrastructureJsonContext.Default.Options;
     const string json = """{"to":"TestTopic"}""";
 
-    var thrown = await Assert.That(() => JsonSerializer.Deserialize<MessageHop>(json, options))
-      .Throws<JsonException>();
+    var hop = JsonSerializer.Deserialize<MessageHop>(json, options);
 
-    await Assert.That(thrown!.Message).Contains("Missing required property: ServiceInstance (or si)");
+    await Assert.That(hop!.ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
+    await Assert.That(hop.Topic).IsEqualTo("TestTopic");
   }
 
   /// <summary>A hop whose service instance is JSON null fails as loudly as one missing it.</summary>

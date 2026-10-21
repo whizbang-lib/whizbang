@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema
   pass of both drivers sets each as a storage parameter where the catalog differs, so a restart takes no lock; a
   negative value (the default) keeps the server's setting.
+
+- **A slim stored form for event metadata (#1586).** `EnvelopeMetadata.ToSlim()` keeps what readers take from a stored
+  event (message id, ephemeral TTL, message timestamp, correlation, causation, stream id, and the scope folded over
+  every hop) and drops the delivery-time detail. A hop without a service instance now reads as
+  `ServiceInstanceInfo.Unknown` instead of failing, and the writer leaves an unknown instance out. Nothing stores the
+  slim form yet; this lets readers accept it before any writer produces it.
+
+- **Stored bytes by event type (#1590).** The `Whizbang.TableStatistics` meter gains
+  `whizbang.event_store.sampled_bytes_per_event` (mean stored payload and metadata bytes per event, tag `part`) and
+  `whizbang.event_store.estimated_type_bytes` (extrapolated total per type). One instance per window samples
+  `EventTypeSamplePercent` of the event body table's pages every `EventTypeSampleInterval`, claiming the window in
+  `wh_unique_emission_claims`; other instances clear their reading. The largest `MaxEventTypes` types are named, the
+  rest reported as `other`. The `Whizbang:TableStatistics` settings are now validated at host start.
 - **Retention for the framework ledgers that had none (#1572).** The maintenance sweep now bounds `wh_log`
   (`log_retention_days`, default 14), `wh_schedule_runs` (`schedule_run_retention_days`, default 30, always keeping each
   schedule's newest run), the stream-purge audit (`stream_purge_audit_retention_days`, default 0 = keep forever) and the
@@ -190,6 +203,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
+  rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
+  `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is
+  named by a constant string (its CLR type name), `typeof(T).FullName` or `TypeNameFormatter.FormatClrTypeName(typeof(T))`;
+  a mixed-mode perspective is left to WHIZ130. WHIZ132 (Warning) reports a receptor whose input message is ephemeral
+  and whose response returns or cascades a Sourced event, which would keep what the ephemeral message carried as a
+  durable fact. The new `[DangerouslyAllowSourcedEventsFromEphemeralInput]` attribute on the receptor silences it for
+  a deliberate case, the way `[DangerouslyAllowMixedEphemeralAndSourcedEvents]` silences WHIZ130.
 - **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
   handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
   its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
@@ -413,6 +434,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operators to enable the flag, which then had no effect. A boot with the flag on now reclassifies the history of
   every ephemeral event type, whenever its drift was detected (the reclassification is idempotent). With the flag
   off, nothing changes.
+
+- **The Dapper driver could not install into a named schema (#1547).** `AddWhizbangPostgres` rendered the migrations for
+  `public` while the tables went wherever the session's search path pointed, and the startup readiness check looked
+  only in `public`. The initializer now takes the schema the way the Dapper work coordinator does: the first schema the
+  connection string's Search Path names (created if it does not exist), otherwise `current_schema()`. It renders the
+  migrations for that schema, and its catalog queries and the readiness check look there, so tables, functions and the
+  coordinator agree.
 - **A subscriber's integrity checkpoint counts included the audit records it received (#1554).** The
   origin's checkpoint window and the subscriber's received count now leave `EventAudited` and `CommandAudited` out,
   as every integrity digest does, so audit traffic no longer reads as a count the origin never declared.

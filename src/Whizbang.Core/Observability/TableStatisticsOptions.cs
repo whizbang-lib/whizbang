@@ -25,7 +25,22 @@ public sealed class TableStatisticsOptions {
 
   /// <summary>The default for <see cref="MaxTrackedTables"/>.</summary>
   public const int DEFAULT_MAX_TRACKED_TABLES = 500;
+
+  /// <summary>
+  /// The <c>event_type</c> the event types past <see cref="MaxEventTypes"/> are summed under. No stored
+  /// event type can have this name, because every stored one names its assembly after a comma.
+  /// </summary>
+  public const string OTHER_EVENT_TYPES = "other";
+
+  /// <summary>The default for <see cref="MaxEventTypes"/>.</summary>
+  public const int DEFAULT_MAX_EVENT_TYPES = 50;
+
+  /// <summary>The default for <see cref="EventTypeSamplePercent"/>.</summary>
+  public const double DEFAULT_EVENT_TYPE_SAMPLE_PERCENT = 1;
 #pragma warning restore CA1707
+
+  /// <summary>The default for <see cref="EventTypeSampleInterval"/>: fifteen minutes.</summary>
+  public static readonly TimeSpan DefaultEventTypeSampleInterval = TimeSpan.FromMinutes(15);
 
   /// <summary>
   /// The most tables reported by name. Past this, the smallest tables are summed under
@@ -37,4 +52,35 @@ public sealed class TableStatisticsOptions {
   /// <c>Whizbang__TableStatistics__MaxTrackedTables</c>. Default 500.
   /// </remarks>
   public int MaxTrackedTables { get; set; } = DEFAULT_MAX_TRACKED_TABLES;
+
+  /// <summary>
+  /// How often the event store is sampled by event type. One instance of the fleet samples per interval;
+  /// <see cref="TimeSpan.Zero"/> turns the sample off. Must not be negative.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:EventTypeSampleInterval</c>, environment variable
+  /// <c>Whizbang__TableStatistics__EventTypeSampleInterval</c>. Default <c>00:15:00</c>.
+  /// </remarks>
+  public TimeSpan EventTypeSampleInterval { get; set; } = DefaultEventTypeSampleInterval;
+
+  /// <summary>
+  /// The share of the event store's pages one sample reads, as a percentage greater than 0 and at most 100.
+  /// The cost of a sample grows with it; so does its accuracy for rare event types.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:EventTypeSamplePercent</c>, environment variable
+  /// <c>Whizbang__TableStatistics__EventTypeSamplePercent</c>. Default 1.
+  /// </remarks>
+  public double EventTypeSamplePercent { get; set; } = DEFAULT_EVENT_TYPE_SAMPLE_PERCENT;
+
+  /// <summary>
+  /// The most event types reported by name, the largest by bytes. The rest are summed under
+  /// <see cref="OTHER_EVENT_TYPES"/>, so the number of series stays bounded however many types a service
+  /// declares. Must be at least 1.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:MaxEventTypes</c>, environment variable
+  /// <c>Whizbang__TableStatistics__MaxEventTypes</c>. Default 50.
+  /// </remarks>
+  public int MaxEventTypes { get; set; } = DEFAULT_MAX_EVENT_TYPES;
 }

@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.Metrics;
+using System.Threading;
 using System.Threading.Tasks;
 using Npgsql;
 using TUnit.Assertions;
@@ -20,11 +22,12 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// control-plane messages (redelivery composites carrying whole event pages) was itself the
 /// allocation that killed the process, so every restart re-fetched the same slice and died on it.
 ///
-/// <para>Allocation is measured with <see cref="GC.GetTotalAllocatedBytes(bool)"/> deltas, which
-/// counts every managed allocation on the process regardless of collection — deterministic where
-/// container RSS limits are noisy. The assertions use wide margins (the unbudgeted fetch
-/// materializes ~2x payload bytes as UTF-16 strings; the budgeted one is bounded by the budget),
-/// so scheduler noise and unrelated test allocations cannot flip them.</para>
+/// <para>Two measures, each used only where it cannot flake. The bytes the fetch reads from the server are
+/// counted by Npgsql's own meter (<c>db.client.operation.npgsql.bytes_read</c>), filtered to this test's
+/// connection pool, which no other test shares: that is what the budget bounds, and every row read is a
+/// row materialized. Managed allocation (<see cref="GC.GetTotalAllocatedBytes(bool)"/>) is process-wide,
+/// so concurrent tests can only add to it; it is used only for the lower bound on the unbudgeted fetch,
+/// which noise can never break.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 [Category("Integration")]
@@ -80,39 +83,64 @@ public class OutboxDrainMemoryFootprintTests : EFCoreTestBase {
     _ = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 1);
     _ = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 1, maxBytes: BYTE_BUDGET);
 
-    // GetTotalAllocatedBytes is PROCESS-wide, and the rest of the assembly's tests run
-    // concurrently in this process — their allocations land inside a single sampled delta as
-    // additive noise (observed pushing a ~10 MB fetch to ~18 MB under CI load, and the min of
-    // THREE samples to 21.3 MB once). Pollution is additive-only, so the MINIMUM of several
-    // samples converges on the fetch's own cost — six samples to give the min room to land.
-    IReadOnlyList<OutboxBatchRow> unbudgeted = [];
-    IReadOnlyList<OutboxBatchRow> budgeted = [];
-    var unbudgetedAllocated = long.MaxValue;
-    var budgetedAllocated = long.MaxValue;
-    for (var attempt = 0; attempt < 6; attempt++) {
-      var before = GC.GetTotalAllocatedBytes(precise: true);
-      unbudgeted = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 100);
-      unbudgetedAllocated = Math.Min(unbudgetedAllocated, GC.GetTotalAllocatedBytes(precise: true) - before);
+    // GetTotalAllocatedBytes is PROCESS-wide, and the rest of the assembly's tests run concurrently in this
+    // process: their allocations land inside a sampled delta as additive noise, enough to push a budgeted
+    // fetch past any fixed ceiling. So allocation is asserted only from below. What the budget bounds, the
+    // bytes read from the server, is counted per connection pool, and this test's pool is its own.
+    var database = new NpgsqlConnectionStringBuilder(ConnectionString).Database!;
+    using var bytesRead = new PoolBytesRead(database);
 
-      before = GC.GetTotalAllocatedBytes(precise: true);
-      budgeted = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 100, maxBytes: BYTE_BUDGET);
-      budgetedAllocated = Math.Min(budgetedAllocated, GC.GetTotalAllocatedBytes(precise: true) - before);
-    }
+    var before = GC.GetTotalAllocatedBytes(precise: true);
+    var readBefore = bytesRead.Total;
+    var unbudgeted = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 100);
+    var unbudgetedAllocated = GC.GetTotalAllocatedBytes(precise: true) - before;
+    var unbudgetedRead = bytesRead.Total - readBefore;
+
+    readBefore = bytesRead.Total;
+    var budgeted = await coordinator.FetchOutboxBatchAsync([stream], instance, maxPerStream: 100, maxBytes: BYTE_BUDGET);
+    var budgetedRead = bytesRead.Total - readBefore;
 
     await Assert.That(unbudgeted.Count).IsEqualTo(ROW_COUNT)
       .Because("precondition: the count bound alone happily hauls the whole backlog into memory");
     await Assert.That(unbudgetedAllocated).IsGreaterThan(40_000_000L)
-      .Because("~30 MB of payload materializes as UTF-16 strings (~2x) plus reader buffers — this IS "
+      .Because("~30 MB of payload materializes as UTF-16 strings (~2x) plus reader buffers: this IS "
                + "the allocation spike that OOMed the live service, reproduced and measured");
+    await Assert.That(unbudgetedRead).IsGreaterThan((long)ROW_COUNT * PAYLOAD_BYTES)
+      .Because("the unbudgeted fetch reads every row's payload off the wire, so the meter must see all of it");
 
     await Assert.That(budgeted.Count).IsLessThan(ROW_COUNT)
       .Because("the budget must have actually cut the slice for the comparison to mean anything");
-    await Assert.That(budgetedAllocated).IsLessThan(25_000_000L)
-      .Because("a 4 MB budget bounds the materialized slice (~2x budget as UTF-16 + reader "
-               + "overhead + residual cross-test noise) — the same fetch is no longer capable "
-               + "of the killing allocation. The ceiling separates memory CLASSES: an unapplied "
-               + "budget hauls 40+ MB, so noise headroom here costs the guard nothing");
-    await Assert.That(budgetedAllocated * 3).IsLessThan(unbudgetedAllocated)
+    await Assert.That(budgetedRead).IsLessThan(BYTE_BUDGET + (2L * PAYLOAD_BYTES))
+      .Because("the cut is made in the database, so the fetch reads the budget plus at most the row that "
+               + "crosses it; a client-side trim would read the whole backlog and allocate it all");
+    await Assert.That(budgetedRead * 3).IsLessThan(unbudgetedRead)
       .Because("the point is the RATIO: the budget changes the fetch's memory class, not its constant");
+  }
+
+  /// <summary>Totals the bytes Npgsql reads from the server on the connection pool for one database.</summary>
+  private sealed class PoolBytesRead : IDisposable {
+    private readonly MeterListener _listener = new();
+    private long _total;
+
+    public PoolBytesRead(string database) {
+      _listener.InstrumentPublished = (instrument, listener) => {
+        if (instrument.Meter.Name == "Npgsql" && instrument.Name == "db.client.operation.npgsql.bytes_read") {
+          listener.EnableMeasurementEvents(instrument);
+        }
+      };
+      _listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+        foreach (var tag in tags) {
+          if (tag.Key == "db.client.connection.pool.name" && tag.Value is string pool
+              && pool.Contains(database, StringComparison.Ordinal)) {
+            Interlocked.Add(ref _total, value);
+          }
+        }
+      });
+      _listener.Start();
+    }
+
+    public long Total => Interlocked.Read(ref _total);
+
+    public void Dispose() => _listener.Dispose();
   }
 }

@@ -293,8 +293,9 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
   private static ServiceInstanceInfo _readServiceInstance(JsonElement root, JsonSerializerOptions options) {
     var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
 
+    // A hop without one is the slim stored form (#1586), whose writer leaves an unknown instance out.
     if (!root.TryGetProperty("si", out var siElem) && !root.TryGetProperty("ServiceInstance", out siElem)) {
-      throw new JsonException("Missing required property: ServiceInstance (or si)");
+      return ServiceInstanceInfo.Unknown;
     }
     return siElem.Deserialize(serviceInstanceTypeInfo)
       ?? throw new JsonException("Failed to deserialize ServiceInstance");
@@ -454,10 +455,12 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
   }
 
   private static void _writeServiceInstanceAndRouting(Utf8JsonWriter writer, MessageHop value, JsonSerializerOptions options) {
-    // ServiceInstance (required)
-    var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
-    writer.WritePropertyName("si");
-    JsonSerializer.Serialize(writer, value.ServiceInstance, serviceInstanceTypeInfo);
+    // ServiceInstance, unless it is the unknown sentinel, which a missing "si" reads back as
+    if (value.ServiceInstance != ServiceInstanceInfo.Unknown) {
+      var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
+      writer.WritePropertyName("si");
+      JsonSerializer.Serialize(writer, value.ServiceInstance, serviceInstanceTypeInfo);
+    }
 
     // Timestamp
     writer.WriteString("ts", value.Timestamp);

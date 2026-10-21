@@ -20,10 +20,13 @@ namespace Whizbang.Core.Attributes;
 /// covers base classes only, never interfaces).
 /// </para>
 /// <para>
-/// <strong>Enforced.</strong> WHIZ130 flags a perspective that applies both ephemeral and Sourced events, and
-/// WHIZ134 an ambiguous composition. Rebuilding or rewinding an ephemeral stream is refused at run time. Analyzers
-/// for a rebuild or rewind of an ephemeral-only perspective (#1544), ephemeral-to-Sourced laundering (#1545) and
-/// a stream that mixes the two modes (#1546) are planned.
+/// <strong>Enforced.</strong> The analyzer band WHIZ130-139 checks what the build can see: WHIZ130 flags a
+/// perspective that applies both ephemeral and Sourced events, WHIZ131 a rebuild or rewind of a perspective whose
+/// every event is ephemeral, WHIZ132 a receptor that turns an ephemeral message into a Sourced event (silenced by
+/// <see cref="DangerouslyAllowSourcedEventsFromEphemeralInputAttribute"/>), and WHIZ134 an ambiguous composition.
+/// Rebuilding or rewinding an ephemeral stream is refused at run time. A stream that mixes the two modes can only be
+/// known when its events are appended, so that check is a runtime guard, not an analyzer; WHIZ133 is reserved for it
+/// and it is planned (#1546).
 /// </para>
 /// </remarks>
 /// <example>

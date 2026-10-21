@@ -234,7 +234,8 @@ public sealed partial class PostgresConnectionRetry {
   }
 
   /// <summary>
-  /// Checks if the required schema is ready (tables and functions exist).
+  /// Checks if the required schema is ready (tables and functions exist), in the schema the connection string's search
+  /// path resolves to, which is where the Dapper driver installs them (#1547).
   /// </summary>
   private static async Task<bool> _isSchemaReadyAsync(string connectionString, CancellationToken cancellationToken) {
     await using var connection = new NpgsqlConnection(connectionString);
@@ -244,7 +245,7 @@ public sealed partial class PostgresConnectionRetry {
     const string checkTablesSql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
         AND table_name IN ('wh_inbox', 'wh_outbox', 'wh_event_store')";
 
     await using var tableCommand = new NpgsqlCommand(checkTablesSql, connection);
@@ -260,7 +261,7 @@ public sealed partial class PostgresConnectionRetry {
     const string checkFunctionsSql = @"
       SELECT COUNT(*)
       FROM information_schema.routines
-      WHERE routine_schema = 'public'
+      WHERE routine_schema = current_schema()
         AND routine_name = 'claim_work'
         AND routine_type = 'FUNCTION'";
 
