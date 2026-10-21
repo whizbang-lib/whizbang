@@ -56,19 +56,21 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine perspective candidates with table name configuration
-    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig);
+    // Combine perspective candidates with table name configuration, and the assembly the registry payload is
+    // registered under (the EF Core driver's service name, "Unknown" for an unnamed compilation as there).
+    var serviceName = context.CompilationProvider.Select(static (c, _) => c.AssemblyName ?? "Unknown");
+    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig).Combine(serviceName);
 
     // Collect all perspectives and generate schemas
     context.RegisterSourceOutput(
         perspectivesWithConfig,
         static (ctx, data) => {
-          var (candidates, config) = data;
+          var ((candidates, config), service) = data;
           var perspectives = candidates
               .Where(c => c is not null)
               .Select(c => _buildPerspectiveSchemaInfo(c!, config))
               .ToImmutableArray();
-          _generatePerspectiveSchemas(ctx, perspectives);
+          _generatePerspectiveSchemas(ctx, perspectives, service);
         }
     );
   }
@@ -150,6 +152,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ClassName: className,
         FullyQualifiedClassName: TypeNameUtilities.FullyQualified(classSymbol),
         ModelClassName: modelClassName,
+        PerspectiveClrTypeName: clrTypeName,
+        ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         TableBaseName: tableBaseName,
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
@@ -157,6 +161,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PhysicalFields: physicalFields,
         DocumentProperties: [.. DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)],
         BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex,
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
         TableStorage: TableStorageInfo.From(modelType)
     );
   }
@@ -175,6 +180,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ClassName: candidate.ClassName,
         FullyQualifiedClassName: candidate.FullyQualifiedClassName,
         ModelClassName: candidate.ModelClassName,
+        PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
+        ModelClrTypeName: candidate.ModelClrTypeName,
         TableName: tableName,
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
@@ -182,6 +189,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         PhysicalFields: candidate.PhysicalFields,
         DocumentProperties: candidate.DocumentProperties,
         BuildsMetadataIndex: candidate.BuildsMetadataIndex,
+        BuildsDataIndex: candidate.BuildsDataIndex,
         TableStorage: candidate.TableStorage
     );
   }
@@ -379,7 +387,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generatePerspectiveSchemas(
       SourceProductionContext context,
-      ImmutableArray<PerspectiveSchemaInfo> perspectives) {
+      ImmutableArray<PerspectiveSchemaInfo> perspectives,
+      string serviceName) {
 
     if (perspectives.IsEmpty) {
       return;
@@ -508,11 +517,39 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       schemaBuilder.AppendLine($"        (\"{table}\", \"{kind}\", \"{name.Replace("\"", "\\\"")}\", \"{declaredBy}\"),");
     }
     schemaBuilder.AppendLine("    };");
+    schemaBuilder.AppendLine();
+    _appendRegistryPayload(schemaBuilder, perspectives, serviceName);
     schemaBuilder.AppendLine("}");
 
     // Add source file as C# code. No summary diagnostic: WHIZ007 is the discovery generator's per-perspective
     // message, and a summary under it formatted as "Found perspective '2' listening to A, B" (#1428).
     context.AddSource("PerspectiveSchemas.g.sql.cs", schemaBuilder.ToString());
+  }
+
+  /// <summary>
+  /// Emits the perspective registry payload and the module initializer that registers it (#1548): the Dapper driver
+  /// reconciles what its assemblies registered into <c>wh_perspective_registry</c> at startup, which is what row
+  /// retention enrolls from. The payload is built by the same shared builder as the EF Core driver's.
+  /// </summary>
+  private static void _appendRegistryPayload(
+      StringBuilder schemaBuilder, ImmutableArray<PerspectiveSchemaInfo> perspectives, string serviceName) {
+    var entries = perspectives.Select(p => new PerspectiveRegistryEntry(
+      p.ModelClrTypeName, p.TableName, p.PerspectiveClrTypeName, p.PhysicalFields,
+      p.BuildsDataIndex, p.BuildsMetadataIndex)).ToList();
+    var json = PerspectiveRegistryPayload.ToJson(entries, serviceName, _mapToPostgresType);
+
+    schemaBuilder.AppendLine("    /// <summary>The service this assembly's perspectives are registered under.</summary>");
+    schemaBuilder.AppendLine($"    public const string ServiceName = \"{PerspectiveRegistryPayload.EscapeJsonString(serviceName)}\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>");
+    schemaBuilder.AppendLine("    /// The perspective registry payload: one entry per perspective, keyed by the model's CLR type name.");
+    schemaBuilder.AppendLine("    /// </summary>");
+    schemaBuilder.AppendLine($"    public const string RegistryJson = \"{json.Replace("\\", "\\\\").Replace("\"", "\\\"")}\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>Registers this assembly's perspective registry payload at load.</summary>");
+    schemaBuilder.AppendLine("    [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    schemaBuilder.AppendLine("    internal static void RegisterPerspectiveRegistry() =>");
+    schemaBuilder.AppendLine("        global::Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Register(ServiceName, RegistryJson);");
   }
 
   /// <summary>
@@ -838,6 +875,8 @@ internal sealed record PerspectiveSchemaInfo(
     string ClassName,
     string FullyQualifiedClassName,
     string ModelClassName,
+    string PerspectiveClrTypeName,
+    string ModelClrTypeName,
     string TableName,
     int PropertyCount,
     int EstimatedSizeBytes,
@@ -845,6 +884,7 @@ internal sealed record PerspectiveSchemaInfo(
     PhysicalFieldInfo[] PhysicalFields,
     string[] DocumentProperties,
     bool BuildsMetadataIndex,
+    bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null
 );
 
@@ -870,6 +910,8 @@ public enum GeneratorFieldStorageMode {
 /// <param name="ClassName">Simple class name (e.g., "OrderSummaryProjection")</param>
 /// <param name="FullyQualifiedClassName">Fully qualified class name</param>
 /// <param name="ModelClassName">Simple class name of the model type</param>
+/// <param name="PerspectiveClrTypeName">The perspective's CLR type name, the form its cursors and snapshots key on</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c>), the perspective registry key</param>
 /// <param name="TableBaseName">Base name for table generation (nested classes merged, e.g., "ActivityProjection")</param>
 /// <param name="PropertyCount">Number of properties for size estimation</param>
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
@@ -877,11 +919,14 @@ public enum GeneratorFieldStorageMode {
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 /// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
+/// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
     string FullyQualifiedClassName,
     string ModelClassName,
+    string PerspectiveClrTypeName,
+    string ModelClrTypeName,
     string TableBaseName,
     int PropertyCount,
     int EstimatedSizeBytes,
@@ -889,5 +934,6 @@ internal sealed record PerspectiveCandidate(
     PhysicalFieldInfo[] PhysicalFields,
     string[] DocumentProperties,
     bool BuildsMetadataIndex,
+    bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null
 );

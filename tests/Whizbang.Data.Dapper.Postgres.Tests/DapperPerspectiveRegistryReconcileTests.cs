@@ -72,8 +72,8 @@ public class DapperPerspectiveRegistryReconcileTests {
     var services = new ServiceCollection();
     services.AddWhizbangPostgres(_database.ConnectionString, JsonContextRegistry.CreateCombinedOptions(), true,
       [new KeyValuePair<string, string>(nameof(TABLE), ENTRY)], managedObjects: null);
-    await using (await SchemaStartup.StartAsync(services)) {
-    }
+    // One start: the schema initializer runs to the open gate, then the host stops.
+    await (await SchemaStartup.StartAsync(services)).DisposeAsync();
 
     var coordinator = new DapperWorkCoordinator(_database.ConnectionString, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.SyncPerspectiveRetentionAsync([

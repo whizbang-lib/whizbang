@@ -145,7 +145,12 @@ public static class PerspectiveRegistryPayload {
         continue;
       }
 
-      var indexType = field.IsVector ? "ivfflat" : "btree";
+      // A vector index is built with the method the field names, and not at all for None or a value no pgvector
+      // method maps to, as the DDL does; describing an index the table does not have reads as drift.
+      var indexType = field.IsVector ? _vectorIndexMethod(field.VectorIndexType) : "btree";
+      if (indexType is null) {
+        continue;
+      }
       schemaIndexes.Add(new IndexSchema(
           PostgresIdentifiers.WithinLimit($"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : "")),
           [field.ColumnName],
@@ -156,6 +161,12 @@ public static class PerspectiveRegistryPayload {
 
     return schemaIndexes;
   }
+
+  private static string? _vectorIndexMethod(GeneratorVectorIndexType? indexType) => indexType switch {
+    GeneratorVectorIndexType.HNSW => "hnsw",
+    GeneratorVectorIndexType.IVFFlat => "ivfflat",
+    _ => null
+  };
 
   /// <summary>Escapes a string for use inside a JSON string literal.</summary>
   /// <param name="value">The raw string.</param>

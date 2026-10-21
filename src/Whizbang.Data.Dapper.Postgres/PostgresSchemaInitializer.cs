@@ -96,6 +96,15 @@ public sealed class PostgresSchemaInitializer {
   /// </summary>
   public ManagedSchemaObjectSet? ManagedObjects { get; init; }
 
+  /// <summary>
+  /// The perspective registry payloads to reconcile into <c>wh_perspective_registry</c> after the perspective tables
+  /// are built, as the EF Core driver does: the registry is what row retention enrolls from, and what the row-eviction
+  /// cleanup reads a model's perspectives from (#1548). The driver passes what the host's assemblies registered
+  /// (<see cref="Whizbang.Core.Perspectives.PerspectiveRegistryPayloads"/>); null or empty reconciles nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveRegistryReconcileTests.cs</tests>
+  public IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload>? PerspectiveRegistry { get; init; }
+
   /// <summary>The reconcile's settings; the defaults when not set. The driver reads them from <c>Whizbang:Schema:Reconcile</c>.</summary>
   public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
 
@@ -184,6 +193,9 @@ public sealed class PostgresSchemaInitializer {
       await perspectiveCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // The registry rows for those tables, once the tables exist (the EF Core driver's step 6).
+    await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
+
     // And the objects that refer to a perspective's table, which can only be created now that the
     // tables are there.
     await _executeApplicationObjectsAsync(
@@ -194,6 +206,26 @@ public sealed class PostgresSchemaInitializer {
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
         () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Reconciles each registered payload into <c>wh_perspective_registry</c> through the shared
+  /// <c>reconcile_perspective_registry</c> function, which inserts new models, follows renamed tables, and records the
+  /// perspectives that fold each model.
+  /// </summary>
+  private async Task _reconcilePerspectiveRegistryAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    foreach (var payload in PerspectiveRegistry ?? []) {
+      await using var reconcile = connection.CreateCommand();
+#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
+      reconcile.CommandText =
+        $"SELECT count(*) FROM {PgIdentifier.Qualify(schema, "reconcile_perspective_registry")}(@p_perspectives::jsonb, @p_service_name)";
+#pragma warning restore S2077
+      reconcile.Parameters.AddWithValue("p_perspectives", payload.Json);
+      reconcile.Parameters.AddWithValue("p_service_name", payload.ServiceName);
+      reconcile.CommandTimeout = 30;
+      await reconcile.ExecuteScalarAsync(cancellationToken);
     }
   }
 
