@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <summary>
 /// <see cref="MixedStreamRefusal"/> turns the store's WHIZ133 refusal (SQLSTATE <c>WH133</c>) into
 /// <see cref="MixedStreamEventException"/> and lets every other failure through unchanged. The store's wording is
-/// built in SQL (migration 225), so these tests feed the translator that wording and the shapes it must survive.
+/// built in SQL (migration 226), so these tests feed the translator that wording and the shapes it must survive.
 /// </summary>
 /// <docs>operations/diagnostics/whiz133</docs>
 public class MixedStreamRefusalTests {

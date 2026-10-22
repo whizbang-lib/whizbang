@@ -1,4 +1,4 @@
--- Migration: 225_StreamsNeverMixEphemeralAndSourcedEvents.sql
+-- Migration: 226_StreamsNeverMixEphemeralAndSourcedEvents.sql
 -- Date: 2026-10-21
 -- Description: A stream never holds both ephemeral and Sourced events (WHIZ133, #1546).
 --
@@ -34,7 +34,7 @@
 --              216_AuditRecordPositionAndDigestExemption.sql, with the refusal added before the copy. Nothing else
 --              in either function changes. _emit_event_store_chain is unchanged: store_outbox_messages refuses before
 --              it calls the copy, and commit_handler_result's second call finds no outbox row for a refused event.
---              Number 225: 223 and 224 are taken on develop.
+--              Number 226: 223 to 225 are taken on develop.
 --
 -- Dependencies: 053 (compute_dead_letter_fingerprint), 162 (move_to_dead_letters, wh_inbox_state), 216 (last word of store_outbox_messages and
 --               _emit_event_store_chain_for_inbox)
@@ -367,7 +367,7 @@ DECLARE
   v_audit_record_ids UUID[] := ARRAY[]::UUID[];
   v_audited_event_ids UUID[] := ARRAY[]::UUID[];
   v_audited_event_text TEXT;
-  -- 225 (#1546): the stream, flags and type of each event in v_inserted_event_ids (same positions), the events whose
+  -- 226 (#1546): the stream, flags and type of each event in v_inserted_event_ids (same positions), the events whose
   -- refusal is raised to the caller, and the events the refusal dead-lettered.
   v_inserted_event_streams UUID[] := ARRAY[]::UUID[];
   v_inserted_event_flags INTEGER[] := ARRAY[]::INTEGER[];
@@ -403,7 +403,7 @@ BEGIN
       NULLIF(elem->>'CoalesceGroup', '') as coalesce_group,
       -- 190: set only on a collective with an ordering key; the type its successor names as its predecessor.
       NULLIF(elem->>'CollectiveLinkType', '') as collective_link_type,
-      -- 225 (#1546): set by a write its caller awaits; a refusal of this event is raised instead of dead-lettered.
+      -- 226 (#1546): set by a write its caller awaits; a refusal of this event is raised instead of dead-lettered.
       COALESCE((elem->>'RaiseOnMixedStream')::BOOLEAN, false) as raise_on_mixed_stream
     FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
@@ -566,7 +566,7 @@ BEGIN
     RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
   END LOOP;
 
-  -- 225 (#1546): an event that would make its stream hold both ephemeral and Sourced events is refused before the
+  -- 226 (#1546): an event that would make its stream hold both ephemeral and Sourced events is refused before the
   -- copy. A refusal the caller awaits raises (the whole call rolls back); any other is dead-lettered, which moves its
   -- outbox row out of the queue, and is left out of the copy so the rest of the write is stored.
   IF cardinality(v_inserted_event_ids) > 0 THEN
@@ -635,7 +635,7 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Stores new outbox messages (149, 161), links each keyed collective to the one stored before it on its key '
   '(190, #1003), and fills each audit record''s stream position from its stored event (216, #1485), in the same '
-  'transaction. 225: refuses an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, '
+  'transaction. 226: refuses an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, '
   '#1546), raising when the element asks for it and dead-lettering the row otherwise.';
 
 -- _emit_event_store_chain_for_inbox: last word 216, with the refusal before the copy. Nothing else in the function
@@ -663,7 +663,7 @@ DECLARE
   c_collective_sink CONSTANT TEXT := '__collective__';
   c_flag_collective CONSTANT INTEGER := 1;
   c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
-  -- 225 (#1546): the rows this pass would copy, for the refusal before the copy.
+  -- 226 (#1546): the rows this pass would copy, for the refusal before the copy.
   v_candidate_ids UUID[];
   v_candidate_streams UUID[];
   v_candidate_flags INTEGER[];
@@ -704,7 +704,7 @@ BEGIN
     ORDER BY ist.stream_id
   ) AS streams_to_lock;
 
-  -- 225 (#1546): a received event that would make its stream hold both ephemeral and Sourced events is refused
+  -- 226 (#1546): a received event that would make its stream hold both ephemeral and Sourced events is refused
   -- before the copy. Nobody awaits a claim, so every refusal here is dead-lettered: recorded in wh_dead_letters and
   -- its lease row completed in place, so the copy below no longer sees it and the claim never offers it again. The
   -- message row is not touched here: this runs inside claim_work after the stream ledger, and wh_inbox comes first
@@ -1039,4 +1039,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 225: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546).';
+  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 226: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546).';
