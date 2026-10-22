@@ -6211,6 +6211,10 @@ public abstract partial class Dispatcher(
         "This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
     }
 
+    // QueuedAt is the time the message is written to the outbox (#1557): stamped on the copy this row
+    // stores and sends, from the injected clock. A message with no QueuedAt property is returned as is.
+    envelope.Payload = (TMessage)AutoPopulatePopulatorRegistry.PopulateQueued(envelope.Payload!, _timeProvider.GetUtcNow());
+
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
 

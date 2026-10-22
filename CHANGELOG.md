@@ -482,6 +482,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now go through `SystemEventFireAndForget.Emit`, which never blocks or faults the caller and, on failure, logs a
   warning naming the event type, tenant and stream and increments `whizbang.system_events.emit_failures`
   (tag `event_type`) on the `Whizbang.EventCategories` meter.
+- **The default outbox publisher ignored `ITransportReadinessCheck` (#1558).** `OutboxDrainWorker` sent to a transport
+  that reported not ready, and each failure then counted as an attempt. It now asks the publish strategy before each
+  pass. While the transport is not ready it publishes nothing, renews the leases of every row it holds on the offered
+  streams (by `LeaseRenewalWorkerOptions.LeaseSeconds`) and reports no failure, so no attempt is charged; the claim
+  offers the streams again and they publish once the transport is ready. The new `OnOutboxPublishHeld` event fires
+  after each held pass with the streams and the rows kept.
+
+- **`[PopulateTimestamp(TimestampKind.QueuedAt)]` was never stamped (#1557).** Nothing called the QueuedAt populator
+  after the publisher that once did was removed, so a property marked this way stayed null. The dispatcher now stamps
+  it as it writes a message's outbox copy (send, publish, their batch forms, a cascade and a deferred publish), and the
+  coalesce worker stamps the composites it writes, both from the registered `TimeProvider`. The stored copy, and so
+  the delivered one, carries the time. The message a local handler runs before the copy is written is not stamped.
 - **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
   (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
   it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the

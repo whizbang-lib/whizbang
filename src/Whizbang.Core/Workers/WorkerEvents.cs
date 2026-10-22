@@ -39,6 +39,29 @@ public sealed record OutboxMessagePublishedEvent {
 }
 
 /// <summary>
+/// Callback invoked when <see cref="OutboxDrainWorker"/> holds a publish pass because the transport
+/// reported not ready. Wired by <see cref="OutboxDrainWorker.OnOutboxPublishHeld"/>.
+/// </summary>
+/// <docs>extending/extensibility/custom-health-checks#whizbang-extension-point-itransportreadinesscheck</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_HoldsTheRowsWithLeasesRenewed_ThenPublishesThemOnceReadyAsync</tests>
+public delegate void OutboxPublishHeldHandler(OutboxPublishHeldEvent e);
+
+/// <summary>
+/// Event data for <see cref="OutboxPublishHeldHandler"/>: the streams a held pass was offered and the
+/// outbox rows it kept, with their leases renewed, for a later pass once the transport is ready.
+/// </summary>
+/// <docs>extending/extensibility/custom-health-checks#whizbang-extension-point-itransportreadinesscheck</docs>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_HoldsTheRowsWithLeasesRenewed_ThenPublishesThemOnceReadyAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_StreamWithNothingHeldHere_RenewsNothingAsync</tests>
+public sealed record OutboxPublishHeldEvent {
+  /// <summary>The streams the held pass was offered.</summary>
+  public required IReadOnlyList<Guid> StreamIds { get; init; }
+
+  /// <summary>The outbox rows this instance holds on those streams, kept unpublished with their leases renewed.</summary>
+  public required IReadOnlyList<Guid> HeldMessageIds { get; init; }
+}
+
+/// <summary>
 /// Callback invoked after a perspective successfully processes events for a stream.
 /// Wired by <see cref="PerspectiveWorker.OnPerspectiveEventProcessed"/>.
 /// </summary>

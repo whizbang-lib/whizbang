@@ -15,7 +15,7 @@ namespace Whizbang.Core.Attributes;
 /// <para>
 /// <list type="bullet">
 /// <item><description><see cref="SentAt"/> - When dispatcher.SendAsync/PublishAsync is called</description></item>
-/// <item><description><see cref="QueuedAt"/> - After message is persisted to outbox</description></item>
+/// <item><description><see cref="QueuedAt"/> - When the dispatcher writes the message to the outbox</description></item>
 /// <item><description><see cref="DeliveredAt"/> - When message arrives from transport</description></item>
 /// </list>
 /// </para>
@@ -33,10 +33,11 @@ public enum TimestampKind {
   SentAt = 0,
 
   /// <summary>
-  /// Populated after the message is written to the outbox and committed.
-  /// Captures the moment the message is durably stored for delivery.
-  /// Only fires for distributed messages (not local-only dispatch).
+  /// Populated when the dispatcher writes the message to the outbox, from the registered
+  /// <see cref="TimeProvider"/>. The stored copy, and so the one the transport delivers, carries it.
+  /// Only fires for messages that get an outbox copy (not local-only dispatch).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherQueuedAtStampTests.cs:Dispatch_WritesOutboxCopy_StampsQueuedAtFromTheTimeProviderAsync</tests>
   QueuedAt = 1,
 
   /// <summary>

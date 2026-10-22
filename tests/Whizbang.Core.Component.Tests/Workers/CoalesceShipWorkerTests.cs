@@ -319,6 +319,31 @@ public class CoalesceShipWorkerTests {
   }
 
 
+  #region Composite QueuedAt
+
+  /// <summary>
+  /// A minted composite is a message written to the outbox like any other, so a
+  /// <c>[PopulateTimestamp(TimestampKind.QueuedAt)]</c> property on it carries the time the worker wrote it, from
+  /// the worker's clock (#1557).
+  /// </summary>
+  [Test]
+  public async Task RunOnce_CompositeWithQueuedAt_StampsTheTimeItIsWrittenToTheOutboxAsync() {
+    var composite = await _foldAsync(c => {
+      c.SlideSeconds = 15;
+      c.CompositeFactory = _ => new QueuedAtStampedComposite { StreamId = TrackedGuid.New() };
+    }, _singles(2));
+
+    // A null property may be left out of the stored form, so absent and null read the same here.
+    var queuedAt = composite.Envelope.Payload.EnumerateObject()
+      .FirstOrDefault(p => string.Equals(p.Name, nameof(QueuedAtStampedComposite.QueuedAt), StringComparison.OrdinalIgnoreCase)).Value;
+    await Assert.That(queuedAt.ValueKind).IsEqualTo(JsonValueKind.String)
+      .Because("the composite's stored copy carries the time it was queued");
+    await Assert.That(queuedAt.GetDateTimeOffset()).IsEqualTo(_testNow)
+      .Because("the stamp is read from the worker's TimeProvider");
+  }
+
+  #endregion
+
   #region Composite priority
 
   private static List<OutboxMessage> _mixedSingles() =>
@@ -890,4 +915,10 @@ public class CoalesceShipWorkerTests {
     }
   }
 
+}
+
+/// <summary>A composite that records when it was written to the outbox (#1557).</summary>
+public sealed class QueuedAtStampedComposite : CompositeEventBase {
+  [Whizbang.Core.Attributes.PopulateTimestamp(Whizbang.Core.Attributes.TimestampKind.QueuedAt)]
+  public DateTimeOffset? QueuedAt { get; set; }
 }

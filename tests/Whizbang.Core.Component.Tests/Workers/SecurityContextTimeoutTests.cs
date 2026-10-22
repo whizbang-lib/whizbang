@@ -291,7 +291,8 @@ public class SecurityContextTimeoutTests {
         Enabled = true,
         MaxPerStream = 100,
         SecurityContextTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
