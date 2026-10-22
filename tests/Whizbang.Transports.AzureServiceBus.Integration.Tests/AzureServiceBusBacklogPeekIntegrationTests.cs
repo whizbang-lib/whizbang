@@ -91,20 +91,26 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
   /// <summary>
   /// The entity's head once it is the given message. The emulator acknowledges a send to a topic
   /// before the message is visible to a peek of its subscription, so the first peek straight after
-  /// a send can find nothing; this waits for that one transition, the probe becoming the head,
-  /// before the sample is taken. That race, with a check that could not see a missing age, is what
-  /// left the found-a-message outcome of the transport's peek untaken in some runs.
+  /// a send can find nothing. That race, with a check that could not see a missing age, is what
+  /// left the found-a-message outcome of the transport's peek untaken in some runs. A peek-lock
+  /// receive is the broker's own signal that the message is visible: it waits on the broker side
+  /// until a message arrives. Abandoning it releases the lock and leaves it the head again.
   /// </summary>
-  private async Task<ServiceBusReceivedMessage> _peekUntilHeadIsAsync(string topic, string messageId) {
-    for (var attempt = 0; attempt < 100; attempt++) {
-      var head = await _peekHeadAsync(topic);
-      if (head?.MessageId == messageId) {
-        return head;
+  private async Task<ServiceBusReceivedMessage> _waitUntilHeadIsAsync(string topic, string messageId) {
+    var receiver = _fixture.Client.CreateReceiver(topic, SUBSCRIPTION,
+      new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.PeekLock });
+    await using (receiver) {
+      var received = await receiver.ReceiveMessageAsync(maxWaitTime: TimeSpan.FromSeconds(30))
+        ?? throw new InvalidOperationException(
+          $"The probe {messageId} never arrived on {topic}/{SUBSCRIPTION}.");
+      await receiver.AbandonMessageAsync(received);
+      if (received.MessageId != messageId) {
+        throw new InvalidOperationException(
+          $"{topic}/{SUBSCRIPTION} held {received.MessageId}, not the probe {messageId}; the drain should have left the probe the only message.");
       }
-      await Task.Delay(50);
     }
-    throw new InvalidOperationException(
-      $"The probe {messageId} never became the head of {topic}/{SUBSCRIPTION}; the drain should have left it the only message.");
+    return await _peekHeadAsync(topic)
+      ?? throw new InvalidOperationException($"The abandoned probe {messageId} is not the head of {topic}/{SUBSCRIPTION}.");
   }
 
   /// <summary>
@@ -121,11 +127,12 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     }
   }
 
-  private AzureServiceBusTransport _transport(IServiceBusAdminClient? admin) {
+  private AzureServiceBusTransport _transport(IServiceBusAdminClient? admin, TimeProvider? clock = null) {
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
       new JsonSerializerOptions(),
-      adminClient: admin);
+      adminClient: admin,
+      timeProvider: clock);
     _disposables.Add(transport);
     return transport;
   }
@@ -155,7 +162,8 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     // The peek is real: a message is published, then its enqueued time comes back through
     // the broker rather than through a stub.
     await _drainAsync(HELD_TOPIC);
-    var transport = _transport(new DepthOnlyAdminClient(depth: 1));
+    var clock = new FixedClock();
+    var transport = _transport(new DepthOnlyAdminClient(depth: 1), clock);
     transport.LivenessWatchdog!.Track(HELD_TOPIC, SUBSCRIPTION);
 
     var probe = new ServiceBusMessage("probe") { MessageId = Guid.NewGuid().ToString("N") };
@@ -163,11 +171,13 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     await using (sender) {
       await sender.SendMessageAsync(probe);
     }
-    var head = await _peekUntilHeadIsAsync(HELD_TOPIC, probe.MessageId);
+    var head = await _waitUntilHeadIsAsync(HELD_TOPIC, probe.MessageId);
+    // The transport's clock is fixed 42 minutes after the broker's own enqueued time for the
+    // probe, so the expected age does not depend on the offset between the emulator's clock and
+    // this host's, nor on how long the peek takes.
+    clock.Now = head.EnqueuedTime.AddMinutes(42);
 
-    var before = DateTimeOffset.UtcNow;
     var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
-    var after = DateTimeOffset.UtcNow;
 
     await Assert.That(samples).HasSingleItem();
     await Assert.That(samples[0].Entity).IsEqualTo($"{HELD_TOPIC}/{SUBSCRIPTION}");
@@ -177,15 +187,14 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     await Assert.That(samples[0].OldestAge.HasValue).IsTrue()
       .Because("a peek that returned nothing would make every backlog look brand new, "
              + "which is the one thing this sample exists to disprove");
-    // Bounded by the broker's own enqueued time for the same message, so the check holds whatever
-    // the offset between the emulator's clock and this host's. Two peeks of one message on the
-    // emulator have disagreed on its enqueued time by a few milliseconds, hence the slack; an
-    // age taken from anything but the head's enqueued time is off by far more.
+    // Two peeks of one message on the emulator have disagreed on its enqueued time by a few
+    // milliseconds, hence the slack; an age taken from anything but the head's enqueued time is
+    // off by far more.
     var slack = TimeSpan.FromSeconds(1);
-    await Assert.That(samples[0].OldestAge!.Value).IsGreaterThanOrEqualTo(before - head.EnqueuedTime - slack)
-      .Because("the age is measured from the head message's enqueued time");
-    await Assert.That(samples[0].OldestAge!.Value).IsLessThanOrEqualTo(after - head.EnqueuedTime + slack)
-      .Because("the age is measured from the head message's enqueued time");
+    await Assert.That(samples[0].OldestAge!.Value).IsGreaterThanOrEqualTo(TimeSpan.FromMinutes(42) - slack)
+      .Because("the age is the transport clock's now minus the head message's enqueued time");
+    await Assert.That(samples[0].OldestAge!.Value).IsLessThanOrEqualTo(TimeSpan.FromMinutes(42) + slack)
+      .Because("the age is the transport clock's now minus the head message's enqueued time");
   }
 
   [Test]
@@ -222,17 +231,17 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
   [Test]
   public async Task PeekBacklogs_WithAProbeOverride_UsesItInsteadOfTheBrokerAsync() {
     // The override exists so a host can supply a cheaper age source than a peek.
-    var transport = _transport(new DepthOnlyAdminClient(depth: 7));
+    var clock = new FixedClock();
+    var transport = _transport(new DepthOnlyAdminClient(depth: 7), clock);
     transport.LivenessWatchdog!.Track("topic-00", "sub-00-a");
-    var stamped = DateTimeOffset.UtcNow.AddMinutes(-30);
+    var stamped = clock.Now.AddMinutes(-30);
     transport.OldestEnqueuedTimeProbe = (_, _, _) => Task.FromResult<DateTimeOffset?>(stamped);
 
     var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
 
     await Assert.That(samples).HasSingleItem();
     await Assert.That(samples[0].Depth).IsEqualTo(7);
-    await Assert.That(samples[0].OldestAge).IsNotNull();
-    await Assert.That(samples[0].OldestAge!.Value.TotalMinutes).IsGreaterThan(25);
+    await Assert.That(samples[0].OldestAge).IsEqualTo(TimeSpan.FromMinutes(30));
   }
 
   [Test]
@@ -250,4 +259,11 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
     await Assert.That(samples[0].Depth).IsEqualTo(3);
     await Assert.That(samples[0].OldestAge).IsNull();
   }
+}
+
+/// <summary>A clock that reads whatever the test sets, so an age computed from it is exact.</summary>
+sealed file class FixedClock : TimeProvider {
+  public DateTimeOffset Now { get; set; } = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+  public override DateTimeOffset GetUtcNow() => Now;
 }
