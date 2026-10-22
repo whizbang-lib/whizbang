@@ -1775,7 +1775,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <remarks>
   /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
   /// only makes objects exist and records nothing; the ordinary pass still applies and records these
-  /// same files afterwards. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
+  /// same files afterward. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
   /// </remarks>
   private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
     return _bootstrapMigrationScripts ??= new[] {
