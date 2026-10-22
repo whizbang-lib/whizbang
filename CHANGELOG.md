@@ -438,6 +438,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A direct event-store append is folded into the stream digest (#1600).** Events stored with
+  `IEventStore.AppendAsync` (both PostgreSQL drivers, through `wh_append_event`) were never folded into
+  `wh_stream_digests`, while the emit chain folds every event it stores and the full recompute the integrity sweep
+  trusts counts both. A stream written by both paths, such as `$wb-system`, therefore had a table digest that missed
+  some of its events, and closing it subtracted events that had never been added. `wh_append_event` (migration 225)
+  now folds the event in the same call and under the same stream lock, with the emit chain's bucket and rules:
+  ephemeral, at-most-once and digest-exempt types (the audit records) are left out. The integrity audit's
+  verification sweep (`VerifyDigestTableAsync`) reported every such stream as drift and healed it; it heals rows
+  appended before the migration once more and then finds nothing.
 - **Concurrent appends to one stream no longer fail or retry (#1555).** `IEventStore.AppendAsync` on both PostgreSQL
   drivers read the stream's last version and inserted the next in separate round trips, so two writers on one
   stream collided on its unique version: the EF Core store threw `Concurrent modification detected` and the Dapper
