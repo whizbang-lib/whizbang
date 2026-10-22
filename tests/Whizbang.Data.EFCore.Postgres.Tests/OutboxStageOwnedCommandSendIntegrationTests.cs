@@ -111,8 +111,8 @@ public class OutboxStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;

@@ -287,12 +287,12 @@ public class SecurityContextTimeoutTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         SecurityContextTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 

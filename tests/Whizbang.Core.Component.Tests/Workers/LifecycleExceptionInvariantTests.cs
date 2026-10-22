@@ -130,8 +130,8 @@ public partial class LifecycleExceptionInvariantTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {

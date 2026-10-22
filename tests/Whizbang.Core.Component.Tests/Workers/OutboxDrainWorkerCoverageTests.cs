@@ -301,8 +301,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -388,8 +388,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
   }
 
   // --- tests ---
@@ -426,8 +426,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -484,8 +484,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -542,8 +542,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -615,8 +615,8 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);

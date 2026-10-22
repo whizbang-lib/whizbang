@@ -209,12 +209,12 @@ public class PublishTimeoutTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
     var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);
@@ -277,12 +277,12 @@ public class PublishTimeoutTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
@@ -341,12 +341,12 @@ public class PublishTimeoutTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
     var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);

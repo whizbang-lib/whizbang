@@ -386,8 +386,8 @@ public class OutboxDrainWorkerBranchCoverageTests {
       runtimeReceptorRegistry: runtimeRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: governor ?? OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       dlqMetrics: dlqMetrics,
       governorMetrics: governorMetrics);
   }
