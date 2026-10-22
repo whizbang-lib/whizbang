@@ -168,7 +168,7 @@ BEGIN
            'stream_event_type', r.stream_event_type,
            'stream_kind', r.stream_kind)
   FROM refused r
-  ORDER BY r.stream_id, r.event_id;
+  ORDER BY r.stream_id ASC, r.event_id ASC;
 END;
 $$ LANGUAGE plpgsql;
 

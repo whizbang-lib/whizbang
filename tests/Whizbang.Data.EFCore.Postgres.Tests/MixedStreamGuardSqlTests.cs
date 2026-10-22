@@ -353,7 +353,7 @@ public class MixedStreamGuardSqlTests : EFCoreTestBase {
     new(dbContext, JsonContextRegistry.CreateCombinedOptions());
 
   private static Guid[] _orderedIds(int count) =>
-    [.. Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).OrderBy(id => id)];
+    [.. Enumerable.Range(0, count).Select(_ => (Guid)TrackedGuid.New()).Order()];
 
   private static OutboxMessage _ephemeral(Guid streamId, Guid? id = null) =>
     CreateTestOutboxMessage(id ?? (Guid)TrackedGuid.New(), TOPIC, streamId, isEvent: true) with {
