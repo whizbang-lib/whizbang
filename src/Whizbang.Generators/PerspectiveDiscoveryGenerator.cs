@@ -48,14 +48,14 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Collect all perspectives and generate registration code
     // Combine compilation with discovered perspectives to get assembly name for namespace
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndPerspectives = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var perspectives = data.Right;
-          _generatePerspectiveRegistrations(ctx, compilation, perspectives);
+          _generatePerspectiveRegistrations(ctx, compilationAssemblyName, perspectives);
         }
     );
   }
@@ -230,7 +230,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generatePerspectiveRegistrations(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
@@ -271,7 +271,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    var registrationSource = _generateRegistrationSource(compilation, perspectives);
+    var registrationSource = _generateRegistrationSource(compilationAssemblyName, perspectives);
     context.AddSource("PerspectiveRegistrations.g.cs", registrationSource);
   }
 
@@ -281,9 +281,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Handles perspectives that implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string _generateRegistrationSource(Compilation compilation, ImmutableArray<PerspectiveInfo> perspectives) {
+  private static string _generateRegistrationSource(string? compilationAssemblyName, ImmutableArray<PerspectiveInfo> perspectives) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template from embedded resource

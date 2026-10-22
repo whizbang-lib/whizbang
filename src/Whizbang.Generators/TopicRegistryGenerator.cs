@@ -31,15 +31,15 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndTopics = context.CompilationProvider.Combine(messageTypes.Collect());
+    var compilationAndTopics = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(messageTypes.Collect());
 
     // Generate registry
     context.RegisterSourceOutput(
         compilationAndTopics,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var topics = data.Right;
-          _generateTopicRegistry(ctx, compilation, topics!);
+          _generateTopicRegistry(ctx, compilationAssemblyName, topics!);
         }
     );
   }
@@ -119,14 +119,14 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateTopicRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<TopicInfo> topics) {
 
     if (topics.IsEmpty) {
       return;  // No topics to register
     }
 
-    var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
+    var assemblyName = compilationAssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
     var source = new StringBuilder();

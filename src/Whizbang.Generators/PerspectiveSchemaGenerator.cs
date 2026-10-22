@@ -645,7 +645,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     return [.. perspective.PhysicalFields.Select(f => f with { IsSplit = isSplit && !f.IsVector })];
   }
 
-  private static string _generatePhysicalColumnsSql(PhysicalFieldInfo[] physicalFields) {
+  private static string _generatePhysicalColumnsSql(EquatableArray<PhysicalFieldInfo> physicalFields) {
     if (physicalFields.Length == 0) {
       return string.Empty;
     }
@@ -779,7 +779,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates SQL index definitions for physical fields.
   /// </summary>
-  private static string _generatePhysicalIndexesSql(string tableName, PhysicalFieldInfo[] physicalFields) {
+  private static string _generatePhysicalIndexesSql(string tableName, EquatableArray<PhysicalFieldInfo> physicalFields) {
     var sb = new StringBuilder();
 
     foreach (var field in physicalFields) {
@@ -879,8 +879,8 @@ internal sealed record PerspectiveSchemaInfo(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields,
-    string[] DocumentProperties,
+    EquatableArray<PhysicalFieldInfo> PhysicalFields,
+    EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null
@@ -929,8 +929,8 @@ internal sealed record PerspectiveCandidate(
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields,
-    string[] DocumentProperties,
+    EquatableArray<PhysicalFieldInfo> PhysicalFields,
+    EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
     bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null

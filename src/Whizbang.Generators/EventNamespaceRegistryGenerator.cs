@@ -50,10 +50,11 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractReceptorEventNamespace(ctx, ct)
     ).Where(static ns => ns is not null);
 
-    // Combine both pipelines with compilation
+    // Combine both pipelines with the assembly name, the one fact read from the compilation. Combining the
+    // compilation itself would make every edit regenerate the registry, since every edit is a new compilation.
     var allData = perspectiveNamespaces.Collect()
         .Combine(receptorNamespaces.Collect())
-        .Combine(context.CompilationProvider);
+        .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
     // Generate registry
     context.RegisterSourceOutput(
@@ -61,8 +62,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var perspectiveNs = data.Left.Left;
           var receptorNs = data.Left.Right;
-          var compilation = data.Right;
-          _generateEventNamespaceRegistry(ctx, compilation, perspectiveNs, receptorNs!);
+          var assemblyName = data.Right;
+          _generateEventNamespaceRegistry(ctx, assemblyName, perspectiveNs, receptorNs!);
         }
     );
   }
@@ -161,11 +162,11 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateEventNamespaceRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<string> perspectiveNamespaces,
       ImmutableArray<string?> receptorNamespaces) {
 
-    var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
+    var assemblyName = compilationAssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Filter out nulls and deduplicate namespaces (case-insensitive)

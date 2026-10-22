@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Linq;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -34,10 +35,10 @@ public sealed record ReceptorInfo(
     string ClassName,
     string MessageType,
     string? ResponseType,
-    string[] LifecycleStages,
+    EquatableArray<string> LifecycleStages,
     bool IsSync = false,
     string? DefaultRouting = null,
-    SyncAttributeInfo[]? SyncAttributes = null,
+    EquatableArray<SyncAttributeInfo>? SyncAttributes = null,
     bool HasTraceAttribute = false,
     bool IsMessageAnEvent = false,
     bool IsPolymorphicMessageType = false,
@@ -91,7 +92,7 @@ public sealed record ReceptorInfo(
 /// <param name="FireBehavior">The fire behavior value (0=FireOnSuccess, 1=FireAlways, 2=FireOnEachEvent).</param>
 public sealed record SyncAttributeInfo(
     string PerspectiveType,
-    string[]? EventTypes,
+    EquatableArray<string>? EventTypes,
     int TimeoutMs,
     int FireBehavior
 );

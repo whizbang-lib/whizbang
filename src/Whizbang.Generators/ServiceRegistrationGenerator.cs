@@ -50,14 +50,14 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndServices = context.CompilationProvider.Combine(serviceCandidates.Collect());
+    var compilationAndServices = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(serviceCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndServices,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var services = data.Right;
-          _generateServiceRegistrations(ctx, compilation, services!);
+          _generateServiceRegistrations(ctx, compilationAssemblyName, services!);
         }
     );
   }
@@ -262,10 +262,10 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateServiceRegistrations(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<ServiceRegistrationInfo> services) {
 
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = compilationAssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Separate concrete from abstract services

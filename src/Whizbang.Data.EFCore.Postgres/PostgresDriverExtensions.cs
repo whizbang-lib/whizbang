@@ -174,6 +174,16 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the partition manager (#1611). It converts wh_log once and keeps the framework's time-partitioned
+        // tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and is idle otherwise. One per
+        // DbContext, since each context's schema has its own tables.
+        selector.Services.AddPartitionedTable(PartitionedTables.Log);
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new PartitionMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<PartitionMaintenanceStep>>() ?? NullLogger<PartitionMaintenanceStep>.Instance,
+                sp.GetRequiredService<TimeProvider>()));
+
         // TURNKEY: the maintenance step that runs the managed-object reconcile between starts, so a drop a start held
         // back while the previous release still ran lands once it is gone, without another deploy (#1252).
         selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
