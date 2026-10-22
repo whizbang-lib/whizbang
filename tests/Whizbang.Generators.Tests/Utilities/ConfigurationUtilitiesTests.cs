@@ -256,6 +256,24 @@ public class ConfigurationUtilitiesTests {
     await Assert.That(result.StripSuffixes).IsEqualTo(expected);
   }
 
+  /// <summary>
+  /// A property the package declares compiler-visible but the project never sets reaches the generator
+  /// as an empty value, not as a missing one. Empty or blank must mean "unset" and keep stripping on,
+  /// or every perspective table is renamed for a consumer that changed nothing (#1660).
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task GetTableNameConfig_BlankStripSuffixesProperty_KeepsStrippingOnAsync(string raw) {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY] = raw
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.StripSuffixes).IsTrue();
+  }
+
   [Test]
   public async Task GetTableNameConfig_ReadsSuffixListProperty_AsyncAsync() {
     var options = new StubOptions(new Dictionary<string, string> {
