@@ -1178,7 +1178,7 @@ END $$;
             // Same rule as infrastructure migrations: an older build never overwrites a newer one's DDL.
             var perspAppliedBy = await _getExistingVersionAsync(connection, perspectiveKey, ct);
             if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", perspAppliedBy, out var perspRefusal)) {
-              logger?.LogWarning("Perspective {Perspective}: not applied — {Reason}", name, perspRefusal);
+              logger?.LogWarning("Perspective {Perspective}: not applied: {Reason}", name, perspRefusal);
               return;
             }
           }
@@ -1426,7 +1426,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       // differs; it cannot say which side is newer.
       var appliedBy = await _getExistingVersionAsync(connection, name, ct);
       if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", appliedBy, out var refusal)) {
-        logger?.LogWarning("Migration {Migration}: not applied — {Reason}", name, refusal);
+        logger?.LogWarning("Migration {Migration}: not applied: {Reason}", name, refusal);
         return false;
       }
     }
@@ -1633,7 +1633,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           || Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", version, out var refusal)) {
         return true;
       }
-      logger?.LogWarning("Migration {Migration}: not applied — {Reason}", name, refusal);
+      logger?.LogWarning("Migration {Migration}: not applied: {Reason}", name, refusal);
       return false;
     }
 
@@ -1655,7 +1655,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           toRun.Add(name);
           reasons[name] = "duplicate overload sweep";
           logger?.LogWarning(
-            "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects} — left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
+            "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects}, left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
             name, string.Join(", ", objects.Where(duplicateOverloadNames.Contains)));
         }
       }
@@ -1684,7 +1684,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         }
         reasons[name] = "redefinition closure";
         logger?.LogInformation(
-          "Migration {Migration}: re-running via redefinition closure — an earlier migration defining the same SQL object(s) is re-running, so this later definition must re-apply after it.",
+          "Migration {Migration}: re-running via redefinition closure: an earlier migration defining the same SQL object(s) is re-running, so this later definition must re-apply after it.",
           name);
       }
       pass.MigrationsToRun[name] = reasons.GetValueOrDefault(name);
