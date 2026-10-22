@@ -288,8 +288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
   `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes
   on `$wb-system`, and audit records when audit is enabled. Before, a service that never registered the emitter itself
-  stored no system events, silently. The default is a singleton that appends each record through an event store
-  resolved in a scope of its own, so a scoped (EF Core) store is never captured, a record commits on its own rather
+  stored no system events, silently. The default is a singleton that takes each record's event store and audit
+  decision hook from a scope of its own, so a scoped (EF Core) store or a scoped hook is never captured, a record commits on its own rather
   than in the caller's unit of work, and a fire-and-forget record no longer shares the caller's `DbContext`. With no
   event store registered the null emitter stays. A host's own `ISystemEventEmitter` registered before `AddWhizbang`
   is the only one registered; one registered after it is the one resolved. **Upgrade:** a service that wants no

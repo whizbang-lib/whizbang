@@ -25,9 +25,9 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// <para>
 /// A singleton. Whether a store exists is decided when the emitter is first resolved, after the driver
-/// has registered its store whatever the order of the calls, and each record is appended through a store
-/// resolved in a scope of its own (<see cref="ScopePerAppendSystemEventSink"/>), so a scoped store is
-/// never captured and a singleton store works the same way.
+/// has registered its store whatever the order of the calls, and each record takes its event store and its
+/// audit decision hook from a scope of its own (<see cref="ScopePerAppendSystemEventSink"/>), so a scoped
+/// store or hook is never captured and a singleton one works the same way.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
@@ -55,7 +55,6 @@ internal static class DefaultSystemEventEmitter {
       serviceProvider.GetRequiredService<IOptions<SystemEventOptions>>(),
       new ScopePerAppendSystemEventSink(serviceProvider.GetRequiredService<IServiceScopeFactory>()),
       serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
-      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>(),
-      serviceProvider.GetService<IAuditDecisionHook>());
+      serviceProvider.GetRequiredService<ILogger<SystemEventEmitter>>());
   }
 }
