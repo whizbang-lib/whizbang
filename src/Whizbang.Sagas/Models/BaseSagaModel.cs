@@ -62,6 +62,13 @@ public class BaseSagaModel {
   /// </summary>
   public bool CompletionEventDispatched { get; set; }
 
+  /// <summary>
+  /// The run's commit-or-rollback outcome, once its signal has been applied; <see langword="null"/>
+  /// before that, and always for a saga that does not signal one.
+  /// </summary>
+  /// <docs>fundamentals/sagas/commit-rollback#recording-it-on-the-projection</docs>
+  public SagaOutcome? Outcome { get; set; }
+
   /// <summary>Optional human-readable summary surfaced by UI.</summary>
   public string? Summary { get; set; }
 
@@ -186,6 +193,28 @@ public class BaseSagaModel {
     }
 
     Status = SagaStatus.Abandoned;
+    UpdatedAt = timestamp;
+    return true;
+  }
+
+  /// <summary>
+  /// Records the run's commit-or-rollback outcome. Returns <c>true</c> iff this call recorded it.
+  /// </summary>
+  /// <remarks>
+  /// The first outcome stands. The framework publishes one per run, so a second can only be a replay
+  /// or a duplicate, and letting it flip the recorded outcome would show a rolled-back run as
+  /// committed. Not guarded on <see cref="Status"/>: an explicit rollback (a cancel) arrives before the
+  /// run has a terminal status, and is still the run's outcome.
+  /// </remarks>
+  /// <param name="outcome">The outcome the signal carried.</param>
+  /// <param name="timestamp">When it was signaled, from the event.</param>
+  /// <returns>Whether this call was the one that recorded it.</returns>
+  public bool TryRecordOutcome(SagaOutcome outcome, DateTimeOffset timestamp) {
+    if (Outcome is not null) {
+      return false;
+    }
+
+    Outcome = outcome;
     UpdatedAt = timestamp;
     return true;
   }

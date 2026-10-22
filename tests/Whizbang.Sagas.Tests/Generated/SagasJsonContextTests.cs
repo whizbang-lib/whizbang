@@ -198,4 +198,72 @@ public class SagasJsonContextTests {
     await Assert.That(round).IsTypeOf<SagaContinuationRequestedEvent>();
     await Assert.That(((SagaContinuationRequestedEvent)round!).ParentSagaId).IsEqualTo(original.ParentSagaId);
   }
+
+  // ── The outcome signals ──────────────────────────────────────────────────
+  //
+  // Published by BaseSagaService when a run that signals its outcome ends, so they cross the outbox,
+  // the transport and the inbox like the continuation request.
+
+  /// <summary>Both signals resolve by their stored and assembly-qualified names.</summary>
+  /// <param name="rolledBack">Which signal to resolve.</param>
+  /// <param name="fullyQualified">Whether to ask with the assembly-qualified name.</param>
+  [Test]
+  [Arguments(false, false)]
+  [Arguments(false, true)]
+  [Arguments(true, false)]
+  [Arguments(true, true)]
+  public async Task OutcomeSignal_ResolvesByItsWireNameAsync(bool rolledBack, bool fullyQualified) {
+    var type = rolledBack ? typeof(SagaRolledBackEvent) : typeof(SagaCommittedEvent);
+    var name = fullyQualified ? type.AssemblyQualifiedName! : $"{type.FullName}, Whizbang.Sagas";
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(name, options);
+
+    await Assert.That(typeInfo).IsNotNull()
+      .Because("an unresolvable signal is never delivered, and a rollback nobody receives undoes nothing");
+    await Assert.That(typeInfo!.Type).IsEqualTo(type);
+    await Assert.That(JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>()).Contains(type);
+    await Assert.That(JsonContextRegistry.GetRegisteredDerivedTypes<IMessage>()).Contains(type);
+  }
+
+  /// <summary>A rollback read back as an <see cref="IEvent"/> keeps its type and every field a compensator reads.</summary>
+  [Test]
+  public async Task Rollback_RoundTripsAsAnIEventAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var eventInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options)!;
+    var original = new SagaRolledBackEvent {
+      SagaName = "ConfigurationRollout",
+      EntityId = Guid.CreateVersion7(),
+      StreamId = Guid.CreateVersion7(),
+      FinalStatus = SagaStatus.Failed,
+      Reason = "step-2 failed",
+    };
+
+    var json = System.Text.Json.JsonSerializer.Serialize<IEvent>(original, eventInfo);
+    var round = System.Text.Json.JsonSerializer.Deserialize(json, eventInfo);
+
+    await Assert.That(round).IsTypeOf<SagaRolledBackEvent>();
+    var back = (SagaRolledBackEvent)round!;
+    await Assert.That(back.SagaName).IsEqualTo(original.SagaName);
+    await Assert.That(back.EntityId).IsEqualTo(original.EntityId);
+    await Assert.That(back.StreamId).IsEqualTo(original.StreamId);
+    await Assert.That(back.FinalStatus).IsEqualTo(SagaStatus.Failed);
+    await Assert.That(back.Reason).IsEqualTo(original.Reason);
+    await Assert.That(back.Outcome).IsEqualTo(SagaOutcome.Rollback);
+  }
+
+  /// <summary>A commit's status survives the round trip, and an explicit rollback's missing status stays missing.</summary>
+  [Test]
+  public async Task OutcomeSignal_StatusSurvivesTheRoundTripAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var eventInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options)!;
+
+    var commit = System.Text.Json.JsonSerializer.Deserialize(
+      System.Text.Json.JsonSerializer.Serialize<IEvent>(new SagaCommittedEvent { FinalStatus = SagaStatus.Completed }, eventInfo), eventInfo);
+    var cancel = System.Text.Json.JsonSerializer.Deserialize(
+      System.Text.Json.JsonSerializer.Serialize<IEvent>(new SagaRolledBackEvent { Reason = "canceled" }, eventInfo), eventInfo);
+
+    await Assert.That(((SagaCommittedEvent)commit!).FinalStatus).IsEqualTo(SagaStatus.Completed);
+    await Assert.That(((SagaRolledBackEvent)cancel!).FinalStatus).IsNull();
+  }
 }

@@ -38,6 +38,10 @@ public static class SagasJsonContextInitializer {
     // Published when a finished saga declared a continuation; it crosses the outbox, the transport and
     // the inbox like the tick, so an unregistered name left the continuation unresolvable on arrival.
     _registerEventRoutes<SagaContinuationRequestedEvent>("Whizbang.Sagas.SagaContinuationRequestedEvent");
+    // The outcome signals cross the same boundaries; a rollback that does not resolve on arrival is a
+    // rollback nobody receives.
+    _registerEventRoutes<SagaCommittedEvent>("Whizbang.Sagas.SagaCommittedEvent");
+    _registerEventRoutes<SagaRolledBackEvent>("Whizbang.Sagas.SagaRolledBackEvent");
   }
 
   /// <summary>
