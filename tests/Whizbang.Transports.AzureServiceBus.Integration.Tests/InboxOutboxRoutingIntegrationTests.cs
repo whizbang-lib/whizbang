@@ -191,20 +191,20 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     var transport = await _createTransportAsync();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
     var warmupAwaiter = new SignalAwaiter();
-    // The awaiter waits for THIS test's message. sub-00-a is shared with other tests, so a message
-    // the drain did not see (published by another test, or redelivered) can arrive first; an
-    // uncorrelated awaiter took it and failed the equality check with another test's id.
-    var expected = _createTestEnvelope();
-    var awaiter = new MessageIdAwaiter(expected.MessageId.ToString());
+    // The subscription is shared by every test on topic-00, and a message a prior test's processor held under lock
+    // comes back once its lock lapses, after the drain has run. Await THIS test's message by id, so a straggler is
+    // ignored instead of being asserted on.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
 
     var transportSubscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
+      async (received, envelopeType, ct) => {
         // Check if this is the warmup message or the actual test message
-        if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
+        if (received is MessageEnvelope<TestMessage> testEnvelope &&
             testEnvelope.Payload.Content.Contains(warmupId)) {
           warmupAwaiter.Signal();
         } else {
-          await awaiter.Handler(envelope, envelopeType, ct);
+          await awaiter.Handler(received, envelopeType, ct);
         }
       },
       new TransportDestination(subscriptionInfo.Topic, "sub-00-a")
@@ -220,11 +220,11 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       );
 
       // Act: Publish the actual test message
-      await transport.PublishAsync(expected, destination);
+      await transport.PublishAsync(envelope, destination);
 
       // Assert
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(receivedMessageId).IsEqualTo(expected.MessageId.ToString());
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
     } finally {
       transportSubscription.Dispose();
       await transport.DisposeAsync();

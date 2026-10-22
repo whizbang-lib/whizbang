@@ -284,6 +284,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
+  `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
+  `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes
+  on `$wb-system`, and audit records when audit is enabled. Before, a service that never registered the emitter itself
+  stored no system events, silently. The default is a singleton that takes each record's event store and audit
+  decision hook from a scope of its own, so a scoped (EF Core) store or a scoped hook is never captured, a record commits on its own rather
+  than in the caller's unit of work, and a fire-and-forget record no longer shares the caller's `DbContext`. With no
+  event store registered the null emitter stays. A host's own `ISystemEventEmitter` registered before `AddWhizbang`
+  is the only one registered; one registered after it is the one resolved. **Upgrade:** a service that wants no
+  system events turns the kinds off in `SystemEventOptions` or registers `NullSystemEventEmitter` itself.
 - **No trace store is registered by default, and the in-memory store is bounded (#1601). Behavior change.**
   `AddWhizbang` no longer registers `InMemoryTraceStore` as `ITraceStore`; it stored every dispatched envelope for
   the life of the process and nothing in the library read it. With no store registered the dispatcher does no trace
@@ -495,6 +505,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the pass ends with `Migration complete: Y of Y succeeded (N applied, M skipped) in <duration>` or
   `Migration stopped at X of Y: <name> : <error>`. `ISchemaInitializationObserver.OnSchemaStepCommittedAsync` reports
   each committed step.
+- **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
+  of a receiving service could lease one source stream's events at once: the later claim skipped the head the
+  earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
+  stream's "created" event after the events it should precede, and a rebuild replayed the same order. Fan-out
+  children carry no origin commit sequence, so nothing could sort the stream back. The inbox emit chain (migration
+  230) now leaves an event unstored while an earlier event of its stream is pending and not held by the same pass,
+  and stores it after that event, in message-id order (producer order for fan-out children). `fetch_inbox_batch`
+  hands out an event only once it is stored, so a waiting event is never dispatched first. Not covered: an earlier
+  event that has not reached the receiver's inbox yet (separate deliveries reordered in transport). Streams already
+  stored out of order are not repaired by this change.
 - **A starting or draining instance is no longer given work (#1638).** "Alive" and "eligible for work" were one test,
   so an instance registered during the migrator election and kept alive by its heartbeat or alive-lock was a
   partition-assignment candidate and was counted in `claim_work`'s peer ranking while it was still migrating, and its

@@ -58,9 +58,9 @@ public class InboxFetchByteBudgetSqlTests : EFCoreTestBase {
         RETURNING message_id, stream_id, received_at, priority, is_event
       )
       INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event,
-                                  status, attempts, instance_id, lease_expiry)
+                                  status, attempts, instance_id, lease_expiry, chain_emitted_at)
       SELECT message_id, stream_id, received_at, priority, is_event,
-             1, 0, @inst, NOW() + interval '5 minutes' FROM m
+             1, 0, @inst, NOW() + interval '5 minutes', NOW() FROM m
       """;
     cmd.Parameters.AddWithValue("id", messageId);
     cmd.Parameters.AddWithValue("bytes", payloadBytes);

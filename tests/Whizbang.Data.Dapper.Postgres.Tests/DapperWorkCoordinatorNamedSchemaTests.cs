@@ -151,7 +151,8 @@ public class DapperWorkCoordinatorNamedSchemaTests {
     await Assert.That(await _countAsync("wh_inbox", "message_id = ANY(@ids)", new { ids = new[] { first, second } })).IsEqualTo(2L);
 
     await _executeAsync(
-      $"UPDATE {SCHEMA}.wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@m)",
+      // Leased and stored, as a claim leaves them: fetch_inbox_batch hands an event out once it is stored (#1607).
+      $"UPDATE {SCHEMA}.wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = ANY(@m)",
       new { i = instanceId, m = new[] { first, second } });
     await Assert.That(await coordinator.FetchInboxBatchAsync([streamId], instanceId)).Count().IsEqualTo(2);
     await Assert.That(await coordinator.FetchInboxBatchAsync([streamId], instanceId, 10, maxBytes: 1_000_000)).Count().IsEqualTo(2);

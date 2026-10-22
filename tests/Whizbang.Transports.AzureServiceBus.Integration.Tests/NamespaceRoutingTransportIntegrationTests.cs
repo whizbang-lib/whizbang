@@ -138,8 +138,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // Use MessageIdAwaiter harness (internally uses RunContinuationsAsynchronously)
-    var awaiter = new MessageIdAwaiter();
+    // Await this test's own message by id: the subscription is shared, and a straggler a prior test left under lock
+    // can arrive after the drain.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler,
       new TransportDestination("topic-00", "sub-00-a")
@@ -149,12 +151,11 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
       await Task.Delay(500);
 
       // Publish message
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, new TransportDestination("topic-00"));
 
       // Assert - harness handles timeout with proper exception
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(receivedMessageId).IsNotNull();
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
     } finally {
       subscription.Dispose();
       await transport.DisposeAsync();
