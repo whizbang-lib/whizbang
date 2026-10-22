@@ -45,6 +45,9 @@ public class PartitionAssignerWorkerTests {
       Options.Create(options ?? new PartitionAssignerOptions()),
       Options.Create(new RoleAssignmentOptions()),
       NullLogger<PartitionAssignerWorker>.Instance, clock);
+    // The assigner's own registration: eligible for work, so a candidate (#1638). Kept last so a test's own
+    // candidates are indexed from zero.
+    store.Candidates.Add(_pooled(_self, 1));
     return (worker, store, aliveLock, clock);
   }
 
@@ -54,7 +57,7 @@ public class PartitionAssignerWorkerTests {
   [Test]
   public async Task Tick_TheFirstOfATenure_PublishesTheLiveMembersAsync() {
     var (worker, store, _, _) = _create();
-    store.Candidates.Add(_pooled(_peer, 1));
+    store.Candidates.Insert(0, _pooled(_peer, 1));
     var became = new List<long>();
     var published = new List<PartitionAssignment>();
     worker.OnBecameAssigner += became.Add;
@@ -103,7 +106,7 @@ public class PartitionAssignerWorkerTests {
   public async Task Tick_WhenAPeerGoesStale_RepublishesWithoutItAsync() {
     var (worker, store, _, _) = _create();
     var grant = new FakeDutyGrant(7);
-    store.Candidates.Add(_pooled(_peer, 1));
+    store.Candidates.Insert(0, _pooled(_peer, 1));
     _ = await worker.TickAsync(grant, CancellationToken.None);
 
     store.Candidates[0] = _pooled(_peer, 3600);

@@ -200,6 +200,24 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ClaimAsync_WithNoAssignment_APeerNotYetReady_IsNotRankedAsync() {
+    var (a, b) = _twoInstancesInIdOrder();
+    await using var conn = await _openAsync();
+    await _heartbeatAsync(conn, a);
+    await _heartbeatAsync(conn, b);
+    // #1638: a is alive (a fresh heartbeat) but still migrating, so it is not eligible for work.
+    await _execAsync(conn, $"SELECT record_instance_state('{a}'::uuid, 'Migrating')");
+    var streams = Enumerable.Range(0, 40).Select(_ => Guid.CreateVersion7()).ToArray();
+    var store = _store();
+    _ = await store.RecordRunAsync(_run(streams), CancellationToken.None);
+
+    var byB = await store.ClaimAsync(new MultiStreamClaim(b, 100, _lease, null), CancellationToken.None);
+
+    await Assert.That(byB.Select(i => i.StreamId).ToHashSet().SetEquals(streams)).IsTrue()
+      .Because("ranked with its migrating peer, b would leave the even partitions to an instance that cannot claim them");
+  }
+
+  [Test]
   public async Task ClaimAsync_AStaleCachedAssignment_FallsBackToRankingAsync() {
     var (a, b) = _twoInstancesInIdOrder();
     await using var conn = await _openAsync();

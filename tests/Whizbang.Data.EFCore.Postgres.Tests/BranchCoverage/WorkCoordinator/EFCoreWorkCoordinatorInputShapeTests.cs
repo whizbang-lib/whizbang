@@ -386,6 +386,7 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
     return (messageId, streamId);
   }
 
+  /// <summary>A leased inbox event as a claim leaves it: the emit chain has stored it, so it can be fetched (#1607).</summary>
   private static async Task<(Guid MessageId, Guid StreamId)> _seedLeasedInboxAsync(NpgsqlConnection connection, Guid instanceId) {
     var messageId = _newId();
     var streamId = _newId();
@@ -399,9 +400,9 @@ public class EFCoreWorkCoordinatorInputShapeTests : EFCoreTestBase {
       )
       INSERT INTO wh_inbox_state
         (message_id, stream_id, received_at, priority, is_event,
-         status, attempts, instance_id, lease_expiry, partition_number)
+         status, attempts, instance_id, lease_expiry, partition_number, chain_emitted_at)
       SELECT message_id, stream_id, received_at, priority, is_event,
-             1, 1, @inst, NOW() + INTERVAL '5 minutes', 9 FROM m
+             1, 1, @inst, NOW() + INTERVAL '5 minutes', 9, NOW() FROM m
       """;
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);

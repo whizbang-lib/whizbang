@@ -187,7 +187,9 @@ public static class ServiceCollectionExtensions {
       sp.GetRequiredService<JsonbSizeValidator>(),
       sp.GetRequiredService<IPolicyEngine>(),
       sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -345,7 +347,9 @@ public static class ServiceCollectionExtensions {
       sp.GetRequiredService<JsonbSizeValidator>(),
       sp.GetRequiredService<IPolicyEngine>(),
       sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,

@@ -138,8 +138,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // The subscription is shared with other tests, so wait for this test's message by its id rather
-    // than for whatever arrives first. The harness runs continuations asynchronously.
+    // Await this test's own message by id: the subscription is shared, and a straggler a prior test left under lock
+    // can arrive after the drain.
     var envelope = _createTestEnvelope();
     var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(

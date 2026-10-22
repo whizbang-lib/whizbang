@@ -243,6 +243,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and whose response returns or cascades a Sourced event, which would keep what the ephemeral message carried as a
   durable fact. The new `[DangerouslyAllowSourcedEventsFromEphemeralInput]` attribute on the receptor silences it for
   a deliberate case, the way `[DangerouslyAllowMixedEphemeralAndSourcedEvents]` silences WHIZ130.
+- **A stream never mixes ephemeral and Sourced events (WHIZ133, #1546).** The step that copies outbox and inbox events
+  into the event store, and the direct append (`IEventStore.AppendAsync` on both drivers), refuse an event whose kind
+  differs from the kind its stream already holds, in either order and with no opt-in; a stream with nothing stored
+  takes the kind of its first event. A compaction origin is neither kind, so a compacted stream keeps receiving the kind
+  it held. A direct append now stores the event's kind (the Ephemeral or Compacted flag, `[Ephemeral]` on a type
+  included, through the event stores' new optional `IEphemeralModeResolver`) instead of storing every event as Sourced,
+  and a refusal there throws `MixedStreamEventException` with nothing stored. A write its caller awaits (the immediate and scoped
+  strategies' flush) fails with the new `MixedStreamEventException`, which names the stream, the refused event's type
+  and the kind the stream holds, and keeps nothing of the write. Every other write (the batch flushes, handler
+  commits, the inbox claim) dead-letters only the refused row, with the new reason
+  `MessageFailureReason.MixedStreamRefused` (held for review), and stores the rest. `OutboxMessage.RaiseOnMixedStream`
+  carries the choice to the store (migration 228).
 - **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
   handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
   its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`
@@ -272,6 +284,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
+  `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
+  `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes
+  on `$wb-system`, and audit records when audit is enabled. Before, a service that never registered the emitter itself
+  stored no system events, silently. The default is a singleton that takes each record's event store and audit
+  decision hook from a scope of its own, so a scoped (EF Core) store or a scoped hook is never captured, a record commits on its own rather
+  than in the caller's unit of work, and a fire-and-forget record no longer shares the caller's `DbContext`. With no
+  event store registered the null emitter stays. A host's own `ISystemEventEmitter` registered before `AddWhizbang`
+  is the only one registered; one registered after it is the one resolved. **Upgrade:** a service that wants no
+  system events turns the kinds off in `SystemEventOptions` or registers `NullSystemEventEmitter` itself.
 - **No trace store is registered by default, and the in-memory store is bounded (#1601). Behavior change.**
   `AddWhizbang` no longer registers `InMemoryTraceStore` as `ITraceStore`; it stored every dispatched envelope for
   the life of the process and nothing in the library read it. With no store registered the dispatcher does no trace
@@ -467,6 +489,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
+  of a receiving service could lease one source stream's events at once: the later claim skipped the head the
+  earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
+  stream's "created" event after the events it should precede, and a rebuild replayed the same order. Fan-out
+  children carry no origin commit sequence, so nothing could sort the stream back. The inbox emit chain (migration
+  230) now leaves an event unstored while an earlier event of its stream is pending and not held by the same pass,
+  and stores it after that event, in message-id order (producer order for fan-out children). `fetch_inbox_batch`
+  hands out an event only once it is stored, so a waiting event is never dispatched first. Not covered: an earlier
+  event that has not reached the receiver's inbox yet (separate deliveries reordered in transport). Streams already
+  stored out of order are not repaired by this change.
+- **A starting or draining instance is no longer given work (#1638).** "Alive" and "eligible for work" were one test,
+  so an instance registered during the migrator election and kept alive by its heartbeat or alive-lock was a
+  partition-assignment candidate and was counted in `claim_work`'s peer ranking while it was still migrating, and its
+  share stalled until it was ready; a draining instance kept its share until its heartbeat lapsed. Now only an
+  instance whose recorded lifecycle phase is `AcceptingCommands` or `Running` is eligible (one definition,
+  `wh_instance_is_eligible_for_work`, migration 229): the candidates, `claim_work`'s and the multi-stream claim's
+  rankings and the elected assigner's own membership follow it, and a starting or draining instance's share goes to
+  its peers at once. Liveness, the reap and stream ownership are unchanged. An instance that records no phase (an
+  older build) is eligible whenever it is live, as before. The phase is recorded reliably: the bootstrap registration
+  records `Migrating`, the heartbeat and the claim loop's registrations carry the phase being entered
+  (`IWhizbangLifecycleState.AnnouncedPhase`), and a claim whose row records another phase than the caller's
+  (`ClaimWorkRequest.LifecyclePhase`) is reported stale so the claim loop writes it.
 - **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
   text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
   user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to

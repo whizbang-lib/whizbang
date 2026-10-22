@@ -25,8 +25,10 @@ namespace Whizbang.Core.Attributes;
 /// every event is ephemeral, WHIZ132 a receptor that turns an ephemeral message into a Sourced event (silenced by
 /// <see cref="DangerouslyAllowSourcedEventsFromEphemeralInputAttribute"/>), and WHIZ134 an ambiguous composition.
 /// Rebuilding or rewinding an ephemeral stream is refused at run time. A stream that mixes the two modes can only be
-/// known when its events are appended, so that check is a runtime guard, not an analyzer; WHIZ133 is reserved for it
-/// and it is planned (#1546).
+/// known when its events are appended, so that check is a runtime guard rather than an analyzer: WHIZ133 refuses an
+/// event that would put both modes on one stream, in either order and with no opt-in (a write its caller awaits fails
+/// with <see cref="Whizbang.Core.Messaging.MixedStreamEventException"/>; any other write dead-letters the refused
+/// event). Publish ephemeral events on a stream of their own.
 /// </para>
 /// </remarks>
 /// <example>

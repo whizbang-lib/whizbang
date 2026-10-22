@@ -180,7 +180,9 @@ __PHYSICAL_FIELD_CONFIGS__
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
         jsonOptions,
-        sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>()
+        sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>(),
+        // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+        sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();

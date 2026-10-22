@@ -353,6 +353,9 @@ public sealed class DeadLetterRecoveryOptions {
     // The same message is the same size every time: re-driving it sends the same bytes to the same
     // consumer. The fix is in the producer (split the work, or raise the type's limit), so hold it.
     [MessageFailureReason.MessagePayloadTooLarge] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
+    // WHIZ133 (#1546): the same event on the same stream is refused every time it is re-driven. The fix is in the
+    // producer (publish the ephemeral events on their own stream), so hold it.
+    [MessageFailureReason.MixedStreamRefused] = new(HOLD_FOR_REVIEW, 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 

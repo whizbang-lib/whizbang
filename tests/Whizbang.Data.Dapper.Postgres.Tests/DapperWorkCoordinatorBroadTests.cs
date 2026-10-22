@@ -163,6 +163,31 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
+  [Arguments("AcceptingCommands", true)]
+  [Arguments("Migrating", false)]
+  public async Task ClaimWorkAsync_ARowRecordingAnotherPhaseThanTheCallers_IsReportedStaleAsync(
+      string callerPhase, bool expectedStale) {
+    // #1638: a row whose recorded phase is not the caller's (a lost or overwritten transition) is reported stale, so
+    // the claim loop's registration writes the phase and a ready instance cannot stay ineligible for work.
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-c", "host-c", 1, LifecyclePhase: "Migrating"));
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(@"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 'TestPerspective', gen_random_uuid(), NULL, NULL, 0, 0, 0, NOW())");
+    }
+
+    var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
+      instanceId, "svc-c", "host-c", 1, MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300,
+      LifecyclePhase: callerPhase));
+
+    await Assert.That(batch.InstanceRegistrationStale).IsEqualTo(expectedStale);
+  }
+
+  [Test]
   public async Task FetchOutboxBatchAsync_NoRows_ReturnsEmptyAsync() {
     var c = _build();
     var instanceId = (Guid)TrackedGuid.New();
