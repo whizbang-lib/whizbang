@@ -54,8 +54,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     // Discover GUID creation calls (Guid.NewGuid(), Guid.CreateVersion7())
     var guidCalls = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
-                                       invocation.Expression is MemberAccessExpressionSyntax,
+        predicate: static (node, _) => IsGuidCallCandidate(node),
         transform: static (ctx, ct) => _extractGuidCallInfo(ctx, ct)
     );
 
@@ -84,6 +83,18 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         }
     );
   }
+
+  /// <summary>
+  /// The syntax-only test that decides which nodes reach the semantic transform. Runs on every node of every
+  /// edited file, so it must stay cheap and allocation-free.
+  /// </summary>
+  /// <param name="node">The syntax node to test.</param>
+  /// <returns><see langword="true"/> when the node is a member-access call the transform should resolve.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorCandidateFilterTests.cs:IsGuidCallCandidate_OrdinaryMemberAccessCalls_AreRejectedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorCandidateFilterTests.cs:IsGuidCallCandidate_EveryInterceptableMethodName_IsAcceptedAsync</tests>
+  public static bool IsGuidCallCandidate(SyntaxNode node) =>
+      node is InvocationExpressionSyntax invocation &&
+      invocation.Expression is MemberAccessExpressionSyntax;
 
   // S3776: Complexity is from sequential validation checks with early returns — already well-structured
 #pragma warning disable S3776
