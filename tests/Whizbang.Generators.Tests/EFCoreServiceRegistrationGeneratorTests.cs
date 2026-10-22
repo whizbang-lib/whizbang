@@ -984,14 +984,11 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use transaction-level advisory lock (PgBouncer-safe), NOT session-level
-    await Assert.That(sourceText).Contains("pg_try_advisory_xact_lock");
-    // Should NOT use session-level lock or manual unlock
+    // Each step runs in a transaction of its own under the transaction-level advisory lock (PgBouncer-safe), which the
+    // step runner takes (pg_try_advisory_xact_lock; SchemaStepRunnerTests pins it). Nothing session-level is generated.
+    await Assert.That(sourceText).Contains("Whizbang.Data.EFCore.Postgres.SchemaStepRunner(");
     await Assert.That(sourceText).DoesNotContain("SELECT pg_try_advisory_lock(");
     await Assert.That(sourceText).DoesNotContain("pg_advisory_unlock");
-
-    // Should use BeginTransactionAsync for PgBouncer compatibility
-    await Assert.That(sourceText).Contains("BeginTransactionAsync");
 
     // Should have fast path with bulk hash comparison
     await Assert.That(sourceText).Contains("_bulkGetHashesAsync");

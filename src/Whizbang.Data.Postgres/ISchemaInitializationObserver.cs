@@ -42,4 +42,18 @@ public interface ISchemaInitializationObserver {
   /// <param name="cancellationToken">Canceled at host shutdown.</param>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupParityTests.cs:ADatabaseThatComesUpLate_IsWaitedFor_ThenTheGateOpensAsync</tests>
   ValueTask OnAttemptFailedAsync(int attempt, Exception exception, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+  /// <summary>
+  /// One step of the schema pass for <paramref name="schema"/> committed: a migration file, a perspective table, or
+  /// one of the core-tables, constraints, associations and registries steps, each in a transaction of its own.
+  /// </summary>
+  /// <param name="schema">The schema being migrated, unquoted.</param>
+  /// <param name="stepName">The step's name: a migration's file name, a perspective's ledger key, or the step's own name.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  /// <remarks>
+  /// Called after the commit and before the next step takes the schema lock, so nothing is held while it runs: a
+  /// test that blocks here has another instance start against a pass that is part way through.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationStepTransactionTests.cs</tests>
+  ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
