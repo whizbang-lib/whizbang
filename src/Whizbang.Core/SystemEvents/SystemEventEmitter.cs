@@ -30,32 +30,62 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-/// <remarks>
-/// Creates a new system event emitter.
-/// </remarks>
-/// <param name="options">System event configuration options.</param>
-/// <param name="systemEventStore">Event store for persisting system events.</param>
-/// <param name="instanceProvider">Names the instance that writes each record.</param>
-/// <param name="logger">Logger for serialization fallbacks.</param>
-/// <param name="auditDecisionHook">The registered audit decision hook; null leaves the decision to the attribute.</param>
-public sealed class SystemEventEmitter(
-    IOptions<SystemEventOptions> options,
-    IEventStore systemEventStore,
-    IServiceInstanceProvider instanceProvider,
-    ILogger<SystemEventEmitter> logger,
-    IAuditDecisionHook? auditDecisionHook) : ISystemEventEmitter {
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/SystemEventEmitterRegistrationTests.cs</tests>
+public sealed class SystemEventEmitter : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
-  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-  private readonly IEventStore _systemEventStore = ArgumentGuard.NotNull(systemEventStore);
+  private readonly SystemEventOptions _options;
+  private readonly ISystemEventSink _sink;
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-  private readonly ILogger<SystemEventEmitter> _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
+  private readonly ILogger<SystemEventEmitter> _logger;
 
   // Optional by design: a service with no telemetry identity wired must still produce audit
   // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
 
-  // Optional: without one, the attribute alone decides, exactly as before hooks existed.
-  private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
+  /// <summary>
+  /// Creates a system event emitter that appends every record to <paramref name="systemEventStore"/>.
+  /// </summary>
+  /// <param name="options">System event configuration options.</param>
+  /// <param name="systemEventStore">Event store for persisting system events.</param>
+  /// <param name="instanceProvider">Names the instance that writes each record.</param>
+  /// <param name="logger">Logger for serialization fallbacks.</param>
+  /// <param name="auditDecisionHook">The registered audit decision hook; null leaves the decision to the attribute.</param>
+  /// <remarks>
+  /// The emitter holds the store it is given, so it must not outlive it: register an emitter built this
+  /// way with the store's lifetime or shorter. The emitter <c>AddWhizbang</c> registers by default
+  /// resolves its store per record instead, so it is a singleton whatever the store's lifetime.
+  /// </remarks>
+  public SystemEventEmitter(
+      IOptions<SystemEventOptions> options,
+      IEventStore systemEventStore,
+      IServiceInstanceProvider instanceProvider,
+      ILogger<SystemEventEmitter> logger,
+      IAuditDecisionHook? auditDecisionHook)
+    : this(options, new EventStoreSystemEventSink(ArgumentGuard.NotNull(systemEventStore), auditDecisionHook), instanceProvider, logger) {
+  }
+
+  /// <summary>
+  /// Creates a system event emitter that takes the audit decision hook and the store for each record from
+  /// <paramref name="sink"/>.
+  /// </summary>
+  /// <remarks>A factory rather than an internal constructor, so a null store given to the public constructor is not ambiguous.</remarks>
+  internal static SystemEventEmitter ForSink(
+      IOptions<SystemEventOptions> options,
+      ISystemEventSink sink,
+      IServiceInstanceProvider instanceProvider,
+      ILogger<SystemEventEmitter> logger) =>
+    new(options, sink, instanceProvider, logger);
+
+  private SystemEventEmitter(
+      IOptions<SystemEventOptions> options,
+      ISystemEventSink sink,
+      IServiceInstanceProvider instanceProvider,
+      ILogger<SystemEventEmitter> logger) {
+    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _sink = sink;
+    _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
+    _instanceProvider = instanceProvider;
+  }
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -73,9 +103,25 @@ public sealed class SystemEventEmitter(
       return;
     }
 
+    // The hook comes from the same session as the store the record is appended to: for the default
+    // emitter that is a scope of the record's own, so a scoped hook is honored and never captured.
+    var session = _sink.Open();
+    try {
+      await _emitEventAuditedAsync(session, streamId, streamPosition, envelope, cancellationToken);
+    } finally {
+      await session.DisposeAsync();
+    }
+  }
+
+  private async Task _emitEventAuditedAsync<TEvent>(
+      ISystemEventSinkSession session,
+      Guid streamId,
+      long streamPosition,
+      MessageEnvelope<TEvent> envelope,
+      CancellationToken cancellationToken) {
     // One place decides, shared with the other audit writers: the attribute and the mode gate the TYPE,
     // the registered hook may veto or name the OCCURRENCE.
-    var decision = AuditEligibility.Decide(envelope.Payload, typeof(TEvent), _options.AuditMode, _auditDecisionHook);
+    var decision = AuditEligibility.Decide(envelope.Payload, typeof(TEvent), _options.AuditMode, session.AuditDecisionHook);
     if (!decision.ShouldAudit) {
       return;
     }
@@ -114,8 +160,9 @@ public sealed class SystemEventEmitter(
       Scope = scope
     };
 
-    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it)
-    await EmitAsync(auditEvent, cancellationToken);
+    // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it). No enablement check:
+    // event audit is on to get here, and an audit record is always stored while any audit is on.
+    await _appendAsync(session, auditEvent, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -186,6 +233,18 @@ public sealed class SystemEventEmitter(
       return;
     }
 
+    var session = _sink.Open();
+    try {
+      await _appendAsync(session, systemEvent, cancellationToken);
+    } finally {
+      await session.DisposeAsync();
+    }
+  }
+
+  private async Task _appendAsync<TSystemEvent>(
+      ISystemEventSinkSession session,
+      TSystemEvent systemEvent,
+      CancellationToken cancellationToken) where TSystemEvent : ISystemEvent {
     // Create envelope for the system event
     var envelope = new MessageEnvelope<TSystemEvent> {
       // Per type, not one band for all of them. Audit follows SystemEventOptions.AuditPriority,
@@ -215,7 +274,7 @@ public sealed class SystemEventEmitter(
 
     // One envelope construction for every kind; only the stream differs. An audit record goes to its
     // tenant's ledger, as on the outbox path (#1485); the global kinds stay on $wb-system (#1555).
-    await _systemEventStore.AppendAsync(SystemEventStreams.StreamFor(systemEvent), envelope, cancellationToken);
+    await session.AppendAsync(SystemEventStreams.StreamFor(systemEvent), envelope, cancellationToken);
   }
 
   /// <inheritdoc />
