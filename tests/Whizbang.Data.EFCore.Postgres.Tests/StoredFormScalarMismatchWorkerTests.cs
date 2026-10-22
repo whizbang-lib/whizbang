@@ -189,6 +189,9 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       () => new NpgsqlConnection(ConnectionString), 986_986_986, StoredFormMigrationSql.ForPhase(schema, [migration]), 30,
       notices, cancellationToken);
     await Assert.That(ran).IsTrue();
+    // RED: forces the interleaving the flake took. The migration's commit made the parked retry due, so the
+    // claim loop may recover the stream, and the apply rewrite the document, before the conversion is read.
+    await recovered;
     await Assert.That(notices.Text).Contains("brought forward the retries of 1 parked row(s)")
       .Because("the parked row's retry was a minute out; the migration that fixed its document makes it due now");
     await Assert.That(await _scalarAsync(conn, $"SELECT (data -> 'Status')::text FROM wh_per_order WHERE id = '{poisoned}'", cancellationToken))
