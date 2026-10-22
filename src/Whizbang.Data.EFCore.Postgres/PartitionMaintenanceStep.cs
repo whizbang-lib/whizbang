@@ -54,10 +54,7 @@ public sealed class PartitionMaintenanceStep(
     var now = _timeProvider.GetUtcNow();
 
     if (SchemaInitConnection.For(services, _dbContextType) is { } initConnectionString) {
-      await using var initConnection = new NpgsqlConnection(initConnectionString);
-      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
-      await PartitionMaintenance.RunAsync(
-        initConnection, quotedSchema, plan, now, _logger, cancellationToken).ConfigureAwait(false);
+      await _runOnInitConnectionAsync(initConnectionString, quotedSchema, plan, now, cancellationToken).ConfigureAwait(false);
       return;
     }
 
@@ -69,5 +66,12 @@ public sealed class PartitionMaintenanceStep(
     } finally {
       await context.Database.CloseConnectionAsync().ConfigureAwait(false);
     }
+  }
+
+  private async Task _runOnInitConnectionAsync(
+      string connectionString, string quotedSchema, PartitionMaintenancePlan plan, DateTimeOffset now, CancellationToken cancellationToken) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+    await PartitionMaintenance.RunAsync(connection, quotedSchema, plan, now, _logger, cancellationToken).ConfigureAwait(false);
   }
 }

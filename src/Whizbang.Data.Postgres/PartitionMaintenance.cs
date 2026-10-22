@@ -80,7 +80,7 @@ internal static partial class PartitionMaintenance {
         results.Add(new PartitionMaintenanceResult(table.Table, CONVERTED, table.Table));
         LogConverted(logger, table.Table, table.PartitionColumn, table.Interval);
       }
-      await _maintainAsync(connection, quotedSchema, table, plan.CreateAhead, now, results, logger, cancellationToken).ConfigureAwait(false);
+      results.AddRange(await _maintainAsync(connection, quotedSchema, table, plan.CreateAhead, now, logger, cancellationToken).ConfigureAwait(false));
     }
     return results;
   }
@@ -89,16 +89,17 @@ internal static partial class PartitionMaintenance {
       NpgsqlConnection connection, string quotedSchema, PartitionedTable table, DateTimeOffset now, CancellationToken cancellationToken) {
     await using var command = connection.CreateCommand();
     command.CommandText = $"SELECT {quotedSchema}.wh_partition_convert(@table, @column, @interval, @now)";
-    command.Parameters.AddWithValue("table", table.Table);
+    command.Parameters.AddWithValue(nameof(table), table.Table);
     command.Parameters.AddWithValue("column", table.PartitionColumn);
     command.Parameters.AddWithValue("interval", table.Interval);
-    command.Parameters.AddWithValue("now", now.ToUniversalTime());
+    command.Parameters.AddWithValue(nameof(now), now.ToUniversalTime());
     return (string)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
   }
 
-  private static async Task _maintainAsync(
+  private static async Task<List<PartitionMaintenanceResult>> _maintainAsync(
       NpgsqlConnection connection, string quotedSchema, PartitionedTable table, int createAhead, DateTimeOffset now,
-      List<PartitionMaintenanceResult> results, ILogger logger, CancellationToken cancellationToken) {
+      ILogger logger, CancellationToken cancellationToken) {
+    var results = new List<PartitionMaintenanceResult>();
     await using var command = connection.CreateCommand();
     // The window is read in the same statement, so a fixed window, a stored window and the stored window's default
     // are one expression: COALESCE(fixed, stored days, default days).
@@ -106,19 +107,20 @@ internal static partial class PartitionMaintenance {
       $"SELECT action, partition_name FROM {quotedSchema}.wh_partition_maintain(@table, @interval, @ahead, " +
       $"COALESCE(@keep, (SELECT make_interval(days => s.setting_value::INTEGER) FROM {quotedSchema}.wh_settings s " +
       "WHERE s.setting_key = @key), make_interval(days => @defaultDays)), @now)";
-    command.Parameters.AddWithValue("table", table.Table);
+    command.Parameters.AddWithValue(nameof(table), table.Table);
     command.Parameters.AddWithValue("interval", table.Interval);
     command.Parameters.AddWithValue("ahead", createAhead);
     command.Parameters.Add(new NpgsqlParameter("keep", NpgsqlDbType.Interval) { Value = table.Retention is { } keep ? keep : (object)DBNull.Value });
     command.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text) { Value = (object?)table.RetentionSettingKey ?? DBNull.Value });
     command.Parameters.AddWithValue("defaultDays", table.RetentionDefaultDays);
-    command.Parameters.AddWithValue("now", now.ToUniversalTime());
+    command.Parameters.AddWithValue(nameof(now), now.ToUniversalTime());
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
       var result = new PartitionMaintenanceResult(table.Table, reader.GetString(0), reader.GetString(1));
       results.Add(result);
       LogPartition(logger, result.Action, result.Partition, result.Table);
     }
+    return results;
   }
 
   [LoggerMessage(Level = LogLevel.Information,

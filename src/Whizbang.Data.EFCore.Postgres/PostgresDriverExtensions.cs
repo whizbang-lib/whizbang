@@ -182,7 +182,7 @@ public static class PostgresDriverExtensions {
             new PartitionMaintenanceStep(
                 dbContextType,
                 sp.GetService<ILogger<PartitionMaintenanceStep>>() ?? NullLogger<PartitionMaintenanceStep>.Instance,
-                sp.GetService<TimeProvider>() ?? TimeProvider.System));
+                sp.GetRequiredService<TimeProvider>()));
 
         // TURNKEY: the maintenance step that runs the managed-object reconcile between starts, so a drop a start held
         // back while the previous release still ran lands once it is gone, without another deploy (#1252).

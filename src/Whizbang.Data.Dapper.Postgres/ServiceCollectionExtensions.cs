@@ -7,7 +7,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -493,8 +492,8 @@ public static class ServiceCollectionExtensions {
     services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
       new DapperPartitionMaintenanceStep(
         connectionString,
-        sp.GetService<ILogger<DapperPartitionMaintenanceStep>>() ?? NullLogger<DapperPartitionMaintenanceStep>.Instance,
-        sp.GetService<TimeProvider>() ?? TimeProvider.System));
+        sp.GetRequiredService<ILogger<DapperPartitionMaintenanceStep>>(),
+        sp.GetRequiredService<TimeProvider>()));
   }
 
   /// <summary>

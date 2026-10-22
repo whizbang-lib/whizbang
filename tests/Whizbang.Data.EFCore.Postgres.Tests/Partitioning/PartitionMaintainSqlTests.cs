@@ -46,11 +46,11 @@ public class PartitionMaintainSqlTests : EFCoreTestBase {
     await using var command = connection.CreateCommand();
     command.CommandText =
       "SELECT action, partition_name FROM wh_partition_maintain(@table, @interval::interval, @ahead, @keep::interval, @now::timestamptz)";
-    command.Parameters.AddWithValue("table", table);
-    command.Parameters.AddWithValue("interval", interval);
-    command.Parameters.AddWithValue("ahead", ahead);
-    command.Parameters.Add(new NpgsqlParameter("keep", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)keep ?? DBNull.Value });
-    command.Parameters.AddWithValue("now", now);
+    command.Parameters.AddWithValue(nameof(table), table);
+    command.Parameters.AddWithValue(nameof(interval), interval);
+    command.Parameters.AddWithValue(nameof(ahead), ahead);
+    command.Parameters.Add(new NpgsqlParameter(nameof(keep), NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)keep ?? DBNull.Value });
+    command.Parameters.AddWithValue(nameof(now), now);
     await using var reader = await command.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
       results.Add((reader.GetString(0), reader.GetString(1)));
@@ -66,7 +66,7 @@ public class PartitionMaintainSqlTests : EFCoreTestBase {
     connection.ExecuteAsync($"INSERT INTO {TABLE} (at, note) VALUES (@at::timestamptz, @note)", new { at, note });
 
   private static List<string> _named(List<(string Action, string Name)> results, string action) =>
-    results.Where(r => r.Action == action).Select(r => r.Name).ToList();
+    [.. results.Where(r => r.Action == action).Select(r => r.Name)];
 
   [Test]
   public async Task ACycle_CreatesTheCurrentAndAheadPartitions_AndASecondCreatesNothingAsync() {
@@ -119,7 +119,7 @@ public class PartitionMaintainSqlTests : EFCoreTestBase {
     await using var connection = await _openAsync();
     await _createProbeAsync(connection);
 
-    var error = await Assert.That(async () => { await _maintainAsync(connection, NOW, interval: interval); }).Throws<PostgresException>();
+    var error = await Assert.That(async () => await _maintainAsync(connection, NOW, interval: interval)).Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue);
   }
@@ -129,7 +129,7 @@ public class PartitionMaintainSqlTests : EFCoreTestBase {
     await using var connection = await _openAsync();
     await _createProbeAsync(connection);
 
-    var error = await Assert.That(async () => { await _maintainAsync(connection, NOW, ahead: -1); }).Throws<PostgresException>();
+    var error = await Assert.That(async () => await _maintainAsync(connection, NOW, ahead: -1)).Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue);
   }
@@ -139,7 +139,7 @@ public class PartitionMaintainSqlTests : EFCoreTestBase {
     await using var connection = await _openAsync();
     await connection.ExecuteAsync($"CREATE TABLE {TABLE} (id BIGINT NOT NULL) PARTITION BY RANGE (id)");
 
-    var error = await Assert.That(async () => { await _maintainAsync(connection, NOW); }).Throws<PostgresException>();
+    var error = await Assert.That(async () => await _maintainAsync(connection, NOW)).Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue);
   }

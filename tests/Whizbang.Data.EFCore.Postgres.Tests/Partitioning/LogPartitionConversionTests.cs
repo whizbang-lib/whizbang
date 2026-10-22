@@ -125,7 +125,7 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     // A table already holding the default partition's name fails the conversion at its last statement.
     await connection.ExecuteAsync("CREATE TABLE wh_log_default (id INT)");
 
-    var error = await Assert.That(async () => { await connection.ExecuteScalarAsync<string>(CONVERT); }).Throws<PostgresException>();
+    var error = await Assert.That(async () => await connection.ExecuteScalarAsync<string>(CONVERT)).Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.DuplicateTable);
     await Assert.That(await connection.ExecuteScalarAsync<string>(RELKIND)).IsEqualTo("r")
@@ -213,9 +213,9 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     await using var connection = await _openAsync();
     await connection.ExecuteAsync("CREATE TABLE wh_partition_candidate (id BIGINT PRIMARY KEY, at TIMESTAMPTZ)");
 
-    var error = await Assert.That(async () => {
-      await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_partition_candidate', 'at', '1 day')");
-    }).Throws<PostgresException>();
+    var error = await Assert.That(async () =>
+      await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_partition_candidate', 'at', '1 day')"))
+      .Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue);
   }
@@ -227,9 +227,9 @@ public class LogPartitionConversionTests : EFCoreTestBase {
       "CREATE TABLE wh_partition_candidate (id BIGINT PRIMARY KEY, code TEXT, at TIMESTAMPTZ NOT NULL); " +
       "CREATE UNIQUE INDEX wh_partition_candidate_code ON wh_partition_candidate (code)");
 
-    var error = await Assert.That(async () => {
-      await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_partition_candidate', 'at', '1 day')");
-    }).Throws<PostgresException>();
+    var error = await Assert.That(async () =>
+      await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_partition_candidate', 'at', '1 day')"))
+      .Throws<PostgresException>();
 
     await Assert.That(error!.SqlState).IsEqualTo(PostgresErrorCodes.InvalidParameterValue);
   }
@@ -282,10 +282,10 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     await connection.ExecuteScalarAsync<string>(CONVERT);
     await _enablePartitionMaintenanceAsync(connection);
 
-    var purge = await _purgeLogAsync(connection);
+    var (rows, status) = await _purgeLogAsync(connection);
 
-    await Assert.That(purge.Rows).IsEqualTo(0L);
-    await Assert.That(purge.Status).IsEqualTo("skipped (partitioned: expired partitions are dropped)");
+    await Assert.That(rows).IsEqualTo(0L);
+    await Assert.That(status).IsEqualTo("skipped (partitioned: expired partitions are dropped)");
     await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["old"])
       .Because("no row is deleted from a partitioned log; the partition holding it goes when it ends past the window");
 
@@ -304,9 +304,9 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     await _logAsync(connection, "young", 1);
     await connection.ExecuteScalarAsync<string>(CONVERT);
 
-    var purge = await _purgeLogAsync(connection);
+    var (_, status) = await _purgeLogAsync(connection);
 
-    await Assert.That(purge.Status).IsEqualTo("ok");
+    await Assert.That(status).IsEqualTo("ok");
     await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["young"]);
   }
 }
