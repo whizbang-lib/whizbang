@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -132,13 +133,52 @@ public class OutboxDrainWorkerTransportReadinessTests {
     }
   }
 
+  /// <summary>
+  /// A held pass with nobody listening on <see cref="OutboxDrainWorker.OnOutboxPublishHeld"/>, the shape of every
+  /// host that does not monitor holds: the rows are still kept with their leases renewed, and the pass completes
+  /// cleanly. A hold that failed on the missing subscriber would reach the batch guard, which logs it at Error
+  /// before the worker goes idle, so the test waits on the idle transition and then asserts nothing was logged
+  /// at Error.
+  /// </summary>
+  [Test]
+  public async Task NotReady_WithNoHeldSubscriber_StillRenewsTheLeasesAndCompletesThePassAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var id = (Guid)TrackedGuid.New();
+    var coordinator = new RecordingCoordinator();
+    coordinator.RowsByStream[streamId] = [_row(id, streamId)];
+    var publish = new ToggleReadyPublishStrategy();
+    var logger = new ErrorCountingLogger();
+    var harness = _build(coordinator, publish, Options.Create(new LeaseRenewalWorkerOptions()), logger);
+    var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    harness.Worker.OnWorkProcessingIdle += () => idle.TrySetResult();
+
+    using var cts = new CancellationTokenSource();
+    try {
+      await harness.Worker.StartAsync(cts.Token);
+      await harness.Drain.WriteAsync(streamId);
+      await idle.Task.WaitAsync(_signal);
+
+      await Assert.That(coordinator.Renewals).Count().IsEqualTo(1);
+      await Assert.That(coordinator.Renewals.Single().Ids).IsEquivalentTo([id])
+        .Because("with no subscriber the held row's lease is renewed all the same");
+      await Assert.That(publish.Published).IsEmpty();
+      await Assert.That(harness.Failures.All).IsEmpty();
+      await Assert.That(logger.Errors).IsEqualTo(0)
+        .Because("a held pass with no subscriber completes; it does not fail into the batch guard");
+    } finally {
+      await cts.CancelAsync();
+      await harness.Worker.StopAsync(CancellationToken.None);
+    }
+  }
+
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private sealed record Harness(
       OutboxDrainWorker Worker, DrainChannel Drain, CompletionChannel Completions, FailureChannel Failures);
 
   private static Harness _build(
-      RecordingCoordinator coordinator, ToggleReadyPublishStrategy publish, IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions) {
+      RecordingCoordinator coordinator, ToggleReadyPublishStrategy publish, IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
+      ILogger<OutboxDrainWorker>? logger = null) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -159,7 +199,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
       schemaReadyGate: gate,
       options: Options.Create(options),
       jsonOptions: Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
-      logger: NullLogger<OutboxDrainWorker>.Instance,
+      logger: logger ?? NullLogger<OutboxDrainWorker>.Instance,
       publishStrategy: publish,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
@@ -303,6 +343,19 @@ public class OutboxDrainWorkerTransportReadinessTests {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
       All.Add(failure);
       return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>Counts the entries logged at Error or above.</summary>
+  private sealed class ErrorCountingLogger : ILogger<OutboxDrainWorker> {
+    private int _errors;
+    public int Errors => Volatile.Read(ref _errors);
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel >= LogLevel.Error) {
+        Interlocked.Increment(ref _errors);
+      }
     }
   }
 }

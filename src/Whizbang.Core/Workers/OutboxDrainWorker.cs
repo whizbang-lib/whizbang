@@ -133,6 +133,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_HoldsTheRowsWithLeasesRenewed_ThenPublishesThemOnceReadyAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithDefaultRenewalOptions_RenewsForTheDefaultLeaseAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_StreamWithNothingHeldHere_RenewsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithNoHeldSubscriber_StillRenewsTheLeasesAndCompletesThePassAsync</tests>
   public event OutboxPublishHeldHandler? OnOutboxPublishHeld;
 
   /// <summary>Keyed-service key under which this worker's concurrency governor is registered. A host
