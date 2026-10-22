@@ -131,7 +131,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// </summary>
   /// <docs>extending/extensibility/custom-health-checks#whizbang-extension-point-itransportreadinesscheck</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_HoldsTheRowsWithLeasesRenewed_ThenPublishesThemOnceReadyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithNoRenewalOptions_RenewsForTheDefaultLeaseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithDefaultRenewalOptions_RenewsForTheDefaultLeaseAsync</tests>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_StreamWithNothingHeldHere_RenewsNothingAsync</tests>
   public event OutboxPublishHeldHandler? OnOutboxPublishHeld;
 
@@ -195,9 +195,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IDeadLetterStore deadLetterStore,
     IGenerationProvider generationProvider,
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
+    IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
-    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null,
-    IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null) {
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(instanceProvider);
@@ -228,7 +228,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _deadLetterStore = deadLetterStore;
     _generationProvider = generationProvider;
     _dlqMetrics = dlqMetrics;
-    _holdLeaseSeconds = (leaseRenewalOptions?.Value ?? new LeaseRenewalWorkerOptions()).LeaseSeconds;
+    ArgumentNullException.ThrowIfNull(leaseRenewalOptions);
+    _holdLeaseSeconds = leaseRenewalOptions.Value.LeaseSeconds;
   }
 
   /// <inheritdoc />

@@ -492,6 +492,7 @@ public class OutboxDrainWorkerStreamRunTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor(options));
     foreach (var offer in offers) {
       channel.TryWrite(offer);

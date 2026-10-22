@@ -82,13 +82,13 @@ public class OutboxDrainWorkerTransportReadinessTests {
   }
 
   [Test]
-  public async Task NotReady_WithNoRenewalOptions_RenewsForTheDefaultLeaseAsync() {
+  public async Task NotReady_WithDefaultRenewalOptions_RenewsForTheDefaultLeaseAsync() {
     var streamId = (Guid)TrackedGuid.New();
     var id = (Guid)TrackedGuid.New();
     var coordinator = new RecordingCoordinator();
     coordinator.RowsByStream[streamId] = [_row(id, streamId)];
     var publish = new ToggleReadyPublishStrategy();
-    var harness = _build(coordinator, publish, leaseRenewalOptions: null);
+    var harness = _build(coordinator, publish, Options.Create(new LeaseRenewalWorkerOptions()));
     var held = new TaskCompletionSource<OutboxPublishHeldEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
     harness.Worker.OnOutboxPublishHeld += e => held.TrySetResult(e);
 
@@ -100,7 +100,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
 
       await Assert.That(publish.Published).IsEmpty();
       await Assert.That(coordinator.Renewals.Single().LeaseSeconds).IsEqualTo(new LeaseRenewalWorkerOptions().LeaseSeconds)
-        .Because("with no renewal options registered the lease is renewed for the renewal worker's default length");
+        .Because("with the default renewal options the lease is renewed for the renewal worker's default length");
     } finally {
       await cts.CancelAsync();
       await harness.Worker.StopAsync(CancellationToken.None);
@@ -138,7 +138,7 @@ public class OutboxDrainWorkerTransportReadinessTests {
       OutboxDrainWorker Worker, DrainChannel Drain, CompletionChannel Completions, FailureChannel Failures);
 
   private static Harness _build(
-      RecordingCoordinator coordinator, ToggleReadyPublishStrategy publish, IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions) {
+      RecordingCoordinator coordinator, ToggleReadyPublishStrategy publish, IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IWorkCoordinator>(coordinator);

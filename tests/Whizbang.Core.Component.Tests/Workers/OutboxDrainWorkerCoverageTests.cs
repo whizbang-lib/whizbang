@@ -301,6 +301,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor(options.Value));
 
     using var cts = new CancellationTokenSource();
@@ -387,6 +388,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: runtimeReceptorRegistry ?? NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(options ?? new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
   }
 
@@ -424,6 +426,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value));
 
     using var cts = new CancellationTokenSource();
@@ -481,6 +484,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
 
     using var cts = new CancellationTokenSource();
@@ -538,6 +542,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
 
     using var cts = new CancellationTokenSource();
@@ -610,6 +615,7 @@ public partial class OutboxDrainWorkerCoverageTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream })).Value));
 
     await worker.StartAsync(cts.Token);

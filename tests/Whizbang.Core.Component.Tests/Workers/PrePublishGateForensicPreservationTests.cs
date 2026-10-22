@@ -219,6 +219,7 @@ public class PrePublishGateForensicPreservationTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
       generationProvider: new FakeGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -298,6 +299,7 @@ public class PrePublishGateForensicPreservationTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
       generationProvider: new FakeGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,
@@ -363,6 +365,7 @@ public class PrePublishGateForensicPreservationTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: dlqStore,
       generationProvider: new FakeGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions {
         Enabled = true,
         MaxPerStream = 100,

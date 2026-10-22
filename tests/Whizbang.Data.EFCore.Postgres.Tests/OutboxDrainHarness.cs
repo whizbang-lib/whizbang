@@ -105,6 +105,7 @@ internal static class OutboxDrainHarness {
       runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       governor: OutboxDrainWorker.CreateDefaultGovernor(options));
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
