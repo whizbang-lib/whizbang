@@ -1,6 +1,6 @@
 # Saga commit / rollback signal
 
-**Status:** in progress (branch `feat/saga-commit-rollback`)
+**Status:** shipped 2026-10-22 (PR #1618, alpha 0.2624.0-alpha.316)
 **Docs:** `fundamentals/sagas/commit-rollback` (docs repo, new page)
 **Tracking:** #1613
 
@@ -106,4 +106,4 @@ staging removes most of it.
       claim, explicit rollback, already-complete retry, model apply
 - [x] Implementation
 - [x] `dotnet format`, build + Sagas tests under the shared build lock
-- [ ] PR (`Fixes` the tracking issue), ADO item, board card
+- [x] PR (`Fixes` the tracking issue), ADO item, board card

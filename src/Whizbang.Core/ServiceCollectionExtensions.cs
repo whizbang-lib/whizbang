@@ -416,7 +416,10 @@ public static class ServiceCollectionExtensions {
 
     // Register lens infrastructure
     services.TryAddSingleton<LensOptions>();
-    services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();
+    // The real emitter wherever an event store is registered, decided at first resolution so a driver
+    // registering its store after this call still counts; the null emitter where none is (#1621).
+    // TryAdd, so a host's own emitter registered first wins.
+    SystemEvents.DefaultSystemEventEmitter.TryAdd(services);
     services.TryAddScoped<IScopedLensFactory, ScopedLensFactory>();
 
     // Register observability metrics (near-zero cost when no OTEL exporter is attached)
