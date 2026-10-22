@@ -112,7 +112,7 @@ public sealed partial class StartupMigrationStepsTests {
     var failed = log.StepLines;
     var failedAt = failed.FindIndex(l => l.StartsWith("Error Migration ", StringComparison.Ordinal) && l.Contains($" - Failed : {plan.File} : P0001 injected failure creating", StringComparison.Ordinal));
     await Assert.That(failedAt).IsGreaterThan(0).Because("the failed step is logged at Error with its SQLSTATE and the server's message");
-    var position = Regex.Match(failed[failedAt], @"Migration (\d+ of \d+)").Groups[1].Value;
+    var position = _positionOf().Match(failed[failedAt]).Groups[1].Value;
     await Assert.That(failed[failedAt - 1]).IsEqualTo($"Information Migration {position} - Started : {plan.File}");
     await Assert.That(failed.Count).IsEqualTo(failedAt + 2).Because("no step after the failed one runs");
     await Assert.That(failed[^1]).StartsWith($"Error Migration stopped at {position}: {plan.File} : P0001 injected failure creating");
@@ -214,8 +214,14 @@ public sealed partial class StartupMigrationStepsTests {
   [GeneratedRegex(@"^\w+ Migration (\d+ of \d+ - |complete: |stopped at )")]
   private static partial Regex _stepLine();
 
+  [GeneratedRegex(@"Migration (\d+ of \d+)")]
+  private static partial Regex _positionOf();
+
+  [GeneratedRegex(@"Migration \d+ of (\d+)")]
+  private static partial Regex _totalIn();
+
   private static int _totalOf(List<string> lines) =>
-    int.Parse(Regex.Match(lines[0], @"Migration \d+ of (\d+)").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    int.Parse(_totalIn().Match(lines[0]).Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
 
   private ServiceProvider _compose(CapturedLog log, Observer? observer = null, bool blocking = true) {
     var services = new ServiceCollection();

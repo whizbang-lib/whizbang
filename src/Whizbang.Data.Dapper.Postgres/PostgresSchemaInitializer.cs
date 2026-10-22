@@ -861,8 +861,8 @@ public sealed class PostgresSchemaInitializer {
       WHERE m.content_hash <> @hash";
     cmd.Parameters.AddWithValue("name", fileName);
     cmd.Parameters.AddWithValue("pending", SchemaPassLedger.PENDING_HASH);
-    cmd.Parameters.AddWithValue("hash", hash);
-    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.Parameters.AddWithValue(nameof(hash), hash);
+    cmd.Parameters.AddWithValue(nameof(versionId), versionId);
     cmd.Parameters.AddWithValue("desc", $"Failed: {failure.Message}");
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);

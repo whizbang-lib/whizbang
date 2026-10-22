@@ -429,8 +429,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         try {
           var steps = new Whizbang.Data.EFCore.Postgres.SchemaStepRunner(
             dbContext, lockId, "__SCHEMA__", ct => _isSchemaCurrentAsync(connection, ct), serviceProvider, logger,
-            TimeProvider.System,
-            ex => {
+            TimeProvider.System) {
+            RetryDelayFor = ex => {
               // A failed step says whether the initializer will retry, and when: the delay is decided here and the
               // retry below waits exactly that long.
               if (!_isRetryableError(ex)) {
@@ -438,7 +438,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               }
               plannedRetryDelay = _initializationRetryDelay(retryAttempt + 1, rng);
               return plannedRetryDelay;
-            });
+            },
+          };
 
           var pass = await _beginPassAsync(
             steps, connection, duplicateSweepPending || staleDefinitionSweepPending, logger, cancellationToken);

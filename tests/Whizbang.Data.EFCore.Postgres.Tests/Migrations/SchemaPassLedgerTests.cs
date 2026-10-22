@@ -16,7 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Unit")]
 [Category("Shard1")]
-public class SchemaPassLedgerTests {
+public partial class SchemaPassLedgerTests {
   private const string THIS_BUILD = "this-build";
   private const string OTHER_BUILD = "other-build";
 
@@ -63,7 +63,7 @@ public class SchemaPassLedgerTests {
   }
 
   /// <summary>
-  /// A pass a different build left behind is not continued, because the steps it applied applied that build's SQL;
+  /// A pass a different build left behind is not continued, because the steps it ran applied that build's SQL;
   /// what it still owed is kept, so a crash never loses a step.
   /// </summary>
   [Test]
@@ -101,7 +101,7 @@ public class SchemaPassLedgerTests {
 
   [Test]
   public async Task ThePendingHashIsNoFilesHashAsync() {
-    await Assert.That(System.Text.RegularExpressions.Regex.IsMatch(SchemaPassLedger.PENDING_HASH, "^[0-9a-f]{64}$")).IsFalse()
+    await Assert.That(_fileHash().IsMatch(SchemaPassLedger.PENDING_HASH)).IsFalse()
       .Because("a file marked to run again must match no file, so every reader of the ledger sees it as changed");
   }
 
@@ -111,4 +111,7 @@ public class SchemaPassLedgerTests {
     await Assert.That(() => SchemaPassLedger.Plan(null!, [], THIS_BUILD)).Throws<ArgumentNullException>();
     await Assert.That(() => SchemaPassLedger.Plan(_rows(), null!, THIS_BUILD)).Throws<ArgumentNullException>();
   }
+
+  [System.Text.RegularExpressions.GeneratedRegex("^[0-9a-f]{64}$")]
+  private static partial System.Text.RegularExpressions.Regex _fileHash();
 }

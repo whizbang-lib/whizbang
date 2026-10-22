@@ -103,7 +103,7 @@ public partial class MigrationStepTransactionTests {
 
     // File N is step N + 2: the core tables come first. Y is checked against the ledger once the retry has finished.
     var lines = firstAttempt.Migration;
-    var total = int.Parse(Regex.Match(lines[0], @" of (\d+) - ").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    var total = int.Parse(_totalLine().Match(lines[0]).Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
     var position = plan.Before.Length + 2;
     await Assert.That(lines).Contains($"Information Migration {position} of {total} - Started : {plan.File}")
       .Because("file N is counted after the core tables and every file before it; the lines were:\n"
@@ -256,6 +256,9 @@ public partial class MigrationStepTransactionTests {
 
   [GeneratedRegex(@"^\w+ Migration (\d+ of \d+ - |complete: |stopped at )")]
   private static partial Regex _stepLine();
+
+  [GeneratedRegex(@" of (\d+) - ")]
+  private static partial Regex _totalLine();
 
   [GeneratedRegex(@"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:[\w""]+\.)?""?(?<name>\w+)""?\s*\(", RegexOptions.IgnoreCase)]
   private static partial Regex _createFunction();

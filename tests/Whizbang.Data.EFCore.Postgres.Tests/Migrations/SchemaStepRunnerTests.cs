@@ -67,7 +67,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     var observer = new Observer();
     var runner = _runner(services: _services(observer));
 
-    var outcome = await runner.RunAsync("one", _ => Task.FromResult(false), _workAsync(1), null, CancellationToken.None);
+    var outcome = await runner.RunAsync("one", _ => Task.FromResult(false), _work(1), null, CancellationToken.None);
 
     await Assert.That(outcome).IsEqualTo(SchemaStepOutcome.Applied);
     await Assert.That(await _countAsync("step_work")).IsEqualTo(1L).Because("the step's work committed");
@@ -121,9 +121,9 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     var failure = new InvalidOperationException("the step failed");
 
     await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), async ct => {
-      await _workAsync(1)(ct);
+      await _work(1)(ct);
       throw failure;
-    }, _recordAsync("one"), CancellationToken.None)).Throws<InvalidOperationException>().WithMessage("the step failed");
+    }, _record("one"), CancellationToken.None)).Throws<InvalidOperationException>().WithMessage("the step failed");
 
     await Assert.That(await _countAsync("step_work")).IsEqualTo(0L).Because("the step's own work rolled back");
     await Assert.That(await _countAsync("step_failures")).IsEqualTo(1L)
@@ -164,7 +164,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
       cancel.Cancel();
       ct.ThrowIfCancellationRequested();
       return Task.CompletedTask;
-    }, _recordAsync("one"), cancel.Token)).Throws<OperationCanceledException>();
+    }, _record("one"), cancel.Token)).Throws<OperationCanceledException>();
 
     await Assert.That(await _countAsync("step_failures")).IsEqualTo(0L);
   }
@@ -176,7 +176,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
 
     await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false),
         ct => _context.Database.ExecuteSqlRawAsync("INSERT INTO step_deferred VALUES (1), (1)", ct),
-        _recordAsync("one"), CancellationToken.None))
+        _record("one"), CancellationToken.None))
       .Throws<PostgresException>();
 
     await Assert.That(await _countAsync("step_deferred")).IsEqualTo(0L);
@@ -193,7 +193,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     await _terminateContextBackendAsync();
     var recorded = false;
 
-    await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), _workAsync(1),
+    await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), _work(1),
         (_, _) => { recorded = true; return Task.CompletedTask; }, CancellationToken.None))
       .Throws<Exception>();
 
@@ -235,8 +235,8 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     var runner = _runner(isSchemaCurrent: _ => Task.FromResult(true), services: _services(observer));
     var asked = 0;
 
-    var first = await runner.RunAsync("one", _ => { asked++; return Task.FromResult(false); }, _workAsync(1), null, CancellationToken.None);
-    var second = await runner.RunAsync("two", _ => { asked++; return Task.FromResult(false); }, _workAsync(2), null, CancellationToken.None);
+    var first = await runner.RunAsync("one", _ => { asked++; return Task.FromResult(false); }, _work(1), null, CancellationToken.None);
+    var second = await runner.RunAsync("two", _ => { asked++; return Task.FromResult(false); }, _work(2), null, CancellationToken.None);
 
     await Assert.That(first).IsEqualTo(SchemaStepOutcome.CompletedElsewhere);
     await Assert.That(second).IsEqualTo(SchemaStepOutcome.CompletedElsewhere);
@@ -257,7 +257,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     var time = new FakeTimeProvider();
     var runner = _runner(isSchemaCurrent: _ => Task.FromResult(false), services: _services(observer), time: time);
 
-    var run = runner.RunAsync("one", _ => Task.FromResult(false), _workAsync(1), null, CancellationToken.None);
+    var run = runner.RunAsync("one", _ => Task.FromResult(false), _work(1), null, CancellationToken.None);
     while (!run.IsCompleted) {
       time.Advance(TimeSpan.FromMilliseconds(50));
       await Task.Yield();
@@ -280,8 +280,8 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
 
     runner.BeginPass(3);
     runner.Skip("a.sql");
-    await runner.RunAsync("b.sql", _ => Task.FromResult(false), _workAsync(1), null, CancellationToken.None);
-    await runner.RunAsync("constraints", _ => Task.FromResult(true), _workAsync(2), null, CancellationToken.None);
+    await runner.RunAsync("b.sql", _ => Task.FromResult(false), _work(1), null, CancellationToken.None);
+    await runner.RunAsync("constraints", _ => Task.FromResult(true), _work(2), null, CancellationToken.None);
     runner.CompletePass();
 
     var lines = logger.Lines;
@@ -324,8 +324,9 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
   public async Task ARetryableFailure_SaysItWillRetry_AndWhenAsync() {
     var logger = new RecordingLogger();
     var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 22, 12, 0, 0, TimeSpan.Zero));
-    var runner = new SchemaStepRunner(_context, _lockId, SCHEMA, _ => Task.FromResult(false), null, logger, time,
-      retryDelayFor: _ => TimeSpan.FromSeconds(2));
+    var runner = new SchemaStepRunner(_context, _lockId, SCHEMA, _ => Task.FromResult(false), null, logger, time) {
+      RetryDelayFor = _ => TimeSpan.FromSeconds(2),
+    };
 
     runner.BeginPass(1);
     await Assert.That(async () => await runner.RunAsync("a.sql", _ => Task.FromResult(false),
@@ -342,7 +343,7 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     var logger = new RecordingLogger();
     var runner = _runner(logger: logger);
 
-    await runner.RunAsync("pass", _ => Task.FromResult(false), _workAsync(1), null, CancellationToken.None);
+    await runner.RunAsync("pass", _ => Task.FromResult(false), _work(1), null, CancellationToken.None);
 
     await Assert.That(logger.Lines).DoesNotContain(l => l.Contains("Migration ", StringComparison.Ordinal));
   }
@@ -399,11 +400,11 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
     return services.BuildServiceProvider();
   }
 
-  private Func<CancellationToken, Task> _workAsync(int id) =>
+  private Func<CancellationToken, Task> _work(int id) =>
     ct => _context.Database.ExecuteSqlAsync($"INSERT INTO step_work VALUES ({id})", ct);
 
   /// <summary>Writes the failure on the context's own connection, which is where the generated pass writes it.</summary>
-  private Func<Exception, CancellationToken, Task> _recordAsync(string step) =>
+  private Func<Exception, CancellationToken, Task> _record(string step) =>
     async (ex, ct) => {
       await using var command = ((NpgsqlConnection)_context.Database.GetDbConnection()).CreateCommand();
       command.CommandText = "INSERT INTO step_failures VALUES ($1, $2)";

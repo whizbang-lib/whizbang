@@ -92,6 +92,7 @@ public static partial class SchemaInitializationLog {
   [LoggerMessage(
       Level = LogLevel.Error,
       Message = "Migration {Position} of {Total} - Failed : {Step} : {SqlState} {Error}; retrying in {Delay} at {RetryAt}")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "A LoggerMessage method takes the logger, the exception and one parameter per placeholder, and the line names seven. A parameter object would change the structured fields the line logs.")]
   internal static partial void StepFailedWillRetry(
       ILogger logger, Exception ex, int position, int total, string step, string sqlState, string error, StepDuration delay, string retryAt);
 
@@ -117,14 +118,9 @@ public static partial class SchemaInitializationLog {
 }
 
 /// <summary>A step's or a pass's duration as the step lines give it: seconds to the millisecond, as in <c>1.234s</c>.</summary>
-internal readonly struct StepDuration {
-  private readonly TimeSpan _elapsed;
-
-  /// <summary>Wraps <paramref name="elapsed"/>.</summary>
-  /// <param name="elapsed">The duration.</param>
-  public StepDuration(TimeSpan elapsed) => _elapsed = elapsed;
-
+/// <param name="elapsed">The duration.</param>
+internal readonly struct StepDuration(TimeSpan elapsed) {
   /// <inheritdoc/>
   public override string ToString() =>
-    _elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s";
+    elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s";
 }

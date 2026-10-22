@@ -66,7 +66,6 @@ public sealed class SchemaStepRunner {
   private readonly IServiceProvider? _services;
   private readonly ILogger _logger;
   private readonly TimeProvider _timeProvider;
-  private readonly Func<Exception, TimeSpan?> _retryDelayFor;
 
   private int _total;
   private int _position;
@@ -84,10 +83,6 @@ public sealed class SchemaStepRunner {
   /// <param name="services">Where the <see cref="ISchemaInitializationObserver"/>s are registered; may be null.</param>
   /// <param name="logger">Where the step lines go; may be null.</param>
   /// <param name="timeProvider">The clock waits and durations are measured on; the system clock when null.</param>
-  /// <param name="retryDelayFor">
-  /// How long the initializer will wait before retrying after a failure, or null when it will not retry; a failed
-  /// step's line says so. Never retried when null.
-  /// </param>
   public SchemaStepRunner(
       DbContext dbContext,
       long lockId,
@@ -95,8 +90,7 @@ public sealed class SchemaStepRunner {
       Func<CancellationToken, Task<bool>> isSchemaCurrentAsync,
       IServiceProvider? services,
       ILogger? logger,
-      TimeProvider? timeProvider = null,
-      Func<Exception, TimeSpan?>? retryDelayFor = null) {
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(schema);
     ArgumentNullException.ThrowIfNull(isSchemaCurrentAsync);
@@ -107,8 +101,13 @@ public sealed class SchemaStepRunner {
     _services = services;
     _logger = logger ?? NullLogger.Instance;
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _retryDelayFor = retryDelayFor ?? (_ => null);
   }
+
+  /// <summary>
+  /// How long the initializer will wait before retrying after a failure, or null when it will not retry; a failed
+  /// step's line says so. Never retried when not set.
+  /// </summary>
+  public Func<Exception, TimeSpan?>? RetryDelayFor { get; init; }
 
   /// <summary>
   /// Whether another instance brought the schema up to date while this one waited for the lock. Once true, every
@@ -318,7 +317,7 @@ public sealed class SchemaStepRunner {
     var text = FailureText(failure);
     var space = text.IndexOf(' ', StringComparison.Ordinal);
     var (state, message) = (text[..space], text[(space + 1)..]);
-    if (_retryDelayFor(failure) is { } delay) {
+    if (RetryDelayFor?.Invoke(failure) is { } delay) {
       var at = (_timeProvider.GetUtcNow() + delay).ToString("O", CultureInfo.InvariantCulture);
       SchemaInitializationLog.StepFailedWillRetry(_logger, failure, _position, _total, step, state, message, new StepDuration(delay), at);
     } else {
