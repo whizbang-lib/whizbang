@@ -7,10 +7,12 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.SystemEvents.Security;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.SystemEvents;
 
@@ -216,6 +218,48 @@ public class SystemEventEmitterRegistrationTests {
   }
 
   [Test]
+  public async Task AddWhizbang_AScopedHostHook_IsHonoredWithoutBeingCapturedAsync() {
+    var log = new AppendLog();
+    var hooksCreated = 0;
+    var services = new ServiceCollection();
+    services.AddWhizbang();
+    services.AddSystemEvents(options => options.EnableEventAudit());
+    services.AddSingleton<IEventStore>(new RecordingStore(log));
+    services.AddScoped<IAuditDecisionHook>(_ => {
+      hooksCreated++;
+      return new RefuseEverything();
+    });
+    var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+    var emitter = provider.GetRequiredService<ISystemEventEmitter>();
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _envelope(new PlainEvent { Name = "refused" }));
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 2, _envelope(new PlainEvent { Name = "refused" }));
+
+    await Assert.That(log.Payloads).IsEmpty()
+      .Because("the host's hook refuses every occurrence, and a hook the emitter never consulted would let both through");
+    await Assert.That(hooksCreated).IsEqualTo(2)
+      .Because("a scoped hook is resolved per record, in that record's own scope, never held by the singleton");
+  }
+
+  [Test]
+  public async Task AddWhizbang_AScopedHostHookThatNamesTheOccurrence_NamesTheStoredRecordAsync() {
+    var log = new AppendLog();
+    var services = new ServiceCollection();
+    services.AddWhizbang();
+    services.AddSystemEvents(options => options.EnableEventAudit());
+    services.AddSingleton<IEventStore>(new RecordingStore(log));
+    services.AddScoped<IAuditDecisionHook>(_ => new NameEverything());
+    var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+    var emitter = provider.GetRequiredService<ISystemEventEmitter>();
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _envelope(new PlainEvent { Name = "named" }));
+
+    await Assert.That(log.Payloads).Count().IsEqualTo(1);
+    var audited = (EventAudited)log.Payloads[0]!;
+    await Assert.That(audited.ActivityName).IsEqualTo(NameEverything.ACTIVITY_NAME);
+  }
+
+  [Test]
   public async Task Create_WhenTheProviderCannotSayWhetherAStoreIsRegistered_ReturnsTheNullEmitterAsync() {
     var emitter = DefaultSystemEventEmitter.Create(new EmptyProvider());
 
@@ -239,6 +283,33 @@ public class SystemEventEmitterRegistrationTests {
     Source = "test",
     Timestamp = _fixedTime
   };
+
+  private static MessageEnvelope<T> _envelope<T>(T payload) => new() {
+    MessageId = MessageId.New(),
+    Payload = payload,
+    Hops = [
+      new MessageHop {
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+        Type = HopType.Current,
+        Timestamp = _fixedTime
+      }
+    ],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+  };
+
+  private sealed record PlainEvent : IEvent {
+    public required string Name { get; init; }
+  }
+
+  private sealed class RefuseEverything : IAuditDecisionHook {
+    public AuditDecision Decide(object payload, Type eventType) => AuditDecision.Skip;
+  }
+
+  private sealed class NameEverything : IAuditDecisionHook {
+    public const string ACTIVITY_NAME = "Named by the scoped hook";
+
+    public AuditDecision Decide(object payload, Type eventType) => AuditDecision.Record(ACTIVITY_NAME);
+  }
 
   private sealed class AppendLog {
     public List<object?> Payloads { get; } = [];
