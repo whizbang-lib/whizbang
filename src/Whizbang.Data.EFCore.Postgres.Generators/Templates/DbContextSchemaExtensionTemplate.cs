@@ -1748,12 +1748,21 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
+  private static (string Name, string Sql)[]? _migrationScripts;
+  private static (string Name, string Sql)[]? _bootstrapMigrationScripts;
+
   /// <summary>
   /// Returns migration scripts as (name, sql) tuples.
   /// Scripts are embedded by the source generator.
   /// </summary>
+  /// <remarks>
+  /// Each text is embedded as a UTF-8 literal, which the compiler keeps out of the capped
+  /// user-string heap, and decoded here. The list is decoded on first use and kept, as the string
+  /// literals it replaces were loaded once; a race on first use decodes the same list twice and
+  /// keeps either.
+  /// </remarks>
   private static (string Name, string Sql)[] GetMigrationScripts() {
-    return new[] {
+    return _migrationScripts ??= new[] {
       #region MIGRATIONS
       // Migration scripts will be embedded here by the source generator
       #endregion
@@ -1766,10 +1775,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <remarks>
   /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
   /// only makes objects exist and records nothing; the ordinary pass still applies and records these
-  /// same files afterwards.
+  /// same files afterward. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
   /// </remarks>
   private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
-    return new[] {
+    return _bootstrapMigrationScripts ??= new[] {
       #region BOOTSTRAP_MIGRATIONS
       // Bootstrap regions will be embedded here by the source generator
       #endregion
