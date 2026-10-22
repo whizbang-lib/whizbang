@@ -44,17 +44,17 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     ).Where(static t => t is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndPerspectives = context.CompilationProvider
+    var compilationAndPerspectives = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
         .Combine(perspectiveCandidates.Collect())
         .Combine(collectiveEventCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left.Left;
+          var compilationAssemblyName = data.Left.Left;
           var perspectives = data.Left.Right;
           var collectiveEventTypes = data.Right;
-          _generatePerspectiveRunnerRegistry(ctx, compilation, perspectives!, collectiveEventTypes!);
+          _generatePerspectiveRunnerRegistry(ctx, compilationAssemblyName, perspectives!, collectiveEventTypes!);
         }
     );
   }
@@ -211,7 +211,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
   private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveRegistryInfo> perspectives,
       ImmutableArray<string?> collectiveEventTypes) {
 
@@ -224,7 +224,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return;
     }
 
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     var source = new StringBuilder();
@@ -463,6 +463,6 @@ internal sealed record PerspectiveRegistryInfo(
     string ClrTypeName,
     string RunnerName,
     string ModelType,
-    string[] EventTypes,
-    string[] EventTypesCodeGen
+    EquatableArray<string> EventTypes,
+    EquatableArray<string> EventTypesCodeGen
 );
