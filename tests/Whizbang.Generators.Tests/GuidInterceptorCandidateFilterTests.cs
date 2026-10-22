@@ -80,7 +80,27 @@ public class GuidInterceptorCandidateFilterTests {
     var hasStep = steps.TryGetValue(CANDIDATES_STEP, out var candidates);
     await Assert.That(hasStep).IsTrue()
         .Because($"the syntax provider step must be tracked as {CANDIDATES_STEP}");
-    await Assert.That(candidates.SelectMany(step => step.Outputs).Count()).IsEqualTo(1);
+    await Assert.That(candidates.Sum(step => step.Outputs.Length)).IsEqualTo(1);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Transform_ACandidateNameThatBindsToNoMethod_InterceptsNothingAsync() {
+    // The name filter admits any call named NewGuid, so the semantic check still has to reject one whose
+    // target does not resolve to a method: here the receiver does not exist.
+    const string source = """
+        namespace TestApp;
+
+        public class Factory {
+          public object Make() => Missing.NewGuid();
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(
+        source, new Dictionary<string, string> { ["build_property.WhizbangGuidInterceptionEnabled"] = "true" });
+
+    await Assert.That(result.Diagnostics.Where(d => d.Id.StartsWith("WHIZ05", StringComparison.Ordinal))).IsEmpty();
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNull();
   }
 
   private static string _sourceWithOrdinaryCalls() {
