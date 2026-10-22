@@ -119,6 +119,22 @@ public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtur
   }
 
   [Test]
+  public async Task PeekBacklogs_OnAnEmptySubscription_ReportsNoAgeAsync() {
+    // The broker peek of an empty entity returns no message. Nothing ever sends to
+    // topic-backlog-empty (Config.json), so the subscription is empty by construction rather than
+    // by whichever test happened to drain a shared one first.
+    var transport = _transport(new DepthOnlyAdminClient(depth: 0));
+    transport.LivenessWatchdog!.Track("topic-backlog-empty", "sub-backlog-empty");
+
+    var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
+
+    await Assert.That(samples).HasSingleItem();
+    await Assert.That(samples[0].Entity).IsEqualTo("topic-backlog-empty/sub-backlog-empty");
+    await Assert.That(samples[0].OldestAge).IsNull()
+      .Because("an empty subscription has no front to be old");
+  }
+
+  [Test]
   public async Task PeekBacklogs_WhenTheDepthCallFails_SkipsThatEntityAsync() {
     // An entity that cannot be read right now is skipped, not reported with a wrong depth —
     // the next tick retries it.
