@@ -459,6 +459,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
+  of a receiving service could lease one source stream's events at once: the later claim skipped the head the
+  earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
+  stream's "created" event after the events it should precede, and a rebuild replayed the same order. Fan-out
+  children carry no origin commit sequence, so nothing could sort the stream back. The inbox emit chain (migration
+  227) now leaves an event unstored while an earlier event of its stream is pending and not held by the same pass,
+  and stores it after that event, in message-id order (producer order for fan-out children). `fetch_inbox_batch`
+  hands out an event only once it is stored, so a waiting event is never dispatched first. Not covered: an earlier
+  event that has not reached the receiver's inbox yet (separate deliveries reordered in transport). Streams already
+  stored out of order are not repaired by this change.
 - **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
   text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
   user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to

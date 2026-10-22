@@ -67,6 +67,98 @@ public class ReceivedStreamOrderSqlTests : EFCoreTestBase {
       .Because("the receiver's versions follow the producer's order, not the order the two claims committed in");
   }
 
+  [Test]
+  public async Task TwoInstancesShareAStream_TheTailWaitsForThePeersHead_ThenFollowsItAsync() {
+    var instanceId = Guid.CreateVersion7();
+    var peerId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var producerOrder = _fanOutChildIds(EVENT_COUNT);
+    await using var connection = await _openAsync();
+    await _registerInstanceAsync(connection, instanceId);
+    await _registerInstanceAsync(connection, peerId);
+    await _storeReceivedAsync(connection, streamId, producerOrder);
+    await _leaseAsync(connection, peerId, producerOrder[..HEAD_COUNT]);
+    await _leaseAsync(connection, instanceId, producerOrder[HEAD_COUNT..]);
+
+    await _emitInboxChainAsync(connection, instanceId);
+    var whileThePeerHoldsTheHead = await _eventIdsInVersionOrderAsync(connection, streamId);
+
+    await _emitInboxChainAsync(connection, peerId);
+    await _emitInboxChainAsync(connection, instanceId);
+
+    await Assert.That(whileThePeerHoldsTheHead).IsEmpty()
+      .Because("every event this instance holds sorts after the head a live peer holds, so none of them is stored yet");
+    await Assert.That(await _eventIdsInVersionOrderAsync(connection, streamId))
+      .IsEquivalentTo(producerOrder, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the peer stores the head, and the next pass stores the tail after it");
+  }
+
+  [Test]
+  public async Task RowsBeforeTheFirstUnheldRow_AreStored_AndOnlyTheRowsAfterItWaitAsync() {
+    var instanceId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var ids = _fanOutChildIds(6);
+    await using var connection = await _openAsync();
+    await _registerInstanceAsync(connection, instanceId);
+    await _storeReceivedAsync(connection, streamId, ids);
+    await _leaseAsync(connection, instanceId, [ids[0], ids[1], ids[2], ids[4], ids[5]]);
+
+    await _emitInboxChainAsync(connection, instanceId);
+
+    await Assert.That(await _eventIdsInVersionOrderAsync(connection, streamId))
+      .IsEquivalentTo(ids[..3], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the rows before the unleased one are the stream's head and are stored at once");
+    await Assert.That(await _unstampedAsync(connection, [ids[4], ids[5]])).IsEqualTo(2)
+      .Because("a row that waits is left for the next pass to re-read");
+  }
+
+  [Test]
+  public async Task AnEarlierCommand_OrAnEarlierEventAlreadyStored_DoesNotHoldTheStreamAsync() {
+    var instanceId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var ids = _fanOutChildIds(4);
+    await using var connection = await _openAsync();
+    await _registerInstanceAsync(connection, instanceId);
+    await _storeReceivedAsync(connection, streamId, ids);
+    // ids[0] is a command on the stream, nobody holds it; ids[1] is already stored, its row not yet stamped.
+    await _executeAsync(connection, "UPDATE wh_inbox_state SET is_event = false WHERE message_id = @id", ids[0]);
+    await _executeAsync(connection,
+      "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at) "
+      + "SELECT message_id, stream_id, stream_id, 'Producer', message_type, 1, NOW() FROM wh_inbox WHERE message_id = @id", ids[1]);
+    await _leaseAsync(connection, instanceId, ids[2..]);
+
+    await _emitInboxChainAsync(connection, instanceId);
+
+    await Assert.That(await _eventIdsInVersionOrderAsync(connection, streamId))
+      .IsEquivalentTo(ids[1..], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("only an event that is not yet stored is a head to wait for");
+  }
+
+  [Test]
+  public async Task AWaitingEvent_IsNotFetched_UntilItIsStoredAsync() {
+    var instanceId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var ids = _fanOutChildIds(3);
+    await using var connection = await _openAsync();
+    await _registerInstanceAsync(connection, instanceId);
+    await _storeReceivedAsync(connection, streamId, ids);
+    // ids[2] is a command on the stream: it is dispatched whether or not the stream's events are stored.
+    await _executeAsync(connection, "UPDATE wh_inbox_state SET is_event = false WHERE message_id = @id", ids[2]);
+    await _leaseAsync(connection, instanceId, ids[1..]);
+
+    await _emitInboxChainAsync(connection, instanceId);
+    var whileItWaits = await _fetchAsync(connection, instanceId, streamId);
+
+    await _leaseAsync(connection, instanceId, ids[..1]);
+    await _emitInboxChainAsync(connection, instanceId);
+    var onceStored = await _fetchAsync(connection, instanceId, streamId);
+
+    await Assert.That(whileItWaits).IsEquivalentTo([ids[2]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the event waiting behind the stream's head is not stored, so it is not dispatched; the command is");
+    await Assert.That(onceStored).IsEquivalentTo(ids, TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("once the head is held and both events are stored, the whole stream is fetched in order");
+  }
+
   // ===== Helpers =====
 
   /// <summary>The ids a composite fan-out gives its children: derived from the composite and the ordinal, so they sort in producer order.</summary>
@@ -149,6 +241,33 @@ public class ReceivedStreamOrderSqlTests : EFCoreTestBase {
       ids.Add(reader.GetGuid(0));
     }
     return ids;
+  }
+
+  private static async Task<List<Guid>> _fetchAsync(NpgsqlConnection connection, Guid instanceId, Guid streamId) {
+    var ids = new List<Guid>();
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT message_id FROM fetch_inbox_batch(@streams, @inst, 100, NULL)";
+    command.Parameters.Add(new NpgsqlParameter("streams", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = new[] { streamId } });
+    command.Parameters.AddWithValue("inst", instanceId);
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      ids.Add(reader.GetGuid(0));
+    }
+    return ids;
+  }
+
+  private static async Task<long> _unstampedAsync(NpgsqlConnection connection, Guid[] messageIds) {
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND chain_emitted_at IS NULL";
+    command.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = messageIds });
+    return (long)(await command.ExecuteScalarAsync())!;
+  }
+
+  private static async Task _executeAsync(NpgsqlConnection connection, string sql, Guid id) {
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    command.Parameters.AddWithValue("id", id);
+    await command.ExecuteNonQueryAsync();
   }
 
   private static async Task _registerInstanceAsync(NpgsqlConnection connection, Guid instanceId) {

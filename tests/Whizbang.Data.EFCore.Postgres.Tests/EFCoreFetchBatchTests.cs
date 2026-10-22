@@ -135,9 +135,9 @@ public class EFCoreFetchBatchTests : EFCoreTestBase {
         )
         INSERT INTO wh_inbox_state
           (message_id, stream_id, received_at, priority, is_event,
-           status, attempts, instance_id, lease_expiry, partition_number)
+           status, attempts, instance_id, lease_expiry, partition_number, chain_emitted_at)
         SELECT message_id, stream_id, received_at, priority, is_event,
-               3, 0, @inst, NOW() + INTERVAL '5 minutes', 9 FROM m
+               3, 0, @inst, NOW() + INTERVAL '5 minutes', 9, NOW() FROM m
 """;
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", streamId);

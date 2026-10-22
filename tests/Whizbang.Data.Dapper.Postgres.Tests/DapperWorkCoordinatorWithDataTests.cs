@@ -350,7 +350,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await conn.ExecuteAsync(
-      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
     var rows = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
@@ -373,7 +373,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await conn.OpenAsync();
     await conn.ExecuteAsync(@"
       UPDATE wh_inbox_state
-      SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', error = 'handler blew up'
+      SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', error = 'handler blew up', chain_emitted_at = NOW()
       WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
