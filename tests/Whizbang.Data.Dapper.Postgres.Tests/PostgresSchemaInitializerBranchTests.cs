@@ -140,7 +140,8 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
     await Assert.That(await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_failure_probe")).IsEqualTo(1L)
       .Because("the failed migration ran on the next start");
     await Assert.That(await connection.ExecuteScalarAsync<int>(
-        "SELECT status FROM wh_schema_migrations WHERE file_name = '100_needs_a_table'")).IsEqualTo(1);
+        "SELECT status FROM wh_schema_migrations WHERE file_name = '100_needs_a_table'")).IsEqualTo(2)
+      .Because("the next start updated the failure record into an applied row");
   }
 
   /// <summary>

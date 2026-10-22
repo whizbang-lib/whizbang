@@ -117,9 +117,14 @@ public static partial class SchemaInitializationLog {
 }
 
 /// <summary>A step's or a pass's duration as the step lines give it: seconds to the millisecond, as in <c>1.234s</c>.</summary>
-/// <param name="Elapsed">The duration.</param>
-internal readonly record struct StepDuration(TimeSpan Elapsed) {
+internal readonly struct StepDuration {
+  private readonly TimeSpan _elapsed;
+
+  /// <summary>Wraps <paramref name="elapsed"/>.</summary>
+  /// <param name="elapsed">The duration.</param>
+  public StepDuration(TimeSpan elapsed) => _elapsed = elapsed;
+
   /// <inheritdoc/>
   public override string ToString() =>
-    Elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s";
+    _elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s";
 }

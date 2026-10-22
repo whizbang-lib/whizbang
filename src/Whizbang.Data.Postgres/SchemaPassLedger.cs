@@ -108,8 +108,20 @@ public static class SchemaPassLedger {
 }
 
 /// <summary>What <see cref="SchemaPassLedger.Plan"/> decided.</summary>
-/// <param name="ToMark">The step rows to mark pending with this build's fingerprint.</param>
-/// <param name="ToRun">The steps the pass runs.</param>
 /// <docs>operations/infrastructure/migrations</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaPassLedgerTests.cs</tests>
-public sealed record SchemaPassSteps(IReadOnlyList<string> ToMark, IReadOnlySet<string> ToRun);
+public sealed class SchemaPassSteps {
+  /// <summary>Creates the decision.</summary>
+  /// <param name="toMark">The step rows to mark pending with this build's fingerprint.</param>
+  /// <param name="toRun">The steps the pass runs.</param>
+  public SchemaPassSteps(IReadOnlyList<string> toMark, IReadOnlySet<string> toRun) {
+    ToMark = toMark;
+    ToRun = toRun;
+  }
+
+  /// <summary>The step rows to mark pending with this build's fingerprint.</summary>
+  public IReadOnlyList<string> ToMark { get; }
+
+  /// <summary>The steps the pass runs.</summary>
+  public IReadOnlySet<string> ToRun { get; }
+}

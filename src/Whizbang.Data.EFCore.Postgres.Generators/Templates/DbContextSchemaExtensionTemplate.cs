@@ -460,24 +460,24 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             ct => ExecuteCoreInfrastructureTablesAsync(dbContext, logger, ct), cancellationToken);
           phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, coreRan ? "completed" : "skipped (hash match)"));
 
-          // Steps 2..: each migration file, with its ledger row in the same transaction. Before the perspectives, so the
+          // Step 2: each migration file, with its ledger row in the same transaction. Before the perspectives, so the
           // tracking tables and functions they use exist.
           phaseSw.Restart();
           migrationsApplied = await ExecuteMigrationsAsync(dbContext, steps, pass, logger, cancellationToken);
           phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, pass.Infra ? "completed" : "skipped (hash match)"));
 
-          // Then each perspective table, hash-tracked one by one.
+          // Step 3: each perspective table, hash-tracked one by one.
           phaseSw.Restart();
           await ExecutePerspectiveTablesAsync(dbContext, steps, pass, segmentConnectionFactory, logger, cancellationToken);
           phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, pass.RunPerspectives ? "completed" : "skipped (hash match)"));
 
-          // Constraints (composite PKs, FKs) that TableDefinition doesn't support yet.
+          // Step 4: constraints (composite PKs, FKs) that TableDefinition doesn't support yet.
           phaseSw.Restart();
           var constraintsRan = await _runRecordedStepAsync(steps, connection, pass, _constraintsStep,
             ct => ExecuteConstraintsAsync(dbContext, logger, ct), cancellationToken);
           phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, constraintsRan ? "completed" : "skipped (hash match)"));
 
-          // Perspective associations (wh_message_associations, for event routing), then the associations-set hash, so
+          // Step 5: perspective associations (wh_message_associations, for event routing), then the associations-set hash, so
           // adding or removing an Apply(TEvent) method re-registers even when no table changed.
           phaseSw.Restart();
           var associationsRan = await _runRecordedStepAsync(steps, connection, pass, _associationsStep, async _ => {
@@ -487,7 +487,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           }, cancellationToken);
           phases.Add(("Associations", phaseSw.ElapsedMilliseconds, associationsRan ? "completed" : "skipped (hash match)"));
 
-          // The perspective registry (CLR type → table name, for drift detection) and the message type registry
+          // Step 6: the perspective registry (CLR type → table name, for drift detection) and the message type registry
           // (pinned ids and CLR type names).
           phaseSw.Restart();
           var registriesRan = await _runRecordedStepAsync(steps, connection, pass, _registriesStep, async ct => {

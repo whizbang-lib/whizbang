@@ -263,14 +263,12 @@ public sealed class SchemaStepRunner {
     // A lost lock rolls back too: nothing ran, and the pooled backend is given up while this instance waits.
     await _endAsync(transaction, step, rollback: outcome is null || failure is not null).ConfigureAwait(false);
 
-    if (failure is not null) {
-      // Only a step that ran under the lock failed; one that never got that far has nothing to record or report.
-      if (outcome is not null) {
-        _reportFailure(step, counted, failure);
-        await _recordFailureAsync(step, recordFailureAsync, failure).ConfigureAwait(false);
-      }
-      ExceptionDispatchInfo.Capture(failure).Throw();
+    // Only a step that ran under the lock failed; one that never got that far has nothing to record or report.
+    if (failure is not null && outcome is not null) {
+      _reportFailure(step, counted, failure);
+      await _recordFailureAsync(step, recordFailureAsync, failure).ConfigureAwait(false);
     }
+    _rethrowIfFailed(failure);
 
     if (counted && outcome is { } ended) {
       if (ended == SchemaStepOutcome.Applied) {
@@ -283,6 +281,11 @@ public sealed class SchemaStepRunner {
       }
     }
     return outcome;
+  }
+
+  /// <summary>Rethrows a captured failure with its original stack, once it has been rolled back and recorded.</summary>
+  private static void _rethrowIfFailed(Exception? failure) {
+    if (failure is not null) { ExceptionDispatchInfo.Capture(failure).Throw(); }
   }
 
   private async Task<bool> _tryLockAsync(NpgsqlConnection connection, DbTransaction transaction, CancellationToken ct) {
