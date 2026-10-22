@@ -18,26 +18,42 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithEnvelopesWithoutCurrentHop_UsesMinValueTimestampAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithNoHops_UsesMinValueTimestampAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReferenceInChildrenTree_ProtectsAgainstInfiniteLoopAsync</tests>
-/// In-memory implementation of ITraceStore for testing and development.
-/// Thread-safe using ConcurrentDictionary.
-/// NOT suitable for production use (no persistence, limited by memory).
+/// In-memory implementation of ITraceStore for testing, development and short-lived diagnostics.
+/// Thread-safe, not durable, and bounded: it keeps the most recent <see cref="Capacity"/> envelopes
+/// and evicts the oldest first, so an opted-in host cannot grow without bound (#1601).
+/// No store is registered by default; a host opts in with
+/// <see cref="TraceStoreRegistration.AddWhizbangInMemoryTraceStore(Microsoft.Extensions.DependencyInjection.IServiceCollection)"/>.
 /// </summary>
+/// <docs>fundamentals/persistence/observability#trace-store-registration</docs>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs</tests>
 public class InMemoryTraceStore : ITraceStore {
-  private readonly ConcurrentDictionary<MessageId, IMessageEnvelope> _traces = new();
-
   /// <summary>The number of envelopes a store keeps when no capacity is given.</summary>
   public const int DEFAULT_CAPACITY = 10_000;
 
+  private readonly ConcurrentDictionary<MessageId, IMessageEnvelope> _traces = new();
+  // Insertion order of the held ids, oldest first; written only under _storeGate
+  private readonly Queue<MessageId> _order = new();
+  private readonly Lock _storeGate = new();
+
   /// <summary>Creates a store that keeps the most recent <see cref="DEFAULT_CAPACITY"/> envelopes.</summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:Constructor_Parameterless_UsesTheDefaultCapacityAsync</tests>
   public InMemoryTraceStore() : this(DEFAULT_CAPACITY) { }
 
   /// <summary>Creates a store that keeps the most recent <paramref name="capacity"/> envelopes.</summary>
-  public InMemoryTraceStore(int capacity) => throw new NotImplementedException();
+  /// <param name="capacity">The most envelopes held; must be positive.</param>
+  /// <exception cref="ArgumentOutOfRangeException">The capacity is zero or negative.</exception>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:Constructor_CapacityNotPositive_ThrowsAsync</tests>
+  public InMemoryTraceStore(int capacity) {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+    Capacity = capacity;
+  }
 
-  /// <summary>The most envelopes this store keeps.</summary>
+  /// <summary>The most envelopes this store keeps; past it the oldest is evicted.</summary>
+  /// <tests>tests/Whizbang.Observability.Tests/DependencyInjection/TraceStoreRegistrationTests.cs:AddWhizbangInMemoryTraceStore_WithCapacity_UsesItAsync</tests>
   public int Capacity { get; }
 
-  /// <summary>The number of envelopes held now.</summary>
+  /// <summary>The number of envelopes held now, never more than <see cref="Capacity"/>.</summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:StoreAsync_PastCapacity_EvictsTheOldestFirstAsync</tests>
   public int Count => _traces.Count;
 
   /// <summary>
@@ -51,10 +67,22 @@ public class InMemoryTraceStore : ITraceStore {
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInRangeAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInChronologicalOrderAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_ConcurrentStores_ShouldHandleConcurrencyAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:StoreAsync_PastCapacity_EvictsTheOldestFirstAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:StoreAsync_SameMessageTwice_KeepsOneEntryAndEvictsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreCapacityTests.cs:Queries_AfterEviction_NeverReturnAnEvictedEnvelopeAsync</tests>
   public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    _traces.TryAdd(envelope.MessageId, envelope);
+    lock (_storeGate) {
+      // The first write for an id wins, and a repeat is not a new entry, so it evicts nothing
+      if (_traces.TryAdd(envelope.MessageId, envelope)) {
+        _order.Enqueue(envelope.MessageId);
+        if (_order.Count > Capacity) {
+          // Every query reads _traces, so removing the oldest here hides it from all of them
+          _traces.TryRemove(_order.Dequeue(), out _);
+        }
+      }
+    }
     return Task.CompletedTask;
   }
 

@@ -10,6 +10,7 @@ using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.TraceStoreOptIn;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Component.Tests.TraceStoreOptIn {
   public record TraceOptInCommand(Guid Id) : ICommand;
@@ -65,7 +66,10 @@ namespace Whizbang.Core.Tests.Dispatcher {
       services.AddSingleton<IEnvelopeRegistry>(registry);
       services.AddReceptors();
       services.AddWhizbangDispatcher();
-      return services.BuildServiceProvider();
+      var provider = services.BuildServiceProvider();
+      // A default host gates dispatch on its schema; there is none to migrate here
+      provider.GetRequiredService<ISchemaReadyGate>().MarkReady();
+      return provider;
     }
 
     /// <summary>Counts envelope registrations, the dispatcher's sign that it built an envelope.</summary>

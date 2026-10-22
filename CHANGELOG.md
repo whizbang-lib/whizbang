@@ -250,6 +250,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **No trace store is registered by default, and the in-memory store is bounded (#1601). Behavior change.**
+  `AddWhizbang` no longer registers `InMemoryTraceStore` as `ITraceStore`; it stored every dispatched envelope for
+  the life of the process and nothing in the library read it. With no store registered the dispatcher does no trace
+  work. A host opts in with `services.AddWhizbangInMemoryTraceStore()` (or `(capacity)`), which leaves exactly one
+  `ITraceStore` registration. `InMemoryTraceStore` now keeps the most recent `Capacity` envelopes (default
+  `DEFAULT_CAPACITY`, 10,000), evicting the oldest first, and no query returns an evicted envelope. **Upgrade:** a
+  host that resolves `ITraceStore` registers one explicitly.
 - **Audit records from the system-event emitter are written on the tenant's audit ledger (#1555). Behavior change.**
   `SystemEventEmitter.EmitEventAuditedAsync`, `EmitCommandAuditedAsync` (used by the command-audit pipeline behavior)
   and an `EventAudited` or `CommandAudited` given to `EmitAsync` now append to `AuditLedger.StreamFor(tenant)`, the

@@ -44,7 +44,7 @@ builder.Services.AddRabbitMQHealthChecks();
 
 #endif
 
-builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+builder.Services.AddWhizbangInMemoryTraceStore();
 
 builder.Services.AddDbContext<NotificationDbContext>(options =>
   options.UseNpgsql(postgresConnection));
