@@ -36,6 +36,7 @@ namespace Whizbang.Sagas.Tests;
 public class SagaOutcomeTests {
   private static readonly Guid _sagaId = Guid.NewGuid();
   private static readonly Guid _entityId = Guid.NewGuid();
+  private static readonly DateTimeOffset _at = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
 
   // ── The policy ───────────────────────────────────────────────────────
 
@@ -459,7 +460,7 @@ public class SagaOutcomeTests {
   [Test]
   public async Task TheProjectionRecordsTheFirstOutcomeAsync() {
     var saga = new BaseSagaModel { Status = SagaStatus.Failed };
-    var at = DateTimeOffset.UtcNow;
+    var at = _at;
 
     var first = SagaApplyHelper.TrackOutcome(saga, SagaOutcome.Rollback, at);
     var second = SagaApplyHelper.TrackOutcome(saga, SagaOutcome.Commit, at.AddSeconds(1));
@@ -474,7 +475,7 @@ public class SagaOutcomeTests {
   /// <summary>A missing model is a wiring error.</summary>
   [Test]
   public async Task TrackingAnOutcomeNeedsAModelAsync() {
-    await Assert.That(() => SagaApplyHelper.TrackOutcome(null!, SagaOutcome.Commit, DateTimeOffset.UtcNow))
+    await Assert.That(() => SagaApplyHelper.TrackOutcome(null!, SagaOutcome.Commit, _at))
       .Throws<ArgumentNullException>();
   }
 
@@ -495,7 +496,7 @@ public class SagaOutcomeTests {
     SagaName = name,
     EntityId = _entityId,
     RescheduleCount = 4,
-    LastObservedAt = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(10),
+    LastObservedAt = _at - TimeSpan.FromMinutes(10),
     LastObservedCompleted = 7,
     LastObservedFailed = 0,
     ConsecutiveStallCount = 3,
