@@ -444,29 +444,29 @@ public class AsbTransportBranchCoverageTests {
   /// </summary>
   [Test]
   public async Task PeekBacklogsAsync_HeldEntityHead_ReportsTheAgeOfTheHeadMessageAsync() {
-    var enqueued = DateTimeOffset.UtcNow.AddMinutes(-42);
+    // The age is read from the transport's clock, so a fake clock fixes it exactly: the head was
+    // enqueued 42 minutes before the clock's now.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+    var enqueued = clock.GetUtcNow().AddMinutes(-42);
     var client = new HeadPeekClient(ServiceBusModelFactory.ServiceBusReceivedMessage(enqueuedTime: enqueued));
     var transport = new AzureServiceBusTransport(
       client,
       AsbTransportTestData.CombinedOptions,
       new AzureServiceBusOptions(),
       NullLogger<AzureServiceBusTransport>.Instance,
-      new RecordingProvisioningAdminClient { ActiveMessageCountResult = 5 });
+      new RecordingProvisioningAdminClient { ActiveMessageCountResult = 5 },
+      timeProvider: clock);
     transport.LivenessWatchdog!.Track(TOPIC, SUBSCRIPTION);
 
-    var before = DateTimeOffset.UtcNow;
     var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
-    var after = DateTimeOffset.UtcNow;
 
     await Assert.That(samples).Count().IsEqualTo(1);
     await Assert.That(samples[0].Depth).IsEqualTo(5L);
     // HasValue, not IsNotNull: TUnit's IsNotNull passes on a null Nullable<T>.
     await Assert.That(samples[0].OldestAge.HasValue).IsTrue()
       .Because("a head message was found, so the entity has an age");
-    await Assert.That(samples[0].OldestAge!.Value).IsGreaterThanOrEqualTo(before - enqueued)
-      .Because("the age is measured from the head message's enqueued time, after the peek started");
-    await Assert.That(samples[0].OldestAge!.Value).IsLessThanOrEqualTo(after - enqueued)
-      .Because("the age is measured from the head message's enqueued time, before the peek returned");
+    await Assert.That(samples[0].OldestAge!.Value).IsEqualTo(TimeSpan.FromMinutes(42))
+      .Because("the age is the transport clock's now minus the head message's enqueued time");
     await Assert.That(client.Receiver.PeekCalls).IsEqualTo(1);
   }
 
