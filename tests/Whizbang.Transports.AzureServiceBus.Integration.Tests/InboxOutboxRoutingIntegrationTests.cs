@@ -62,10 +62,7 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     // Create transport and set up consumer with warmup detection using harnesses
     var transport = await _createTransportAsync();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
-    var (warmupAwaiter, testAwaiter, handler) = SubscriptionWarmup.CreateDiscriminatingAwaiters<TestMessage>(
-      warmupId,
-      msg => msg.Content
-    );
+    var (warmupAwaiter, handler, envelope, awaiter) = _createCorrelatedAwaiters(warmupId);
 
     var subscription = await transport.SubscribeAsync(
       handler,
@@ -82,12 +79,11 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       );
 
       // Act: Now publish the actual test message
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, destination);
 
-      // Assert - Message should arrive at shared topic
-      var receivedEnvelope = await testAwaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(receivedEnvelope).IsNotNull();
+      // Assert - THIS message arrives at the shared topic
+      var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
     } finally {
       subscription.Dispose();
       await transport.DisposeAsync();
@@ -123,10 +119,7 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     // Create transport and set up consumer with warmup detection using harnesses
     var transport = await _createTransportAsync();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
-    var (warmupAwaiter, testAwaiter, handler) = SubscriptionWarmup.CreateDiscriminatingAwaiters<TestMessage>(
-      warmupId,
-      msg => msg.Content
-    );
+    var (warmupAwaiter, handler, envelope, awaiter) = _createCorrelatedAwaiters(warmupId);
 
     var transportSubscription = await transport.SubscribeAsync(
       handler,
@@ -144,12 +137,11 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       );
 
       // Act: Publish command to shared inbox
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, publishDestination);
 
-      // Assert
-      var receivedEnvelope = await testAwaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(receivedEnvelope).IsNotNull();
+      // Assert - THIS message arrives at the shared inbox
+      var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
     } finally {
       transportSubscription.Dispose();
       await transport.DisposeAsync();
@@ -318,6 +310,35 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     } finally {
       await receiver.DisposeAsync();
     }
+  }
+
+  /// <summary>
+  /// Creates the test envelope up front and a subscription handler that signals warmup on a warmup
+  /// message and otherwise feeds an awaiter correlated on that envelope's id. The subscriptions are
+  /// shared with other tests, so a message the drain did not see can arrive first; an awaiter that
+  /// accepted any non-warmup message completed on it, and an IsNotNull check then passed without
+  /// proving this test's message was delivered.
+  /// </summary>
+  private static (
+    SignalAwaiter WarmupAwaiter,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> Handler,
+    MessageEnvelope<TestMessage> Envelope,
+    MessageIdAwaiter Awaiter
+  ) _createCorrelatedAwaiters(string warmupId) {
+    var warmupAwaiter = new SignalAwaiter();
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
+
+    async Task handler(IMessageEnvelope received, string? envelopeType, CancellationToken ct) {
+      if (received is MessageEnvelope<TestMessage> testEnvelope &&
+          testEnvelope.Payload.Content.Contains(warmupId, StringComparison.Ordinal)) {
+        warmupAwaiter.Signal();
+      } else {
+        await awaiter.Handler(received, envelopeType, ct);
+      }
+    }
+
+    return (warmupAwaiter, handler, envelope, awaiter);
   }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
