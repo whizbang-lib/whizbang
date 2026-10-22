@@ -60,6 +60,29 @@ public partial class WorkTablesAreLockedInOneOrderTests {
   }
 
   /// <summary>
+  /// The direct append (<c>wh_append_event</c>) refuses a mixed stream through the shared finder, and neither it nor
+  /// anything it calls locks a work table: its caller may hold any of them, in any order the canonical order allows.
+  /// </summary>
+  [Test]
+  public async Task TheDirectAppend_AndWhatItCalls_LocksNoWorkTableAsync() {
+    var bodies = _latestFunctionBodies();
+    var reached = _reachedFrom("wh_append_event", bodies);
+
+    var workTableLocks = reached
+      .SelectMany(function => _lockingStatements(bodies[function])
+        .SelectMany(statement => statement.Tables.Select(table => $"{function} locks {table}")))
+      .Where(l => CANONICAL.Any(table => l.EndsWith(" " + table, StringComparison.Ordinal)))
+      .Distinct(StringComparer.Ordinal)
+      .ToList();
+
+    await Assert.That(reached).Contains("_wh_mixed_stream_refusals")
+      .Because("the direct append refuses a mixed stream with the same finder the outbox and inbox copies use");
+    await Assert.That(workTableLocks).IsEmpty()
+      .Because("the refusal on the direct append reads; it never locks a work table. Locks: "
+        + string.Join("; ", workTableLocks));
+  }
+
+  /// <summary>
   /// The premise of the rule above: the claim calls the inbox emit chain after it has written the stream ledger.
   /// </summary>
   [Test]

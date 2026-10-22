@@ -8,9 +8,14 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
+using Whizbang.Core.Data;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Dapper.Custom;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -64,6 +69,77 @@ public class DapperMixedStreamGuardTests : PostgresTestBase {
     await Assert.That(stored).IsEqualTo(0L);
   }
 
+  [Test]
+  public async Task AppendAsync_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync() {
+    var store = _eventStore();
+    var streamId = (Guid)TrackedGuid.New();
+    await store.AppendAsync(streamId, new DapperMixedStreamProbeTyping { StreamId = streamId });
+    var sourced = new DapperMixedStreamProbeNoted { StreamId = streamId };
+
+    var thrown = await Assert.That(async () => await store.AppendAsync(streamId, sourced))
+      .Throws<MixedStreamEventException>();
+
+    await Assert.That(thrown!.StreamId).IsEqualTo(streamId);
+    await Assert.That(thrown.Message).Contains("ephemeral events");
+    await Assert.That(await _storedCountAsync(streamId)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task AppendAsync_EphemeralEventOnASourcedStream_ThrowsAndStoresNothingAsync() {
+    var store = _eventStore();
+    var streamId = (Guid)TrackedGuid.New();
+    await store.AppendAsync(streamId, new DapperMixedStreamProbeNoted { StreamId = streamId });
+
+    var thrown = await Assert.That(async () =>
+        await store.AppendAsync(streamId, new DapperMixedStreamProbeTyping { StreamId = streamId }))
+      .Throws<MixedStreamEventException>();
+
+    await Assert.That(thrown!.Message).Contains("Sourced events");
+    await Assert.That(await _storedCountAsync(streamId)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task AppendAsync_EventTheResolverDeclaresEphemeral_IsStoredAsEphemeralAsync() {
+    var store = _eventStore(new DeclaresEphemeral(typeof(DapperMixedStreamProbeNoted)));
+    var streamId = (Guid)TrackedGuid.New();
+
+    await store.AppendAsync(streamId, new DapperMixedStreamProbeNoted { StreamId = streamId });
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var flags = await conn.ExecuteScalarAsync<int>("SELECT flags FROM wh_event_store WHERE stream_id = @streamId", new { streamId });
+    await Assert.That(flags).IsEqualTo((int)EventFlags.Ephemeral)
+      .Because("[Ephemeral] on a type is resolved through the ephemeral-mode resolver, as on the dispatch path");
+  }
+
+  private DapperPostgresEventStore _eventStore(IEphemeralModeResolver? resolver = null) {
+    var jsonOptions = Whizbang.Data.Dapper.Postgres.Tests.Generated.WhizbangJsonContext.CreateOptions();
+    return new DapperPostgresEventStore(
+      ConnectionFactory,
+      Executor,
+      jsonOptions,
+      new EventEnvelopeJsonbAdapter(jsonOptions),
+      new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance),
+      new PolicyEngine(),
+      null,
+      NullLogger<DapperPostgresEventStore>.Instance,
+      resolver);
+  }
+
+  private async Task<long> _storedCountAsync(Guid streamId) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    return await conn.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_event_store WHERE stream_id = @streamId", new { streamId });
+  }
+
+  /// <summary>An ephemeral-mode resolver that declares exactly one type ephemeral, as the generated catalog would.</summary>
+  private sealed class DeclaresEphemeral(Type ephemeralType) : IEphemeralModeResolver {
+    public Whizbang.Core.Attributes.EphemeralInfo? Resolve(string clrTypeName) => null;
+    public Whizbang.Core.Attributes.EphemeralInfo? Resolve(Type type) => null;
+    public bool IsEphemeral(string clrTypeName) => false;
+    public bool IsEphemeral(Type type) => type == ephemeralType;
+  }
+
   private DapperWorkCoordinator _build() =>
     new(ConnectionString, _jsonOptions, NullLogger<DapperWorkCoordinator>.Instance);
 
@@ -85,4 +161,18 @@ public class DapperMixedStreamGuardTests : PostgresTestBase {
       Flags = flags,
     };
   }
+}
+
+/// <summary>An ephemeral event a direct append stores (the shipped marker declares it).</summary>
+public sealed record DapperMixedStreamProbeTyping : IEphemeralEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public required Guid StreamId { get; init; }
+}
+
+/// <summary>A Sourced event a direct append stores.</summary>
+public sealed record DapperMixedStreamProbeNoted : IEvent {
+  /// <summary>The stream.</summary>
+  [StreamId]
+  public required Guid StreamId { get; init; }
 }

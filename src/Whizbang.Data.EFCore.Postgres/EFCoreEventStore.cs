@@ -34,8 +34,11 @@ namespace Whizbang.Data.EFCore.Postgres;
 public sealed class EFCoreEventStore<TDbContext>(
   TDbContext context,
   JsonSerializerOptions? jsonOptions = null,
-  ILogger<EFCoreEventStore<TDbContext>>? logger = null) : IEventStore
+  ILogger<EFCoreEventStore<TDbContext>>? logger = null,
+#pragma warning disable CS9113 // RED stub: not read yet
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null) : IEventStore
   where TDbContext : DbContext {
+#pragma warning restore CS9113
 
   private const string APPEND_EVENT_FUNCTION = "wh_append_event";
 

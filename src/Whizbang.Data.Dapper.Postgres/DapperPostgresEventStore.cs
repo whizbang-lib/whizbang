@@ -36,7 +36,8 @@ public class DapperPostgresEventStore(
   JsonbSizeValidator sizeValidator,
   IPolicyEngine policyEngine,
   IPerspectiveInvoker? perspectiveInvoker,
-  ILogger<DapperPostgresEventStore> logger
+  ILogger<DapperPostgresEventStore> logger,
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
   ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
