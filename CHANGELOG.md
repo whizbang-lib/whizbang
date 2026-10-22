@@ -489,6 +489,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Perspective tables keep their names when `WhizbangStripTableNameSuffixes` is not set (#1660).** Since the
+  table-naming properties became visible to the generators (#1426), a project that never set the property handed
+  the generators an empty value, which was read as "do not strip". Every perspective table then gained its model's
+  suffix, so `ActiveTenantModel` mapped to `wh_per_active_tenant_model` instead of `wh_per_active_tenant`, and an
+  upgraded service looked for tables that did not exist. An empty or blank value now counts as unset, so suffixes
+  are stripped by default and tables keep the names they had on 0.2623 again. A project that sets the property to
+  `false` still keeps the suffix, and a set value is trimmed before it is read. The suffix list and identifier
+  length properties already ignored a blank value and behave as before.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a

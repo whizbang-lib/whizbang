@@ -223,6 +223,22 @@ public class ConfigurationUtilitiesTests {
     await Assert.That(result).IsNull();
   }
 
+  [Test]
+  [Arguments("", null)]
+  [Arguments("   ", null)]
+  [Arguments("0", null)]
+  [Arguments("40", 40)]
+  [Arguments(" 40 ", 40)]
+  public async Task GetMaxIdentifierLengthOverride_ReadsOnlyAUsableSetValueAsync(string raw, int? expected) {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.MAX_IDENTIFIER_LENGTH_PROPERTY] = raw
+    });
+
+    var result = ConfigurationUtilities.GetMaxIdentifierLengthOverride(options);
+
+    await Assert.That(result).IsEqualTo(expected);
+  }
+
   #endregion
 
   #region GetTableNameConfig — populated options
@@ -243,6 +259,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   [Arguments("true", true)]
   [Arguments("TRUE", true)]
+  [Arguments(" true ", true)]
   [Arguments("false", false)]
   [Arguments("nonsense", false)]
   public async Task GetTableNameConfig_ReadsStripSuffixesProperty_CaseInsensitivelyAsync(
