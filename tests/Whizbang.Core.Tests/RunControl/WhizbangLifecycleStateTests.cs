@@ -70,7 +70,7 @@ public class WhizbangLifecycleStateTests {
     LifecyclePhase? settledDuring = null;
     var participant = new FakeParticipant("instance-state", _ => {
       announcedDuring = state!.AnnouncedPhase;
-      settledDuring = state!.Phase;
+      settledDuring = state.Phase;
       return default;
     });
     var options = new WhizbangLifecycleOptions();

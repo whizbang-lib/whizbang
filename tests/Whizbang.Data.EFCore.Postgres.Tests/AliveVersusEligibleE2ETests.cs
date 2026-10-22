@@ -402,7 +402,8 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
   private async Task<NpgsqlConnection> _holdAliveLockAsync(Guid id, CancellationToken cancellationToken) {
     var holder = await _openAsync(cancellationToken);
     await using var cmd = holder.CreateCommand();
-    cmd.CommandText = $"SELECT claim_instance_alive_lock('{id}'::uuid)";
+    cmd.CommandText = "SELECT claim_instance_alive_lock(@id)";
+    cmd.Parameters.AddWithValue("id", id);
     if (await cmd.ExecuteScalarAsync(cancellationToken) is not true) {
       throw new InvalidOperationException($"the alive-lock for {id} was already held");
     }
