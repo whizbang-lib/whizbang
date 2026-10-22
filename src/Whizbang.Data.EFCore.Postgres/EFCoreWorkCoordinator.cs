@@ -2271,7 +2271,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
     cmd.Parameters.Add(new NpgsqlParameter("p_alive_lock_held", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AliveLockHeld });
-    // 228 (#1638): a row recording another phase than the caller's is reported stale; null judges it by liveness alone.
+    // 229 (#1638): a row recording another phase than the caller's is reported stale; null judges it by liveness alone.
     cmd.Parameters.Add(new NpgsqlParameter("p_lifecycle_phase", NpgsqlTypes.NpgsqlDbType.Text) {
       Value = (object?)request.LifecyclePhase ?? DBNull.Value
     });

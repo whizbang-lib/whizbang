@@ -43,7 +43,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/228_OnlyReadyInstancesAreEligibleForWork.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/229_OnlyReadyInstancesAreEligibleForWork.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Core/RunControl/WhizbangLifecycleState.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PartitionAssigner.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/SchemaBootstrapPhase.cs</code-under-test>

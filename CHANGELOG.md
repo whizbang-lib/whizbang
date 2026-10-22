@@ -472,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   partition-assignment candidate and was counted in `claim_work`'s peer ranking while it was still migrating, and its
   share stalled until it was ready; a draining instance kept its share until its heartbeat lapsed. Now only an
   instance whose recorded lifecycle phase is `AcceptingCommands` or `Running` is eligible (one definition,
-  `wh_instance_is_eligible_for_work`, migration 228): the candidates, `claim_work`'s and the multi-stream claim's
+  `wh_instance_is_eligible_for_work`, migration 229): the candidates, `claim_work`'s and the multi-stream claim's
   rankings and the elected assigner's own membership follow it, and a starting or draining instance's share goes to
   its peers at once. Liveness, the reap and stream ownership are unchanged. An instance that records no phase (an
   older build) is eligible whenever it is live, as before. The phase is recorded reliably: the bootstrap registration

@@ -1185,7 +1185,7 @@ public partial class DapperWorkCoordinator(
           AssignmentRevision = request.PartitionAssignment?.Revision,
           // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
           request.AliveLockHeld,
-          // 228 (#1638): a row recording another phase than the caller's is reported stale; null: liveness alone.
+          // 229 (#1638): a row recording another phase than the caller's is reported stale; null: liveness alone.
           request.LifecyclePhase
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);

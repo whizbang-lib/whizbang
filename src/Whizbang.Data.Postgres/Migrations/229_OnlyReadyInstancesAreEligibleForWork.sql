@@ -1,4 +1,4 @@
--- Migration: 228_OnlyReadyInstancesAreEligibleForWork.sql
+-- Migration: 229_OnlyReadyInstancesAreEligibleForWork.sql
 -- Date: 2026-10-22
 -- Description: "Alive" and "eligible for work" are two tests (#1638).
 --
@@ -71,13 +71,13 @@ LANGUAGE sql
 IMMUTABLE
 PARALLEL SAFE
 AS $$
-  -- NULL: an instance that records no phase (an older build) is eligible whenever it is live, as before 228.
+  -- NULL: an instance that records no phase (an older build) is eligible whenever it is live, as before 229.
   SELECT p_instance.lifecycle_phase IS NULL
       OR p_instance.lifecycle_phase IN ('AcceptingCommands', 'Running')
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_instance_is_eligible_for_work(__SCHEMA__.wh_service_instances) IS
-  '228 (#1638): whether an instance may be given work: its recorded lifecycle phase is AcceptingCommands or Running, or '
+  '229 (#1638): whether an instance may be given work: its recorded lifecycle phase is AcceptingCommands or Running, or '
   'it records none (an older build, eligible whenever live). Alive is a separate test; this says only whether it is '
   'ready. The one definition read by the partition-assignment candidates and the claims'' peer rankings.';
 
@@ -116,7 +116,7 @@ AS $$
          clock_timestamp() - si.last_heartbeat_at
   FROM __SCHEMA__.wh_service_instances si
   WHERE NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_instance_evictions e WHERE e.instance_id = si.instance_id)
-    -- 228 (#1638): only an instance eligible for work is a candidate; a starting or draining one is alive, not ready.
+    -- 229 (#1638): only an instance eligible for work is a candidate; a starting or draining one is alive, not ready.
     AND __SCHEMA__.wh_instance_is_eligible_for_work(si)
   ORDER BY si.instance_id;
 $$;
@@ -124,7 +124,7 @@ $$;
 COMMENT ON FUNCTION __SCHEMA__.wh_partition_assignment_candidates() IS
   '203 (#1254): every registered, not evicted instance with its connection mode, whether its alive-lock is held '
   '(direct mode only) and the age of its heartbeat. The assigner applies the per-mode strategy to these. 204: the lock '
-  'is read through wh_direct_alive_lock_holders. 228: only an instance eligible for work '
+  'is read through wh_direct_alive_lock_holders. 229: only an instance eligible for work '
   '(wh_instance_is_eligible_for_work) is a candidate.';
 
 -- ---------------------------------------------------------------------------------------------
@@ -204,7 +204,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   -- 204 (#1286): whether the caller holds its session alive-lock right now. A direct caller holding it is live by
   -- the lock, so its registration is not reported stale between the slow beats of its heartbeat.
   p_alive_lock_held BOOLEAN DEFAULT FALSE,
-  -- 228 (#1638): the lifecycle phase the caller announces. When its row records another phase (a transition write that
+  -- 229 (#1638): the lifecycle phase the caller announces. When its row records another phase (a transition write that
   -- was lost, or overwritten by a beat built before it), the registration is reported stale and the caller's
   -- registration writes the phase, so a ready instance cannot stay ineligible for work while it claims. NULL (an older
   -- caller): the row is judged by liveness alone, as before.
@@ -362,7 +362,7 @@ BEGIN
     -- one the repair's guard already paid.
     -- 204 (#1286): a direct caller that holds its alive-lock is live by the lock, which is how its peers rank it, so a
     -- row older than the cutoff is not stale for it: its heartbeat runs on the slow cadence while it holds the lock.
-    -- 228 (#1638): and a row that records another phase than the one the caller announces is stale as well; the same
+    -- 229 (#1638): and a row that records another phase than the one the caller announces is stale as well; the same
     -- primary-key probe reads it, so the check costs nothing.
     IF NOT EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_service_instances
@@ -410,7 +410,7 @@ BEGIN
         -- cadence of a lock holder never counts it out, and a direct instance that lost its lock is judged by its
         -- heartbeat at once, like a pooled one. The lock is consulted only for a direct row past the cutoff (the OR
         -- short-circuits), as a hashed subplan built once per claim.
-        -- 228 (#1638): and only a peer eligible for work is counted (wh_instance_is_eligible_for_work): alive is not
+        -- 229 (#1638): and only a peer eligible for work is counted (wh_instance_is_eligible_for_work): alive is not
         -- ready, and a starting or draining peer's share must go to the others at once. Read from the rows this scan
         -- already reads; the caller is counted below whatever its own row says, as it always was.
         SELECT si.instance_id
@@ -1063,7 +1063,7 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
   'published and unexpired supplies the rank and member count; otherwise the claim ranks itself and raises '
   'whizbang.partition_assignment_stale. 204: a peer is ranked live by a fresh heartbeat or, when it is direct, by its '
   'held alive-lock (wh_direct_alive_lock_holders); p_alive_lock_held keeps a direct caller holding its lock from being '
-  'asked to re-register between the slow beats of its heartbeat. 228: only a peer eligible for work '
+  'asked to re-register between the slow beats of its heartbeat. 229: only a peer eligible for work '
   '(wh_instance_is_eligible_for_work) is ranked, and p_lifecycle_phase reports a registration that records another '
   'phase than the caller''s stale.';
 
@@ -1102,7 +1102,7 @@ DECLARE
 BEGIN
   -- The rank, as claim_work takes it (203, 204): the caller's cached assignment when it is still the published one,
   -- unexpired, and names this instance; otherwise this instance's place among the live instances, counting itself.
-  -- 228 (#1638): live and eligible for work, as claim_work ranks them.
+  -- 229 (#1638): live and eligible for work, as claim_work ranks them.
   IF p_assignment_epoch IS NOT NULL THEN
     SELECT array_position(pa.members, p_instance_id) - 1, cardinality(pa.members)
     INTO v_rank, v_count
@@ -1186,5 +1186,5 @@ COMMENT ON FUNCTION __SCHEMA__.wh_claim_multi_stream_work(UUID, INTEGER, INTEGER
   '213: claims up to p_batch_size pending multi-stream items this instance owns (its stream lease, else its '
   'partition share unless a live sibling holds the lease), leasing each and counting the attempt. Reads '
   'wh_active_streams; never writes it. A run''s payload is returned on its first claimed row only; later rows carry NULL. '
-  '228: ranks only the instances eligible for work (wh_instance_is_eligible_for_work); a sibling that holds a stream''s '
+  '229: ranks only the instances eligible for work (wh_instance_is_eligible_for_work); a sibling that holds a stream''s '
   'lease keeps it while it is alive, eligible or not.';

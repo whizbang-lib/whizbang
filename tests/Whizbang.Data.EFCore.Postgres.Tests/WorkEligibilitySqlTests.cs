@@ -14,7 +14,7 @@ using Whizbang.Data.Postgres;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Migration 228 (#1638): "alive" and "eligible for work" are two tests. Alive (a fresh heartbeat, or a held alive-lock
+/// Migration 229 (#1638): "alive" and "eligible for work" are two tests. Alive (a fresh heartbeat, or a held alive-lock
 /// in direct mode) keeps an instance from being reaped; only an instance whose recorded lifecycle phase is
 /// AcceptingCommands or Running is eligible for work: a partition-assignment candidate and a member of claim_work's
 /// peer ranking. A starting or draining instance is alive but not eligible, so its share goes to its peers at once. An
@@ -26,7 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// that is rolled back, so one test can claim twice over the same rows.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/partition-assignment</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/228_OnlyReadyInstancesAreEligibleForWork.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/229_OnlyReadyInstancesAreEligibleForWork.sql</code-under-test>
 [Category("Shard3")]
 public class WorkEligibilitySqlTests : EFCoreTestBase {
   private const string REGISTRATION_STALE = "whizbang.instance_registration_stale=true";
