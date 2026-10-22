@@ -239,7 +239,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         Entity: $"{topic}/{subscription}",
         Depth: depth,
         OldestAge: oldestEnqueued is { } enqueued && enqueued > DateTimeOffset.MinValue
-          ? DateTimeOffset.UtcNow - enqueued
+          ? _timeProvider.GetUtcNow() - enqueued
           : null));
     }
 

@@ -46,6 +46,10 @@ namespace Whizbang.Sagas.Generated;
 // framework-published saga event, so it needs the same pair.
 [JsonSerializable(typeof(SagaContinuationRequestedEvent))]
 [JsonSerializable(typeof(MessageEnvelope<SagaContinuationRequestedEvent>))]
+[JsonSerializable(typeof(SagaCommittedEvent))]
+[JsonSerializable(typeof(MessageEnvelope<SagaCommittedEvent>))]
+[JsonSerializable(typeof(SagaRolledBackEvent))]
+[JsonSerializable(typeof(MessageEnvelope<SagaRolledBackEvent>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class SagasJsonContext : JsonSerializerContext;

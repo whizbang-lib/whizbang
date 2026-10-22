@@ -117,7 +117,8 @@ public class OutboxStageOwnedCommandSendComponentTests {
       runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;

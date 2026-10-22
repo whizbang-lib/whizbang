@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **A built-in partition manager for time-ordered framework tables (#1611).** With
+  `Whizbang:Workers:Maintenance:Partitioning:Enabled` (default `false`), the maintenance cycle converts `wh_log` once
+  to weekly partitions by `logged_at` (primary key `(log_id, logged_at)`, every writer unchanged, gated on the
+  `wh_log_partition_version` marker), creates partitions `:CreateAhead` (default 3) intervals ahead with a default
+  partition, and drops partitions wholly past `log_retention_days` instead of deleting rows. Only the maintainer-duty
+  holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
+  table and detached later. Migration 226.
+
 - **A perspective table can declare when autovacuum runs (#1584).** `[PerspectiveTableStorage]` gains
   `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold`,
   `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema
@@ -144,6 +152,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A saga can end in one commit or rollback signal (#1613).** A `[Saga]` marked `[SignalsOutcome]` publishes exactly
+  one `SagaCommittedEvent` or `SagaRolledBackEvent` per run on its own stream, whichever path ends it: `Completed`
+  commits; `Failed`, `Abandoned` and (by default) `CompletedWithFailures` roll back, the last overridable with
+  `OnCompletedWithFailures = SagaOutcome.Commit`. `BaseSagaService.RollbackSagaAsync(ctx, reason, ct)` rolls a run back
+  explicitly (a cancel), and a completion already in flight then cannot commit it. A failed signal is retried by the
+  next watchdog tick. `BaseSagaModel.Outcome` and `SagaApplyHelper.TrackOutcome` record it on the projection. The
+  framework signals and does not compensate; see the stage-then-apply guidance in the docs.
 - **A large rebuild selection splits into bounded commands (#1525).** `RebuildPerspectiveCommand.SplitByStreams(max)`
   returns commands naming at most `max` streams each (default `DEFAULT_STREAMS_PER_COMMAND`, 500, the stream
   redelivery bound), in order and without duplicates, each with `RequestId = ChunkRequestId(requestId, chunkIndex)`, a
@@ -452,6 +467,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
+  text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
+  user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to
+  build with CS8103 and nothing warned first. The migration and bootstrap lists are now emitted as UTF-8 literals,
+  which the compiler places in the data section, and decoded once at run time to exactly the text they carried
+  before, so applied migrations keep their content hashes. Consumers need no change and no compiler flag.
 - **A direct event-store append is folded into the stream digest (#1600).** Events stored with
   `IEventStore.AppendAsync` (both PostgreSQL drivers, through `wh_append_event`) were never folded into
   `wh_stream_digests`, while the emit chain folds every event it stores and the full recompute the integrity sweep
@@ -475,6 +496,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now go through `SystemEventFireAndForget.Emit`, which never blocks or faults the caller and, on failure, logs a
   warning naming the event type, tenant and stream and increments `whizbang.system_events.emit_failures`
   (tag `event_type`) on the `Whizbang.EventCategories` meter.
+- **The default outbox publisher ignored `ITransportReadinessCheck` (#1558).** `OutboxDrainWorker` sent to a transport
+  that reported not ready, and each failure then counted as an attempt. It now asks the publish strategy before each
+  pass. While the transport is not ready it publishes nothing, renews the leases of every row it holds on the offered
+  streams (by `LeaseRenewalWorkerOptions.LeaseSeconds`) and reports no failure, so no attempt is charged; the claim
+  offers the streams again and they publish once the transport is ready. The new `OnOutboxPublishHeld` event fires
+  after each held pass with the streams and the rows kept.
+
+- **`[PopulateTimestamp(TimestampKind.QueuedAt)]` was never stamped (#1557).** Nothing called the QueuedAt populator
+  after the publisher that once did was removed, so a property marked this way stayed null. The dispatcher now stamps
+  it as it writes a message's outbox copy (send, publish, their batch forms, a cascade and a deferred publish), and the
+  coalesce worker stamps the composites it writes, both from the registered `TimeProvider`. The stored copy, and so
+  the delivered one, carries the time. The message a local handler runs before the copy is written is not stamped.
 - **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
   (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
   it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the

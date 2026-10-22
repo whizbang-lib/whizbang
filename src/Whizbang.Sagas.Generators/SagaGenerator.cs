@@ -22,6 +22,9 @@ namespace Whizbang.Sagas.Generators;
 [Generator]
 public sealed class SagaGenerator : IIncrementalGenerator {
   private const string CONTINUES_WITH_ATTRIBUTE = "Whizbang.Sagas.ContinuesWithAttribute";
+  private const string SIGNALS_OUTCOME_ATTRIBUTE = "Whizbang.Sagas.SignalsOutcomeAttribute";
+  private const int OUTCOME_COMMIT = 1;     // SagaOutcome.Commit
+  private const int OUTCOME_ROLLBACK = 2;   // SagaOutcome.Rollback
   private const int RAN_TO_THE_END = 3;   // Completed | CompletedWithFailures
 
   // Members every generated saga state carries. They are emitted by each of the state
@@ -119,7 +122,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       className: typeSymbol.Name,
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,
-      options: new SagaEmitOptions(includeHooks, generateService, isPartial),
+      options: new SagaEmitOptions(includeHooks, generateService, isPartial, _readOutcomeDeclaration(typeSymbol)),
       location: classDecl.Identifier.GetLocation(),
       continuations: _readContinuations(typeSymbol));
   }
@@ -166,6 +169,10 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     if (info.Continuations.Length > 0) {
       _emitContinuationRegistration(sb, info);
+    }
+
+    if (info.OnCompletedWithFailures is { } onCompletedWithFailures) {
+      _emitOutcomeRegistration(sb, info, onCompletedWithFailures);
     }
 
     var fileName = (info.Namespace is null ? "" : info.Namespace + ".") + info.ClassName + ".g.cs";
@@ -439,6 +446,48 @@ public sealed class SagaGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// The <c>[SignalsOutcome]</c> declaration on a saga class, as the outcome it gives a partly failed
+  /// run, or <see langword="null"/> when the saga does not signal an outcome.
+  /// </summary>
+  private static int? _readOutcomeDeclaration(INamedTypeSymbol typeSymbol) {
+    foreach (var attribute in typeSymbol.GetAttributes()) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, SIGNALS_OUTCOME_ATTRIBUTE)) {
+        continue;
+      }
+
+      var onCompletedWithFailures = OUTCOME_ROLLBACK;
+      foreach (var named in attribute.NamedArguments) {
+        if (named.Key == "OnCompletedWithFailures" && named.Value.Value is int declared) {
+          onCompletedWithFailures = declared;
+        }
+      }
+      return onCompletedWithFailures;
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Emits the registration that puts this saga's outcome policy in the runtime registry.
+  /// </summary>
+  /// <remarks>
+  /// A module initializer for the reason the continuation registration is one: it registers the saga
+  /// whether or not a service was generated, and without the host calling an Add method.
+  /// </remarks>
+  private static void _emitOutcomeRegistration(StringBuilder sb, SagaInfo info, int onCompletedWithFailures) {
+    var outcome = onCompletedWithFailures == OUTCOME_COMMIT ? "Commit" : "Rollback";
+    sb.AppendLine();
+    sb.Append("internal static class ").Append(info.ClassName).AppendLine("OutcomeRegistration {");
+    sb.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    sb.AppendLine("  internal static void RegisterOutcome() {");
+    sb.AppendLine("    global::Whizbang.Sagas.SagaOutcomeRegistry.Register(");
+    sb.Append("      \"").Append(info.SagaName).AppendLine("\",");
+    sb.Append("      new global::Whizbang.Sagas.SagaOutcomePolicy(global::Whizbang.Sagas.SagaOutcome.").Append(outcome).AppendLine("));");
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+  }
+
+  /// <summary>
   /// The trigger as named flags, so the generated call reads like the declaration it came from.
   /// </summary>
   private static string _renderTrigger(int trigger) {
@@ -473,10 +522,12 @@ public sealed class SagaGenerator : IIncrementalGenerator {
   /// because a constructor that keeps growing one flag at a time is how a parameter list reaches the
   /// point where call sites stop being readable.
   /// </remarks>
-  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial) {
+  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial, int? onCompletedWithFailures) {
     public bool IncludeHooks { get; } = includeHooks;
     public bool GenerateService { get; } = generateService;
     public bool IsPartial { get; } = isPartial;
+    /// <summary>The outcome a partly failed run gets, or null when the saga does not signal an outcome.</summary>
+    public int? OnCompletedWithFailures { get; } = onCompletedWithFailures;
   }
 
   private sealed class SagaInfo(
@@ -495,6 +546,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     public bool IncludeHooks => options.IncludeHooks;
     public bool GenerateService => options.GenerateService;
     public bool IsPartial => options.IsPartial;
+    public int? OnCompletedWithFailures => options.OnCompletedWithFailures;
     public Location Location { get; } = location;
   }
 }

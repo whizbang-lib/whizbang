@@ -8,8 +8,8 @@ using Whizbang.Core.Registry;
 namespace Whizbang.Sagas;
 
 /// <summary>
-/// Resolves the stream of every saga event: the watchdog tick, the abandon event and the continuation
-/// request the framework publishes itself, and every <see cref="ISagaStreamEvent"/>, which is every
+/// Resolves the stream of every saga event: the watchdog tick, the abandon event, the continuation
+/// request and the commit and rollback signals the framework publishes itself, and every <see cref="ISagaStreamEvent"/>, which is every
 /// event a <c>[Saga]</c> declaration generates. Each is stored on the stream of the saga it belongs to,
 /// keyed by the saga id.
 /// </summary>
@@ -52,6 +52,8 @@ public sealed class SagaFrameworkEventStreamIds : IStreamIdExtractor {
     SagaCompletionWatchdogTickEvent tick => tick.StreamId,
     SagaCompletionAbandonedEvent abandoned => abandoned.StreamId,
     SagaContinuationRequestedEvent continuation => continuation.StreamId,
+    SagaCommittedEvent committed => committed.StreamId,
+    SagaRolledBackEvent rolledBack => rolledBack.StreamId,
     ISagaStreamEvent sagaEvent => sagaEvent.SagaId,
     _ => null,
   };
@@ -67,6 +69,12 @@ public sealed class SagaFrameworkEventStreamIds : IStreamIdExtractor {
         return true;
       case SagaContinuationRequestedEvent continuation:
         continuation.StreamId = streamId;
+        return true;
+      case SagaCommittedEvent committed:
+        committed.StreamId = streamId;
+        return true;
+      case SagaRolledBackEvent rolledBack:
+        rolledBack.StreamId = streamId;
         return true;
       case ISagaStreamEvent sagaEvent:
         sagaEvent.SagaId = streamId;

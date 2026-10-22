@@ -138,7 +138,7 @@ public class SchemaMigratorDeferralGenerationTests {
       .Because("the generator embeds the whole migration set");
     await Assert.That(window.Split(".sql\"").Length - 1).IsEqualTo(embedded.Count);
     foreach (var name in embedded) {
-      await Assert.That(window).Contains($"(\"{name}\", @\"", StringComparison.Ordinal);
+      await Assert.That(window).Contains($"(\"{name}\", global::System.Text.Encoding.UTF8.GetString(@\"", StringComparison.Ordinal);
     }
   }
 

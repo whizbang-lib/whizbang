@@ -33,14 +33,14 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     // Generate perspective invoker with routing logic
     // Combine compilation with discovered perspectives to get assembly name for namespace
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndPerspectives = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var perspectives = data.Right;
-          _generatePerspectiveInvoker(ctx, compilation, perspectives!);
+          _generatePerspectiveInvoker(ctx, compilationAssemblyName, perspectives!);
         }
     );
   }
@@ -132,17 +132,17 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// <tests>No tests found</tests>
   private static void _generatePerspectiveInvoker(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
       // No perspectives found - generate empty invoker
-      _generateEmptyInvoker(context, compilation);
+      _generateEmptyInvoker(context, compilationAssemblyName);
       return;
     }
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Report each discovered perspective for routing
@@ -204,9 +204,9 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static void _generateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
+  private static void _generateEmptyInvoker(SourceProductionContext context, string? compilationAssemblyName) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     var template = TemplateUtilities.GetEmbeddedTemplate(

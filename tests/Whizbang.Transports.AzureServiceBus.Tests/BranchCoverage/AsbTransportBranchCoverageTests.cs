@@ -21,7 +21,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests.BranchCoverage;
 /// tags written when a tracer is listening, the initialization verification paths, the
 /// correlation-filter outcomes as a tracer sees them, a destination with no routing key, metadata
 /// values AMQP cannot carry natively, a perspective-only receive filter, a recovery with no handler,
-/// and a backlog peek over an empty entity.
+/// and a backlog peek over an empty entity and over a held one.
 /// </summary>
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusTransport.cs</code-under-test>
 [Timeout(10_000)]
@@ -437,6 +437,39 @@ public class AsbTransportBranchCoverageTests {
       .Because("the age comes from a real head peek when no probe seam is installed");
   }
 
+  /// <summary>
+  /// An entity whose head peek finds a message reports the age of that message: the time since the
+  /// broker enqueued it. Without this outcome every backlog would look brand new, which is the one
+  /// thing the sample exists to disprove.
+  /// </summary>
+  [Test]
+  public async Task PeekBacklogsAsync_HeldEntityHead_ReportsTheAgeOfTheHeadMessageAsync() {
+    // The age is read from the transport's clock, so a fake clock fixes it exactly: the head was
+    // enqueued 42 minutes before the clock's now.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+    var enqueued = clock.GetUtcNow().AddMinutes(-42);
+    var client = new HeadPeekClient(ServiceBusModelFactory.ServiceBusReceivedMessage(enqueuedTime: enqueued));
+    var transport = new AzureServiceBusTransport(
+      client,
+      AsbTransportTestData.CombinedOptions,
+      new AzureServiceBusOptions(),
+      NullLogger<AzureServiceBusTransport>.Instance,
+      new RecordingProvisioningAdminClient { ActiveMessageCountResult = 5 },
+      timeProvider: clock);
+    transport.LivenessWatchdog!.Track(TOPIC, SUBSCRIPTION);
+
+    var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
+
+    await Assert.That(samples).Count().IsEqualTo(1);
+    await Assert.That(samples[0].Depth).IsEqualTo(5L);
+    // HasValue, not IsNotNull: TUnit's IsNotNull passes on a null Nullable<T>.
+    await Assert.That(samples[0].OldestAge.HasValue).IsTrue()
+      .Because("a head message was found, so the entity has an age");
+    await Assert.That(samples[0].OldestAge!.Value).IsEqualTo(TimeSpan.FromMinutes(42))
+      .Because("the age is the transport clock's now minus the head message's enqueued time");
+    await Assert.That(client.Receiver.PeekCalls).IsEqualTo(1);
+  }
+
   // ========================================
   // HELPERS
   // ========================================
@@ -553,9 +586,9 @@ sealed file class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEvent
   }
 }
 
-/// <summary>A client whose receivers find an empty entity head.</summary>
-sealed file class HeadPeekClient : ServiceBusClient {
-  public EmptyHeadReceiver Receiver { get; } = new();
+/// <summary>A client whose receivers find the given entity head: none by default, as on an empty entity.</summary>
+sealed file class HeadPeekClient(ServiceBusReceivedMessage? head = null) : ServiceBusClient {
+  public HeadPeekReceiver Receiver { get; } = new(head);
 
   public override string FullyQualifiedNamespace => "peek.servicebus.windows.net";
 
@@ -564,13 +597,13 @@ sealed file class HeadPeekClient : ServiceBusClient {
   public override ServiceBusReceiver CreateReceiver(string topicName, string subscriptionName) => Receiver;
 }
 
-/// <summary>A receiver whose head peek returns no message.</summary>
-sealed file class EmptyHeadReceiver : ServiceBusReceiver {
+/// <summary>A receiver whose head peek returns the given message, or no message when there is none.</summary>
+sealed file class HeadPeekReceiver(ServiceBusReceivedMessage? head) : ServiceBusReceiver {
   public int PeekCalls { get; private set; }
 
   public override Task<ServiceBusReceivedMessage> PeekMessageAsync(long? fromSequenceNumber = default, CancellationToken cancellationToken = default) {
     PeekCalls++;
-    return Task.FromResult<ServiceBusReceivedMessage>(null!);
+    return Task.FromResult(head!);
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "Base ServiceBusReceiver.DisposeAsync() calls CloseAsync which fails on mocking-constructor instances; this fake holds nothing")]

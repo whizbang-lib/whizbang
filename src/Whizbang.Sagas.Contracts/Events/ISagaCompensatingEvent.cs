@@ -29,7 +29,14 @@ namespace Whizbang.Sagas;
 /// compensating action" signal that tooling can filter on without
 /// every consumer inventing its own convention.
 /// </para>
+/// <para>
+/// What starts the compensation is a separate signal. A saga that declares
+/// <c>[SignalsOutcome]</c> is committed or rolled back exactly once however it
+/// ends, and the consumer's receptor on <c>SagaRolledBackEvent</c> is where
+/// these events are raised from.
+/// </para>
 /// </remarks>
+/// <docs>fundamentals/sagas/commit-rollback#stage-then-apply</docs>
 public interface ISagaCompensatingEvent : IEvent {
 
   /// <summary>Stream id of the saga whose forward work this event compensates.</summary>
