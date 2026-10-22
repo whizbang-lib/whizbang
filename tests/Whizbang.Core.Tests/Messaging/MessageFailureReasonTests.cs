@@ -23,6 +23,8 @@ public class MessageFailureReasonTests {
     await Assert.That((int)MessageFailureReason.Throttled).IsEqualTo(8);
     await Assert.That((int)MessageFailureReason.SecurityContextEstablishmentFailure).IsEqualTo(10);
     await Assert.That((int)MessageFailureReason.EmptyStreamId).IsEqualTo(11);
+    // Written by the store itself (migration 228), so the number is part of the SQL contract.
+    await Assert.That((int)MessageFailureReason.MixedStreamRefused).IsEqualTo(22);
     await Assert.That((int)MessageFailureReason.Unknown).IsEqualTo(99);
 #pragma warning restore TUnitAssertions0005
   }

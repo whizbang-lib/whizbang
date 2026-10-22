@@ -243,6 +243,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and whose response returns or cascades a Sourced event, which would keep what the ephemeral message carried as a
   durable fact. The new `[DangerouslyAllowSourcedEventsFromEphemeralInput]` attribute on the receptor silences it for
   a deliberate case, the way `[DangerouslyAllowMixedEphemeralAndSourcedEvents]` silences WHIZ130.
+- **A stream never mixes ephemeral and Sourced events (WHIZ133, #1546).** The step that copies outbox and inbox events
+  into the event store, and the direct append (`IEventStore.AppendAsync` on both drivers), refuse an event whose kind
+  differs from the kind its stream already holds, in either order and with no opt-in; a stream with nothing stored
+  takes the kind of its first event. A compaction origin is neither kind, so a compacted stream keeps receiving the kind
+  it held. A direct append now stores the event's kind (the Ephemeral or Compacted flag, `[Ephemeral]` on a type
+  included, through the event stores' new optional `IEphemeralModeResolver`) instead of storing every event as Sourced,
+  and a refusal there throws `MixedStreamEventException` with nothing stored. A write its caller awaits (the immediate and scoped
+  strategies' flush) fails with the new `MixedStreamEventException`, which names the stream, the refused event's type
+  and the kind the stream holds, and keeps nothing of the write. Every other write (the batch flushes, handler
+  commits, the inbox claim) dead-letters only the refused row, with the new reason
+  `MessageFailureReason.MixedStreamRefused` (held for review), and stores the rest. `OutboxMessage.RaiseOnMixedStream`
+  carries the choice to the store (migration 228).
 - **Framework-shaped handlers no longer fail a consumer's unused-parameter rules (#1378).** A `[CollectiveApplyFor]`
   handler is bound by its shape, not an interface, so IDE0060, CA1801, Roslynator RCS1163 and Sonar S1172 flagged
   its event parameter whenever the handler did not read it. The analyzer package now ships a `DiagnosticSuppressor`

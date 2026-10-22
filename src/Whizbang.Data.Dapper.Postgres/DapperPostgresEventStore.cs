@@ -36,12 +36,15 @@ public class DapperPostgresEventStore(
   JsonbSizeValidator sizeValidator,
   IPolicyEngine policyEngine,
   IPerspectiveInvoker? perspectiveInvoker,
-  ILogger<DapperPostgresEventStore> logger
+  ILogger<DapperPostgresEventStore> logger,
+  Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null
   ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
 #pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+  // #1546: resolves [Ephemeral] declared on a type, so an appended event's kind is the one the dispatch path stamps.
+  private readonly Whizbang.Core.IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
@@ -54,6 +57,9 @@ public class DapperPostgresEventStore(
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_DuplicateEventId_FailsClearly_WithoutRetryingAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamGuardTests.cs:AppendAsync_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
+  /// events (WHIZ133); nothing is stored.</exception>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -190,7 +196,7 @@ public class DapperPostgresEventStore(
   protected override string GetAppendSql() => @"
     SELECT wh_append_event(
       @EventId, @StreamId, @AggregateId, @AggregateType, @EventType,
-      @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
+      @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt, @Flags)";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for reading events from a stream by sequence number.
@@ -305,14 +311,15 @@ public class DapperPostgresEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    var parameters = _buildAppendParameters(streamId, envelope, jsonb);
+    var parameters = _buildAppendParameters(streamId, envelope, jsonb, Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver));
 
     try {
-      await Executor.ExecuteScalarAsync<int>(
+      // #1546: the caller awaits the append, so a WHIZ133 refusal reaches it as MixedStreamEventException.
+      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => Executor.ExecuteScalarAsync<int>(
         connection,
         GetAppendSql(),
         parameters,
-        cancellationToken: cancellationToken);
+        cancellationToken: cancellationToken));
     } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
       // The version is assigned under the stream's lock and can no longer collide, so a unique violation is
       // the event id: this event is already stored. Retrying would only fail the same way.
@@ -329,7 +336,8 @@ public class DapperPostgresEventStore(
   private static object _buildAppendParameters<TMessage>(
     Guid streamId,
     MessageEnvelope<TMessage> envelope,
-    JsonbPersistenceModel jsonb) {
+    JsonbPersistenceModel jsonb,
+    int flags) {
 
     return new {
       EventId = envelope.MessageId.Value,
@@ -343,7 +351,9 @@ public class DapperPostgresEventStore(
       EventData = jsonb.DataJson,
       Metadata = jsonb.MetadataJson,
       Scope = jsonb.ScopeJson,
-      CreatedAt = DateTimeOffset.UtcNow
+      CreatedAt = DateTimeOffset.UtcNow,
+      // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
+      Flags = flags
     };
   }
 

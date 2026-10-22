@@ -61,6 +61,66 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   /// <summary>
+  /// The scoped strategy's caller awaits the flush (the dispatcher awaits it when publishing), so its store asks for
+  /// a WHIZ133 refusal to be raised rather than dead-lettered (#1546).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_AsksTheStoreToRaiseAMixedStreamRefusalAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var sut = _strategy(fakeCoordinator);
+    _queueTestOutboxMessage(sut);
+
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].RaiseOnMixedStream).IsTrue();
+  }
+
+  /// <summary>
+  /// A write refused for mixing a stream rolled back and its caller has the error, so the disposal safety net must
+  /// not write it after all, exactly as for a canceled caller (#1546).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForMixingAStream_DisposalDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new MixedStreamEventException("WHIZ133: refused", Guid.NewGuid(), Guid.NewGuid())
+    };
+    var sut = _strategy(fakeCoordinator);
+    _queueTestOutboxMessage(sut);
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<MixedStreamEventException>();
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).IsEmpty()
+      .Because("the caller has the refusal; disposal writes only work nobody flushed");
+  }
+
+  /// <summary>
+  /// The disposal safety net has no caller to tell, so a refusal there is dead-lettered by the store and the rest of
+  /// the write is kept (#1546).
+  /// </summary>
+  [Test]
+  public async Task DisposeAsync_SafetyNetFlush_LeavesARefusalToBeDeadLetteredAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var sut = _strategy(fakeCoordinator);
+    _queueTestOutboxMessage(sut);
+
+    await sut.DisposeAsync();
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].RaiseOnMixedStream).IsFalse();
+  }
+
+  private static ScopedWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator) =>
+    new(
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      workChannelWriter: null,
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
+      inboxChannelWriter: new InboxChannelWriter());
+
+  /// <summary>
   /// A flush that fails for any other reason, a cancellation its caller did not ask for included, keeps
   /// its work for the disposal safety net, as before.
   /// </summary>
