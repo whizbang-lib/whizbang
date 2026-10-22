@@ -58,7 +58,7 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
     await _executeAsync(
-      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
     Guid[] input2 = [streamId];
