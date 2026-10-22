@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never removes a signal some pod has not delivered.
 
 #### Audit
+- **Security system events are stored, each kind behind its own switch (#1599).** `SystemEventOptions` gains
+  `AccessDeniedEnabled` and `PermissionChangedEnabled` (default `true`) and `AccessGrantedEnabled` and
+  `ScopeContextEstablishedEnabled` (default `false`), bound from `Whizbang:SystemEvents:*` and honored by
+  `IsEnabled<T>()`. `SystemEventEmitter` therefore stores denials and permission changes on `$wb-system` by default;
+  before, every security event was dropped before the append. Grants and scope establishments happen on every read or
+  request and stay opt-in.
+
 - **Command audit records the length of a command's id lists, not the lists (#1525).** A command implementing the new
   `IBoundedCommandAudit` names its id-list properties in `ListsAuditedAsLengths()`, and `CommandAudited.CommandBody`
   keeps each one's length (a JSON number) in place of the list; null lists stay null and every other property is kept.

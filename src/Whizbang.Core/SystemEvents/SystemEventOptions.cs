@@ -206,6 +206,43 @@ public sealed class SystemEventOptions {
   public int AuditPriority { get; set; } = Priority.WorkPriority.IDLE;
 
   /// <summary>
+  /// Whether <see cref="Security.AccessDenied"/> is stored on <c>$wb-system</c>. Default <c>true</c>: a denial is
+  /// rare, and it is the record an auditor asks for when something is wrong.
+  /// Configuration key <c>Whizbang:SystemEvents:AccessDeniedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:Defaults_StoreDenialsAndPermissionChanges_NotGrantsOrScopeEstablishmentsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessDeniedEnabled_Off_StopsStoringDenialsOnlyAsync</tests>
+  public bool AccessDeniedEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether <see cref="Security.PermissionChanged"/> is stored on <c>$wb-system</c>. Default <c>true</c>: a
+  /// change to a user's roles or permissions is rare and is part of every access review.
+  /// Configuration key <c>Whizbang:SystemEvents:PermissionChangedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:PermissionChangedEnabled_Off_StopsStoringPermissionChangesOnlyAsync</tests>
+  public bool PermissionChangedEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether <see cref="Security.AccessGranted"/> is stored on <c>$wb-system</c>. Default <c>false</c>: a grant is
+  /// recorded on every allowed read, so storing it is a deployment's choice.
+  /// Configuration key <c>Whizbang:SystemEvents:AccessGrantedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessGrantedEnabled_On_StoresGrantsOnlyAsync</tests>
+  public bool AccessGrantedEnabled { get; set; }
+
+  /// <summary>
+  /// Whether <see cref="Security.ScopeContextEstablished"/> is stored on <c>$wb-system</c>. Default <c>false</c>: a
+  /// scope is established on every request, so storing it is a deployment's choice.
+  /// Configuration key <c>Whizbang:SystemEvents:ScopeContextEstablishedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:ScopeContextEstablishedEnabled_On_StoresScopeEstablishmentsOnlyAsync</tests>
+  public bool ScopeContextEstablishedEnabled { get; set; }
+
+  /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
   /// When enabled, an EventAudited is emitted for each domain event appended.
   /// </summary>
@@ -341,6 +378,23 @@ public sealed class SystemEventOptions {
     // wants to hear this one too; a host that does not is not asking to be advised.
     if (systemEventType == typeof(PerspectiveIndexAdvised) || systemEventType == typeof(PerspectiveScanAdvised)) {
       return PerspectiveEventsEnabled;
+    }
+
+    // Security facts (#1599): one switch per type, so a deployment stores exactly the kinds it wants.
+    if (systemEventType == typeof(Security.AccessDenied)) {
+      return AccessDeniedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.PermissionChanged)) {
+      return PermissionChangedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.AccessGranted)) {
+      return AccessGrantedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.ScopeContextEstablished)) {
+      return ScopeContextEstablishedEnabled;
     }
 
     // Add more system event type checks as they are added
