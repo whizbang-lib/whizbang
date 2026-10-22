@@ -25,7 +25,7 @@
     <PropertyGroup>
       <_VersionInfoFile>$(IntermediateOutputPath)WhizbangVersionInfo.Generated.cs</_VersionInfoFile>
     </PropertyGroup>
-    <WriteLinesToFile File="$(_VersionInfoFile)" Overwrite="true" Lines="// &lt;auto-generated/&gt;
+    <WriteLinesToFile File="$(_VersionInfoFile)" Overwrite="true" WriteOnlyWhenDifferent="true" Lines="// &lt;auto-generated/&gt;
 namespace Whizbang.Core.Diagnostics%3B
 
 /// &lt;summary&gt;Compile-time version info stamped by MSBuild from $(Version).&lt;/summary&gt;

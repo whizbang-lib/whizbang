@@ -39,7 +39,7 @@
       <_BuildInfoLines Include="}" />
     </ItemGroup>
     <WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
-                     Lines="@(_BuildInfoLines)" Overwrite="true" />
+                     Lines="@(_BuildInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ItemGroup>
       <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
     </ItemGroup>

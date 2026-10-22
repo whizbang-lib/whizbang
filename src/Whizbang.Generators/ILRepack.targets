@@ -44,12 +44,18 @@
       ILRepack merges Whizbang.Generators.Shared.dll (common helper code) into each generator
       to create self-contained assemblies. This is standard practice for generator packaging.
   -->
-  <Target Name="MergeSharedAssembly" AfterTargets="Build">
+  <!-- Merges into the intermediate assembly, after compile and before the copy to the output folder, and only
+       when the compiled assembly or the shared one changed. Merging in place in the output folder on every
+       build rewrote the generator DLL each time, so every project that loads the generator recompiled on a
+       build with nothing changed (#1609); and the copy from obj/ put the unmerged DLL back every time. -->
+  <Target Name="MergeSharedAssembly" AfterTargets="CoreCompile" BeforeTargets="CopyFilesToOutputDirectory"
+          Inputs="@(IntermediateAssembly);@(ReferencePath->WithMetadataValue('Filename','Whizbang.Generators.Shared'))"
+          Outputs="$(IntermediateOutputPath)$(TargetName).merged.stamp">
     <ItemGroup>
       <!-- Main assembly (must be first) -->
-      <InputAssemblies Include="$(OutputPath)$(TargetName)$(TargetExt)" />
+      <InputAssemblies Include="@(IntermediateAssembly->'%(FullPath)')" />
       <!-- Shared library to merge -->
-      <InputAssemblies Include="$(OutputPath)Whizbang.Generators.Shared.dll" />
+      <InputAssemblies Include="@(ReferencePath->WithMetadataValue('Filename','Whizbang.Generators.Shared'))" />
 
       <!-- Build list of search directories from reference paths -->
       <_ILRepackSearchDir Include="@(ReferencePath->'%(RootDir)%(Directory)')" />
@@ -68,10 +74,14 @@
       Internalize="false"
       InputAssemblies="@(InputAssemblies)"
       TargetKind="SameAsPrimaryAssembly"
-      OutputFile="$(OutputPath)$(TargetName)$(TargetExt)"
+      OutputFile="@(IntermediateAssembly->'%(FullPath)')"
       KeyFile="$(AssemblyOriginatorKeyFile)"
       LibraryPath="$(OutputPath);$(_ILRepackSearchDirs)"
     />
+    <Touch Files="$(IntermediateOutputPath)$(TargetName).merged.stamp" AlwaysCreate="true" />
+    <ItemGroup>
+      <FileWrites Include="$(IntermediateOutputPath)$(TargetName).merged.stamp" />
+    </ItemGroup>
   </Target>
 
   <!-- Note: Cleanup disabled to prevent race conditions during parallel builds.
