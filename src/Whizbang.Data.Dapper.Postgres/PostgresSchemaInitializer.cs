@@ -306,8 +306,7 @@ public sealed class PostgresSchemaInitializer {
         // failure on the connection the rollback did not touch, propagate.
         failure = ex;
         await transaction.RollbackAsync(cancellationToken);
-        await _upsertMigrationAsync(connection,
-          new MigrationRecord(name, hash, versionId, -1, $"Failed: {ex.Message}"), cancellationToken);
+        await _recordFailureAsync(connection, name, hash, versionId, ex, cancellationToken);
       }
 
       if (failure is not null) {
@@ -601,12 +600,14 @@ public sealed class PostgresSchemaInitializer {
       var isUpdate = existingHash != null;
       // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
       // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
-      // unavailable to them. The EFCore runner has always honored it, because EF's
-      // ExecuteSqlRawAsync runs inside a transaction. This runner did not, and the divergence stayed
-      // invisible until a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a
-      // transaction block with 25P01, so a cutover that moves rows between tables and then drops the
-      // columns they came from failed here while passing there. Nothing in these migrations is
-      // transaction-hostile (no CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
+      // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
+      // pass shared, which met the contract but threw away every file that had succeeded when a later
+      // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
+      // This runner once ran them outside any transaction, and the divergence stayed invisible until
+      // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
+      // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
+      // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
+      // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
       //
       // The ledger write joins the transaction too, so a migration and the record saying it applied
       // commit together or not at all. The FAILURE record is deliberately written outside it, after
@@ -673,9 +674,7 @@ public sealed class PostgresSchemaInitializer {
         failure = ex;
         await transaction.RollbackAsync(cancellationToken);
         // Record failure on the connection with no ambient transaction, so it survives the rollback.
-        await _upsertMigrationAsync(connection,
-            new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
-            cancellationToken);
+        await _recordFailureAsync(connection, migration.Name, hash, versionId, ex, cancellationToken);
       }
 
       if (failure is not null) {
@@ -756,9 +755,7 @@ public sealed class PostgresSchemaInitializer {
       // order — roll back, record the failure, propagate — with no unreachable line.
       failure = ex;
       await transaction.RollbackAsync(cancellationToken);
-      await _upsertMigrationAsync(connection,
-        new MigrationRecord(perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}"),
-        cancellationToken);
+      await _recordFailureAsync(connection, perspectiveName, hash, versionId, ex, cancellationToken);
     }
 
     if (failure is not null) {
@@ -842,6 +839,31 @@ public sealed class PostgresSchemaInitializer {
     cmd.Parameters.AddWithValue("desc", record.Description);
     cmd.Parameters.AddWithValue("prevContent", (object?)record.PreviousContent ?? DBNull.Value);
     cmd.Parameters.AddWithValue("execOrder", (object?)record.ExecutionOrder ?? DBNull.Value);
+    cmd.CommandTimeout = 10;
+    await cmd.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Records a failure on a connection with no transaction open, after the failed step rolled back. Status -1 and the
+  /// error, but never the file's own hash: a row for a file that never applied gets
+  /// <see cref="SchemaPassLedger.PENDING_HASH"/>, and an existing row keeps the hash it had, so the next start still
+  /// reads the file as changed and runs it again. A row another session has since brought current is left alone.
+  /// </summary>
+  private static async Task _recordFailureAsync(
+      NpgsqlConnection connection, string fileName, string hash, int versionId, Exception failure,
+      CancellationToken cancellationToken) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_schema_migrations AS m (file_name, content_hash, version_id, status, status_description)
+      VALUES (@name, @pending, @versionId, -1, @desc)
+      ON CONFLICT (file_name) DO UPDATE SET
+        status = -1, status_description = EXCLUDED.status_description, updated_at = NOW()
+      WHERE m.content_hash <> @hash";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("pending", SchemaPassLedger.PENDING_HASH);
+    cmd.Parameters.AddWithValue("hash", hash);
+    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.Parameters.AddWithValue("desc", $"Failed: {failure.Message}");
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }

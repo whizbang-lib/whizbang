@@ -16,6 +16,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:ConcurrentInitialization_BothPodsSucceedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:Initialization_NeverVacuumsTheWorkTablesAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationTests.cs:EnsureWhizbangDatabaseInitialized_CreatesCoreInfrastructureTablesAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/SchemaStepRunnerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupParity/StartupMigrationStepsTests.cs</tests>
 public static partial class SchemaInitializationLog {
   [LoggerMessage(
       Level = LogLevel.Debug,
@@ -66,4 +68,58 @@ public static partial class SchemaInitializationLog {
       Level = LogLevel.Debug,
       Message = "Schema initialized by another instance for '{Schema}', skipping")]
   public static partial void SchemaInitializedByOtherInstance(ILogger logger, string schema);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "Migration {Position} of {Total} - Started : {Step}")]
+  internal static partial void StepStarted(ILogger logger, int position, int total, string step);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "Migration {Position} of {Total} - Succeeded : {Step} ({Duration})")]
+  internal static partial void StepSucceeded(ILogger logger, int position, int total, string step, StepDuration duration);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "Migration {Position} of {Total} - Skipped : {Step} (already current)")]
+  internal static partial void StepSkipped(ILogger logger, int position, int total, string step);
+
+  [LoggerMessage(
+      Level = LogLevel.Error,
+      Message = "Migration {Position} of {Total} - Failed : {Step} : {SqlState} {Error}")]
+  internal static partial void StepFailed(ILogger logger, Exception ex, int position, int total, string step, string sqlState, string error);
+
+  [LoggerMessage(
+      Level = LogLevel.Error,
+      Message = "Migration {Position} of {Total} - Failed : {Step} : {SqlState} {Error}; retrying in {Delay} at {RetryAt}")]
+  internal static partial void StepFailedWillRetry(
+      ILogger logger, Exception ex, int position, int total, string step, string sqlState, string error, StepDuration delay, string retryAt);
+
+  [LoggerMessage(
+      Level = LogLevel.Information,
+      Message = "Migration complete: {Succeeded} of {Total} succeeded ({Applied} applied, {Skipped} skipped) in {Duration}")]
+  internal static partial void PassComplete(ILogger logger, int succeeded, int total, int applied, int skipped, StepDuration duration);
+
+  [LoggerMessage(
+      Level = LogLevel.Error,
+      Message = "Migration stopped at {Position} of {Total}: {Step} : {Error}")]
+  internal static partial void PassStopped(ILogger logger, int position, int total, string step, string error);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Could not roll back schema step {Step} for '{Schema}'; the server ends a transaction whose connection is gone, and the step's own failure is what is raised")]
+  internal static partial void StepRollbackFailed(ILogger logger, Exception ex, string schema, string step);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Could not record the failure of schema step {Step} for '{Schema}' in wh_schema_migrations; the step's own failure is what is raised")]
+  internal static partial void StepFailureNotRecorded(ILogger logger, Exception ex, string schema, string step);
+}
+
+/// <summary>A step's or a pass's duration as the step lines give it: seconds to the millisecond, as in <c>1.234s</c>.</summary>
+/// <param name="Elapsed">The duration.</param>
+internal readonly record struct StepDuration(TimeSpan Elapsed) {
+  /// <inheritdoc/>
+  public override string ToString() =>
+    Elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s";
 }

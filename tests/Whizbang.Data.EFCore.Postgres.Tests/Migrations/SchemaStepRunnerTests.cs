@@ -184,13 +184,12 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// A connection that died before the lock was taken: the step never ran, so there is nothing to record, and the
-  /// failed rollback is reported rather than raised over the failure that matters.
+  /// A connection that died before the lock was taken: the step never ran under the lock, so it did not fail, and
+  /// there is nothing to record; the error that ended it is what propagates.
   /// </summary>
   [Test]
-  public async Task AConnectionLostBeforeTheLock_RecordsNothing_AndReportsTheRollbackAsync() {
-    var logger = new RecordingLogger();
-    var runner = _runner(logger: logger);
+  public async Task AConnectionLostBeforeTheLock_RecordsNothingAsync() {
+    var runner = _runner();
     await _terminateContextBackendAsync();
     var recorded = false;
 
@@ -199,8 +198,28 @@ public sealed class SchemaStepRunnerTests : IAsyncDisposable {
       .Throws<Exception>();
 
     await Assert.That(recorded).IsFalse().Because("the step never ran under the lock, so it did not fail");
-    await Assert.That(logger.Warnings).Contains(w => w.Contains("one", StringComparison.Ordinal))
-      .Because("the rollback over a dead connection failed, and a catch that does not rethrow says what failed");
+    await Assert.That(_context.Database.CurrentTransaction).IsNull();
+  }
+
+  /// <summary>
+  /// A step that fails while its connection is still busy (here a reader it left open) cannot be rolled back on that
+  /// connection; the rollback's failure is reported, and the step's own failure is what propagates.
+  /// </summary>
+  [Test]
+  public async Task ARollbackThatCannotRun_IsLogged_AndTheStepsOwnFailurePropagatesAsync() {
+    var logger = new RecordingLogger();
+    var runner = _runner(logger: logger);
+    System.Data.Common.DbDataReader? leaked = null;
+
+    await Assert.That(async () => await runner.RunAsync("one", _ => Task.FromResult(false), async ct => {
+      await using var command = _context.Database.GetDbConnection().CreateCommand();
+      command.CommandText = "SELECT 1";
+      leaked = await command.ExecuteReaderAsync(ct);
+      throw new InvalidOperationException("the step failed");
+    }, null, CancellationToken.None)).Throws<InvalidOperationException>().WithMessage("the step failed");
+
+    await Assert.That(logger.Warnings).Contains(w => w.Contains("roll back schema step one", StringComparison.Ordinal));
+    await leaked!.DisposeAsync();
   }
 
   // ─── Another instance holds the lock ─────────────────────────────────────

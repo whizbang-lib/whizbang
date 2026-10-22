@@ -28,6 +28,9 @@ public static class SchemaInitializationObservers {
   /// <param name="schema">The schema being migrated, unquoted.</param>
   /// <param name="step">The step that committed.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
-  public static Task StepCommittedAsync(IServiceProvider? services, string schema, string step, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task StepCommittedAsync(IServiceProvider? services, string schema, string step, CancellationToken cancellationToken) {
+    foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
+      await observer.OnSchemaStepCommittedAsync(schema, step, cancellationToken).ConfigureAwait(false);
+    }
+  }
 }

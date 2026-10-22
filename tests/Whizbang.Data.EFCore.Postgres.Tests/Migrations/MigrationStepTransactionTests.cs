@@ -101,12 +101,13 @@ public partial class MigrationStepTransactionTests {
       .IsEqualTo((short)-1)
       .Because("the failure is recorded in a transaction of its own, after N's rolled back");
 
-    // The pass counts the core tables, every file, the perspective tables, the constraints, the associations and the
-    // registries; file N is step N + 2 because the core tables come first.
-    var total = MigrationFiles().Length + 5;
-    var position = plan.Before.Length + 2;
+    // File N is step N + 2: the core tables come first. Y is checked against the ledger once the retry has finished.
     var lines = firstAttempt.Migration;
-    await Assert.That(lines).Contains($"Information Migration {position} of {total} - Started : {plan.File}");
+    var total = int.Parse(Regex.Match(lines[0], @" of (\d+) - ").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    var position = plan.Before.Length + 2;
+    await Assert.That(lines).Contains($"Information Migration {position} of {total} - Started : {plan.File}")
+      .Because("file N is counted after the core tables and every file before it; the lines were:\n"
+        + string.Join("\n", lines.TakeLast(4)));
     var failedAt = lines.FindIndex(l => l.StartsWith(
       $"Error Migration {position} of {total} - Failed : {plan.File} : P0001 injected failure creating public.{plan.Function}(", StringComparison.Ordinal));
     await Assert.That(failedAt).IsGreaterThan(0).Because("file N's failure is logged at Error with its SQLSTATE");
@@ -132,6 +133,9 @@ public partial class MigrationStepTransactionTests {
     await Assert.That(retry.Migration).Contains($"Information Migration {position - 1} of {total} - Skipped : {plan.Before[^1]} (already current)");
     await Assert.That(retry.Migration).DoesNotContain(l => l.Contains($"Started : {plan.Before[^1]}", StringComparison.Ordinal));
     await Assert.That(retry.Migration[^1]).StartsWith($"Information Migration complete: {total} of {total} succeeded (");
+    await Assert.That(total).IsEqualTo(MigrationFiles().Length + (int)await _scalarAsync<long>(
+        "SELECT count(*) FROM public.wh_schema_migrations WHERE file_name LIKE 'perspective:%'") + 4)
+      .Because("Y counts every file, every perspective table, and the core-table, constraint, association and registry steps");
     await Assert.That(await _loggedAsync("whizbang")).IsEquivalentTo(plan.FromN)
       .Because("the retry resumes at N: each file before it is current, and N's failure record does not make it look so");
     await Assert.That(await _loggedAsync("step")).DoesNotContain(s => s.EndsWith(":core-infrastructure", StringComparison.Ordinal))
