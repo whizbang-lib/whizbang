@@ -489,6 +489,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
+  its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
+  associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
+  (#1636), rolled back every file that had already applied and each retry started from nothing while holding every
+  lock until the final commit. Each step is now a transaction of its own, taking the schema advisory lock (still
+  transaction-scoped) at its start and re-checking its own ledger row under it: a failure rolls back only that step,
+  the retry resumes at it, and a second instance that starts part way through finishes the pass without applying
+  any step twice. The steps with no ledger row of their own are recorded as `step:<context>:<step>` rows, and a file
+  re-run by the redefinition closure or a sweep is marked `pending-rerun` before anything runs, so the plan survives
+  a failure. The failed step's record (status -1, `Failed: <SQLSTATE> <message>`) is written after its rollback and
+  never carries the file's hash; the Dapper driver wrote the hash, so a file that failed for a reason outside its
+  text was skipped on every later start, and now runs again. Every step logs `Migration X of Y - Started : <name>`
+  and then `Succeeded`, `Skipped` or `Failed : <name> : <SQLSTATE> <message>` (at Error, saying when a retry comes),
+  and the pass ends with `Migration complete: Y of Y succeeded (N applied, M skipped) in <duration>` or
+  `Migration stopped at X of Y: <name> : <error>`. `ISchemaInitializationObserver.OnSchemaStepCommittedAsync` reports
+  each committed step.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
