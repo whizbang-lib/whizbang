@@ -930,7 +930,8 @@ public sealed partial class MaintenanceWorker(
     string? keys = null;
     try {
       // Resolved inside the guard: options that fail validation are reported here rather than failing the cycle.
-      var settings = RetentionSettingsBridge.SettingsFor(_coordinatorDebugMode(sp), _options.Retention, _ephemeralOptions(sp));
+      var settings = RetentionSettingsBridge.SettingsFor(
+        _coordinatorDebugMode(sp), _options.Retention, _ephemeralOptions(sp), _options.Partitioning);
       keys = string.Join(", ", settings.Select(s => s.Key));
       await coordinator.SyncRetentionSettingsAsync(settings, ct).ConfigureAwait(false);
     } catch (OperationCanceledException) {
@@ -1268,4 +1269,12 @@ public sealed class MaintenanceWorkerOptions {
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenanceRetentionOptions Retention { get; set; } = new();
+
+  /// <summary>
+  /// The built-in partition manager, under <c>Whizbang:Workers:Maintenance:Partitioning</c>: off by default, three
+  /// intervals created ahead. See <see cref="MaintenancePartitioningOptions"/>.
+  /// </summary>
+  /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
+  public MaintenancePartitioningOptions Partitioning { get; set; } = new();
 }

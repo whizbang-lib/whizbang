@@ -13,7 +13,8 @@ This document explains the performance-critical patterns that MUST be followed w
 3. [Value Type Records for Caching](#value-type-records-for-caching)
 4. [Early Null Returns](#early-null-returns)
 5. [Static Methods Where Possible](#static-methods-where-possible)
-6. [Performance Impact Summary](#performance-impact-summary)
+6. [Keeping Output Cached Across Edits](#keeping-output-cached-across-edits)
+7. [Performance Impact Summary](#performance-impact-summary)
 
 ---
 
@@ -360,6 +361,92 @@ public class MyGenerator : IIncrementalGenerator {
 
 ---
 
+## Keeping Output Cached Across Edits
+
+### The Rule
+
+> **An edit that changes nothing a generator reads must leave every output step Cached or Unchanged.**
+
+A generator whose output regenerates on every keystroke costs the consumer in the IDE, on every incremental
+build, and in every project that depends on the generated code. `tests/Whizbang.Generators.Tests/BuildCost/GeneratorCachingTests.cs`
+runs every generator in the package over a consumer-shaped corpus, applies an unrelated edit (an ordinary
+method body, a comment, a receptor body), and fails if any tracked output step is `New` or `Modified`.
+
+Three things defeat caching. Each was found in this package and fixed (#1609).
+
+### 1. Never combine `CompilationProvider` directly
+
+Every edit produces a new `Compilation`, so anything combined with it re-runs and, because a `Compilation`
+compares by reference, reaches the output as `Modified`.
+
+```csharp
+// ❌ WRONG: the output regenerates on every edit
+var data = receptors.Collect().Combine(context.CompilationProvider);
+
+// ✅ CORRECT: project the one fact you need to a value first
+var assemblyName = context.CompilationProvider.Select(static (c, _) => c.AssemblyName);
+var data = receptors.Collect().Combine(assemblyName);
+```
+
+When the output genuinely needs compilation-wide facts (the concrete subtypes of a polymorphic message, the
+nested types of a message's properties, referenced-assembly versions), read them in a `Select` step that
+returns a **value-equatable model**, and generate from the model:
+
+```csharp
+var facts = receptors.Collect()
+    .Combine(context.CompilationProvider)
+    .Select(static (data, _) => ReceptorCompilationFacts.From(data.Right, data.Left));
+context.RegisterSourceOutput(receptors.Collect().Combine(facts), ...);
+```
+
+The `Select` still runs on every edit, but its result compares equal while the facts do, so the output step is
+`Cached`. Never pass a `Compilation`, `ISymbol` or `SemanticModel` into `RegisterSourceOutput`.
+`ReceptorDiscoveryGenerator` (`ReceptorCompilationFacts`), `MessageJsonContextGenerator` (`JsonContextAnalysis`)
+and `MessageRegistryGenerator` (referenced Whizbang packages) are the worked examples.
+
+### 2. Models hold no arrays, `ImmutableArray`, `List`, symbols or syntax
+
+A `record` compares member by member, but an array, `ImmutableArray<T>` or `List<T>` member compares **by
+reference**, so a model holding one is unequal to its predecessor on every run. A syntax provider's semantic
+transform runs again against each new compilation, so a transform that returns such a model regenerates the
+output even when the edited file is unrelated.
+
+```csharp
+// ❌ WRONG: never equal across runs
+internal sealed record ReceptorInfo(string ClassName, string[] LifecycleStages);
+
+// ✅ CORRECT: EquatableArray<T> compares by its elements
+internal sealed record ReceptorInfo(string ClassName, EquatableArray<string> LifecycleStages);
+```
+
+`EquatableArray<T>` (`Whizbang.Generators.Shared.Utilities`) converts implicitly from `T[]`, is built by a
+collection expression (`[.. items]`), and reads like an array (`Length`, indexer, `foreach`, LINQ), so code that
+fills or reads a model rarely changes. It is a class, so a member that may be absent stays nullable
+(`EquatableArray<string>? MemberDefaults`). The same applies to a transform's own return type: return
+`EquatableArray<T>?`, not `T[]?` or `ImmutableArray<T>?`, when the result is `Collect()`ed.
+
+A `Location` is acceptable only on the rare model that reports a diagnostic: it compares by syntax tree and
+span, so it stays equal while its file is unchanged.
+
+### 3. Prefer `ForAttributeWithMetadataName` when an attribute is the trigger
+
+`ForAttributeWithMetadataName` finds its candidates from a per-tree index of attribute names that the
+compiler keeps incrementally, so an edit re-scans only the edited tree, where a `CreateSyntaxProvider`
+predicate is evaluated against the nodes of every changed tree by hand. Both still run their semantic transform
+against the new compilation on every edit, so rule 2 applies to both: the transform's result must compare equal.
+When the trigger is an attribute, use `ForAttributeWithMetadataName` (as the saga pipelines do). When it is an
+interface or base type, `CreateSyntaxProvider` with a syntactic predicate is the only option.
+
+### How to Diagnose
+
+Run the driver with `new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true)`,
+apply an edit, run again, and read `GetRunResult().Results[i].TrackedOutputSteps`. For a step that is `New` or
+`Modified`, walk `step.Inputs` back to the first input that is not `Cached`/`Unchanged`; its output value's type
+names the model that lacks value equality. `WithTrackingName("...")` on a step makes it appear in
+`TrackedSteps` by name.
+
+---
+
 ## Performance Impact Summary
 
 ### Good Practices vs. Bad Practices
@@ -405,6 +492,10 @@ Before claiming generator work complete:
 - [ ] Predicate uses syntactic filtering only (no semantic analysis)
 - [ ] Predicate filters out 95%+ of nodes
 - [ ] Info types are `sealed record` (not classes)
+- [ ] Models and transform results hold `EquatableArray<T>`, never `T[]`, `ImmutableArray<T>`, `List<T>`, symbols or syntax
+- [ ] `CompilationProvider` is projected with `Select` to a value before any `Combine`; no `Compilation` reaches `RegisterSourceOutput`
+- [ ] Attribute-triggered pipelines use `ForAttributeWithMetadataName`
+- [ ] `GeneratorCachingTests` passes (an unrelated edit regenerates nothing)
 - [ ] Transform has early null returns
 - [ ] Semantic operations pass `CancellationToken`
 - [ ] Methods are `static` where possible

@@ -44,15 +44,15 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         .SelectMany(static (a, _) => a)
         .Collect();
 
-    var combined = context.CompilationProvider.Combine(entries.Collect()).Combine(ledgerFormers);
+    var combined = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(entries.Collect()).Combine(ledgerFormers);
 
     context.RegisterSourceOutput(
         combined,
         static (ctx, data) => {
-          var compilation = data.Left.Left;
+          var compilationAssemblyName = data.Left.Left;
           var infos = data.Left.Right;
           var formerNames = data.Right;
-          _generateCatalog(ctx, compilation, infos!, formerNames);
+          _generateCatalog(ctx, compilationAssemblyName, infos!, formerNames);
         }
     );
   }
@@ -270,7 +270,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
 
   private static void _generateCatalog(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<MessageTypeCatalogEntryInfo> infos,
       ImmutableArray<PinnedFormerName> formerNames) {
 
@@ -278,7 +278,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       return;
     }
 
-    var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
+    var assemblyName = compilationAssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
     var formerByPinnedId = _indexFormerNamesByPinnedId(formerNames);
