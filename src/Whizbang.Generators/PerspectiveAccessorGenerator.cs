@@ -233,7 +233,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
 
 /// <summary>A perspective model and the paths it can be filtered on.</summary>
 internal sealed record AccessorModel(
-    string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, ImmutableArray<AccessorPath> Paths);
+    string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, EquatableArray<AccessorPath> Paths);
 
 /// <summary>One addressable property path, the type it yields, and how to reach it.</summary>
 /// <param name="Path">The dotted path a filter names.</param>

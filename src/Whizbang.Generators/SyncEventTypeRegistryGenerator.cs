@@ -45,14 +45,14 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
     ).Where(static mappings => mappings?.Length > 0);
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndMappings = context.CompilationProvider.Combine(syncMappings.Collect());
+    var compilationAndMappings = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(syncMappings.Collect());
 
     context.RegisterSourceOutput(
         compilationAndMappings,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var allMappings = data.Right;
-          _generateSyncEventTypeRegistry(ctx, compilation, allMappings!);
+          _generateSyncEventTypeRegistry(ctx, compilationAssemblyName, allMappings!);
         }
     );
   }
@@ -61,7 +61,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   /// Extracts event type to perspective mappings from [AwaitPerspectiveSync] attributes.
   /// Returns null if no [AwaitPerspectiveSync] attributes are found.
   /// </summary>
-  private static SyncTypeMapping[]? _extractSyncMappings(
+  private static EquatableArray<SyncTypeMapping>? _extractSyncMappings(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -116,10 +116,10 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateSyncEventTypeRegistry(
       SourceProductionContext context,
-      Compilation compilation,
-      ImmutableArray<SyncTypeMapping[]> allMappings) {
+      string? compilationAssemblyName,
+      ImmutableArray<EquatableArray<SyncTypeMapping>> allMappings) {
 
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = compilationAssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Flatten and group by event type

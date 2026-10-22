@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Whizbang.Generators.Shared.Utilities;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -25,7 +27,7 @@ internal sealed record JsonMessageTypeInfo(
     bool IsEvent,
     bool IsSerializable,
     bool IsComposite,
-    PropertyInfo[] Properties,
+    EquatableArray<PropertyInfo> Properties,
     bool HasParameterizedConstructor
 ) {
   /// <summary>
@@ -82,3 +84,21 @@ internal sealed record JsonEnumInfo(
   /// </summary>
   public string UniqueIdentifier => FullyQualifiedName.Replace("global::", "").Replace(".", "_");
 }
+
+/// <summary>
+/// What the JSON context generator reads from the compilation, as values: the assembly name, the deduplicated
+/// message types, the nested types their properties use, the enums among them, and the polymorphic base types.
+/// Value-equal while those are, so an edit that changes none of them leaves the generated context cached.
+/// </summary>
+/// <param name="AssemblyName">The compilation's assembly name.</param>
+/// <param name="Messages">The message types, deduplicated by fully qualified name, first entry kept.</param>
+/// <param name="NestedTypes">The custom types the message properties use.</param>
+/// <param name="EnumTypes">The enum types among the messages and nested types.</param>
+/// <param name="PolymorphicTypes">The polymorphic base types with their derived types.</param>
+internal sealed record JsonContextAnalysis(
+    string? AssemblyName,
+    EquatableArray<JsonMessageTypeInfo> Messages,
+    EquatableArray<JsonMessageTypeInfo> NestedTypes,
+    EquatableArray<JsonEnumInfo> EnumTypes,
+    EquatableArray<PolymorphicTypeInfo> PolymorphicTypes
+);

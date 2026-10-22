@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Collections.Immutable;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -28,7 +28,7 @@ namespace Whizbang.Generators;
 internal sealed record PolymorphicTypeInfo(
     string BaseTypeName,
     string BaseSimpleName,
-    ImmutableArray<string> DerivedTypes
+    EquatableArray<string> DerivedTypes
 ) {
   /// <summary>
   /// Unique identifier derived from fully qualified name, suitable for C# identifiers.

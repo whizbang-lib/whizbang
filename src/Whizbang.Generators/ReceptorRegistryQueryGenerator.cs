@@ -126,7 +126,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// </summary>
   private sealed record ReceptorRegistryEntry(
       string MessageType,
-      ImmutableArray<string> Stages,
+      EquatableArray<string> Stages,
       bool IsInboxHandler,
       string ContractNamespace,
       string Kind
@@ -160,7 +160,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     var stages = CompileTimeMessageClassification.FireAtStagesOf(classSymbol);
     var isInboxHandler = CompileTimeMessageClassification.IsInboxHandler(stages);
 
-    return new ReceptorRegistryEntry(messageType, stages, isInboxHandler, contractNamespace, kind);
+    return new ReceptorRegistryEntry(messageType, [.. stages], isInboxHandler, contractNamespace, kind);
   }
 
   // ===== Discovery: perspectives =====
@@ -169,7 +169,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// no receptor is registered for that type.</summary>
   private sealed record PerspectiveRegistryEntry(string EventType);
 
-  private static PerspectiveRegistryEntry[]? _extractPerspectiveEntry(
+  private static EquatableArray<PerspectiveRegistryEntry>? _extractPerspectiveEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
@@ -270,7 +270,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private static void _emitRegistryQuery(
       SourceProductionContext context,
       ImmutableArray<ReceptorRegistryEntry?> receptors,
-      ImmutableArray<PerspectiveRegistryEntry[]?> perspectives,
+      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
       ImmutableArray<string?> taggedTypes,
       ImmutableArray<string?> compositeTypes,
       ImmutableArray<string?> collectiveTypes) {
