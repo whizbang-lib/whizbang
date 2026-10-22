@@ -266,7 +266,7 @@ public class ReceivedStreamOrderSqlTests : EFCoreTestBase {
   private static async Task _executeAsync(NpgsqlConnection connection, string sql, Guid id) {
     await using var command = connection.CreateCommand();
     command.CommandText = sql;
-    command.Parameters.AddWithValue("id", id);
+    command.Parameters.AddWithValue(nameof(id), id);
     await command.ExecuteNonQueryAsync();
   }
 
