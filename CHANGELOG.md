@@ -479,6 +479,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A starting or draining instance is no longer given work (#1638).** "Alive" and "eligible for work" were one test,
+  so an instance registered during the migrator election and kept alive by its heartbeat or alive-lock was a
+  partition-assignment candidate and was counted in `claim_work`'s peer ranking while it was still migrating, and its
+  share stalled until it was ready; a draining instance kept its share until its heartbeat lapsed. Now only an
+  instance whose recorded lifecycle phase is `AcceptingCommands` or `Running` is eligible (one definition,
+  `wh_instance_is_eligible_for_work`, migration 229): the candidates, `claim_work`'s and the multi-stream claim's
+  rankings and the elected assigner's own membership follow it, and a starting or draining instance's share goes to
+  its peers at once. Liveness, the reap and stream ownership are unchanged. An instance that records no phase (an
+  older build) is eligible whenever it is live, as before. The phase is recorded reliably: the bootstrap registration
+  records `Migrating`, the heartbeat and the claim loop's registrations carry the phase being entered
+  (`IWhizbangLifecycleState.AnnouncedPhase`), and a claim whose row records another phase than the caller's
+  (`ClaimWorkRequest.LifecyclePhase`) is reported stale so the claim loop writes it.
 - **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
   text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
   user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to

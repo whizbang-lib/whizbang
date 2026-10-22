@@ -109,7 +109,10 @@ public static class PartitionAssigner {
   }
 
   /// <summary>
-  /// The live members, in instance-id order. The assigner itself is always a member: it is running the evaluation.
+  /// The live members, in instance-id order. The candidates are the instances eligible for work (#1638): a starting or
+  /// draining instance is not among them. The assigner is a member when it is a candidate, whatever its heartbeat's age,
+  /// since it is running the evaluation; when it is not a candidate (still starting, or draining) it gives itself no
+  /// share, as it gives none to any other instance that cannot claim one.
   /// </summary>
   /// <param name="candidates">The registered instances and their signals.</param>
   /// <param name="self">The assigner.</param>
@@ -118,7 +121,7 @@ public static class PartitionAssigner {
   public static IReadOnlyList<Guid> LiveMembers(
       IEnumerable<PartitionAssignmentCandidate> candidates, Guid self, PartitionAssignerOptions options) {
     ArgumentNullException.ThrowIfNull(candidates);
-    var live = new SortedSet<Guid>(candidates.Where(c => IsLive(c, options)).Select(c => c.InstanceId)) { self };
+    var live = new SortedSet<Guid>(candidates.Where(c => c.InstanceId == self || IsLive(c, options)).Select(c => c.InstanceId));
     return [.. live];
   }
 
