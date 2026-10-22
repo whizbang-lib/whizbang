@@ -64,6 +64,8 @@ public class MigrationUtf8LiteralGenerationTests {
   private const string DECODE = "global::System.Text.Encoding.UTF8.GetString";
   private const string FULL_LIST = "GetMigrationScripts";
   private const string BOOTSTRAP_LIST = "GetBootstrapMigrationScripts";
+  private const string REGION_INDENTATION = "      ";
+  private static readonly string[] _lineBreaks = ["\r\n", "\r", "\n"];
 
   /// <summary>Both lists carry their SQL as UTF-8 literals, and no ordinary literal but the names.</summary>
   /// <remarks>
@@ -94,8 +96,9 @@ public class MigrationUtf8LiteralGenerationTests {
   /// <remarks>
   /// The expected text is derived here from the generator's own embedded resources by the escaping
   /// the verbatim literals applied: the schema token preserved as <c>__MIGRATION_SCHEMA__</c> for
-  /// the runtime transform, and braces doubled for <c>ExecuteSqlRawAsync</c>. Quote doubling is
-  /// literal syntax, not value, so it is not part of the expected text. Fails if a file is dropped,
+  /// the runtime transform, braces doubled for <c>ExecuteSqlRawAsync</c>, and the template region's
+  /// indentation on every line after the first. Quote doubling is literal syntax, not value, so it
+  /// is not part of the expected text. Fails if a file is dropped, if the region is re-indented,
   /// reordered or renamed, if either escape is lost or applied twice, if quotes reach the value
   /// doubled, or if a template-wide replacement reaches into the SQL.
   /// </remarks>
@@ -162,14 +165,27 @@ public class MigrationUtf8LiteralGenerationTests {
       // back (those bytes decoded) at run time.
       var decoded = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(literal!.Token.ValueText));
       await Assert.That(decoded == expected[i].Sql).IsTrue()
-        .Because($"{entries[i].Name} has to decode to exactly the text it carried as a verbatim literal");
+        .Because($"{entries[i].Name} has to decode to exactly the text it carried as a verbatim literal; "
+          + _firstDifference(decoded, expected[i].Sql));
     }
   }
 
-  private static string _escapedAsBefore(string sql) => sql
-    .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")
-    .Replace("{", "{{")
-    .Replace("}", "}}");
+  // The text as it has always been emitted. The schema token is preserved for the runtime transform
+  // and braces are doubled for ExecuteSqlRawAsync. The lists are emitted into an indented template
+  // region, which indents every non-blank line of the replacement, so every line of the SQL after its
+  // first that is not blank carries the region's six spaces, and line breaks are normalized to \n. That indentation is
+  // part of the value, hence of every content hash recorded for an applied migration: re-indenting
+  // the template region would make every migration look changed.
+  private static string _escapedAsBefore(string sql) {
+    var lines = sql
+      .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")
+      .Replace("{", "{{")
+      .Replace("}", "}}")
+      .Split(_lineBreaks, StringSplitOptions.None);
+    // The last line shares its source line with the literal's closing quote, so it is never blank.
+    return string.Join("\n", lines.Select((line, i) =>
+      i == 0 || (string.IsNullOrWhiteSpace(line) && i < lines.Length - 1) ? line : REGION_INDENTATION + line));
+  }
 
   private static List<(string Name, string Sql)> _embeddedMigrations() {
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
@@ -211,6 +227,20 @@ public class MigrationUtf8LiteralGenerationTests {
       && literal.IsKind(SyntaxKind.Utf8StringLiteralExpression)
         ? literal
         : null;
+
+  private static string _firstDifference(string actual, string expected) {
+    var at = 0;
+    while (at < actual.Length && at < expected.Length && actual[at] == expected[at]) {
+      at++;
+    }
+
+    static string around(string text, int at) {
+      var from = Math.Max(0, at - 20);
+      return Uri.EscapeDataString(text.AsSpan(from, Math.Min(text.Length, at + 20) - from));
+    }
+    return $"first difference at {at} of {actual.Length}/{expected.Length}: "
+      + $"decoded '{around(actual, at)}', expected '{around(expected, at)}'";
+  }
 
   private static string _head(ExpressionSyntax sql) {
     var text = sql.ToString();

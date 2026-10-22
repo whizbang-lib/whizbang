@@ -452,6 +452,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
+  text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
+  user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to
+  build with CS8103 and nothing warned first. The migration and bootstrap lists are now emitted as UTF-8 literals,
+  which the compiler places in the data section, and decoded once at run time to exactly the text they carried
+  before, so applied migrations keep their content hashes. Consumers need no change and no compiler flag.
 - **A direct event-store append is folded into the stream digest (#1600).** Events stored with
   `IEventStore.AppendAsync` (both PostgreSQL drivers, through `wh_append_event`) were never folded into
   `wh_stream_digests`, while the emit chain folds every event it stores and the full recompute the integrity sweep
