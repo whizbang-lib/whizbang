@@ -61,7 +61,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // Generate extractor methods from collected events, commands, and composites
     // Combine compilation with discovered types to get assembly name for namespace
-    var compilationAndData = context.CompilationProvider
+    var compilationAndData = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
         .Combine(eventsWithStreamId.Collect())
         .Combine(eventsWithoutStreamId.Collect())
         .Combine(commandsWithStreamId.Collect())
@@ -70,12 +70,12 @@ public class StreamIdGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndData,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left.Left;
+          var compilationAssemblyName = data.Left.Left.Left.Left;
           var withStreamId = data.Left.Left.Left.Right;
           var withoutStreamId = data.Left.Left.Right;
           var commandsWithId = data.Left.Right;
           var compositesWithId = data.Right;
-          _generateStreamIdExtractors(ctx, compilation, withStreamId!, withoutStreamId!, commandsWithId!, compositesWithId!);
+          _generateStreamIdExtractors(ctx, compilationAssemblyName, withStreamId!, withoutStreamId!, commandsWithId!, compositesWithId!);
         }
     );
   }
@@ -375,7 +375,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 #pragma warning disable S3776
   private static void _generateStreamIdExtractors(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId,
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
@@ -383,7 +383,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 #pragma warning restore S3776
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);

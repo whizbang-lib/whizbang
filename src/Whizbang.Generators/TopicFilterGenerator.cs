@@ -47,22 +47,21 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     ).Where(static infos => infos is { Length: > 0 });
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndFilters = context.CompilationProvider.Combine(topicFilters.Collect());
+    var compilationAndFilters = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(topicFilters.Collect());
 
     // Generate registry
     context.RegisterSourceOutput(
         compilationAndFilters,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var allFilters = data.Right;
 
           // Flatten array of arrays to single list
           var filters = allFilters
-              .Where(f => f.HasValue)
-              .SelectMany(f => f!.Value)
+              .SelectMany(static f => f!)
               .ToImmutableArray();
 
-          _generateRegistry(ctx, compilation, filters);
+          _generateRegistry(ctx, compilationAssemblyName, filters);
         }
     );
   }
@@ -72,7 +71,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// Returns array of TopicFilterInfo for all [TopicFilter] attributes found.
   /// Returns null if class doesn't implement ICommand or has no TopicFilter attributes.
   /// </summary>
-  private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
+  private static EquatableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
@@ -119,7 +118,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       }
     }
 
-    return filters.Count > 0 ? filters.ToImmutable() : null;
+    return filters.Count > 0 ? [.. filters] : null;
   }
 
   /// <summary>
@@ -178,7 +177,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<TopicFilterInfo> filters) {
 
     if (filters.IsEmpty) {
@@ -206,7 +205,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
         .ToDictionary(g => g.Key, g => g.Select(f => f.Filter).ToArray());
 
     // Generate registry source code
-    var assemblyName = compilation.AssemblyName ?? "Generated";
+    var assemblyName = compilationAssemblyName ?? "Generated";
     var namespaceName = $"{assemblyName}.Generated";
 
     var sb = new StringBuilder();

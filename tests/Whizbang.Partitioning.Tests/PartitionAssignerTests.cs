@@ -58,7 +58,8 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task LiveMembers_AreTheLiveInstancesAndTheAssigner_InIdOrderAsync() {
-    var members = PartitionAssigner.LiveMembers([_pooled(_b, 1), _pooled(_a, 600), _direct(_a, true, 600)], _self, _options);
+    var members = PartitionAssigner.LiveMembers(
+      [_pooled(_b, 1), _pooled(_a, 600), _direct(_a, true, 600), _pooled(_self, 600)], _self, _options);
 
     await Assert.That(members).IsEquivalentTo([_self, _a, _b], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("the assigner is running the evaluation, and an instance listed twice is one member");
@@ -66,9 +67,35 @@ public class PartitionAssignerTests {
 
   [Test]
   public async Task LiveMembers_WithNoLivePeer_IsTheAssignerAloneAsync() {
-    var members = PartitionAssigner.LiveMembers([_pooled(_a, 600)], _self, _options);
+    var members = PartitionAssigner.LiveMembers([_pooled(_a, 600), _pooled(_self, 1)], _self, _options);
 
     await Assert.That(members).IsEquivalentTo([_self]);
+  }
+
+  [Test]
+  public async Task LiveMembers_TheAssignerAmongTheCandidates_IsAMemberWhateverItsHeartbeatAsync() {
+    var members = PartitionAssigner.LiveMembers([_pooled(_self, 3600), _pooled(_a, 1)], _self, _options);
+
+    await Assert.That(members).IsEquivalentTo([_self, _a], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("the assigner is running the evaluation, so a late beat of its own does not count it out");
+  }
+
+  [Test]
+  public async Task LiveMembers_TheAssignerNotAmongTheCandidates_IsNotAMemberAsync() {
+    // #1638: the candidates are the instances eligible for work. An assigner elected while it is still migrating (or
+    // once it is draining) is alive but not eligible, so it is not a candidate and must not give itself a share.
+    var members = PartitionAssigner.LiveMembers([_pooled(_a, 1)], _self, _options);
+
+    await Assert.That(members).IsEquivalentTo([_a])
+      .Because("a share assigned to an instance that cannot claim it stalls until the instance is ready");
+  }
+
+  [Test]
+  public async Task LiveMembers_WithNoCandidateAtAll_IsEmptyAsync() {
+    var members = PartitionAssigner.LiveMembers([], _self, _options);
+
+    await Assert.That(members).IsEmpty()
+      .Because("with nobody eligible every claimer ranks itself, which an empty assignment leaves it to do");
   }
 
   // --- when to publish -------------------------------------------------------------------------

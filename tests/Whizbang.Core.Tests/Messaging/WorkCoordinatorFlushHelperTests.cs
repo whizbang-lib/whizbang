@@ -54,6 +54,37 @@ public class WorkCoordinatorFlushHelperTests {
     await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0);
   }
 
+  /// <summary>
+  /// A flush its caller awaits asks the store to raise a WHIZ133 refusal rather than dead-letter it (#1546), so
+  /// every outbox message it stores carries the request. The audit records riding along are not events and are
+  /// never refused, so they are stored as they were queued.
+  /// </summary>
+  [Test]
+  public async Task RaiseOnMixedStream_EveryOutboxMessageAsksTheStoreToRaiseItsRefusalAsync() {
+    var coordinator = new CapturingWorkCoordinator();
+    var audit = _outbox();
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: coordinator, outboxMessages: [_outbox(), _outbox()], pendingAudit: [audit], raiseOnMixedStream: true), default);
+
+    bool[] raised = [true, true, false];
+    await Assert.That(coordinator.LastStoredOutbox.Select(m => m.RaiseOnMixedStream)).IsEquivalentTo(raised);
+    await Assert.That(coordinator.LastStoredOutbox[2]).IsSameReferenceAs(audit);
+  }
+
+  /// <summary>A background flush leaves the request off, so the store dead-letters a refusal and keeps the rest.</summary>
+  [Test]
+  public async Task WithoutRaiseOnMixedStream_StoresTheQueuedMessagesAsTheyAreAsync() {
+    var coordinator = new CapturingWorkCoordinator();
+    var queued = _outbox();
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: coordinator, outboxMessages: [queued]), default);
+
+    await Assert.That(coordinator.LastStoredOutbox[0]).IsSameReferenceAs(queued);
+    await Assert.That(coordinator.LastStoredOutbox[0].RaiseOnMixedStream).IsFalse();
+  }
+
   [Test]
   public async Task InboxMessages_RouteToStoreInboxMessagesAsync() {
     var coordinator = new CapturingWorkCoordinator();
@@ -389,7 +420,8 @@ public class WorkCoordinatorFlushHelperTests {
     OutboxMessage[]? pendingAudit = null,
     bool skipLifecycle = true,
     WorkCoordinatorMetrics? metrics = null,
-    string strategy = ""
+    string strategy = "",
+    bool raiseOnMixedStream = false
   ) => new(
     coordinator,
     scopeFactory,
@@ -409,7 +441,8 @@ public class WorkCoordinatorFlushHelperTests {
     PendingAuditMessages: pendingAudit,
     SkipLifecycle: skipLifecycle,
     Metrics: metrics,
-    Strategy: strategy);
+    Strategy: strategy,
+    RaiseOnMixedStream: raiseOnMixedStream);
 
   private static OutboxMessage _outbox() {
     var id = Guid.CreateVersion7();

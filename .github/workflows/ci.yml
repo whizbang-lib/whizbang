@@ -706,6 +706,41 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-SolutionTestProjects.ps1
 
+  # A build with nothing changed must compile nothing. One file rewritten on every build (a version stamp, a
+  # generator DLL merged in place) makes every project above it recompile, on every contributor's machine and
+  # every CI run (#1609). Builds a sample service that loads every generator package, builds it again, and
+  # names any project that compiled and the input that made it. Runs beside the build, off its critical path.
+  noop-rebuild:
+    name: Build · No-op rebuild does no work
+    needs: [ff-validated, release-pr]
+    if: >-
+      ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
+      needs.release-pr.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build twice and check the second build did no work
+        shell: pwsh
+        run: ./scripts/build-cost/Test-NoOpRebuild.ps1 -OutputDirectory noop-rebuild
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: noop-rebuild-${{ github.run_id }}
+          path: noop-rebuild/
+          retention-days: 7
+
   build:
     name: Build · Compile
     needs: [version, changes, release-pr, ff-validated]

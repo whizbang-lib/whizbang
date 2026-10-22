@@ -198,6 +198,16 @@ public enum MessageFailureReason {
   BodyClaimUnsealed = 21,
 
   /// <summary>
+  /// The event would have made its stream hold both ephemeral and Sourced events (diagnostic <c>WHIZ133</c>), so the
+  /// step that copies events into the event store refused it and dead-lettered the row. Not retried: the same event on
+  /// the same stream is refused every time. The fix is in the producer: publish the ephemeral events on a stream of
+  /// their own. The recorded error text starts with <c>WHIZ133</c> and names the stream, the refused event's type and
+  /// the kind the stream holds.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz133</docs>
+  MixedStreamRefused = 22,
+
+  /// <summary>
   /// Unclassified error - reason not determined. Numbered far above the classified reasons so a
   /// new one can be appended without moving it, and last so the members read in value order.
   /// </summary>

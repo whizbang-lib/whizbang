@@ -22,6 +22,11 @@ namespace Whizbang.Core.Messaging;
 /// Most fields are kept for source compatibility with strategy call sites; the new-path
 /// helper only consumes the ones documented below.
 /// </summary>
+/// <remarks>
+/// <c>RaiseOnMixedStream</c> (#1546) is set by a flush whose caller awaits it (the immediate and scoped strategies'
+/// <c>FlushAsync</c>): every outbox message it stores asks the store to raise a WHIZ133 refusal as
+/// <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+/// </remarks>
 internal readonly record struct FlushContext(
   IWorkCoordinator? Coordinator,
   IServiceScopeFactory? ScopeFactory,
@@ -41,7 +46,8 @@ internal readonly record struct FlushContext(
   OutboxMessage[]? PendingAuditMessages,
   bool SkipLifecycle = false,
   WorkCoordinatorMetrics? Metrics = null,
-  string Strategy = "");
+  string Strategy = "",
+  bool RaiseOnMixedStream = false);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
@@ -132,9 +138,13 @@ internal static class WorkCoordinatorFlushHelper {
           ct);
       }
 
-      var outboxToStore = ctx.OutboxMessages;
+      // #1546: a flush its caller awaits asks the store to raise a mixed-stream refusal to that caller; every other
+      // flush leaves it to the store to dead-letter the refused row and keep the rest of the write.
+      OutboxMessage[] outboxToStore = ctx.RaiseOnMixedStream
+        ? [.. ctx.OutboxMessages.Select(m => m with { RaiseOnMixedStream = true })]
+        : ctx.OutboxMessages;
       if (ctx.PendingAuditMessages is { Length: > 0 }) {
-        outboxToStore = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
+        outboxToStore = [.. outboxToStore, .. ctx.PendingAuditMessages];
       }
 
       if (outboxToStore.Length > 0) {

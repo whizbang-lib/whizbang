@@ -20,6 +20,14 @@ public interface IWhizbangLifecycleState {
   /// <summary>The current phase (starts at <see cref="LifecyclePhase.Starting"/>).</summary>
   LifecyclePhase Phase { get; }
 
+  /// <summary>
+  /// The phase this instance announces: the one being entered while a transition is in flight, otherwise
+  /// <see cref="Phase"/>. It is what the instance's row records (#1638): the instance-state participant writes it
+  /// during the transition, before <see cref="Phase"/> changes, so every other writer of the row (the heartbeat, the
+  /// claim loop's registration) reads this one or would write the phase before it over the transition.
+  /// </summary>
+  LifecyclePhase AnnouncedPhase => Phase;
+
   /// <summary>Advances to <paramref name="phase"/>, broadcasting it to every resource and awaiting all acks.</summary>
   ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken);
 

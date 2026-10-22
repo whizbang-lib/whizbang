@@ -38,6 +38,7 @@ public class RetentionSettingsBridgeTests {
     "log_retention_days", "schedule_run_retention_days", "stream_purge_audit_retention_days", "integrity_ledger_max_entries",
     "ephemeral_rewind_grace_seconds", "ephemeral_deep_maintenance_enabled",
     "ephemeral_pointer_retention_days", "ephemeral_pointer_prune_interval_days",
+    "partition_maintenance_enabled",
   ];
 
   private static MaintenanceRetentionOptions _allRetentionSet() => new() {
@@ -128,7 +129,8 @@ public class RetentionSettingsBridgeTests {
 
   [Test]
   public async Task EveryKeyInScope_IsMappedExactlyOnceAsync() {
-    var keys = RetentionSettingsBridge.SettingsFor(true, _allRetentionSet(), _allEphemeralSet()).Select(s => s.Key).ToArray();
+    var keys = RetentionSettingsBridge.SettingsFor(true, _allRetentionSet(), _allEphemeralSet(), new MaintenancePartitioningOptions())
+      .Select(s => s.Key).ToArray();
 
     await Assert.That(keys).IsEquivalentTo(_everyKey).Because("one upsert carries every set value; a key listed twice would fail it with "
              + "'ON CONFLICT DO UPDATE command cannot affect row a second time'");
@@ -193,5 +195,24 @@ public class RetentionSettingsBridgeTests {
     await Assert.That(ephemeral.PointerPrune).IsNotNull();
     await Assert.That(RetentionSettingsBridge.SettingsFor(false, retention, ephemeral).Count).IsEqualTo(1)
       .Because("a host that configures nothing must change nothing in the database beyond what it did before");
+  }
+
+  [Test]
+  [Arguments(true, "true")]
+  [Arguments(false, "false")]
+  public async Task PartitionMaintenance_IsAlwaysPublishedInBothDirectionsAsync(bool enabled, string literal) {
+    var settings = _byKey(RetentionSettingsBridge.SettingsFor(
+      false, new MaintenanceRetentionOptions(), new EphemeralOptions(), new MaintenancePartitioningOptions { Enabled = enabled }));
+
+    await Assert.That(settings["partition_maintenance_enabled"].Value).IsEqualTo(literal)
+      .Because("a stale true would keep the row sweep off a partitioned table nothing maintains any more");
+    await Assert.That(settings["partition_maintenance_enabled"].ValueType).IsEqualTo("boolean");
+    await Assert.That(settings["partition_maintenance_enabled"].Source).IsEqualTo("Whizbang:Workers:Maintenance:Partitioning:Enabled");
+  }
+
+  [Test]
+  public async Task SettingsFor_RejectsAMissingPartitioningObjectAsync() {
+    await Assert.That(() => RetentionSettingsBridge.SettingsFor(false, new MaintenanceRetentionOptions(), new EphemeralOptions(), null!))
+      .Throws<ArgumentNullException>();
   }
 }

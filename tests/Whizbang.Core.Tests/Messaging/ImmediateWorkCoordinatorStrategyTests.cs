@@ -379,6 +379,59 @@ public class ImmediateWorkCoordinatorStrategyTests {
       .Because("the canceled caller withdrew its work; the next flush writes only what came after");
   }
 
+  /// <summary>
+  /// The immediate strategy's caller awaits the flush, so its store asks for a WHIZ133 refusal to be raised to it
+  /// rather than dead-lettered (#1546).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_AsksTheStoreToRaiseAMixedStreamRefusalAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var sut = _strategy(fakeCoordinator);
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].RaiseOnMixedStream).IsTrue();
+  }
+
+  /// <summary>
+  /// A write refused for mixing a stream rolled back and its caller has the error, so the work is withdrawn as a
+  /// canceled caller's is: the next flush writes only what came after, instead of offering the refused write again
+  /// and failing every later flush with it (#1546).
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_RefusedForMixingAStream_TheNextFlushDoesNotWriteTheRefusedWorkAsync() {
+    var fakeCoordinator = new FakeWorkCoordinator {
+      FailNextStoreWith = new MixedStreamEventException("WHIZ133: refused", Guid.NewGuid(), Guid.NewGuid())
+    };
+    var sut = _strategy(fakeCoordinator);
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None)).Throws<MixedStreamEventException>();
+    var later = _createOutboxMessage();
+    sut.QueueOutboxMessage(later);
+    await sut.FlushAsync(WorkBatchOptions.None);
+
+    Guid[] onlyTheLaterWork = [later.MessageId];
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Select(m => m.MessageId)).IsEquivalentTo(onlyTheLaterWork)
+      .Because("the refused write can never succeed; offering it again would fail every later flush on this strategy");
+  }
+
+  private static ImmediateWorkCoordinatorStrategy _strategy(FakeWorkCoordinator coordinator) =>
+    new(
+      coordinator: coordinator,
+      instanceProvider: new FakeServiceInstanceProvider(),
+      options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
+      logger: NullLogger<ImmediateWorkCoordinatorStrategy>.Instance,
+      scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
+      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      deferredChannel: new DeferredOutboxChannel(),
+      systemEventOptions: Options.Create(new SystemEventOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null);
+
   [Test]
   public async Task QueueInboxMessage_WithLogger_LogsMessageQueuedAsync() {
     // Arrange - logger != null exercises line 105
@@ -809,6 +862,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     /// <summary>A canceled store writes nothing and throws, as the database rolling the write back does.</summary>
     public bool HonorsCancellation { get; init; }
 
+    /// <summary>The next store throws this, once, and writes nothing.</summary>
+    public Exception? FailNextStoreWith { get; set; }
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount,
@@ -816,6 +872,10 @@ public class ImmediateWorkCoordinatorStrategyTests {
       ProcessWorkBatchCallCount++;
       if (HonorsCancellation) {
         cancellationToken.ThrowIfCancellationRequested();
+      }
+      if (FailNextStoreWith is { } failure) {
+        FailNextStoreWith = null;
+        throw failure;
       }
       LastNewOutboxMessages = messages;
       return Task.CompletedTask;

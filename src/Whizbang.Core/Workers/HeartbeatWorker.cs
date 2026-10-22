@@ -315,7 +315,9 @@ public partial class HeartbeatWorker(
     ServiceName: _instanceProvider.ServiceName,
     HostName: _instanceProvider.HostName,
     ProcessId: _instanceProvider.ProcessId,
-    LifecyclePhase: _lifecycleState.Phase.ToString(),
+    // #1638: the announced phase, not the settled one: a beat built while a transition's acks are awaited would
+    // otherwise write the phase before it over the one the transition just recorded.
+    LifecyclePhase: _lifecycleState.AnnouncedPhase.ToString(),
     LibraryVersion: _libraryVersion.LibraryVersion,
     StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options));
 

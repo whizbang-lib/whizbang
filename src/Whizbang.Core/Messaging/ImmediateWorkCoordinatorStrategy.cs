@@ -178,13 +178,20 @@ public partial class ImmediateWorkCoordinatorStrategy(
           outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
-          Metrics: _metrics, Strategy: STRATEGY_NAME),
+          // #1546: this flush's caller awaits it, so a mixed-stream refusal is raised to it.
+          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       // The caller withdrew this work: the write rolled back and the caller is told it was canceled,
       // so nothing may write it after all, neither a later flush nor the disposal safety net (#1410
       // follow-up). A cancellation the caller did not ask for keeps the work, as any other failure does.
+      _queues.Clear();
+      throw;
+    } catch (MixedStreamEventException) {
+      // #1546: the store refused the write for mixing ephemeral and Sourced events on one stream. It rolled back
+      // and the caller has the refusal; the same write is refused every time, so it is withdrawn rather than
+      // offered to a later flush (which it would fail too) or to the disposal safety net.
       _queues.Clear();
       throw;
     }

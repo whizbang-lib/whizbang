@@ -1,4 +1,4 @@
--- Migration: 227_ReceivedStreamsKeepTheProducersOrder.sql
+-- Migration: 230_ReceivedStreamsKeepTheProducersOrder.sql
 -- Date: 2026-10-21
 -- Description: A receiver stores one source stream's events in the producer's order, however many claims carry
 --              them and whichever of those claims commits first (#1607).
@@ -27,14 +27,18 @@
 --              bounded by the batch (the rows received no later than the batch's newest row, sorting before its last
 --              one). No index is added: the index count of wh_inbox_state is a gated design property.
 --
---              Number 227: 225 is the direct append's digest fold and 226 is taken by the partition manager.
+--              The mixed-stream refusal 228 added before the copy is kept as it is: it runs over every row the pass
+--              leases, before any row is held back, so a row that waits has already passed it and is not refused
+--              again when the next claim stores it unless its stream's kind has changed meanwhile.
 --
--- Dependencies: 158 and 162 (wh_inbox_state.chain_emitted_at), 216 (last word of _emit_event_store_chain_for_inbox),
+--              Number 230: 223 to 229 are taken on develop.
+--
+-- Dependencies: 158 and 162 (wh_inbox_state.chain_emitted_at), 228 (last word of _emit_event_store_chain_for_inbox),
 --               162 (last word of fetch_inbox_batch)
 -- Objects: _emit_event_store_chain_for_inbox, fetch_inbox_batch
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
--- _emit_event_store_chain_for_inbox: last word 216, with a row waiting behind its stream's unheld head.
+-- _emit_event_store_chain_for_inbox: last word 228, with a row waiting behind its stream's unheld head.
 -- <docs>fundamentals/events/event-store</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceivedStreamOrderSqlTests.cs:TwoClaimsOfOneStream_TheHeadsClaimCommitsLast_VersionsFollowTheProducerOrderAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ReceivedStreamOrderSqlTests.cs:TwoInstancesShareAStream_TheTailWaitsForThePeersHead_ThenFollowsItAsync</tests>
@@ -56,6 +60,11 @@ DECLARE
   c_collective_sink CONSTANT TEXT := '__collective__';
   c_flag_collective CONSTANT INTEGER := 1;
   c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
+  -- 228 (#1546): the rows this pass would copy, for the refusal before the copy.
+  v_candidate_ids UUID[];
+  v_candidate_streams UUID[];
+  v_candidate_flags INTEGER[];
+  v_candidate_types TEXT[];
 BEGIN
   -- Migration 087: resolve the LOCAL service id once. store_inbox_messages (062) COALESCEs a
   -- missing envelope SourceServiceId to the local id, so a wh_inbox row attributed to SELF (or
@@ -91,6 +100,30 @@ BEGIN
       )
     ORDER BY ist.stream_id
   ) AS streams_to_lock;
+
+  -- 228 (#1546): a received event that would make its stream hold both ephemeral and Sourced events is refused
+  -- before the copy. Nobody awaits a claim, so every refusal here is dead-lettered: recorded in wh_dead_letters and
+  -- its lease row completed in place, so the copy below no longer sees it and the claim never offers it again. The
+  -- message row is not touched here: this runs inside claim_work after the stream ledger, and wh_inbox comes first
+  -- in the canonical lock order. The rows are the ones the copy reads, by the same predicate, under the locks taken
+  -- above.
+  SELECT array_agg(ist.message_id), array_agg(ist.stream_id), array_agg(i.flags), array_agg(i.message_type)
+    INTO v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types
+  FROM __SCHEMA__.wh_inbox_state ist
+  JOIN __SCHEMA__.wh_inbox i ON i.message_id = ist.message_id
+  WHERE ist.instance_id = p_instance_id
+    AND ist.lease_expiry > p_now
+    AND ist.processed_at IS NULL
+    AND ist.is_event = true
+    AND ist.stream_id IS NOT NULL
+    AND ist.chain_emitted_at IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
+    );
+  IF v_candidate_ids IS NOT NULL THEN
+    PERFORM __SCHEMA__._wh_refuse_mixed_stream_inbox_events(
+      v_candidate_ids, v_candidate_streams, v_candidate_flags, v_candidate_types, p_instance_id, p_now);
+  END IF;
 
   -- Auto-create event_store rows for inbox rows owned by this instance that:
   --   - are events (is_event = true)
@@ -128,7 +161,7 @@ BEGIN
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = ist.message_id
       )
   ),
-  -- 227 (#1607): a received stream is stored in the producer's order, however many claims carry it. A claim
+  -- 230 (#1607): a received stream is stored in the producer's order, however many claims carry it. A claim
   -- numbers the rows it holds after the stream's tail, so a claim that holds a stream's later events and reaches
   -- this pass first would number them ahead of the head another claim leased earlier and has not stored yet.
   -- The head is visible here as a pending event of the stream that this pass does not hold: not yet in the event
@@ -453,7 +486,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 227: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607).';
+  'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 228: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546). 230: a row waits behind an earlier pending row of its stream that this pass does not hold, so a received stream is stored in the producer''s order (#1607).';
 
 -- fetch_inbox_batch: last word 162, with events withheld until they are stored.
 -- Exactly one overload per framework function: this name is defined at more than one
@@ -531,7 +564,7 @@ BEGIN
       AND ist.instance_id = p_instance_id
       AND ist.lease_expiry > NOW()
       AND ist.processed_at IS NULL  -- inbox uses processed_at as both production-marker and debug-kept-marker
-      -- 227 (#1607): an event is dispatched once it is stored. The emit chain stores a leased event in the claim
+      -- 230 (#1607): an event is dispatched once it is stored. The emit chain stores a leased event in the claim
       -- that leased it, unless the event waits behind its stream's head; such a row stays leased and unstored,
       -- and completing it would delete it before it ever reached the event store.
       AND (ist.chain_emitted_at IS NOT NULL OR ist.is_event = false OR ist.stream_id IS NULL)
