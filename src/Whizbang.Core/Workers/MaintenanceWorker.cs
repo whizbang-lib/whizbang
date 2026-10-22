@@ -1268,4 +1268,7 @@ public sealed class MaintenanceWorkerOptions {
   /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
   public MaintenanceRetentionOptions Retention { get; set; } = new();
+
+  /// <summary>Stub (RED).</summary>
+  public MaintenancePartitioningOptions Partitioning { get; set; } = new();
 }

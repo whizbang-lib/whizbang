@@ -104,6 +104,11 @@ public static class RetentionSettingsBridge {
     return settings;
   }
 
+  /// <summary>Stub (RED).</summary>
+  public static IReadOnlyList<RetentionSetting> SettingsFor(
+      bool debugMode, MaintenanceRetentionOptions retention, EphemeralOptions ephemeral, MaintenancePartitioningOptions partitioning) =>
+    throw new NotImplementedException();
+
   /// <summary>The <c>debug_mode</c> setting for a debug-retention option, in both directions.</summary>
   /// <param name="debugMode">Whether completed rows are retained.</param>
   /// <returns>The setting to publish.</returns>
