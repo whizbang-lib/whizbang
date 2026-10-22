@@ -35,6 +35,9 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
   public LifecyclePhase Phase => _phase;
 
   /// <inheritdoc />
+  public LifecyclePhase AnnouncedPhase => _phase;
+
+  /// <inheritdoc />
   public async ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
     try {
       await _coordinator.TransitionAsync(phase, cancellationToken).ConfigureAwait(false);

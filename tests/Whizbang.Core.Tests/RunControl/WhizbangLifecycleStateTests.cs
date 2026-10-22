@@ -55,6 +55,67 @@ public class WhizbangLifecycleStateTests {
   }
 
   [Test]
+  public async Task AnnouncedPhase_BeforeAnyTransition_IsStartingAsync() {
+    var (state, _) = _build();
+
+    await Assert.That(state.AnnouncedPhase).IsEqualTo(LifecyclePhase.Starting);
+  }
+
+  [Test]
+  public async Task AnnouncedPhase_DuringATransition_IsThePhaseBeingEnteredAsync() {
+    // #1638: what the instance's row should record. The settled phase changes only once every participant has acked,
+    // so a writer reading it while the instance-state participant records the transition writes the phase before it.
+    WhizbangLifecycleState? state = null;
+    LifecyclePhase? announcedDuring = null;
+    LifecyclePhase? settledDuring = null;
+    var participant = new FakeParticipant("instance-state", _ => {
+      announcedDuring = state!.AnnouncedPhase;
+      settledDuring = state!.Phase;
+      return default;
+    });
+    var options = new WhizbangLifecycleOptions();
+    state = new WhizbangLifecycleState(new WhizbangLifecycleCoordinator([participant], options), options);
+
+    await state.AdvanceToAsync(LifecyclePhase.AcceptingCommands, CancellationToken.None);
+
+    await Assert.That(announcedDuring).IsEqualTo(LifecyclePhase.AcceptingCommands);
+    await Assert.That(settledDuring).IsEqualTo(LifecyclePhase.Starting);
+    await Assert.That(state.AnnouncedPhase).IsEqualTo(LifecyclePhase.AcceptingCommands);
+  }
+
+  [Test]
+  public async Task AnnouncedPhase_OnTheFaultPath_FollowsThePhaseAsync() {
+    var time = new FakeTimeProvider();
+    var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };
+    var participant = new FakeParticipant("workers", phase =>
+      phase == LifecyclePhase.Running ? throw new InvalidOperationException("boom") : default);
+    var state = new WhizbangLifecycleState(new WhizbangLifecycleCoordinator([participant], options, time), options, time);
+
+    var advance = state.AdvanceToAsync(LifecyclePhase.Running, CancellationToken.None).AsTask();
+    await _until(() => state.Phase == LifecyclePhase.Faulted);
+    var whileFaulted = state.AnnouncedPhase;
+    time.Advance(TimeSpan.FromSeconds(6));
+    await advance;
+
+    await Assert.That(whileFaulted).IsEqualTo(LifecyclePhase.Faulted)
+      .Because("a transition that failed is not what the row should record; the fault is");
+    await Assert.That(state.AnnouncedPhase).IsEqualTo(LifecyclePhase.Halted);
+  }
+
+  [Test]
+  public async Task AnnouncedPhase_OfAStateThatDoesNotTrackIt_IsItsPhaseAsync() {
+    IWhizbangLifecycleState state = new SettledOnly(LifecyclePhase.Running);
+
+    await Assert.That(state.AnnouncedPhase).IsEqualTo(LifecyclePhase.Running);
+  }
+
+  private sealed class SettledOnly(LifecyclePhase phase) : IWhizbangLifecycleState {
+    public LifecyclePhase Phase => phase;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => default;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => default;
+  }
+
+  [Test]
   public async Task AdvanceTo_ParticipantThrows_FaultsThenHaltsAfterRecordWindowAsync() {
     var time = new FakeTimeProvider();
     var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };
