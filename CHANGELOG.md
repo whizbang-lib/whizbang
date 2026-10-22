@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never removes a signal some pod has not delivered.
 
 #### Audit
+- **Security system events are stored, each kind behind its own switch (#1599).** `SystemEventOptions` gains
+  `AccessDeniedEnabled` and `PermissionChangedEnabled` (default `true`) and `AccessGrantedEnabled` and
+  `ScopeContextEstablishedEnabled` (default `false`), bound from `Whizbang:SystemEvents:*` and honored by
+  `IsEnabled<T>()`. `SystemEventEmitter` therefore stores denials and permission changes on `$wb-system` by default;
+  before, every security event was dropped before the append. Grants and scope establishments happen on every read or
+  request and stay opt-in.
+
 - **Command audit records the length of a command's id lists, not the lists (#1525).** A command implementing the new
   `IBoundedCommandAudit` names its id-list properties in `ListsAuditedAsLengths()`, and `CommandAudited.CommandBody`
   keeps each one's length (a JSON number) in place of the list; null lists stay null and every other property is kept.
@@ -137,6 +144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers are configured, so offload is opt-in by config presence with zero per-service code.
 
 #### Work coordination, perspectives & sagas
+- **A saga can end in one commit or rollback signal (#1613).** A `[Saga]` marked `[SignalsOutcome]` publishes exactly
+  one `SagaCommittedEvent` or `SagaRolledBackEvent` per run on its own stream, whichever path ends it: `Completed`
+  commits; `Failed`, `Abandoned` and (by default) `CompletedWithFailures` roll back, the last overridable with
+  `OnCompletedWithFailures = SagaOutcome.Commit`. `BaseSagaService.RollbackSagaAsync(ctx, reason, ct)` rolls a run back
+  explicitly (a cancel), and a completion already in flight then cannot commit it. A failed signal is retried by the
+  next watchdog tick. `BaseSagaModel.Outcome` and `SagaApplyHelper.TrackOutcome` record it on the projection. The
+  framework signals and does not compensate; see the stage-then-apply guidance in the docs.
 - **A large rebuild selection splits into bounded commands (#1525).** `RebuildPerspectiveCommand.SplitByStreams(max)`
   returns commands naming at most `max` streams each (default `DEFAULT_STREAMS_PER_COMMAND`, 500, the stream
   redelivery bound), in order and without duplicates, each with `RequestId = ChunkRequestId(requestId, chunkIndex)`, a
@@ -259,6 +273,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **No trace store is registered by default, and the in-memory store is bounded (#1601). Behavior change.**
+  `AddWhizbang` no longer registers `InMemoryTraceStore` as `ITraceStore`; it stored every dispatched envelope for
+  the life of the process and nothing in the library read it. With no store registered the dispatcher does no trace
+  work. A host opts in with `services.AddWhizbangInMemoryTraceStore()` (or `(capacity)`), which leaves exactly one
+  `ITraceStore` registration. `InMemoryTraceStore` now keeps the most recent `Capacity` envelopes (default
+  `DEFAULT_CAPACITY`, 10,000), evicting the oldest first, and no query returns an evicted envelope. **Upgrade:** a
+  host that resolves `ITraceStore` registers one explicitly.
 - **Audit records from the system-event emitter are written on the tenant's audit ledger (#1555). Behavior change.**
   `SystemEventEmitter.EmitEventAuditedAsync`, `EmitCommandAuditedAsync` (used by the command-audit pipeline behavior)
   and an `EventAudited` or `CommandAudited` given to `EmitAsync` now append to `AuditLedger.StreamFor(tenant)`, the
@@ -447,6 +468,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **Embedded migrations no longer push consumer builds toward CS8103 (#1622).** The EF Core generator embedded the
+  text of every migration in each assembly with a generated DbContext as ordinary string literals, which share one
+  user-string heap capped at 16,777,215 bytes, so every migration added moved every consumer closer to failing to
+  build with CS8103 and nothing warned first. The migration and bootstrap lists are now emitted as UTF-8 literals,
+  which the compiler places in the data section, and decoded once at run time to exactly the text they carried
+  before, so applied migrations keep their content hashes. Consumers need no change and no compiler flag.
+- **A direct event-store append is folded into the stream digest (#1600).** Events stored with
+  `IEventStore.AppendAsync` (both PostgreSQL drivers, through `wh_append_event`) were never folded into
+  `wh_stream_digests`, while the emit chain folds every event it stores and the full recompute the integrity sweep
+  trusts counts both. A stream written by both paths, such as `$wb-system`, therefore had a table digest that missed
+  some of its events, and closing it subtracted events that had never been added. `wh_append_event` (migration 225)
+  now folds the event in the same call and under the same stream lock, with the emit chain's bucket and rules:
+  ephemeral, at-most-once and digest-exempt types (the audit records) are left out. The integrity audit's
+  verification sweep (`VerifyDigestTableAsync`) reported every such stream as drift and healed it; it heals rows
+  appended before the migration once more and then finds nothing.
 - **Concurrent appends to one stream no longer fail or retry (#1555).** `IEventStore.AppendAsync` on both PostgreSQL
   drivers read the stream's last version and inserted the next in separate round trips, so two writers on one
   stream collided on its unique version: the EF Core store threw `Concurrent modification detected` and the Dapper
@@ -461,6 +497,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now go through `SystemEventFireAndForget.Emit`, which never blocks or faults the caller and, on failure, logs a
   warning naming the event type, tenant and stream and increments `whizbang.system_events.emit_failures`
   (tag `event_type`) on the `Whizbang.EventCategories` meter.
+- **The default outbox publisher ignored `ITransportReadinessCheck` (#1558).** `OutboxDrainWorker` sent to a transport
+  that reported not ready, and each failure then counted as an attempt. It now asks the publish strategy before each
+  pass. While the transport is not ready it publishes nothing, renews the leases of every row it holds on the offered
+  streams (by `LeaseRenewalWorkerOptions.LeaseSeconds`) and reports no failure, so no attempt is charged; the claim
+  offers the streams again and they publish once the transport is ready. The new `OnOutboxPublishHeld` event fires
+  after each held pass with the streams and the rows kept.
+
+- **`[PopulateTimestamp(TimestampKind.QueuedAt)]` was never stamped (#1557).** Nothing called the QueuedAt populator
+  after the publisher that once did was removed, so a property marked this way stayed null. The dispatcher now stamps
+  it as it writes a message's outbox copy (send, publish, their batch forms, a cascade and a deferred publish), and the
+  coalesce worker stamps the composites it writes, both from the registered `TimeProvider`. The stored copy, and so
+  the delivered one, carries the time. The message a local handler runs before the copy is written is not stamped.
 - **Row retention on the Dapper driver enrolled nothing, because that driver never wrote the perspective registry
   (#1548).** The driver-neutral schema generator now emits each assembly's perspective registry payload and registers
   it at load, and the Dapper driver reconciles it into `wh_perspective_registry` at startup after building the

@@ -223,7 +223,8 @@ public class PrePublishGateForensicPreservationTests {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     // The drop path stores NOTHING, so there is no MoveAsync to await on — and IsIdle starts
     // true, so polling it would assert before the worker ever ran (a vacuous pass that survived
@@ -302,7 +303,8 @@ public class PrePublishGateForensicPreservationTests {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,  // row.Attempts = 11 > 10 → gate fires
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -367,7 +369,8 @@ public class PrePublishGateForensicPreservationTests {
         Enabled = true,
         MaxPerStream = 100,
         MaxOutboxAttempts = 10,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

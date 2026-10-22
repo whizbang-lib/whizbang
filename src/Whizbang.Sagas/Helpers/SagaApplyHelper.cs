@@ -152,6 +152,26 @@ public static class SagaApplyHelper {
   }
 
   /// <summary>
+  /// Record the run's commit-or-rollback outcome, from the perspective that applies
+  /// <c>SagaCommittedEvent</c> and <c>SagaRolledBackEvent</c>.
+  /// </summary>
+  /// <remarks>
+  /// Recording it is optional: the framework's one-outcome guarantee is its claim, not this field. It
+  /// is what lets a dashboard show a run as rolled back rather than merely failed, and lets a step
+  /// that reads staged state check whether the run it belongs to was committed.
+  /// </remarks>
+  /// <param name="saga">The saga model the perspective holds.</param>
+  /// <param name="outcome">The outcome the signal carried (<c>ISagaOutcomeEvent.Outcome</c>).</param>
+  /// <param name="timestamp">When it was signaled, from the event.</param>
+  /// <returns>Whether this call was the one that recorded it.</returns>
+  /// <docs>fundamentals/sagas/commit-rollback#recording-it-on-the-projection</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaOutcomeTests.cs:TheProjectionRecordsTheFirstOutcomeAsync</tests>
+  public static bool TrackOutcome(BaseSagaModel saga, SagaOutcome outcome, DateTimeOffset timestamp) {
+    ArgumentNullException.ThrowIfNull(saga);
+    return saga.TryRecordOutcome(outcome, timestamp);
+  }
+
+  /// <summary>
   /// Find-or-create item, mark <see cref="SagaItemState.Failed"/>, bump
   /// <see cref="BaseSagaModel.FailedItems"/> under
   /// <see cref="SagaItemModel.IsTerminal"/> guard, then call

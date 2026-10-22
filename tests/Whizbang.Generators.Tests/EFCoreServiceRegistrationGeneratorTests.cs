@@ -840,9 +840,9 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use verbatim strings (@"...") for migration SQL in tuples
-    // Pattern: ("migration_name.sql", @"SQL content")
-    await Assert.That(sourceText).Contains(", @\"");
+    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622)
+    // Pattern: ("migration_name.sql", global::System.Text.Encoding.UTF8.GetString(@"SQL content"u8))
+    await Assert.That(sourceText).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
 
     // Should call ExecuteSqlRawAsync with migration SQL (variable names may vary: sql, transformedSql, etc.)
     await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(");

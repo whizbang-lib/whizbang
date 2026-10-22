@@ -28,3 +28,16 @@ public partial class GeneratorTestCustomBaseSaga;
 [ContinuesWith("GeneratorTestFollowOn")]
 [ContinuesWith("GeneratorTestCleanup", SagaContinuationTriggers.Failed)]
 public partial class GeneratorTestChainedSaga;
+
+/// <summary>
+/// A saga whose steps must not outlive a failed run. No generated service, because a generated one
+/// brings a watchdog receptor every test host in this project would then have to register it for.
+/// </summary>
+[Saga("GeneratorTestSignalsOutcome", GenerateService = false)]
+[SignalsOutcome]
+public partial class GeneratorTestSignalsOutcomeSaga;
+
+/// <summary>A saga that keeps a partly failed run, declared without a generated service.</summary>
+[Saga("GeneratorTestTolerantOutcome", GenerateService = false)]
+[SignalsOutcome(OnCompletedWithFailures = SagaOutcome.Commit)]
+public partial class GeneratorTestTolerantOutcomeSaga;

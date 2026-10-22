@@ -226,7 +226,8 @@ public class PriorityOnTheWireEndToEndTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
     await drain.StartAsync(cts.Token);
     await drainChannel.WriteAsync(streamId);
     var wire = await wireCaptured.Task.WaitAsync(TimeSpan.FromSeconds(10));

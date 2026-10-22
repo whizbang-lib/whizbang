@@ -2639,13 +2639,28 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates code for migration tuples to embed in generated file.
-  /// SQL files physically live in <c>Whizbang.Data.Postgres/Migrations/</c> and are linked into
-  /// this generator's embedded resources at build time via <code>&lt;EmbeddedResource Include=...
-  /// Link="Templates\Migrations\..."/&gt;</code> in the .csproj. There is exactly ONE physical
-  /// source of truth for the SQL files — no manual sync required.
+  /// An escaped migration text as an expression that decodes it from a UTF-8 literal.
   /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+  /// <remarks>
+  /// <para>
+  /// Every ordinary string literal in an assembly shares one user-string heap capped at 16,777,215
+  /// bytes, and the build fails with CS8103 past it. The migration set is embedded in every
+  /// assembly with a generated DbContext and grows with every release, so as ordinary literals it
+  /// moved every consumer toward that cap with nothing to warn before the cliff. A UTF-8 literal is
+  /// compiled into the data section, which has no such cap, and identical literals share one copy.
+  /// </para>
+  /// <para>
+  /// The decoded string is the one the verbatim literal used to carry: verbatim UTF-8 literals take
+  /// the same quote doubling, and the brace doubling and schema token are part of the value, so the
+  /// runtime transform sees exactly what it saw before. The template caches each decoded list, so it
+  /// is decoded once per process, as the interned literals were loaded once.
+  /// </para>
+  /// </remarks>
+  /// <param name="escapedForVerbatim">The text, already escaped for a verbatim literal.</param>
+  /// <tests>tests/Whizbang.Generators.Tests/MigrationUtf8LiteralGenerationTests.cs</tests>
+  private static string _decodedUtf8Literal(string escapedForVerbatim) =>
+    $"global::System.Text.Encoding.UTF8.GetString(@\"{escapedForVerbatim}\"u8)";
+
   /// <summary>
   /// Emits the marked bootstrap regions, in migration order.
   /// </summary>
@@ -2689,7 +2704,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           .Replace("\"", "\"\"")
           .Replace("{", "{{")
           .Replace("}", "}}");
-      entries.Add($"      (\"{fileName}\", @\"{escaped}\")");
+      entries.Add($"      (\"{fileName}\", {_decodedUtf8Literal(escaped)})");
     }
 
     // Never empty: the list is this assembly's own embedded migrations, fixed at build time, and
@@ -2700,6 +2715,16 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return string.Join(",\n", entries);
   }
 
+  /// <summary>
+  /// Generates code for migration tuples to embed in generated file.
+  /// SQL files physically live in <c>Whizbang.Data.Postgres/Migrations/</c> and are linked into
+  /// this generator's embedded resources at build time via <code>&lt;EmbeddedResource Include=...
+  /// Link="Templates\Migrations\..."/&gt;</code> in the .csproj. There is exactly ONE physical
+  /// source of truth for the SQL files, so no manual sync is required. Each text is emitted as a
+  /// UTF-8 literal (see <see cref="_decodedUtf8Literal"/>).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MigrationUtf8LiteralGenerationTests.cs</tests>
   private static string _generateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 
@@ -2736,8 +2761,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       using var reader = new System.IO.StreamReader(stream);
       var content = reader.ReadToEnd();
 
-      // Escape the SQL content for C# verbatim string literal (@"...")
-      // In verbatim strings, only quotes need escaping (by doubling them)
+      // Escape the SQL content for a C# verbatim UTF-8 literal (@"..."u8)
+      // In verbatim literals, only quotes need escaping (by doubling them)
       // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
       // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
       //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
@@ -2747,7 +2772,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
           .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
-      sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
+      sb.Append($"      (\"{fileName}\", {_decodedUtf8Literal(escapedContent)})");
 
       if (i < migrationResources.Length - 1) {
         sb.AppendLine(",");

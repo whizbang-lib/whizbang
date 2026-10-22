@@ -49,7 +49,7 @@ builder.Services.AddRabbitMQHealthChecks();
 #endif
 
 // Add trace store for observability
-builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+builder.Services.AddWhizbangInMemoryTraceStore();
 
 // Register service instance provider (MUST be before workers that depend on it)
 builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();

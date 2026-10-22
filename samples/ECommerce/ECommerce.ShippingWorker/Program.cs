@@ -47,7 +47,7 @@ builder.Services.AddRabbitMQHealthChecks();
 #endif
 
 // Add trace store for observability
-builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+builder.Services.AddWhizbangInMemoryTraceStore();
 
 // Register EF Core DbContext for Inbox/Outbox/EventStore
 builder.Services.AddDbContext<ShippingDbContext>(options =>

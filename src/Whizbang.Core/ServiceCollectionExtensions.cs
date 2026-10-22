@@ -340,7 +340,8 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private static void _registerCoreServices(IServiceCollection services) {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
-    services.TryAddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
+    // No ITraceStore by default (#1601): a host opts in with AddWhizbangInMemoryTraceStore or its own store,
+    // and with none the dispatcher does no trace work
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();

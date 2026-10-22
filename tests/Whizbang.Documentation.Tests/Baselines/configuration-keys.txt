@@ -293,6 +293,8 @@ Whizbang:StreamRateLimiter:CooldownDuration
 Whizbang:StreamRateLimiter:MaxEventsPerWindow
 Whizbang:StreamRateLimiter:StaleEntryTimeout
 Whizbang:StreamRateLimiter:WindowDuration
+Whizbang:SystemEvents:AccessDeniedEnabled
+Whizbang:SystemEvents:AccessGrantedEnabled
 Whizbang:SystemEvents:AuditBodyDefault
 Whizbang:SystemEvents:AuditMode
 Whizbang:SystemEvents:AuditPriority
@@ -300,6 +302,8 @@ Whizbang:SystemEvents:AuditShipMaxBatchCount
 Whizbang:SystemEvents:AuditShipMaxDelaySeconds
 Whizbang:SystemEvents:AuditShipSlideSeconds
 Whizbang:SystemEvents:LocalOnly
+Whizbang:SystemEvents:PermissionChangedEnabled
+Whizbang:SystemEvents:ScopeContextEstablishedEnabled
 Whizbang:TableStatistics:EventTypeSampleInterval
 Whizbang:TableStatistics:EventTypeSamplePercent
 Whizbang:TableStatistics:MaxEventTypes

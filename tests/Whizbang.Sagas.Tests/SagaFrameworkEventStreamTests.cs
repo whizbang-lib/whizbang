@@ -79,6 +79,36 @@ public class SagaFrameworkEventStreamTests {
   }
 
   /// <summary>
+  /// The outcome signal is stored on the run's own stream, so a perspective can record it on the
+  /// saga's row and a compensator can read the run's history beside it.
+  /// </summary>
+  [Test]
+  public async Task OutcomeSignals_PublishedThroughTheDispatcher_AreStoredOnTheSagasStreamAsync() {
+    await using var host = _host();
+    var emitter = new DispatcherSagaEventEmitter(host.Dispatcher);
+
+    await emitter.PublishAsync(new SagaCommittedEvent { StreamId = _sagaId, SagaName = ProbeSaga.SagaName, EntityId = _entityId });
+    await emitter.PublishAsync(new SagaRolledBackEvent { StreamId = _sagaId, SagaName = ProbeSaga.SagaName, EntityId = _entityId });
+
+    await Assert.That(host.Outbox.Rows.Count).IsEqualTo(2);
+    await Assert.That(host.Outbox.Rows.All(r => r.Message.StreamId == _sagaId)).IsTrue()
+      .Because("a signal on a stream of its own could not be applied to the saga's row");
+  }
+
+  /// <summary>Both outcome signals resolve and take their stream through the framework extractor.</summary>
+  [Test]
+  public async Task OutcomeSignals_ResolveAndSetTheirStreamAsync() {
+    var extractor = new SagaFrameworkEventStreamIds();
+    var committed = new SagaCommittedEvent();
+    var rolledBack = new SagaRolledBackEvent();
+
+    await Assert.That(extractor.SetStreamId(committed, _sagaId)).IsTrue();
+    await Assert.That(extractor.SetStreamId(rolledBack, _sagaId)).IsTrue();
+    await Assert.That(extractor.ExtractStreamId(committed, committed.GetType())).IsEqualTo(_sagaId);
+    await Assert.That(extractor.ExtractStreamId(rolledBack, rolledBack.GetType())).IsEqualTo(_sagaId);
+  }
+
+  /// <summary>
   /// The extractor answers for the three framework events and every saga stream event, and for nothing
   /// else, so it cannot claim a consumer's own event from the extractor generated for it.
   /// </summary>
