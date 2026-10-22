@@ -122,10 +122,9 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       className: typeSymbol.Name,
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,
-      options: new SagaEmitOptions(includeHooks, generateService, isPartial),
+      options: new SagaEmitOptions(includeHooks, generateService, isPartial, _readOutcomeDeclaration(typeSymbol)),
       location: classDecl.Identifier.GetLocation(),
-      continuations: _readContinuations(typeSymbol),
-      onCompletedWithFailures: _readOutcomeDeclaration(typeSymbol));
+      continuations: _readContinuations(typeSymbol));
   }
 
   private static void _emit(SourceProductionContext spc, SagaInfo info) {
@@ -523,10 +522,12 @@ public sealed class SagaGenerator : IIncrementalGenerator {
   /// because a constructor that keeps growing one flag at a time is how a parameter list reaches the
   /// point where call sites stop being readable.
   /// </remarks>
-  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial) {
+  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial, int? onCompletedWithFailures) {
     public bool IncludeHooks { get; } = includeHooks;
     public bool GenerateService { get; } = generateService;
     public bool IsPartial { get; } = isPartial;
+    /// <summary>The outcome a partly failed run gets, or null when the saga does not signal an outcome.</summary>
+    public int? OnCompletedWithFailures { get; } = onCompletedWithFailures;
   }
 
   private sealed class SagaInfo(
@@ -536,11 +537,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       string eventBaseFullName,
       SagaEmitOptions options,
       Location location,
-      ImmutableArray<ContinuationDeclaration> continuations,
-      int? onCompletedWithFailures) {
+      ImmutableArray<ContinuationDeclaration> continuations) {
     public ImmutableArray<ContinuationDeclaration> Continuations { get; } = continuations;
-    /// <summary>The outcome a partly failed run gets, or null when the saga does not signal an outcome.</summary>
-    public int? OnCompletedWithFailures { get; } = onCompletedWithFailures;
     public string? Namespace { get; } = @namespace;
     public string ClassName { get; } = className;
     public string SagaName { get; } = sagaName;
@@ -548,6 +546,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     public bool IncludeHooks => options.IncludeHooks;
     public bool GenerateService => options.GenerateService;
     public bool IsPartial => options.IsPartial;
+    public int? OnCompletedWithFailures => options.OnCompletedWithFailures;
     public Location Location { get; } = location;
   }
 }

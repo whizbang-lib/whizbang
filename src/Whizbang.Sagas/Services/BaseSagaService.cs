@@ -1197,12 +1197,15 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   }
 
   /// <summary>A short account of a final status, for a signal that no caller gave a reason for.</summary>
+  /// <remarks>
+  /// Only a status <see cref="SagaOutcomePolicy.OutcomeFor"/> maps to an outcome reaches here, so the
+  /// last arm is <see cref="SagaStatus.Abandoned"/>.
+  /// </remarks>
   private static string _reasonFor(SagaStatus finalStatus) => finalStatus switch {
     SagaStatus.Completed => "Every item completed.",
     SagaStatus.CompletedWithFailures => "The run reached the end with some items failed.",
     SagaStatus.Failed => "The run failed before every item finished.",
-    SagaStatus.Abandoned => "The watchdog abandoned the run: it stopped making progress.",
-    _ => $"The run ended {finalStatus}.",
+    _ => "The watchdog abandoned the run: it stopped making progress.",
   };
 
   /// <summary>
