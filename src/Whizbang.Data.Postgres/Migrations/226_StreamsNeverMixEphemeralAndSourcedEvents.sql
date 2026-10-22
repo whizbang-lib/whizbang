@@ -3,12 +3,15 @@
 -- Description: A stream never holds both ephemeral and Sourced events (WHIZ133, #1546).
 --
 --              One ephemeral event marks its whole stream state-based, so every rebuild and rewind then skips the
---              stream's Sourced history without a word. The step that copies outbox and inbox events into the event
---              store now refuses the event that would mix the two kinds, in either order, with no opt-in. Only the
---              ephemeral flag (flags & 8) is compared: a compacted stream (flags & 16) is a Sourced stream with a
---              carry-forward head and keeps receiving Sourced events.
+--              stream's Sourced history without a word. Every path that stores an event now refuses the event that
+--              would mix the two kinds, in either order, with no opt-in: the copy of outbox and inbox events into
+--              the event store, and the direct append (wh_append_event, IEventStore.AppendAsync on both drivers).
+--              The kind is the ephemeral flag (flags & 8). A compaction origin (flags & 16) is neither kind: it is
+--              never refused and never decides a stream's kind, so a compacted stream keeps taking the kind of the
+--              events around its origin (StreamCompactor appends one at the head of an ephemeral stream).
 --
---              The kind a stream already holds is read from its newest stored event, through the unique
+--              The kind a stream already holds is read from its newest stored event that is not a compaction
+--              origin, through the unique
 --              (stream_id, version) index the version assignment already reads: one more index lookup per stream
 --              per write, never a scan. A stream with nothing stored yet takes the kind of its first event in the
 --              write (version order is message id order), so a first write that mixes both kinds keeps the first
@@ -17,8 +20,8 @@
 --
 --              What "refused" means depends on who is waiting for the write:
 --                a write its caller awaits   an outbox element carrying RaiseOnMixedStream (set by the immediate and
---                                            scoped strategies' flush) raises SQLSTATE WH133. The whole write rolls
---                                            back and the caller gets the error.
+--                                            scoped strategies' flush), and every direct append, raises SQLSTATE
+--                                            WH133. The whole write rolls back and the caller gets the error.
 --                every other write           the refused row alone is dead-lettered with reason 22
 --                                            (MessageFailureReason.MixedStreamRefused) and error text starting
 --                                            WHIZ133, and the rest of the write is stored. The batch flushes, the
@@ -34,13 +37,17 @@
 --              216_AuditRecordPositionAndDigestExemption.sql, with the refusal added before the copy. Nothing else
 --              in either function changes. _emit_event_store_chain is unchanged: store_outbox_messages refuses before
 --              it calls the copy, and commit_handler_result's second call finds no outbox row for a refused event.
+--              wh_append_event is copied forward from its last word, 225_DirectAppendFoldsTheStreamDigest.sql, with
+--              a trailing p_flags parameter (the event's kind, now stored on the row as the other paths store it)
+--              and the refusal before the insert. The direct append stored every event with flags 0 before this,
+--              so a directly appended ephemeral event, or compaction origin, read as Sourced.
 --              Number 226: 223 to 225 are taken on develop.
 --
--- Dependencies: 053 (compute_dead_letter_fingerprint), 162 (move_to_dead_letters, wh_inbox_state), 216 (last word of store_outbox_messages and
---               _emit_event_store_chain_for_inbox)
+-- Dependencies: 053 (compute_dead_letter_fingerprint), 162 (move_to_dead_letters, wh_inbox_state), 216 (last word of
+--               store_outbox_messages and _emit_event_store_chain_for_inbox), 225 (last word of wh_append_event)
 -- Objects: _wh_mixed_stream_refusals, _wh_refuse_mixed_stream_outbox_events, _wh_inbox_dead_letter_snapshot,
---          _wh_refuse_mixed_stream_inbox_events,
---          store_outbox_messages, _emit_event_store_chain_for_inbox
+--          _wh_refuse_mixed_stream_inbox_events, store_outbox_messages, _emit_event_store_chain_for_inbox,
+--          wh_append_event
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
 
 -- ===========================================================================================
@@ -69,6 +76,7 @@
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_FirstWriteMixesBothKinds_KeepsTheFirstKindAndDeadLettersTheOtherAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_SourcedEventOnACompactedStream_IsStoredAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:InboxChain_FirstClaimMixesBothKinds_KeepsTheFirstKindAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_CompactionOriginOnAnEphemeralStream_IsStored_AndTheStreamStaysEphemeralAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_mixed_stream_refusals(
   p_event_ids UUID[],
   p_stream_ids UUID[],
@@ -81,7 +89,11 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._wh_mixed_stream_refusals(
   refusal_detail JSONB
 ) AS $$
 DECLARE
-  c_flag_ephemeral CONSTANT INTEGER := 8;     -- EventFlags.Ephemeral (1 << 3); Compacted (1 << 4) is not compared
+  c_flag_ephemeral CONSTANT INTEGER := 8;     -- EventFlags.Ephemeral (1 << 3)
+  -- EventFlags.Compacted (1 << 4): a compaction origin is neither kind. It is never refused, and it never decides
+  -- a stream's kind, so the stream it heads keeps the kind of the events around it (StreamCompactor appends one at
+  -- the head of an ephemeral stream, which goes on taking ephemeral events).
+  c_flag_compacted CONSTANT INTEGER := 16;
 BEGIN
   IF p_event_ids IS NULL OR cardinality(p_event_ids) = 0 THEN
     RETURN;
@@ -106,6 +118,7 @@ BEGIN
            __SCHEMA__.normalize_event_type(c.event_type) AS event_type
     FROM unnest(p_event_ids, p_stream_ids, p_flags, p_event_types) AS c(event_id, stream_id, flags, event_type)
     WHERE c.stream_id IS NOT NULL
+      AND (COALESCE(c.flags, 0) & c_flag_compacted) = 0
   ),
   -- Each stream's first event in this write (version order is message id order), one sort over the write.
   opener AS (
@@ -118,12 +131,14 @@ BEGIN
            COALESCE(stored.is_ephemeral, o.is_ephemeral) AS is_ephemeral,
            COALESCE(stored.event_type, o.event_type) AS event_type
     FROM opener o
-    -- The newest stored event, read backward through idx_event_store_stream (stream_id, version): one index
-    -- lookup per stream. A stream with nothing stored takes the kind of its first event in this write.
+    -- The newest stored event that is not a compaction origin, read backward through idx_event_store_stream
+    -- (stream_id, version): one index lookup per stream, and one more row for a stream whose head is an origin.
+    -- A stream with nothing of a kind stored takes the kind of its first event in this write.
     LEFT JOIN LATERAL (
       SELECT (es.flags & c_flag_ephemeral) <> 0 AS is_ephemeral, es.event_type
       FROM __SCHEMA__.wh_event_store es
       WHERE es.stream_id = o.stream_id
+        AND (es.flags & c_flag_compacted) = 0
       ORDER BY es.version DESC
       LIMIT 1
     ) AS stored ON TRUE
@@ -159,7 +174,8 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_mixed_stream_refusals(UUID[], UUID[], INTEGER[], TEXT[]) IS
   'Finds the events that would make a stream hold both ephemeral and Sourced events (WHIZ133, #1546), under the '
-  'event store copy''s per-stream advisory locks, and words each refusal. Locks no work table.';
+  'event store copy''s per-stream advisory locks, and words each refusal. A compaction origin (flags & 16) is '
+  'neither kind. Locks no work table.';
 
 -- <docs>operations/diagnostics/whiz133</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_RefusedEventInABatch_LeavesTheOtherStreamsStoredAsync</tests>
@@ -1040,3 +1056,124 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
   'Copies leased inbox events into the event store, stamps their origin and creates their perspective work (162). 214: the digest fold leaves out at-most-once events (flags & 32). 216: and audit records (#1492). 226: an event that would make its stream hold both ephemeral and Sourced events is dead-lettered instead (WHIZ133, #1546).';
+
+-- ===========================================================================================
+-- wh_append_event: last word 225_DirectAppendFoldsTheStreamDigest.sql, with the event's kind stored and the refusal
+-- before the insert. Nothing else in the function changes. The direct append (IEventStore.AppendAsync, both drivers)
+-- stores past the outbox and the inbox emit chain, so it refuses for itself; its caller awaits it, so it raises. The
+-- new trailing parameter changes the signature, so the old overload is dropped first (exactly one overload per
+-- framework function).
+-- ===========================================================================================
+
+SELECT __SCHEMA__.drop_all_overloads('wh_append_event');
+
+-- <docs>fundamentals/events/event-store#appending-and-concurrency</docs>
+-- <docs>resilience/stream-integrity#direct-appends-digested</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreConcurrentAppendTests.cs:ParallelAppendsToOneStream_AllSucceed_WithVersionsZeroToNMinusOneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreConcurrentAppendTests.cs:ADirectAppend_WaitsForTheEmitChainsStreamLockAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreConcurrentAppendTests.cs:TheFunction_ExistsOnce_AndAReRunOfTheMigrationLeavesItSoAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ParallelAppendsToOneStream_AllSucceedWithVersionsZeroToNMinusOneAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendStreamDigestTests.cs:MixedPathStream_TableDigestEqualsARecomputationOverAllItsEventsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendStreamDigestTests.cs:DirectAppend_FoldsByTenantIntoTheLocalBucketAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendStreamDigestTests.cs:DirectAppend_OfADigestExemptType_IsNotFoldedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendStreamDigestTests.cs:CloseStream_AfterDirectAppends_TableStillMatchesTheRecomputeAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendStreamDigestTests.cs:TheFunction_ExistsOnce_AndAReRunOfTheMigrationStillFoldsAsync</tests>
+-- <docs>operations/diagnostics/whiz133</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_EphemeralEventOnASourcedStream_ThrowsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_EphemeralEvent_IsStoredAsEphemeralAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_CompactionOriginOnAnEphemeralStream_IsStored_AndTheStreamStaysEphemeralAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperMixedStreamGuardTests.cs:AppendAsync_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/WorkTablesAreLockedInOneOrderTests.CallGraph.cs:TheDirectAppend_AndWhatItCalls_LocksNoWorkTableAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.wh_append_event(
+  p_event_id UUID,
+  p_stream_id UUID,
+  p_aggregate_id UUID,
+  p_aggregate_type TEXT,
+  p_event_type TEXT,
+  p_event_data JSONB,
+  p_metadata JSONB,
+  p_scope JSONB,
+  p_created_at TIMESTAMPTZ,
+  -- 226 (#1546): the event's kind bits (EventFlags.Ephemeral, EventFlags.Compacted), stored on the row as the outbox
+  -- and inbox copies store them. Defaulted so a caller from before this migration still resolves.
+  p_flags INTEGER DEFAULT 0
+) RETURNS INTEGER AS $$
+DECLARE
+  v_version INTEGER;
+  v_flags INTEGER;
+  v_refusal RECORD;
+  c_flag_ephemeral CONSTANT INTEGER := 8;     -- EventFlags.Ephemeral (1 << 3), as the emit chain tests it
+  c_flag_at_most_once CONSTANT INTEGER := 32;  -- EventFlags.AtMostOnce (1 << 5), 214
+BEGIN
+  -- The emit chains' key for this stream (214), so a direct append and a chain emit serialize too.
+  PERFORM pg_advisory_xact_lock(hashtext('wh_event_store:' || p_stream_id::text));
+
+  -- 226 (#1546): an event that would make its stream hold both ephemeral and Sourced events is refused, under the
+  -- lock above, before anything is stored. The caller awaits the append, so the refusal is raised (SQLSTATE WH133,
+  -- which both drivers surface as MixedStreamEventException). The check only reads.
+  SELECT r.refusal_text, r.refusal_detail INTO v_refusal
+  FROM __SCHEMA__._wh_mixed_stream_refusals(
+    ARRAY[p_event_id], ARRAY[p_stream_id], ARRAY[COALESCE(p_flags, 0)], ARRAY[p_event_type]) r
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'WH133',
+      MESSAGE = v_refusal.refusal_text,
+      DETAIL = v_refusal.refusal_detail::TEXT,
+      HINT = 'Publish the ephemeral events on their own stream.';
+  END IF;
+
+  -- A separate statement: its snapshot is taken after the lock was granted.
+  INSERT INTO __SCHEMA__.wh_event_store (
+    event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at, flags
+  )
+  SELECT
+    p_event_id,
+    p_stream_id,
+    p_aggregate_id,
+    p_aggregate_type,
+    p_event_type,
+    p_scope,
+    COALESCE((SELECT MAX(es.version) FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = p_stream_id), -1) + 1,
+    p_created_at,
+    COALESCE(p_flags, 0)
+  RETURNING version, flags INTO v_version, v_flags;
+
+  -- The body half of the pointer/body split (077). Constraint-less ON CONFLICT, as the emit chain writes it:
+  -- event_id is the table's only key.
+  INSERT INTO __SCHEMA__.wh_event_body (event_id, event_data, metadata)
+  VALUES (p_event_id, p_event_data, p_metadata)
+  ON CONFLICT DO NOTHING;
+
+  -- 225 (#1600): fold the event into its stream digest bucket, as the emit chain's digest_folds does, still under
+  -- the stream lock taken above. One event, so one row: the chain's bit_xor and COUNT(*) over a single event are
+  -- its two hashes and 1.
+  IF COALESCE(v_flags, 0) & c_flag_ephemeral = 0
+     AND COALESCE(v_flags, 0) & c_flag_at_most_once = 0
+     AND split_part(p_event_type, ',', 1) <> ALL(__DIGEST_EXEMPT_TYPES__) THEN
+    INSERT INTO __SCHEMA__.wh_stream_digests AS d
+      (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
+    VALUES (
+      __EMPTY_UUID__::uuid,  -- NOSONAR S1192: the local-origin sentinel recurs per function; PL/pgSQL has no file-level constants
+      COALESCE(p_scope ->> 't', ''),
+      p_event_type,
+      p_stream_id,
+      hashtextextended(p_event_id::text, 0),
+      hashtextextended(p_event_id::text, 1),
+      1,
+      p_created_at
+    )
+    ON CONFLICT (origin_service_id, scope_tenant, event_type, stream_id) DO UPDATE SET
+      digest_lo = d.digest_lo # EXCLUDED.digest_lo,
+      digest_hi = d.digest_hi # EXCLUDED.digest_hi,
+      event_count = d.event_count + EXCLUDED.event_count,
+      updated_at = EXCLUDED.updated_at;
+  END IF;
+
+  RETURN v_version;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.wh_append_event(UUID, UUID, UUID, TEXT, TEXT, JSONB, JSONB, JSONB, TIMESTAMPTZ, INTEGER) IS
+'Appends one event to a stream for IEventStore.AppendAsync (both drivers) and returns the version it assigned. Takes the per-stream advisory lock the emit chains take (hashtext(''wh_event_store:'' || stream_id)), then inserts at COALESCE(MAX(version), -1) + 1 in a separate statement so the read sees every append committed during the wait (224, #1555). 225: folds the stored event into wh_stream_digests as the emit chain does, unless it is ephemeral, at-most-once or of a digest-exempt type (#1600). 226: stores the event''s kind bits (p_flags) and refuses, raising SQLSTATE WH133, an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, #1546).';

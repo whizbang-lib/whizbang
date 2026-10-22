@@ -35,10 +35,8 @@ public sealed class EFCoreEventStore<TDbContext>(
   TDbContext context,
   JsonSerializerOptions? jsonOptions = null,
   ILogger<EFCoreEventStore<TDbContext>>? logger = null,
-#pragma warning disable CS9113 // RED stub: not read yet
   Whizbang.Core.IEphemeralModeResolver? ephemeralModeResolver = null) : IEventStore
   where TDbContext : DbContext {
-#pragma warning restore CS9113
 
   private const string APPEND_EVENT_FUNCTION = "wh_append_event";
 
@@ -47,6 +45,8 @@ public sealed class EFCoreEventStore<TDbContext>(
   // Null-object default so a drain deserialize failure is ALWAYS logged: DI supplies a real logger in
   // production; the NullLogger fallback only applies to manual construction / a log-free host.
   private readonly ILogger<EFCoreEventStore<TDbContext>> _logger = logger ?? NullLogger<EFCoreEventStore<TDbContext>>.Instance;
+  // #1546: resolves [Ephemeral] declared on a type, so an appended event's kind is the one the dispatch path stamps.
+  private readonly Whizbang.Core.IEphemeralModeResolver? _ephemeralModeResolver = ephemeralModeResolver;
 
   /// <summary>
   /// Body-aware read projection (E1 #13b4-1). Since the body offload (072) an ephemeral event's
@@ -107,6 +107,9 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreConcurrentAppendTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DirectAppendMixedStreamGuardTests.cs:DirectAppend_SourcedEventOnAnEphemeralStream_ThrowsAndStoresNothingAsync</tests>
+  /// <exception cref="MixedStreamEventException">The event would make its stream hold both ephemeral and Sourced
+  /// events (WHIZ133); nothing is stored.</exception>
   public Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -172,7 +175,7 @@ public sealed class EFCoreEventStore<TDbContext>(
       await using var command = _context.Database.GetDbConnection().CreateCommand();
       command.Transaction = _context.Database.CurrentTransaction?.GetDbTransaction();
 #pragma warning disable S2077 // The function name is schema-qualified from the EF model, never from input.
-      command.CommandText = $"SELECT {functionName}(@p_event_id, @p_stream_id, @p_aggregate_id, @p_aggregate_type, @p_event_type, @p_event_data, @p_metadata, @p_scope, @p_created_at)";
+      command.CommandText = $"SELECT {functionName}(@p_event_id, @p_stream_id, @p_aggregate_id, @p_aggregate_type, @p_event_type, @p_event_data, @p_metadata, @p_scope, @p_created_at, @p_flags)";
 #pragma warning restore S2077
       command.Parameters.Add(new NpgsqlParameter("p_event_id", NpgsqlDbType.Uuid) { Value = eventId });
       command.Parameters.Add(new NpgsqlParameter("p_stream_id", NpgsqlDbType.Uuid) { Value = streamId });
@@ -188,7 +191,10 @@ public sealed class EFCoreEventStore<TDbContext>(
       // This store never wrote the scope column; the scope travels in the hops.
       command.Parameters.Add(new NpgsqlParameter("p_scope", NpgsqlDbType.Jsonb) { Value = DBNull.Value });
       command.Parameters.Add(new NpgsqlParameter("p_created_at", NpgsqlDbType.TimestampTz) { Value = DateTime.UtcNow });
-      await command.ExecuteScalarAsync(cancellationToken);
+      // #1546: the event's kind, stored on the row and checked against its stream's (WHIZ133).
+      command.Parameters.Add(new NpgsqlParameter("p_flags", NpgsqlDbType.Integer) { Value = Whizbang.Data.Postgres.DirectAppendKind.Of(envelope.Payload, _ephemeralModeResolver) });
+      // The caller awaits the append, so a refusal reaches it as MixedStreamEventException, with nothing stored.
+      await Whizbang.Data.Postgres.MixedStreamRefusal.RunAsync(() => command.ExecuteScalarAsync(cancellationToken));
     } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation) {
       // The version can no longer collide, so a unique violation is the event id: this event is already stored.
       throw new InvalidOperationException(
