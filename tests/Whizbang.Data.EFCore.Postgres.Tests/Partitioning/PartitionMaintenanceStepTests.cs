@@ -149,9 +149,9 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
   public async Task TheStep_IsNamed_AndRejectsMissingArgumentsAsync() {
     await Assert.That(_step().Name).IsEqualTo("partition-maintenance");
     await Assert.That(() => _step().RunAsync(null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => new PartitionMaintenanceStep(null!, NullLogger<PartitionMaintenanceStep>.Instance, TimeProvider.System))
+    await Assert.That(() => new PartitionMaintenanceStep(null!, NullLogger<PartitionMaintenanceStep>.Instance, new FakeTimeProvider(_now)))
       .ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => new PartitionMaintenanceStep(typeof(WorkCoordinationDbContext), null!, TimeProvider.System))
+    await Assert.That(() => new PartitionMaintenanceStep(typeof(WorkCoordinationDbContext), null!, new FakeTimeProvider(_now)))
       .ThrowsExactly<ArgumentNullException>();
     await Assert.That(() => new PartitionMaintenanceStep(typeof(WorkCoordinationDbContext), NullLogger<PartitionMaintenanceStep>.Instance, null!))
       .ThrowsExactly<ArgumentNullException>();

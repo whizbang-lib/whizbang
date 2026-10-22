@@ -181,9 +181,9 @@ public class DapperPartitionMaintenanceStepTests : PostgresTestBase {
   public async Task TheStep_IsNamed_AndRejectsMissingArgumentsAsync() {
     await Assert.That(_step().Name).IsEqualTo("partition-maintenance");
     await Assert.That(() => _step().RunAsync(null!, CancellationToken.None)).ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => new DapperPartitionMaintenanceStep(" ", NullLogger<DapperPartitionMaintenanceStep>.Instance, TimeProvider.System))
+    await Assert.That(() => new DapperPartitionMaintenanceStep(" ", NullLogger<DapperPartitionMaintenanceStep>.Instance, new FixedClock(_now)))
       .ThrowsExactly<ArgumentException>();
-    await Assert.That(() => new DapperPartitionMaintenanceStep(ConnectionString, null!, TimeProvider.System))
+    await Assert.That(() => new DapperPartitionMaintenanceStep(ConnectionString, null!, new FixedClock(_now)))
       .ThrowsExactly<ArgumentNullException>();
     await Assert.That(() => new DapperPartitionMaintenanceStep(ConnectionString, NullLogger<DapperPartitionMaintenanceStep>.Instance, null!))
       .ThrowsExactly<ArgumentNullException>();
