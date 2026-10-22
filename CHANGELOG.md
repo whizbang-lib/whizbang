@@ -489,6 +489,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
+  burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
+  reach the row first. The framework answers that by folding the earlier event onto the row the other worker
+  committed, rewinding the stream when the event sits below the row's position. On a model opted into strict
+  ordering (`IVersionedApplyTarget`, which per-item saga rows use) the store refused that corrective write, because
+  the rewind records the row's own newest event id and the guard admitted only a strictly newer one, and a live
+  fold of the earlier event alone was refused the same way; both refusals were reported as applied, so the work
+  rows were retired and the row kept only the later event. The guard now admits a write at the stored event id,
+  and a live write the ordering guard refuses re-folds the stream instead of being reported applied. Rows already
+  missing an event are repaired by rebuilding the perspective (any mode); on earlier releases only a blue-green
+  rebuild repairs them, because an in-place rebuild of a strictly ordered row was refused the same way.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a

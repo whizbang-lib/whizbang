@@ -69,17 +69,25 @@ public static class PerspectiveRowVersionCommands {
   /// guard is written against whatever expression carries the incoming metadata, which differs
   /// between the two statement shapes: <c>EXCLUDED.metadata</c> in an upsert, the bound parameter in
   /// a conditional update.
+  /// <para>
+  /// Both forms admit a write AT the stored position, not only past it (#1608). A rewind or a rebuild re-folds the
+  /// stream and records the stream's frontier, which is the position the row already holds whenever the late event
+  /// sits below the newest one. Refusing it on the event id refused every correction of a row that had applied its
+  /// newest event first, and the late event was then reported applied while the row never received it. A stale
+  /// read is not what this guard stops: the checked write refuses it on the row version.
+  /// </para>
   /// </remarks>
   /// <param name="qualifiedTable">The quoted, schema-qualified perspective table.</param>
   /// <param name="incoming">The SQL expression for the incoming metadata.</param>
   /// <param name="isVersionedTarget">Whether the model opts into event-id ordering.</param>
   /// <returns>A boolean SQL expression, true when the write may proceed.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:TheLaterEventCommitsFirst_EveryRowStillHoldsBothEventsAsync</tests>
   public static string OrderingGuard(string qualifiedTable, string incoming, bool isVersionedTarget) {
     ArgumentException.ThrowIfNullOrWhiteSpace(qualifiedTable);
     ArgumentException.ThrowIfNullOrWhiteSpace(incoming);
     return isVersionedTarget
       ? $"{qualifiedTable}.metadata->>'EventId' IS NULL "
-        + $"OR {incoming}->>'EventId' > {qualifiedTable}.metadata->>'EventId'"
+        + $"OR {incoming}->>'EventId' >= {qualifiedTable}.metadata->>'EventId'"
       : $"{qualifiedTable}.metadata->>'CommitSequence' IS NULL "
         + $"OR {incoming}->>'CommitSequence' IS NULL "
         + $"OR ({incoming}->>'CommitSequence')::bigint >= ({qualifiedTable}.metadata->>'CommitSequence')::bigint";

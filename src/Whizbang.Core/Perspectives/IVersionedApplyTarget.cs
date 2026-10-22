@@ -25,10 +25,17 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// <para>
 /// Models that implement this marker get a stricter UPSERT <c>WHERE</c> clause: the row is
-/// updated only when the incoming <c>metadata.EventId</c> sorts strictly after the stored
+/// updated only when the incoming <c>metadata.EventId</c> sorts at or after the stored
 /// <c>EventId</c>. UUIDv7 from <see cref="ValueObjects.TrackedGuid.New"/> orders
 /// lexicographically by emission time, so "newer event wins" holds with no extra column.
-/// Same-EventId re-applies are idempotent skips; older-EventId stale writes are dropped.
+/// Older-EventId writes are dropped.
+/// </para>
+/// <para>
+/// A write AT the stored <c>EventId</c> lands (#1608). A rewind or a rebuild re-folds the stream and records its
+/// frontier, which is the event the row already holds whenever a late event sits below the newest one; refusing
+/// that write refused the correction, and the late event was reported applied while the row never received it. A
+/// redelivery of the row's own event never reaches the store (the runner's idempotency filter drops it), and a
+/// live fold of a late event that the guard refuses is re-folded by a rewind instead of being reported applied.
 /// </para>
 /// <para>
 /// This is opt-in because the strict comparison is more restrictive than the legacy contract.
@@ -40,5 +47,6 @@ namespace Whizbang.Core.Perspectives;
 /// <docs>fundamentals/perspectives/versioned-apply</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:StaleEventWrite_OnVersionedTarget_DoesNotRegressTerminalRowAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:NewerEventWrite_OnVersionedTarget_AdvancesRowAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:IdempotentReapply_OnVersionedTarget_DoesNotBumpVersionAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:WriteAtTheStoredEventId_OnVersionedTarget_LandsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:TheLaterEventCommitsFirst_EveryRowStillHoldsBothEventsAsync</tests>
 public interface IVersionedApplyTarget;

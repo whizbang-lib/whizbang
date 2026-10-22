@@ -90,6 +90,45 @@ public class PerspectiveLateEventApplyTests : EFCoreTestBase {
              + "must fold it onto the row the other worker committed, not report it applied while the row lacks it");
   }
 
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task ARowThatLostItsEarlierEvent_IsRepairedByARebuildInPlaceAsync(bool stamped) {
+    var streamId = Guid.CreateVersion7();
+    var started = _envelope(Guid.Parse("019f0000-0000-7aaa-8000-000000000001"), new ItemProgressStartedEvent { StreamId = streamId });
+    var completed = _envelope(Guid.Parse("019f0001-0000-7aaa-8000-000000000001"), new ItemProgressCompletedEvent { StreamId = streamId });
+    var inner = new InMemoryEventStore();
+    await inner.AppendAsync(streamId, started);
+    await inner.AppendAsync(streamId, completed);
+    var eventStore = new StampingEventStore(inner, new Dictionary<Guid, long?> {
+      [started.MessageId.Value] = stamped ? 1000 : null,
+      [completed.MessageId.Value] = stamped ? 2000 : null,
+    });
+    // The row as an affected release left it: Completed applied, Started never folded.
+    await using (var seedContext = CreateDbContext()) {
+      await _runner(eventStore, new EFCorePostgresPerspectiveStore<ItemProgress>(seedContext, TABLE)).RunWithEventsAsync(
+        streamId, PERSPECTIVE, null, [_copy(completed, eventStore)], CancellationToken.None);
+    }
+
+    var previousMode = ProcessingModeAccessor.Current;
+    ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+    try {
+      await using var rebuildContext = CreateDbContext();
+      await _runner(eventStore, new EFCorePostgresPerspectiveStore<ItemProgress>(rebuildContext, TABLE)).RunWithEventsAsync(
+        streamId, PERSPECTIVE, null, [_copy(started, eventStore), _copy(completed, eventStore)], CancellationToken.None);
+    } finally {
+      ProcessingModeAccessor.Current = previousMode;
+    }
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<ItemProgress>>().AsNoTracking().SingleAsync(r => r.Id == streamId);
+    await Assert.That(row.Data.Started).IsTrue()
+      .Because("a rebuild re-derives the row from every stored event and records the row's own newest event, "
+             + "a write the strict ordering must admit or the row can never be repaired in place");
+    await Assert.That(row.Data.Completed).IsTrue();
+    await Assert.That(row.Data.Attempts).IsEqualTo(1);
+  }
+
   /// <summary>
   /// One stream's two workers: the Started worker reads, the Completed worker runs to commit, then the Started
   /// worker writes.
