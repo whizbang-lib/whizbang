@@ -27,16 +27,12 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// </para>
 /// </remarks>
 /// <typeparam name="T">The element type, compared with its default equality.</typeparam>
+/// <param name="items">The array to wrap, which the caller must not change afterwards.</param>
 /// <docs>operations/performance/build-cost</docs>
 /// <tests>tests/Whizbang.Generators.Tests/EquatableArrayTests.cs</tests>
 [CollectionBuilder(typeof(EquatableArray), nameof(EquatableArray.Create))]
-public sealed class EquatableArray<T> : IEquatable<EquatableArray<T>>, IReadOnlyList<T> {
-  private readonly T[] _items;
-
-  /// <summary>Wraps <paramref name="items"/>, which the caller must not change afterwards.</summary>
-  public EquatableArray(T[] items) {
-    _items = items;
-  }
+public sealed class EquatableArray<T>(T[] items) : IEquatable<EquatableArray<T>>, IReadOnlyList<T> {
+  private readonly T[] _items = items;
 
   /// <summary>The number of elements, as an array names it.</summary>
   public int Length => _items.Length;

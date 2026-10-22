@@ -83,7 +83,14 @@ public class EquatableArrayTests {
     await Assert.That(array.Count).IsEqualTo(2);
     await Assert.That(array[1]).IsEqualTo("b");
     await Assert.That(array.ToList()).IsEquivalentTo(["a", "b"]);
-    await Assert.That(((System.Collections.IEnumerable)array).Cast<string>().ToList()).IsEquivalentTo(["a", "b"]);
+
+    // Cast<T>() would hand back the generic enumerator, so the non-generic one is walked by hand.
+    var untyped = new List<object?>();
+    var enumerator = ((System.Collections.IEnumerable)array).GetEnumerator();
+    while (enumerator.MoveNext()) {
+      untyped.Add(enumerator.Current);
+    }
+    await Assert.That(untyped).IsEquivalentTo(new object?[] { "a", "b" });
   }
 
   [Test]

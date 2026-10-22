@@ -23,7 +23,7 @@ public static class ConsumerCorpus {
   /// one receptor, one read model and one perspective each, plus the file of ordinary code.
   /// </summary>
   public static IReadOnlyList<(string Path, string Source)> Build(int features) {
-    var files = new List<(string, string)>(features * 3 + 1);
+    var files = new List<(string, string)>((features * 3) + 1);
     for (var i = 0; i < features; i++) {
       files.Add(($"Feature{i}/Messages.cs", _messages(i)));
       files.Add(($"Feature{i}/Receptors.cs", _receptor(i, "\"created\"")));

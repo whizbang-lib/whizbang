@@ -700,7 +700,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var polyType in propertyPolymorphicTypes) {
       polymorphicTypeDict[polyType.BaseTypeName] = polyType;
     }
-    return polymorphicTypeDict.Values.ToImmutableArray();
+    return [.. polymorphicTypeDict.Values];
   }
 
   /// <summary>
