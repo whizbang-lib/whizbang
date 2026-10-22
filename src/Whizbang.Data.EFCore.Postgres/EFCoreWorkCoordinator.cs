@@ -2225,7 +2225,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       "SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       "envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp, @p_idle_settled, @p_idle_trickle_after, @p_idle_trickle_slice, @p_idle_force_after, @p_outbox_rows, @p_outbox_run, @p_assignment_epoch, @p_assignment_revision, @p_alive_lock_held, @p_lifecycle_phase)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2271,6 +2271,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     });
     // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
     cmd.Parameters.Add(new NpgsqlParameter("p_alive_lock_held", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AliveLockHeld });
+    // 229 (#1638): a row recording another phase than the caller's is reported stale; null judges it by liveness alone.
+    cmd.Parameters.Add(new NpgsqlParameter("p_lifecycle_phase", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)request.LifecyclePhase ?? DBNull.Value
+    });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;

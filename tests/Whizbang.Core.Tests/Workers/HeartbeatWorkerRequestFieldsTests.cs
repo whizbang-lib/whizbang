@@ -46,6 +46,17 @@ public class HeartbeatWorkerRequestFieldsTests {
   }
 
   [Test]
+  public async Task BuildRequest_DuringATransition_CarriesThePhaseBeingEnteredAsync() {
+    // #1638: a beat built while a transition's acks are awaited must not write the phase before it over the one the
+    // transition just recorded, or a ready instance reads as still migrating and is not eligible for work.
+    var worker = _worker(new AnnouncingLifecycle(LifecyclePhase.Migrating, LifecyclePhase.AcceptingCommands), new StubVersion("1.0.0"));
+
+    var request = worker.BuildRequest();
+
+    await Assert.That(request.LifecyclePhase).IsEqualTo(nameof(LifecyclePhase.AcceptingCommands));
+  }
+
+  [Test]
   public async Task Constructor_WithoutLifecycleOrVersionProviders_ThrowsAsync() {
     // Both inputs are what peers and operators read from the registry to tell a live instance from
     // a dead one. An optional dependency is silently null wherever the worker is hand-built, so the
@@ -124,6 +135,13 @@ public class HeartbeatWorkerRequestFieldsTests {
 
   private sealed class StubLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {
     public LifecyclePhase Phase => phase;
+    public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  }
+
+  private sealed class AnnouncingLifecycle(LifecyclePhase settled, LifecyclePhase announced) : IWhizbangLifecycleState {
+    public LifecyclePhase Phase => settled;
+    public LifecyclePhase AnnouncedPhase => announced;
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
     public ValueTask FaultAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
   }
