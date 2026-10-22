@@ -191,7 +191,10 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     var transport = await _createTransportAsync();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
     var warmupAwaiter = new SignalAwaiter();
-    var awaiter = new MessageIdAwaiter();
+    // The subscription is shared with other tests, so a message they left behind (or one the broker
+    // redelivers after its lock expires) can arrive first; wait for this test's message by its id.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
 
     var transportSubscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
@@ -216,7 +219,6 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       );
 
       // Act: Publish the actual test message
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, destination);
 
       // Assert
