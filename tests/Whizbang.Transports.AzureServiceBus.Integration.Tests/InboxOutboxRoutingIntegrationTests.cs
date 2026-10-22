@@ -191,7 +191,11 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     var transport = await _createTransportAsync();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
     var warmupAwaiter = new SignalAwaiter();
-    var awaiter = new MessageIdAwaiter();
+    // The awaiter waits for THIS test's message. sub-00-a is shared with other tests, so a message
+    // the drain did not see (published by another test, or redelivered) can arrive first; an
+    // uncorrelated awaiter took it and failed the equality check with another test's id.
+    var expected = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(expected.MessageId.ToString());
 
     var transportSubscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
@@ -216,12 +220,11 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       );
 
       // Act: Publish the actual test message
-      var envelope = _createTestEnvelope();
-      await transport.PublishAsync(envelope, destination);
+      await transport.PublishAsync(expected, destination);
 
       // Assert
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
-      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
+      await Assert.That(receivedMessageId).IsEqualTo(expected.MessageId.ToString());
     } finally {
       transportSubscription.Dispose();
       await transport.DisposeAsync();
