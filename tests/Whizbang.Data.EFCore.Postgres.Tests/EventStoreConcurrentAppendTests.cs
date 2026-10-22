@@ -118,7 +118,7 @@ public class EventStoreConcurrentAppendTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
     // A re-run of 224 re-runs every later migration that redefines the function too (the ledger's redefinition
-    // closure), so the server ends on the last word, which the store calls (226 added a trailing parameter, #1546).
+    // closure), so the server ends on the last word, which the store calls (228 added a trailing parameter, #1546).
     var migrations = new PostgresMigrationProvider().GetMigrations()
       .Where(m => string.CompareOrdinal(m.Name, "224_") >= 0
         && m.Sql.Contains("FUNCTION public.wh_append_event(", StringComparison.Ordinal))
