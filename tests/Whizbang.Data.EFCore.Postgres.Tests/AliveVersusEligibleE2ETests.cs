@@ -381,7 +381,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
     await using var conn = await _openAsync(cancellationToken);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT lifecycle_phase FROM wh_service_instances WHERE instance_id = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return await cmd.ExecuteScalarAsync(cancellationToken) as string;
   }
 
@@ -393,7 +393,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
       INSERT INTO wh_service_instances
         (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, connection_mode, lifecycle_phase)
       VALUES (@id, 'eligibility-svc', 'eligibility-host', 1, NOW() - @age, NOW() - INTERVAL '2 hours', 'direct', 'Migrating')";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue(nameof(age), age);
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
@@ -403,7 +403,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
     var holder = await _openAsync(cancellationToken);
     await using var cmd = holder.CreateCommand();
     cmd.CommandText = "SELECT claim_instance_alive_lock(@id)";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     if (await cmd.ExecuteScalarAsync(cancellationToken) is not true) {
       throw new InvalidOperationException($"the alive-lock for {id} was already held");
     }
@@ -430,7 +430,7 @@ public class AliveVersusEligibleE2ETests : EFCoreTestBase {
     await using var conn = await _openAsync(cancellationToken);
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT partition_number FROM wh_outbox WHERE instance_id = @id AND destination = @destination ORDER BY partition_number";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     cmd.Parameters.AddWithValue(nameof(destination), destination);
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
