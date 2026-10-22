@@ -44,6 +44,7 @@ public static class RetentionSettingsBridge {
   private const string EPHEMERAL = "Whizbang:Ephemeral:";
   private const string POINTER_PRUNE = "Whizbang:Ephemeral:PointerPrune:";
   private const string POINTER_PRUNE_ENABLED_KEY = "ephemeral_deep_maintenance_enabled";
+  private const string PARTITIONING_ENABLED_KEY = "partition_maintenance_enabled";
 
   private sealed record IntegerSetting<TSource>(string Key, string Source, Func<TSource, int?> Read);
 
@@ -75,6 +76,7 @@ public static class RetentionSettingsBridge {
     .. _maintenance.Select(s => s.Key),
     .. _ephemeral.Select(s => s.Key),
     POINTER_PRUNE_ENABLED_KEY,
+    PARTITIONING_ENABLED_KEY,
   ];
 
   /// <summary>
@@ -104,10 +106,30 @@ public static class RetentionSettingsBridge {
     return settings;
   }
 
-  /// <summary>Stub (RED).</summary>
+  /// <summary>
+  /// The settings one maintenance cycle publishes, with <c>partition_maintenance_enabled</c>, which is always
+  /// published, in both directions: the row sweep leaves a partitioned table to the partition drop only while it is
+  /// <see langword="true"/>, so a stale value would leave a table nothing bounds.
+  /// </summary>
+  /// <param name="debugMode">The host's <c>WorkCoordinatorOptions.DebugMode</c>.</param>
+  /// <param name="retention">The bound <c>Whizbang:Workers:Maintenance:Retention</c> options.</param>
+  /// <param name="ephemeral">The bound <c>Whizbang:Ephemeral</c> options.</param>
+  /// <param name="partitioning">The bound <c>Whizbang:Workers:Maintenance:Partitioning</c> options.</param>
+  /// <returns>One entry per key to write, each key at most once.</returns>
+  /// <exception cref="ArgumentNullException">An options object, or <see cref="EphemeralOptions.PointerPrune"/>, is null.</exception>
+  /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:PartitionMaintenance_IsAlwaysPublishedInBothDirectionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBridgeTests.cs:EveryKeyInScope_IsMappedExactlyOnceAsync</tests>
   public static IReadOnlyList<RetentionSetting> SettingsFor(
-      bool debugMode, MaintenanceRetentionOptions retention, EphemeralOptions ephemeral, MaintenancePartitioningOptions partitioning) =>
-    throw new NotImplementedException();
+      bool debugMode, MaintenanceRetentionOptions retention, EphemeralOptions ephemeral, MaintenancePartitioningOptions partitioning) {
+    ArgumentNullException.ThrowIfNull(partitioning);
+    List<RetentionSetting> settings = [
+      .. SettingsFor(debugMode, retention, ephemeral),
+      new(PARTITIONING_ENABLED_KEY, DebugRetentionBridge.SettingValueFor(partitioning.Enabled), BOOLEAN,
+        "Whizbang:Workers:Maintenance:Partitioning:" + nameof(MaintenancePartitioningOptions.Enabled)),
+    ];
+    return settings;
+  }
 
   /// <summary>The <c>debug_mode</c> setting for a debug-retention option, in both directions.</summary>
   /// <param name="debugMode">Whether completed rows are retained.</param>

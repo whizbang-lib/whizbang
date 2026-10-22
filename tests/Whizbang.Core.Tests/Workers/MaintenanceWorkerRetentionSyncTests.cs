@@ -143,6 +143,7 @@ public class MaintenanceWorkerRetentionSyncTests {
       ["debug_mode"] = "true",
       ["dedup_retention_days"] = "3",
       ["ephemeral_deep_maintenance_enabled"] = "true",
+      ["partition_maintenance_enabled"] = "false",
     });
     await Assert.That(coord.DebugSyncCalls).IsEqualTo(0)
       .Because("debug_mode travels in the same single write; a second statement for it would be the duplicate this replaces");

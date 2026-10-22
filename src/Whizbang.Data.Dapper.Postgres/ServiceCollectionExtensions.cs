@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -161,6 +162,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     services.AddSingleton(options);
@@ -311,6 +313,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     // Register PostgresOptions for components that need retry settings
@@ -481,6 +484,17 @@ public static class ServiceCollectionExtensions {
     var connection = new Npgsql.NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
     return connection;
+  }
+
+  // TURNKEY: the partition manager (#1611). It converts wh_log once and keeps the framework's time-partitioned tables
+  // while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and is idle otherwise.
+  private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
+    services.AddPartitionedTable(PartitionedTables.Log);
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPartitionMaintenanceStep(
+        connectionString,
+        sp.GetService<ILogger<DapperPartitionMaintenanceStep>>() ?? NullLogger<DapperPartitionMaintenanceStep>.Instance,
+        sp.GetService<TimeProvider>() ?? TimeProvider.System));
   }
 
   /// <summary>

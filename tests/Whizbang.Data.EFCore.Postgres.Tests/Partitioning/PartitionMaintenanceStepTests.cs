@@ -101,8 +101,7 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
 
   [Test]
   public async Task AContextWithoutTheFrameworkModel_WorksInThePublicSchemaAsync() {
-    await using var context = new PostgresTestDbContext(
-      new DbContextOptionsBuilder<PostgresTestDbContext>().UseNpgsql(ConnectionString).Options);
+    await using var context = new BareContext(new DbContextOptionsBuilder<BareContext>().UseNpgsql(ConnectionString).Options);
     var services = new ServiceCollection();
     services.AddSingleton(context);
     services.AddSingleton(Options.Create(new MaintenanceWorkerOptions {
@@ -111,7 +110,7 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
     services.AddPartitionedTable(PartitionedTables.Log);
     await using var provider = services.BuildServiceProvider();
 
-    await new PartitionMaintenanceStep(typeof(PostgresTestDbContext), NullLogger<PartitionMaintenanceStep>.Instance, new FakeTimeProvider(_now))
+    await new PartitionMaintenanceStep(typeof(BareContext), NullLogger<PartitionMaintenanceStep>.Instance, new FakeTimeProvider(_now))
       .RunAsync(provider, CancellationToken.None);
 
     await Assert.That(await _logKindAsync()).IsEqualTo("p")
@@ -179,4 +178,7 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
     await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo([PartitionedTables.Log])
       .Because("wh_log is registered by the driver, and read once however often the driver is added");
   }
+
+  // A context that maps nothing, so it names no schema for the framework's tables.
+  private sealed class BareContext(DbContextOptions<BareContext> options) : DbContext(options);
 }
