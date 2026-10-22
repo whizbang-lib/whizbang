@@ -18,6 +18,9 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
   private readonly WhizbangLifecycleOptions _options;
   private readonly TimeProvider _timeProvider;
   private volatile LifecyclePhase _phase = LifecyclePhase.Starting;
+  // #1638: the phase being entered, set before the broadcast so a writer of the instance's row never reads the phase
+  // the transition is leaving while the transition is being recorded.
+  private volatile LifecyclePhase _announced = LifecyclePhase.Starting;
 
   /// <summary>Creates the lifecycle state over the coordinator it drives.</summary>
   public WhizbangLifecycleState(
@@ -35,11 +38,12 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
   public LifecyclePhase Phase => _phase;
 
   /// <inheritdoc />
-  public LifecyclePhase AnnouncedPhase => _phase;
+  public LifecyclePhase AnnouncedPhase => _announced;
 
   /// <inheritdoc />
   public async ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
     try {
+      _announced = phase;
       await _coordinator.TransitionAsync(phase, cancellationToken).ConfigureAwait(false);
       _phase = phase;
     } catch (OperationCanceledException) {
@@ -61,6 +65,7 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
 
   private async ValueTask _faultAndHaltAsync(CancellationToken cancellationToken) {
     _phase = LifecyclePhase.Faulted;
+    _announced = LifecyclePhase.Faulted;
     await _broadcastBestEffortAsync(LifecyclePhase.Faulted, cancellationToken).ConfigureAwait(false);
 
     try {
@@ -70,6 +75,7 @@ public sealed class WhizbangLifecycleState : IWhizbangLifecycleState {
     }
 
     _phase = LifecyclePhase.Halted;
+    _announced = LifecyclePhase.Halted;
     await _broadcastBestEffortAsync(LifecyclePhase.Halted, CancellationToken.None).ConfigureAwait(false);
   }
 

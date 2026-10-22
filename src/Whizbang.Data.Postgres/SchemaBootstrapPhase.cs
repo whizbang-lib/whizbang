@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 
 namespace Whizbang.Data.Postgres;
 
@@ -268,6 +269,24 @@ public static class SchemaBootstrapPhase {
     command.Parameters.AddWithValue(instance.ProcessId);
     command.Parameters.AddWithValue((double)leaseSeconds);
     await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+    // #1638: the row records the phase the instance is in, Migrating, as part of the registration. A row without a
+    // phase reads as an older build, which is eligible for work whenever it is live, so a new instance registered here
+    // would be handed partitions for its whole migration. The instance-state participant's own Migrating write ran
+    // before this row existed and found nothing to update. Only where the recording function exists: the bootstrap of
+    // an empty database registers before the migration that adds it, and with no older instance there is no peer to
+    // hand a share to anyway.
+    await using var probe = new NpgsqlCommand(
+      "SELECT to_regprocedure($1 || '.record_instance_state(uuid,text,text)') IS NOT NULL", connection);
+    probe.Parameters.AddWithValue(_quoteIdentifier(target));
+    if (await probe.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
+      return;
+    }
+    await using var record = new NpgsqlCommand(
+      $"SELECT {_quoteIdentifier(target)}.record_instance_state($1, $2)", connection);
+    record.Parameters.AddWithValue(instance.InstanceId);
+    record.Parameters.AddWithValue(nameof(LifecyclePhase.Migrating));
+    await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>

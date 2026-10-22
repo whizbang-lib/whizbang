@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Signals;
 
 #pragma warning disable IDE0290  // Allow explicit constructor for optional channel writers
@@ -936,7 +937,10 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxOutboxAcquireRows: maxOutboxRows,
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
       PartitionAssignment: assignment,
-      AliveLockHeld: aliveLockHeld), ct);
+      AliveLockHeld: aliveLockHeld,
+      // #1638: the phase this instance announces. A row that records another one is reported stale, and the
+      // registration below writes it, so a lost transition write cannot leave a ready instance ineligible for work.
+      LifecyclePhase: _announcedPhase(scope.ServiceProvider)), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
     _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
@@ -945,7 +949,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // instance waited behind it. When the claim found the row missing or stale, register now: the
     // claim has returned, so this is a statement of its own, on the same pinned connection.
     if (batch.InstanceRegistrationStale) {
-      await _refreshRegistrationAsync(coordinator, ct);
+      await _refreshRegistrationAsync(coordinator, scope.ServiceProvider, ct);
     }
 
     // #1254: the version this claim presented was superseded or expired; the next claim reads the published one.
@@ -1149,7 +1153,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await _registerAsync(coordinator, ct);
+    await _registerAsync(coordinator, scope.ServiceProvider, ct);
   }
 
   /// <summary>
@@ -1157,21 +1161,33 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// reported and the claim's batch is still returned: the work it leased is this instance's either
   /// way, and the next claim that finds the row stale asks again.
   /// </summary>
-  private async Task _refreshRegistrationAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+  private async Task _refreshRegistrationAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) {
     try {
-      await _registerAsync(coordinator, ct);
+      await _registerAsync(coordinator, services, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRegistrationRefreshFailed(_logger, ex);
     }
   }
 
-  /// <summary>The registration: this instance's identity through <c>record_heartbeat</c>.</summary>
-  private Task<bool> _registerAsync(IWorkCoordinator coordinator, CancellationToken ct) =>
+  /// <summary>
+  /// The registration: this instance's identity through <c>record_heartbeat</c>, with the phase it announces (#1638).
+  /// A row it inserts records that phase rather than none, which would read as an older build; a row whose phase a lost
+  /// or overwritten transition left behind is corrected. Without a lifecycle the recorded phase is kept.
+  /// </summary>
+  private Task<bool> _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) =>
     coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
-      ProcessId: _instanceProvider.ProcessId), ct);
+      ProcessId: _instanceProvider.ProcessId,
+      LifecyclePhase: _announcedPhase(services)), ct);
+
+  /// <summary>
+  /// The phase this instance announces (<see cref="IWhizbangLifecycleState.AnnouncedPhase"/>), resolved from the
+  /// claim's scope as the coordinator is; null in a host without a lifecycle, whose row is then judged by liveness alone.
+  /// </summary>
+  private static string? _announcedPhase(IServiceProvider services) =>
+    services.GetService<IWhizbangLifecycleState>()?.AnnouncedPhase.ToString();
 
 
   /// <summary>

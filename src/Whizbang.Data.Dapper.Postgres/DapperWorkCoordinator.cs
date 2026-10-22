@@ -1165,7 +1165,8 @@ public partial class DapperWorkCoordinator(
       // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
       rows = await connection.QueryAsync<ClaimWorkRow>(
         $"SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM {prefix}claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp, "
-        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld)",
+        + "p_assignment_epoch => @AssignmentEpoch, p_assignment_revision => @AssignmentRevision, p_alive_lock_held => @AliveLockHeld, "
+        + "p_lifecycle_phase => @LifecyclePhase)",
         new {
           Id = request.InstanceId,
           Svc = request.ServiceName,
@@ -1183,7 +1184,9 @@ public partial class DapperWorkCoordinator(
           AssignmentEpoch = request.PartitionAssignment?.Epoch,
           AssignmentRevision = request.PartitionAssignment?.Revision,
           // 204 (#1286): a direct caller holding its alive-lock is not reported stale between slow beats.
-          request.AliveLockHeld
+          request.AliveLockHeld,
+          // 228 (#1638): a row recording another phase than the caller's is reported stale; null: liveness alone.
+          request.LifecyclePhase
         },
         commandTimeout: CoordinatorCommandTimeout.SECONDS);
     } finally {
