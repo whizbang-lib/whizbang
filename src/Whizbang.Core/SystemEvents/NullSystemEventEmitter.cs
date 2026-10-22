@@ -7,9 +7,10 @@ namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
 /// No-op implementation of <see cref="ISystemEventEmitter"/>.
-/// Used as a default when system event auditing is not configured.
-/// Replaced by <see cref="SystemEventEmitter"/> when auditing is enabled.
+/// The default where no event store is registered: there is nowhere to store a system event. Wherever an
+/// event store is registered, the default is <see cref="SystemEventEmitter"/> instead (#1621).
 /// </summary>
+/// <docs>fundamentals/events/system-events#emitter</docs>
 public sealed class NullSystemEventEmitter : ISystemEventEmitter {
   /// <inheritdoc />
   public Task EmitEventAuditedAsync<TEvent>(

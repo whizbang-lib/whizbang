@@ -26,6 +26,7 @@ public static class SystemEventServiceCollectionExtensions {
   /// <para>
   /// This method registers:
   /// - <see cref="ITransportPublishFilter"/> for transport filtering
+  /// - the default <see cref="ISystemEventEmitter"/> (the same one <c>AddWhizbang</c> registers), unless one is already registered
   /// - <see cref="AuditingEventStoreDecorator"/> when event audit is enabled
   /// </para>
   /// <para>
@@ -82,6 +83,8 @@ public static class SystemEventServiceCollectionExtensions {
     // TryAdd lets an application's own hook win by simply being registered.
     services.TryAddSingleton<IAuditDecisionHook, NoOpinionAuditDecisionHook>();
     services.TryAddSingleton<ITransportPublishFilter, SystemEventTransportFilter>();
+    // The same default AddWhizbang registers, with TryAdd, so calling both adds one emitter, never two.
+    DefaultSystemEventEmitter.TryAdd(services);
 
     // Decorate the IEventStore with auditing if event audit is enabled
     if (options.EventAuditEnabled) {
