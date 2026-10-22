@@ -105,8 +105,7 @@ public class MigrationUtf8LiteralGenerationTests {
   [Test]
   public async Task TheFullListDecodesToTheTextEmittedBeforeAsync() {
     var expected = _embeddedMigrations()
-      .Select(m => (m.Name, Sql: _escapedAsBefore(m.Sql)))
-      .ToList();
+      .ConvertAll(m => (m.Name, Sql: _escapedAsBefore(m.Sql)));
 
     await _assertDecodesToAsync(FULL_LIST, expected);
   }
@@ -153,7 +152,7 @@ public class MigrationUtf8LiteralGenerationTests {
 
     var entries = _entries(_method(await _schemaExtensionsRootAsync(), list));
 
-    await Assert.That(entries.Select(e => e.Name).ToList()).IsEquivalentTo(expected.Select(e => e.Name).ToList())
+    await Assert.That(entries.ConvertAll(e => e.Name)).IsEquivalentTo(expected.ConvertAll(e => e.Name))
       .Because("every file is emitted, once, under its own name");
     for (var i = 0; i < expected.Count; i++) {
       await Assert.That(entries[i].Name).IsEqualTo(expected[i].Name)
