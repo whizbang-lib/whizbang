@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **A built-in partition manager for time-ordered framework tables (#1611).** With
+  `Whizbang:Workers:Maintenance:Partitioning:Enabled` (default `false`), the maintenance cycle converts `wh_log` once
+  to weekly partitions by `logged_at` (primary key `(log_id, logged_at)`, every writer unchanged, gated on the
+  `wh_log_partition_version` marker), creates partitions `:CreateAhead` (default 3) intervals ahead with a default
+  partition, and drops partitions wholly past `log_retention_days` instead of deleting rows. Only the maintainer-duty
+  holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
+  table and detached later. Migration 226.
+
 - **A perspective table can declare when autovacuum runs (#1584).** `[PerspectiveTableStorage]` gains
   `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold`,
   `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema

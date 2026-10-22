@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class MaintenanceWorkerRetentionSyncTests {
 
   private static readonly string[] _syncThenSweep = ["sync", "maintenance"];
-  private static readonly string[] _debugAndStuckInbox = ["debug_mode", "stuck_inbox_retention_days"];
+  private static readonly string[] _debugAndStuckInbox = ["debug_mode", "stuck_inbox_retention_days", "partition_maintenance_enabled"];
 
   private sealed record LogEntry(LogLevel Level, EventId EventId, string Message, Exception? Exception);
 
@@ -143,6 +143,7 @@ public class MaintenanceWorkerRetentionSyncTests {
       ["debug_mode"] = "true",
       ["dedup_retention_days"] = "3",
       ["ephemeral_deep_maintenance_enabled"] = "true",
+      ["partition_maintenance_enabled"] = "false",
     });
     await Assert.That(coord.DebugSyncCalls).IsEqualTo(0)
       .Because("debug_mode travels in the same single write; a second statement for it would be the duplicate this replaces");
@@ -182,6 +183,20 @@ public class MaintenanceWorkerRetentionSyncTests {
     await Assert.That(coord.Syncs.Single().Select(s => s.Key).ToArray())
       .IsEquivalentTo(_debugAndStuckInbox)
       .Because("a host that never registered the ephemeral options has no opinion on those keys");
+  }
+
+  [Test]
+  [Arguments(true, "true")]
+  [Arguments(false, "false")]
+  public async Task EachCycle_PublishesWhetherPartitionMaintenanceIsOnAsync(bool enabled, string literal) {
+    var coord = new SyncingCoordinator();
+    var options = new MaintenanceWorkerOptions { Partitioning = new MaintenancePartitioningOptions { Enabled = enabled } };
+    var (worker, _) = _build(coord, options, ephemeral: null);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Syncs.Single().Single(s => s.Key == "partition_maintenance_enabled").Value).IsEqualTo(literal)
+      .Because("the row sweep reads it to leave a partitioned wh_log to the partition drop, and takes it back when this is off");
   }
 
   [Test]
