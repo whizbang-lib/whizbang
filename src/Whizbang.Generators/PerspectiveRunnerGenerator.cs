@@ -49,12 +49,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     ).Where(static result => result is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndResults = context.CompilationProvider.Combine(perspectiveResults.Collect());
+    var compilationAndResults = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveResults.Collect());
 
     context.RegisterSourceOutput(
         compilationAndResults,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var results = data.Right;
 
           // Report warnings for perspectives missing StreamId on model
@@ -84,7 +84,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
                 DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, Model, Problem));
           }
 
-          _generatePerspectiveRunners(ctx, compilation, validPerspectives);
+          _generatePerspectiveRunners(ctx, compilationAssemblyName, validPerspectives);
         }
     );
   }
@@ -456,7 +456,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generatePerspectiveRunners(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
@@ -465,7 +465,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
-      var runnerSource = _generateRunnerSource(compilation, perspective);
+      var runnerSource = _generateRunnerSource(compilationAssemblyName, perspective);
       var runnerName = _getRunnerName(perspective.SimpleName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
@@ -483,8 +483,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Generates the C# source code for a perspective runner.
   /// Uses template-based generation with unit-of-work pattern and AOT-compatible switch statements.
   /// </summary>
-  private static string _generateRunnerSource(Compilation compilation, PerspectiveInfo perspective) {
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+  private static string _generateRunnerSource(string? compilationAssemblyName, PerspectiveInfo perspective) {
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template from embedded resource
@@ -725,7 +725,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
     // A Split model reads every promoted field back from its column. Any other model reads back its jsonb
     // columns: the EF Core model keeps them out of the mapped document, so the column is where they are.
-    PhysicalFieldInfoCompact[] promoted = perspective.PhysicalFields ?? [];
+    EquatableArray<PhysicalFieldInfoCompact> promoted = perspective.PhysicalFields ?? [];
     var fields = perspective.StorageMode == 2
       ? promoted
       : [.. promoted.Where(f => PhysicalFieldScalar.IsJsonb(f.ColumnType))];

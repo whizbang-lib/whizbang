@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -30,15 +31,15 @@ internal sealed record PerspectiveInfo(
     string ClassName,
     string SimpleName,
     string ClrTypeName,
-    string[] InterfaceTypeArguments,
-    string[] EventTypes,
-    string[] MessageTypeNames,
+    EquatableArray<string> InterfaceTypeArguments,
+    EquatableArray<string> EventTypes,
+    EquatableArray<string> MessageTypeNames,
     string EmptyModelInitializer = "{ }",
-    EventStreamIdInfo[]? EventStreamIds = null,
-    EventValidationError[]? EventValidationErrors = null,
-    string[]? MustExistEventTypes = null,
-    EventReturnTypeInfo[]? EventReturnTypes = null,
-    PhysicalFieldInfoCompact[]? PhysicalFields = null,
+    EquatableArray<EventStreamIdInfo>? EventStreamIds = null,
+    EquatableArray<EventValidationError>? EventValidationErrors = null,
+    EquatableArray<string>? MustExistEventTypes = null,
+    EquatableArray<EventReturnTypeInfo>? EventReturnTypes = null,
+    EquatableArray<PhysicalFieldInfoCompact>? PhysicalFields = null,
     bool IsWithActionsInterface = false,
     int StorageMode = 0,
     bool IsModelRecord = false,
@@ -52,8 +53,8 @@ internal sealed record PerspectiveInfo(
     string? RowCapScopeKey = null,
     string? StreamGroupSpec = null,
     Whizbang.Generators.Shared.Models.ModelCopyInfo? ModelCopy = null,
-    string[]? MemberDefaults = null,
-    string[]? UnconditionalPurgeEventTypes = null
+    EquatableArray<string>? MemberDefaults = null,
+    EquatableArray<string>? UnconditionalPurgeEventTypes = null
 );
 
 /// <summary>

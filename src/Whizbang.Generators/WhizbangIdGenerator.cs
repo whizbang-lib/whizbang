@@ -80,12 +80,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Generate WhizbangIdJsonContext for JSON serialization
     // Combine compilation with discovered IDs to get assembly name for namespace
-    var compilationAndIds = context.CompilationProvider.Combine(allIds);
+    var compilationAndIds = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(allIds);
 
     context.RegisterSourceOutput(
         compilationAndIds,
         static (ctx, data) => {
-          var (compilation, idsData) = data;
+          var (compilationAssemblyName, idsData) = data;
 
           var typeIds = idsData.Left.Left;
           var propertyIds = idsData.Left.Right;
@@ -94,7 +94,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           // Flatten all IDs into single array
           ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> allFlat = [.. typeIds, .. propertyIds, .. parameterIds];
 
-          _generateWhizbangIdJsonContext(ctx, compilation, allFlat);
+          _generateWhizbangIdJsonContext(ctx, compilationAssemblyName, allFlat);
         }
     );
   }
@@ -808,7 +808,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateWhizbangIdJsonContext(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
 
     // Extract only valid IDs, leaving out the error results. Each discovery pipeline drops its null
@@ -827,7 +827,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
             .Select(group => group.First())];
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template
