@@ -218,7 +218,7 @@ public class StringEventFlagsStoreTests : EFCoreTestBase {
   private static string _names(EventFlags flags, JsonNamingPolicy? policy) {
     var options = new JsonSerializerOptions();
     var converter = (JsonConverter<EventFlags>)new JsonStringEnumConverter<EventFlags>(policy, allowIntegerValues: false)
-      .CreateConverter(typeof(EventFlags), options)!;
+      .CreateConverter(typeof(EventFlags), options);
     using var buffer = new MemoryStream();
     using (var writer = new Utf8JsonWriter(buffer)) {
       converter.Write(writer, flags, options);
