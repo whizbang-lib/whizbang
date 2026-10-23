@@ -60,6 +60,33 @@ public class EventFlagsWireFormTests {
     await Assert.That(flags.GetInt32()).IsEqualTo((int)(EventFlags.Ephemeral | EventFlags.AtMostOnce));
   }
 
+  [Test]
+  public async Task Converter_ReadsTheNumberAsync() {
+    await Assert.That(_read("63")).IsEqualTo(EVERY_FLAG);
+  }
+
+  [Test]
+  public async Task Converter_ReadsANameListAsync() {
+    await Assert.That(_read("\"Collective, Ephemeral, AtMostOnce\"")).IsEqualTo(EventFlags.Collective | EventFlags.Ephemeral | EventFlags.AtMostOnce)
+      .Because("a message written as names before the flags were pinned to the number still reads with every bit");
+  }
+
+  [Test]
+  public async Task Converter_NameNoEventFlagsValueHas_ThrowsJsonExceptionAsync() {
+    await Assert.That(() => _read("\"Ephemeral, Hibernating\"")).Throws<JsonException>();
+  }
+
+  [Test]
+  public async Task Converter_NeitherANumberNorAString_ThrowsJsonExceptionAsync() {
+    await Assert.That(() => _read("true")).Throws<JsonException>();
+  }
+
+  private static EventFlags _read(string json) {
+    var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
+    reader.Read();
+    return new EventFlagsNumberJsonConverter().Read(ref reader, typeof(EventFlags), new JsonSerializerOptions());
+  }
+
   private static JsonSerializerOptions _optionsWithStringEnums() {
     var options = JsonContextRegistry.CreateCombinedOptions();
     options.Converters.Add(new JsonStringEnumConverter());
