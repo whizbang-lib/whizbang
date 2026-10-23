@@ -117,7 +117,7 @@ public class EventFlagsWireFormTests {
 
   private static MessageEnvelope<JsonElement> _envelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     Hops = [],
   };
