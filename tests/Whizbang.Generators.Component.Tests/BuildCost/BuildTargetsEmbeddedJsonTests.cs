@@ -38,10 +38,10 @@ public class BuildTargetsEmbeddedJsonTests {
   public async Task MessageRegistry_EmbeddedJson_IsFoundByTheTargetsAndComesBackByteIdenticalAsync() {
     var (assembly, constant) = _buildWithGenerator(new MessageRegistryGenerator(), "Whizbang.Generated.MessageRegistry");
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Problem).IsNull();
-    await Assert.That(scan.Json).IsEqualTo(constant);
+    await Assert.That(problem).IsNull();
+    await Assert.That(scannedJson).IsEqualTo(constant);
   }
 
   [Test]
@@ -49,10 +49,10 @@ public class BuildTargetsEmbeddedJsonTests {
   public async Task PinnedTypeLedger_EmbeddedJson_IsFoundByTheTargetsAndComesBackByteIdenticalAsync() {
     var (assembly, constant) = _buildWithGenerator(new PinnedTypeLedgerGenerator(), "Whizbang.Generated.PinnedTypeLedgerSource");
 
-    var scan = Scanner.Scan(assembly, _ledgerOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _ledgerOpening);
 
-    await Assert.That(scan.Problem).IsNull();
-    await Assert.That(scan.Json).IsEqualTo(constant);
+    await Assert.That(problem).IsNull();
+    await Assert.That(scannedJson).IsEqualTo(constant);
   }
 
   [Test]
@@ -60,10 +60,10 @@ public class BuildTargetsEmbeddedJsonTests {
     const string json = "{\n  \"messages\": [\n    { \"type\": \"A{B}\", \"note\": \"say \\\"}]\\\" \\\\\" }\n  ],\n  \"tail\": \"[{\"\n}";
     var assembly = _emit($$"""internal static class Holder { internal const string Json = {{SymbolDisplay.FormatLiteral(json, true)}}; }""");
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Problem).IsNull();
-    await Assert.That(scan.Json).IsEqualTo(json);
+    await Assert.That(problem).IsNull();
+    await Assert.That(scannedJson).IsEqualTo(json);
   }
 
   [Test]
@@ -76,10 +76,10 @@ public class BuildTargetsEmbeddedJsonTests {
       }
       """);
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Problem).IsNull();
-    await Assert.That(scan.Json).IsEqualTo(json).Because("a read of the constant copies it into the user-string heap, and the copy is the same JSON");
+    await Assert.That(problem).IsNull();
+    await Assert.That(scannedJson).IsEqualTo(json).Because("a read of the constant copies it into the user-string heap, and the copy is the same JSON");
   }
 
   [Test]
@@ -91,20 +91,20 @@ public class BuildTargetsEmbeddedJsonTests {
       }
       """);
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Json).IsNull();
-    await Assert.That(scan.Problem).Contains("2 times");
+    await Assert.That(scannedJson).IsNull();
+    await Assert.That(problem).Contains("2 times");
   }
 
   [Test]
   public async Task Scan_NoMatch_IsNeitherJsonNorAProblemAsync() {
     var assembly = _emit("""internal static class Holder { internal const string Json = "{\"other\": []}"; }""");
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Json).IsNull();
-    await Assert.That(scan.Problem).IsNull();
+    await Assert.That(scannedJson).IsNull();
+    await Assert.That(problem).IsNull();
   }
 
   [Test]
@@ -114,10 +114,10 @@ public class BuildTargetsEmbeddedJsonTests {
   public async Task Scan_JsonThatDoesNotCloseCleanly_IsAProblemAsync(string broken) {
     var assembly = _emit($$"""internal static class Holder { internal const string Json = {{SymbolDisplay.FormatLiteral(broken, true)}}; }""");
 
-    var scan = Scanner.Scan(assembly, _registryOpening);
+    var (scannedJson, problem) = Scanner.Scan(assembly, _registryOpening);
 
-    await Assert.That(scan.Json).IsNull();
-    await Assert.That(scan.Problem).Contains("matching close brace");
+    await Assert.That(scannedJson).IsNull();
+    await Assert.That(problem).Contains("matching close brace");
   }
 
   [Test]

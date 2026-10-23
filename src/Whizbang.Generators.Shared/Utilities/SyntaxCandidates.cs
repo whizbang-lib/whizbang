@@ -33,13 +33,13 @@ public static class SyntaxCandidates {
 
   /// <summary>Whether the type can carry an attribute: the declaration has one, or is partial.</summary>
   public static bool MayHaveAttributes(TypeDeclarationSyntax type) =>
-      type.AttributeLists.Count > 0 || IsPartial(type);
+      type.AttributeLists.Any() || IsPartial(type);
 
   /// <summary>
   /// Whether the declaration itself declares an attributed property: a property, indexer or event with an
   /// attribute, or a primary-constructor parameter with one (a record's positional parameter is a property).
   /// </summary>
   public static bool DeclaresAttributedProperty(TypeDeclarationSyntax type) =>
-      type.Members.OfType<BasePropertyDeclarationSyntax>().Any(static p => p.AttributeLists.Count > 0) ||
-      (type.ParameterList?.Parameters.Any(static p => p.AttributeLists.Count > 0) ?? false);
+      type.Members.OfType<BasePropertyDeclarationSyntax>().Any(static p => p.AttributeLists.Any()) ||
+      (type.ParameterList?.Parameters.Any(static p => p.AttributeLists.Any()) ?? false);
 }
