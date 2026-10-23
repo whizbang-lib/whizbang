@@ -335,8 +335,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
     var inAPartition = await _recentEventIdAsync(connection);
-    await _insertLifecycleCompletionAsync(connection, inAPartition, DateTimeOffset.UtcNow.AddDays(-10));
-    await _insertLifecycleCompletionAsync(connection, _version4EventId, DateTimeOffset.UtcNow.AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, inAPartition, (await _databaseNowAsync(connection)).AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, _version4EventId, (await _databaseNowAsync(connection)).AddDays(-10));
     await _partitionCompletionsAsync(connection, "true");
 
     var deleted = await _createCoordinator(dbContext).CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7));
@@ -353,8 +353,8 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
   public async Task CleanupLifecycleCompletionsAsync_PartitionedWithMaintenanceSwitchedOff_SweepsByRowAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
-    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), DateTimeOffset.UtcNow.AddDays(-10));
-    await _insertLifecycleCompletionAsync(connection, _version4EventId, DateTimeOffset.UtcNow.AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), (await _databaseNowAsync(connection)).AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, _version4EventId, (await _databaseNowAsync(connection)).AddDays(-10));
     await _partitionCompletionsAsync(connection, "false");
 
     var deleted = await _createCoordinator(dbContext).CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7));
@@ -367,7 +367,7 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
   public async Task CleanupLifecycleCompletionsAsync_ManagedWithoutADefaultPartition_DeletesNothingAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
-    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), DateTimeOffset.UtcNow.AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), (await _databaseNowAsync(connection)).AddDays(-10));
     await _partitionCompletionsAsync(connection, "true");
     await using (var drop = connection.CreateCommand()) {
       drop.CommandText = "DROP TABLE wh_lifecycle_completions_default";
@@ -690,6 +690,15 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     ins.Parameters.AddWithValue(nameof(status), status);
     ins.Parameters.AddWithValue("trigger", (object?)rewindTriggerEventId ?? DBNull.Value);
     await ins.ExecuteNonQueryAsync();
+  }
+
+  // The sweep compares against the database clock, so rows are aged from it too.
+  private static async Task<DateTimeOffset> _databaseNowAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT now()";
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    return reader.GetFieldValue<DateTimeOffset>(0);
   }
 
   private static async Task _insertLifecycleCompletionAsync(
