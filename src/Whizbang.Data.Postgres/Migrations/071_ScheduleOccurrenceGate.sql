@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 071_ScheduleOccurrenceGate.sql
 -- Date: 2026-07-14 (F2 temporal engine — increment 6b: pre-fire hook / occurrence gate)
 -- Description: The occurrence-level operations the pre-fire gate needs. The gate runs in C# immediately

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Enhancement
 description: A better version of something Whizbang already does.
 title: "[Enhancement]: "

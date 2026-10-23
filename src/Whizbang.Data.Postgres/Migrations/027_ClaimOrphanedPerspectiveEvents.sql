@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 027_ClaimOrphanedPerspectiveEvents.sql
 -- Date: 2025-12-25 (updated 2026-04-13 for full-stream capture, stream count limit)
 -- Description: Creates claim_orphaned_perspective_events function for claiming orphaned perspective events.

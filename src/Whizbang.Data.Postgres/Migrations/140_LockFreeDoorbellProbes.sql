@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 140_LockFreeDoorbellProbes
 -- Date: 2026-09-07
 -- Description: The doorbell probes and the claim tick's watermark stamp never wait on a held row

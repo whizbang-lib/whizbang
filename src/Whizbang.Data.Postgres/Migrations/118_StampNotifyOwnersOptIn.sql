@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 118_StampNotifyOwnersOptIn.sql
 -- Date: 2026-08-19
 -- Description: The post-stamp perspective doorbell (117) becomes OPT-IN per call.

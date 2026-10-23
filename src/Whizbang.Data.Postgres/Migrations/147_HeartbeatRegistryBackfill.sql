@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 147_HeartbeatRegistryBackfill.sql
 -- Date: 2026-09-08
 -- Description: Two liveness gaps closed on the heartbeat write.

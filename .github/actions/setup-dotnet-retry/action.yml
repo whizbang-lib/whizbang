@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: 'Setup .NET with Retry'
 description: 'Installs .NET SDK with retry logic to handle transient network failures'
 

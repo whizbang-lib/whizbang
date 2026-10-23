@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 229_OnlyReadyInstancesAreEligibleForWork.sql
 -- Date: 2026-10-22
 -- Description: "Alive" and "eligible for work" are two tests (#1638).

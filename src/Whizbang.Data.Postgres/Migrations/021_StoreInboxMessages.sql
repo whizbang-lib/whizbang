@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 021_StoreInboxMessages.sql
 -- Date: 2025-12-25
 -- Description: Creates store_inbox_messages function for inserting new inbox messages without lease.

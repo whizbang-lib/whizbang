@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 092_DigestEpochs.sql
 --
 -- Epoch substrate for bounded integrity reconciliation (docs: resilience/stream-integrity;

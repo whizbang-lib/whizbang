@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 063_NormalizeClrTypeNamesV2.sql
 -- Date: 2026-07-04
 -- Description: DATA (not schema) migration — normalize stored CLR type names to the canonical

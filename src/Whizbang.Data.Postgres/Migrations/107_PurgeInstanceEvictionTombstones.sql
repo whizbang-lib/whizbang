@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 107_PurgeInstanceEvictionTombstones.sql
 -- Date: 2026-08-15
 -- Description: Re-creates perform_maintenance VERBATIM from 082 plus a new Task 10 that purges

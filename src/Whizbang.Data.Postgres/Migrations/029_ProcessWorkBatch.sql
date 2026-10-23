@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 029_ProcessWorkBatch.sql
 -- Date: 2025-12-28
 -- Description: Hosts the focused work-pump SQL functions that replaced the legacy

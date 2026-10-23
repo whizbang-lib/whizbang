@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 198_LapsedBridgeLooksBeforeItLocks.sql
 -- Date: 2026-10-08
 -- Description: wh_end_lapsed_bridge reads the role row before it takes any lock, and returns at once when there

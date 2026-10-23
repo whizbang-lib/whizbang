@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Release Prerelease
 
 # Publishes a beta or rc FROM a release branch, while its release PR is open. Gitflow channels:

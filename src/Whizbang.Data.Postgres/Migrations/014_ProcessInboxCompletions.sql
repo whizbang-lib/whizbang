@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 014_ProcessInboxCompletions.sql
 -- Date: 2025-12-25
 -- Description: Creates process_inbox_completions function for marking inbox messages as complete.

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 052_LiveInstancesView.sql
 -- Date: 2026-06-04 (zero-idle-polling Slice 2b)
 -- Description: Defines wh_live_instances, a view that joins wh_service_instances

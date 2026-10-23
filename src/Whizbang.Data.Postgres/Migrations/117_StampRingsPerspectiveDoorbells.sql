@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 117_StampRingsPerspectiveDoorbells.sql
 -- Date: 2026-08-19
 -- Description: Stamping is the perspective-visibility event — ring the owners' doorbells.

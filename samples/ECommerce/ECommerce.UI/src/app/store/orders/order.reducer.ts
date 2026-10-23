@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { createReducer, on } from '@ngrx/store';
 import * as OrderActions from './order.actions';
 import { Order } from './order.actions';

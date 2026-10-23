@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: CI
 
 # Without this, a run is titled after its commit, and a post-merge run on develop is therefore
@@ -1275,6 +1278,25 @@ jobs:
         with:
           config-file: ./.github/dependency-review-config.yml
 
+  license-headers:
+    name: Gate · License headers
+    # Every file states its copyright and license (#1647, OpenSSF copyright_per_file and license_per_file):
+    # source code in its own header, everything else through REUSE.toml, which has no catch-all, so a new
+    # source file without the header fails here. `reuse lint` checks the whole tree against REUSE 3.3. It
+    # runs from the project's container image pinned by digest rather than a third-party action, which
+    # would need an allowed-actions change. Cheap (seconds, no build) and run on every event.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check every file's copyright and license (reuse lint)
+        run: docker run --rm -v "$PWD":/data:ro fsfe/reuse:6.2.0@sha256:85462a75c0f8efda09ddd190b92816b70e7662577c8427429e11e1b9f25a992e lint
+
   review-checks:
     name: Gate · Review checks
     # Deterministic review findings on the pull request's added lines, description, target branch and
@@ -1358,7 +1380,7 @@ jobs:
     # no such proof fails, which is what a release PR once got through with no suite results (#905).
     # The rules live in .github/scripts/Test-CiResult.ps1, tested by script-tests.
     # Requiring only this check also means suites can be renamed or sharded without a ruleset change.
-    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, review-checks]
+    needs: [changes, version, pr-version, format, build, unit-tests, component-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, general-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated, release-pr, alpha-floor, script-tests, dco, linked-issue, pipeline-owner, pr-type, dependency-review, license-headers, review-checks]
     if: always()
     runs-on: ubuntu-latest
     # Covers the wait for a yielded-to run's gate (90 minutes at most, usually minutes: Quality has

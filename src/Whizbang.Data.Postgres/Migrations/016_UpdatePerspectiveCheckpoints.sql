@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 016_UpdatePerspectiveCheckpoints.sql
 -- Date: 2025-12-25
 -- Description: Creates update_perspective_cursors, which persists each stream's perspective cursor at the position the

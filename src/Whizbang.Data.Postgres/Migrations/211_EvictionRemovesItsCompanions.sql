@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 211_EvictionRemovesItsCompanions.sql
 -- Date: 2026-10-19
 -- Description: An eviction reclaims storage only; the read model stays a function of the events (#1483).

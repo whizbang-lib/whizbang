@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 208_MultiStreamCommands.sql
 -- Date: 2026-10-13
 -- Description: Multi-stream commands (#1358). A command that names a set of streams is recorded once as a run, with one

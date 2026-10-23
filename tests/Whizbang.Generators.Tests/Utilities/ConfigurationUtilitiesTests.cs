@@ -223,6 +223,22 @@ public class ConfigurationUtilitiesTests {
     await Assert.That(result).IsNull();
   }
 
+  [Test]
+  [Arguments("", null)]
+  [Arguments("   ", null)]
+  [Arguments("0", null)]
+  [Arguments("40", 40)]
+  [Arguments(" 40 ", 40)]
+  public async Task GetMaxIdentifierLengthOverride_ReadsOnlyAUsableSetValueAsync(string raw, int? expected) {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.MAX_IDENTIFIER_LENGTH_PROPERTY] = raw
+    });
+
+    var result = ConfigurationUtilities.GetMaxIdentifierLengthOverride(options);
+
+    await Assert.That(result).IsEqualTo(expected);
+  }
+
   #endregion
 
   #region GetTableNameConfig — populated options
@@ -263,6 +279,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   [Arguments("true", true)]
   [Arguments("TRUE", true)]
+  [Arguments(" true ", true)]
   [Arguments("false", false)]
   [Arguments("nonsense", false)]
   public async Task GetTableNameConfig_ReadsStripSuffixesProperty_CaseInsensitivelyAsync(
@@ -274,6 +291,24 @@ public class ConfigurationUtilitiesTests {
     var result = ConfigurationUtilities.GetTableNameConfig(options);
 
     await Assert.That(result.StripSuffixes).IsEqualTo(expected);
+  }
+
+  /// <summary>
+  /// A property the package declares compiler-visible but the project never sets reaches the generator
+  /// as an empty value, not as a missing one. Empty or blank must mean "unset" and keep stripping on,
+  /// or every perspective table is renamed for a consumer that changed nothing (#1660).
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task GetTableNameConfig_BlankStripSuffixesProperty_KeepsStrippingOnAsync(string raw) {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY] = raw
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.StripSuffixes).IsTrue();
   }
 
   [Test]

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 165_TtlReapDrivesFromRegistry.sql
 -- Date: 2026-09-20
 -- Description: The row-expiry reap inside perform_maintenance chooses its tables from the

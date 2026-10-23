@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 126_FreshWorkClaimFairness
 -- Date: 2026-09-03
 -- Description: claim_work's inbox ordering becomes a weighted-fair merge between fresh-head

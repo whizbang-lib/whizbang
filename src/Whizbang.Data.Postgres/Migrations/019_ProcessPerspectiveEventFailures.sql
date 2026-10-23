@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 019_ProcessPerspectiveEventFailures.sql
 -- Date: 2025-12-25
 -- Description: Creates process_perspective_event_failures function for handling failed perspective events.

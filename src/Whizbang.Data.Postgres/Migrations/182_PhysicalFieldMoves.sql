@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 182_PhysicalFieldMoves
 -- Date: 2026-10-01
 -- Description: Moving a perspective field's storage keeps its data, during the deploy and after it

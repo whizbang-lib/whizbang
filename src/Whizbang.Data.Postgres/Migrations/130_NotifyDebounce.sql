@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 130_NotifyDebounce
 -- Date: 2026-09-04
 -- Description: Doorbell debounce (issue #665). Under fan-out load, store_*_messages fired

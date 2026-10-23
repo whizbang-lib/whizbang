@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 091_DrainFetchByteBudget.sql
 --
 -- Bound the drain fetch by BYTES as well as by row count.

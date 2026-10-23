@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 047_StampPendingCommitSequences.sql
 -- Date: 2026-05-23
 -- Description: Slice 26 step 2 — the stamper SQL function. Allocates commit_sequence

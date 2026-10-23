@@ -197,7 +197,7 @@ public sealed class PostgresSchemaInitializer {
     await command.ExecuteNonQueryAsync(cancellationToken);
 
     // Execute migration SQL files with hash-based change detection
-    await _executeMigrationsWithHashDetectionAsync(connection, cancellationToken);
+    await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
 
     // An application's own objects, before anything of its perspectives exists. This is the slot an
     // immutable function behind an expression index needs: the function has to be there before the
@@ -425,10 +425,11 @@ public sealed class PostgresSchemaInitializer {
       List<MigrationStep> steps, NpgsqlConnection connection,
       IReadOnlyList<Core.Data.MigrationScript> migrations, CancellationToken cancellationToken) {
     foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
-      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var hash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
 
-      if (existingHash == hash) {
+      // A row still on the legacy hash of this file is a file that did not change: the start rewrites it and skips.
+      if (existingHash == hash || existingHash == MigrationSqlNormalizer.LegacyContentHash(migration.Sql)) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
       } else if (existingHash != null) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));
@@ -547,7 +548,7 @@ public sealed class PostgresSchemaInitializer {
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Deciding what to run compares each migration's recorded hash against the file, then pulls in the redefinition closure of whatever drifted. Both passes walk the same ordered list, and the second depends on what the first found.")]
-  private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+  private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {
       return;
@@ -565,16 +566,21 @@ public sealed class PostgresSchemaInitializer {
     // Step 2: Upsert version row
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
+    var ordered = migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
+
+    // Step 2b: rows an earlier release recorded over the raw text are moved onto normalized hashes before any hash is
+    // read, so a file that did not change is not applied again.
+    await _rewriteLegacyMigrationHashesAsync(connection, schema, ordered, versionId, cancellationToken);
+
     // Redefinition-closure pre-pass (mirrors the EF Core schema-init): whenever a migration
     // re-runs, every LATER migration defining any of the same SQL objects must re-run after it —
     // otherwise a partial replay leaves the database on an earlier definition with no error
     // anywhere. Compute the will-run set, then expand it to its fixed-point closure.
-    var ordered = migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
     var hashCache = new Dictionary<string, (string Hash, string? ExistingHash)>(StringComparer.Ordinal);
     var toRun = new List<string>();
     var orderedObjects = new List<(string Name, IReadOnlyCollection<string> Objects)>();
     foreach (var migration in ordered) {
-      var preHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var preHash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var preExisting = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
       hashCache[migration.Name] = (preHash, preExisting);
       if (preExisting != preHash) {
@@ -682,6 +688,23 @@ public sealed class PostgresSchemaInitializer {
       }
     }
   }
+
+  /// <summary>
+  /// The pre-migration hash rewrite (#1648): every ledger row whose hash is the raw-text hash of its file as shipped,
+  /// which is what earlier releases recorded, takes the file's normalized hash. Runs under the schema lock and before
+  /// change detection reads a hash; a row matching neither form belongs to a file that really changed and is left for
+  /// change detection to apply.
+  /// </summary>
+  /// <remarks>
+  /// A distinct step so the startup phases can move it. Nothing to latch: once no row holds a legacy hash, the
+  /// statement updates nothing.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/NormalizedMigrationHashTests.cs</tests>
+  private Task<int> _rewriteLegacyMigrationHashesAsync(
+      NpgsqlConnection connection, string schema, IEnumerable<Core.Data.MigrationScript> migrations, int versionId,
+      CancellationToken cancellationToken) =>
+    MigrationHashUpgrade.RewriteLegacyHashesAsync(
+      connection, schema, migrations.Select(m => (m.Name, m.Sql)), versionId, Logger, cancellationToken);
 
   /// <summary>
   /// Executes perspective DDL with per-perspective hash tracking.

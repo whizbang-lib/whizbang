@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 099_RepairTerminalCadence.sql
 --
 -- Past the attempt cap the repair ladder FLATTENS to its terminal cadence (base x 2^6)

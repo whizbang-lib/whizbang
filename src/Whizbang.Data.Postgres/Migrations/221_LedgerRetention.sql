@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 221_LedgerRetention.sql
 -- Date: 2026-10-21
 -- Description: The maintenance sweep bounds the framework ledgers that had no delete path (#1572, WS-5 slice S3).

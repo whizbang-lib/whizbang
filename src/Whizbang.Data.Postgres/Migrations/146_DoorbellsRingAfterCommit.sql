@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 146_DoorbellsRingAfterCommit
 -- Date: 2026-09-08
 -- Description: no hot-path transaction issues NOTIFY; doorbells queue and ring in their own tiny commit (#720).

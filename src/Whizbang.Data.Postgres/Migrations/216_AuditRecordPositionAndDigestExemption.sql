@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 216_AuditRecordPositionAndDigestExemption.sql
 -- Date: 2026-10-20
 -- Description: An audit record written on the outbox path names the stream position its event was stored at

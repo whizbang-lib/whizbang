@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 145_BoundedAcquisitionRewrite
 -- Date: 2026-09-08
 -- Description: inbox acquisition costs the batch, not the backlog; commands have a lane; idle ranks may steal.

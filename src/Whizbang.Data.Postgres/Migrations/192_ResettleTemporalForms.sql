@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 192_ResettleTemporalForms.sql
 -- Date: 2026-10-04
 -- Description: Let the stored-form pass look again at every perspective table (#1059).

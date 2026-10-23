@@ -92,11 +92,17 @@ public static class SchemaBootstrapPhase {
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
     var closure = BootstrapClosure.Of(scripts);
 
-    if (await _isClosureRecordedAsync(connection, target, closure.Hash, cancellationToken).ConfigureAwait(false)) {
+    var recorded = await _recordedClosureAsync(connection, target, closure, cancellationToken).ConfigureAwait(false);
+    if (recorded == RecordedClosure.Current) {
       // The closure this instance carries is the one the database already holds. Applying it again
       // would take a share lock per statement on tables the running instances write, for nothing —
       // an instance starting under load deadlocked on exactly that.
       SchemaBootstrapLog.ClosureCurrent(log, closure.Hash, target);
+    } else if (recorded == RecordedClosure.Legacy) {
+      // The same closure, recorded by an earlier release under the hash it computed then. Current
+      // all the same; the normalized hash is recorded beside it so the next start finds it directly.
+      await _recordNormalizedClosureHashAsync(connection, lockId, closure, target, log, cancellationToken)
+        .ConfigureAwait(false);
     } else {
       // Its own method so the transaction is closed before the probe below, which has to read
       // committed state. That ordering is the reason this is not inlined here.
@@ -188,6 +194,58 @@ public static class SchemaBootstrapPhase {
       // did before an election existed. Throwing here would turn a wrong closure or a permission
       // problem into a service that cannot start at all.
       SchemaBootstrapLog.ScriptFailed(log, ex, applying);
+    }
+  }
+
+  /// <summary>
+  /// The pre-migration step for the bootstrap closure: records the closure's normalized hash beside the legacy one an
+  /// earlier release recorded, under the schema lock and without applying anything.
+  /// </summary>
+  /// <param name="connection">An open connection with no transaction of its own.</param>
+  /// <param name="lockId">The schema initialization lock key.</param>
+  /// <param name="closure">The closure whose legacy hash the database holds.</param>
+  /// <param name="schema">The target schema, which holds the record table.</param>
+  /// <param name="log">Where to report; never null.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <remarks>
+  /// <para>
+  /// The legacy row is kept rather than replaced: an instance of the earlier release still running in the fleet keeps
+  /// finding its own record, and does not apply the closure's DDL on its next start. Idempotent: once the normalized
+  /// hash is recorded, <see cref="ApplyAsync"/> finds it and never comes here.
+  /// </para>
+  /// <para>
+  /// Like the bootstrap itself, it never blocks and never throws. An instance that does not get the lock records
+  /// nothing (the holder's start, or this instance's next one, does it), and a record that cannot be written is
+  /// reported: the closure is current either way.
+  /// </para>
+  /// </remarks>
+  private static async Task _recordNormalizedClosureHashAsync(
+      NpgsqlConnection connection,
+      long lockId,
+      BootstrapClosure closure,
+      string schema,
+      ILogger log,
+      CancellationToken cancellationToken) {
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+    try {
+      if (!await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
+        SchemaBootstrapLog.LockHeldElsewhere(log, lockId);
+        return;
+      }
+
+      await using (var record = new NpgsqlCommand(
+          $"INSERT INTO {_quoteIdentifier(schema)}.wh_bootstrap_closure (closure_hash) VALUES ($1) ON CONFLICT DO NOTHING",
+          connection)) {
+        record.Parameters.AddWithValue(closure.Hash);
+        await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+
+      await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+      SchemaBootstrapLog.LegacyClosureRecordedAgain(log, closure.LegacyHash, closure.Hash, schema);
+    } catch (NpgsqlException ex) {
+      // Reported, never rethrown: nothing was applied and the closure is current, so the start goes on. A database
+      // refusal is the failure this can meet; cancellation, and anything that is not the database's, propagates.
+      SchemaBootstrapLog.LegacyClosureRecordFailed(log, ex, closure.LegacyHash, schema);
     }
   }
 
@@ -301,14 +359,34 @@ public static class SchemaBootstrapPhase {
   /// hash means the database holds exactly what this instance would apply.
   /// </para>
   /// <para>
-  /// Only statements take part. A line that is nothing but a comment, a blank line, and the line
-  /// ending convention are dropped before hashing, because none of them changes what is applied
-  /// and any of them can differ between two instances of one release: a header a builder writes,
-  /// a note an author adds, or a stamp of the clock. One such stamp once made every instance
-  /// compute its own closure, so the record never matched and every start applied the DDL.
+  /// Only statements take part: each script is hashed in the form <see cref="MigrationSqlNormalizer"/>
+  /// gives it, the same form a migration's ledger row records. Comments, whitespace at line edges and
+  /// between tokens, blank lines and the line ending convention are dropped before hashing, because
+  /// none of them changes what is applied and any of them can differ between two instances of one
+  /// release: a header a builder writes, a note an author adds, or a stamp of the clock. One such
+  /// stamp once made every instance compute its own closure, so the record never matched and every
+  /// start applied the DDL.
   /// </para>
   /// </remarks>
   public static string ClosureHash(IEnumerable<(string Name, string Sql)> scripts) {
+    ArgumentNullException.ThrowIfNull(scripts);
+    using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+    foreach (var (name, sql) in scripts) {
+      sha.AppendData(System.Text.Encoding.UTF8.GetBytes(name));
+      sha.AppendData("\n"u8);
+      sha.AppendData(System.Text.Encoding.UTF8.GetBytes(MigrationSqlNormalizer.Normalize(sql)));
+      sha.AppendData("\n\n"u8);
+    }
+    return Convert.ToHexStringLower(sha.GetHashAndReset());
+  }
+
+  /// <summary>
+  /// The closure hash earlier releases recorded: comment-only and blank lines dropped and line endings ignored, the
+  /// rest of every line hashed as written. Read only to recognize a closure an earlier release recorded.
+  /// </summary>
+  /// <param name="scripts">The scripts, in the order they apply.</param>
+  /// <returns>Sixty-four lowercase hex characters.</returns>
+  internal static string LegacyClosureHash(IEnumerable<(string Name, string Sql)> scripts) {
     ArgumentNullException.ThrowIfNull(scripts);
     using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
     foreach (var (name, sql) in scripts) {
@@ -335,38 +413,47 @@ public static class SchemaBootstrapPhase {
     }
   }
 
-  /// <summary>Whether the database records <paramref name="closureHash"/> as applied.</summary>
+  /// <summary>Whether the database records <paramref name="closure"/>, under its hash or only under its legacy hash.</summary>
   /// <remarks>
   /// Two statements rather than one: a query that names the record table fails to parse when the
   /// table does not exist yet, whatever else the query says, and on an empty database it does not.
   /// A record that cannot be read reads as "not recorded", which applies the closure; the safe
   /// direction, since applying is idempotent and skipping is not.
   /// </remarks>
-  private static async Task<bool> _isClosureRecordedAsync(
-      NpgsqlConnection connection, string schema, string closureHash, CancellationToken cancellationToken) {
+  private static async Task<RecordedClosure> _recordedClosureAsync(
+      NpgsqlConnection connection, string schema, BootstrapClosure closure, CancellationToken cancellationToken) {
     await using (var exists = new NpgsqlCommand("SELECT to_regclass($1 || '.wh_bootstrap_closure') IS NOT NULL", connection)) {
       exists.Parameters.AddWithValue(_quoteIdentifier(schema));
       if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
-        return false;
+        return RecordedClosure.None;
       }
     }
+    var table = $"{_quoteIdentifier(schema)}.wh_bootstrap_closure";
     await using var recorded = new NpgsqlCommand(
-      $"SELECT EXISTS (SELECT 1 FROM {_quoteIdentifier(schema)}.wh_bootstrap_closure WHERE closure_hash = $1)", connection);
-    recorded.Parameters.AddWithValue(closureHash);
-    return await recorded.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+      $"SELECT CASE WHEN EXISTS (SELECT 1 FROM {table} WHERE closure_hash = $1) THEN {(int)RecordedClosure.Current} "
+      + $"WHEN EXISTS (SELECT 1 FROM {table} WHERE closure_hash = $2) THEN {(int)RecordedClosure.Legacy} "
+      + $"ELSE {(int)RecordedClosure.None} END",
+      connection);
+    recorded.Parameters.AddWithValue(closure.Hash);
+    recorded.Parameters.AddWithValue(closure.LegacyHash);
+    return (RecordedClosure)(int)(await recorded.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
   }
+
+  /// <summary>How the database records a closure: not at all, under its hash, or only under the legacy hash.</summary>
+  private enum RecordedClosure { None = 0, Current = 1, Legacy = 2 }
 
   private static string _quoteIdentifier(string identifier) =>
     "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
-  /// <summary>The scripts a bootstrap applies, and the hash that names exactly that set.</summary>
+  /// <summary>The scripts a bootstrap applies, and the hashes that name exactly that set.</summary>
   /// <param name="Scripts">The scripts, in the order they apply.</param>
   /// <param name="Hash">Their <see cref="ClosureHash"/>.</param>
-  private sealed record BootstrapClosure(IReadOnlyList<(string Name, string Sql)> Scripts, string Hash) {
+  /// <param name="LegacyHash">Their <see cref="LegacyClosureHash"/>, which an earlier release recorded.</param>
+  private sealed record BootstrapClosure(IReadOnlyList<(string Name, string Sql)> Scripts, string Hash, string LegacyHash) {
     /// <summary>Materializes <paramref name="scripts"/> once and hashes them.</summary>
     public static BootstrapClosure Of(IEnumerable<(string Name, string Sql)> scripts) {
       var list = new List<(string Name, string Sql)>(scripts);
-      return new BootstrapClosure(list, ClosureHash(list));
+      return new BootstrapClosure(list, ClosureHash(list), LegacyClosureHash(list));
     }
   }
 
@@ -419,4 +506,18 @@ internal static partial class SchemaBootstrapLog {
       Level = LogLevel.Information,
       Message = "Schema bootstrap closure {ClosureHash} applied and recorded for {Schema}")]
   public static partial void ClosureApplied(ILogger logger, string closureHash, string schema);
+
+  [LoggerMessage(
+      EventId = 6,
+      Level = LogLevel.Information,
+      Message = "Schema bootstrap closure is recorded for {Schema} under its legacy hash {LegacyHash}; nothing applied, "
+              + "and its normalized hash {ClosureHash} is now recorded beside it")]
+  public static partial void LegacyClosureRecordedAgain(ILogger logger, string legacyHash, string closureHash, string schema);
+
+  [LoggerMessage(
+      EventId = 7,
+      Level = LogLevel.Warning,
+      Message = "Schema bootstrap closure is recorded for {Schema} under its legacy hash {LegacyHash}, but its normalized "
+              + "hash could not be recorded beside it; nothing was applied, and the next start tries again")]
+  public static partial void LegacyClosureRecordFailed(ILogger logger, Exception exception, string legacyHash, string schema);
 }

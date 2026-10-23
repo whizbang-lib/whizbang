@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 202_ClaimTakesItsLedgerInOnePass.sql
 -- Date: 2026-10-09
 -- Description: One claim takes every stream-ledger row it writes in one stream_id order (#1256).

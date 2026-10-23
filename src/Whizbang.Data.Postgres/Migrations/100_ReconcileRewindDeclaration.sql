@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 100_ReconcileRewindDeclaration.sql
 --
 -- Reconcile SELF-DECLARES the perspective rewind. A backfilled/redelivered event keeps its

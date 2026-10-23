@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 194_OutboxAcquisitionWindow.sql
 -- Date: 2026-10-07
 -- Description: The outbox acquisition examines a window of the oldest claimable rows, not the backlog

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 213_MultiStreamClaimSendsEachPayloadOnce.sql
 -- Date: 2026-10-19
 -- Description: The multi-stream claim returns a run's payload on the run's first claimed row only; its other rows carry

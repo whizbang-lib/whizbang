@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 050_WhDeadLetters.sql
 -- Date: 2026-06-03 (v0.502 slice C.1)
 -- Description: Creates wh_dead_letters table and move_to_dead_letters() function for the

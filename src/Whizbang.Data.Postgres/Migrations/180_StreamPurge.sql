@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 180_StreamPurge.sql
 -- Date: 2026-10-01
 -- Description: Purged streams stay purged (#1027), and an operator purge of durable streams (#1030).

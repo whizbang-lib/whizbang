@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 074_ReclassifyEventsEphemeral.sql
 -- Date: 2026-07-15
 -- Description: E1 #13c1 — reclassification primitive. When a type that already has stored Sourced events

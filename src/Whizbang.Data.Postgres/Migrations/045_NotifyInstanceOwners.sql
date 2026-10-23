@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 045_NotifyInstanceOwners.sql
 -- Date: 2026-05-23 (v0.685 cold-start fix; 2026-06-12 perf rewrite)
 -- Description: Slice 27 — helper for instance-routed NOTIFY emission. Replaces the

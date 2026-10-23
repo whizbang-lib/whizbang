@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 057_EmitChainInboxIndex.sql
 -- Date: 2026-06-11
 -- Description: Partial index backing _emit_event_store_chain_for_inbox's outer scan.

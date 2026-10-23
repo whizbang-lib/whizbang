@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { platformBrowser } from '@angular/platform-browser';
 import { AppModule } from './app/app-module';
 

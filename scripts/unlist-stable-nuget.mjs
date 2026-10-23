@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 // Unlists the STABLE (non-prerelease) versions of every SoftwareExtravaganza.
 // Whizbang.* package on nuget.org, so the project presents as prerelease-only
 // (no accidental "latest stable" like the stray 0.9.4). Unlisting hides a

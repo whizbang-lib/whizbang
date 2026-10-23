@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 151_PriorityOnTheWire
 -- Date: 2026-09-10
 -- Description: Priority step 1 on the wire. fetch_outbox_batch is re-created VERBATIM from 096 plus the row's

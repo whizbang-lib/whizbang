@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Create a signed release tag
 description: >-
   Creates an annotated tag signed keylessly with Sigstore (gitsign), checks the signature names this

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 207_ClaimRefreshesStaleQueueStatistics.sql
 -- Date: 2026-10-12
 -- Description: A claim analyzes a queue table whose statistics describe it as it was before a load (#1349).

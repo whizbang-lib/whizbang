@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 148_ActiveStreamLeases
 -- Date: 2026-09-09
 -- Description: Acquiring a stream's rows leases the stream (#731). wh_active_streams.lease_expiry had never

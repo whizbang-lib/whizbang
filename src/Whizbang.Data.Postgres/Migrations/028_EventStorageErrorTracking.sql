@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- =====================================================================================
 -- Migration 028: Event Storage Error Tracking & Logging System
 -- =====================================================================================

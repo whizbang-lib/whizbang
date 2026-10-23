@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Sync Into Develop
 
 # The ONE merge-back mechanism: opens a review PR that brings a published release's changes into
