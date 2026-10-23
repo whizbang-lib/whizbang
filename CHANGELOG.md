@@ -517,6 +517,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a live write the ordering guard refuses re-folds the stream instead of being reported applied. Rows already
   missing an event are repaired by rebuilding the perspective (any mode); on earlier releases only a blue-green
   rebuild repairs them, because an in-place rebuild of a strictly ordered row was refused the same way.
+- **A failed backlog head peek on Azure Service Bus is logged (#1643).** The backlog sample reports an entity whose
+  oldest-message peek throws (a missing permission, a deleted entity, a broker error) with its depth and no age, as it
+  does an empty entity, and nothing said why. The failure is now logged at Warning with the entity, the exception type
+  and its message, at most once every five minutes per entity on the transport's `TimeProvider`; the depth is still
+  reported.
 - **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
   its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
   associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
