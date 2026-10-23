@@ -305,9 +305,11 @@ public class ConfigurationUtilitiesTests {
   }
 
   [Test]
-  public async Task GetTableNameConfig_BlankSuffixList_KeepsDefaultsAsync() {
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task GetTableNameConfig_BlankSuffixList_KeepsDefaultsAsync(string raw) {
     var options = new StubOptions(new Dictionary<string, string> {
-      [ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY] = "   "
+      [ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY] = raw
     });
 
     var result = ConfigurationUtilities.GetTableNameConfig(options);

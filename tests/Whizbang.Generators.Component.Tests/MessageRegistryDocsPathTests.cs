@@ -62,6 +62,19 @@ public class MessageRegistryDocsPathTests {
     }
   }
 
+  /// <summary>
+  /// A build that sets neither declared property hands the generator empty values (#1660): no docs checkout is read
+  /// and none is discovered, and the registry is still generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Registry_WithTheDeclaredPropertiesUnset_ReadsNoCheckoutAsync() {
+    var registry = _registry(MSBuildGlobalOptions.For());
+
+    await Assert.That(registry).Contains("OrderPlaced");
+    await Assert.That(registry).DoesNotContain(DOCS_URL);
+  }
+
   [RequiresAssemblyFiles]
   private static string _registry(Dictionary<string, string> globalOptions) =>
     GeneratorTestHelper.GetGeneratedSource(

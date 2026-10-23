@@ -64,6 +64,7 @@
   <ItemGroup>
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
     <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/MSBuildGlobalOptions.cs" Link="Shared/MSBuildGlobalOptions.cs" />
   </ItemGroup>
   <!-- #1378: the suppressor guard runs the real third-party rules a consumer's build runs. Directory.Build.props
        references both packages for every project; their analyzer assemblies are copied into the output so the
