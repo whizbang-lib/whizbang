@@ -530,6 +530,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does an empty entity, and nothing said why. The failure is now logged at Warning with the entity, the exception type
   and its message, at most once every five minutes per entity on the transport's `TimeProvider`; the depth is still
   reported.
+- **An event's flags keep every bit when the JSON options write enums as names (#1612).** The outbox and inbox
+  store functions read an event's flags from the stored message's JSON and, for anything but a number, kept only
+  `Collective`. JSON options carrying `JsonStringEnumConverter` (added by a host to its options, or registered with
+  `JsonContextRegistry`) write the flags as names, so on such a host an ephemeral event was stored as Sourced (its body
+  never reaped, its stream invisible to the WHIZ133 and rebuild guards), and the `Composite`, `NoRebroadcast`,
+  `Compacted` and `AtMostOnce` bits were stored as 0, with nothing reported. The framework's default options write the
+  number and were not affected. `OutboxMessage.Flags` and `InboxMessage.Flags` are now always written as the number
+  (`EventFlagsNumberJsonConverter`, a property-level converter that outranks the options), and the store functions
+  (migration 232) read a name list bit by bit for any writer that still sends one: every `EventFlags` name, under any
+  naming policy, and a number among the names. A name `EventFlags` does not define raises SQLSTATE `22P02` naming it,
+  so an event whose kind cannot be read is refused rather than stored as Sourced. Events already stored with the lost
+  bits are not repaired by this change.
 - **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
   its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
   associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
