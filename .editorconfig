@@ -273,7 +273,7 @@ dotnet_diagnostic.CA1707.severity = none
 
 # CA2026: JsonDocument.Parse(...).RootElement creates a document nothing disposes, so its pooled buffers are
 # never returned (#1679). The rule ships only with the SDK 11 analyzers; it is an error here for builds on that
-# SDK, and the repository analyzer WHZ0004 (tools/Whizbang.RepoAnalyzers) enforces the same thing on SDK 10.
+# SDK, and the repository analyzer WHZ0005 (tools/Whizbang.RepoAnalyzers) enforces the same thing on SDK 10.
 dotnet_diagnostic.CA2026.severity = error
 
 # var preferences

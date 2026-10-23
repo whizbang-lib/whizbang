@@ -177,7 +177,7 @@
   <!-- Repository-only analyzers (tools/Whizbang.RepoAnalyzers, never packed): rules this repository enforces on
        its own source before the SDK it builds with can. Loaded as an analyzer only, so no project references
        its assembly or carries it into a package. The analyzer project and its tests reference it directly instead.
-       WHZ0004 stands in for CA2026 until SDK 11 (#1679). -->
+       WHZ0005 stands in for CA2026 until SDK 11 (#1679). -->
   <ItemGroup Condition="!$(MSBuildProjectName.StartsWith('Whizbang.RepoAnalyzers'))">
     <ProjectReference Include="$(MSBuildThisFileDirectory)tools/Whizbang.RepoAnalyzers/Whizbang.RepoAnalyzers.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />

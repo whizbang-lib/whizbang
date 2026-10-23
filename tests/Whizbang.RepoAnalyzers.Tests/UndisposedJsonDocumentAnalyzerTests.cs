@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis;
 namespace Whizbang.RepoAnalyzers.Tests;
 
 /// <summary>
-/// WHZ0004: a JsonDocument created and dropped in one expression is never disposed, so the buffers it
+/// WHZ0005: a JsonDocument created and dropped in one expression is never disposed, so the buffers it
 /// rented from the shared pool are never returned. The rule stands in for the SDK's CA2026 on builds
 /// whose SDK does not ship it yet.
 /// </summary>
@@ -23,7 +23,7 @@ public class UndisposedJsonDocumentAnalyzerTests {
   public async Task Descriptor_IsTheRepositoryRuleReportedAsAnErrorAsync() {
     var descriptor = new UndisposedJsonDocumentAnalyzer().SupportedDiagnostics.Single();
 
-    await Assert.That(descriptor.Id).IsEqualTo("WHZ0004");
+    await Assert.That(descriptor.Id).IsEqualTo("WHZ0005");
     await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(descriptor.IsEnabledByDefault).IsTrue();
   }
@@ -38,7 +38,7 @@ public class UndisposedJsonDocumentAnalyzerTests {
       """);
 
     await Assert.That(diagnostics).Count().IsEqualTo(1);
-    await Assert.That(diagnostics[0].Id).IsEqualTo("WHZ0004");
+    await Assert.That(diagnostics[0].Id).IsEqualTo("WHZ0005");
     await Assert.That(diagnostics[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture))
       .Contains("JsonDocument.Parse");
   }

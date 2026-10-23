@@ -10,7 +10,7 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Whizbang.RepoAnalyzers;
 
 /// <summary>
-/// WHZ0004: a <c>JsonDocument</c> created and dropped in one expression, as in
+/// WHZ0005: a <c>JsonDocument</c> created and dropped in one expression, as in
 /// <c>JsonDocument.Parse(json).RootElement</c>. Nothing holds the document, so nothing can dispose it,
 /// and the buffers it rented from the shared pool are never returned.
 /// </summary>
@@ -27,7 +27,7 @@ namespace Whizbang.RepoAnalyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class UndisposedJsonDocumentAnalyzer : DiagnosticAnalyzer {
   private static readonly DiagnosticDescriptor _rule = new(
-    id: "WHZ0004",
+    id: "WHZ0005",
     title: "A JsonDocument is created and dropped without being disposed",
     messageFormat: "'{0}' creates a JsonDocument that nothing can dispose, so its pooled buffers are never returned; use JsonElement.Parse or JsonSerializer.SerializeToElement, or dispose the document and Clone the element that must outlive it",
     category: "Reliability",

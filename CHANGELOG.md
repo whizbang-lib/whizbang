@@ -512,7 +512,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and never disposed the document, so the buffers it rented from the shared pool were never returned, on paths that
   run per message. They now use `JsonElement.Parse`, whose element owns its memory; every returned element keeps the
   same content and stays valid after the call. Generated message-tag registries with `ExtraJson` now dispose the
-  document they merge from. A repository analyzer (WHZ0004) fails the build on the pattern, so it cannot return while
+  document they merge from. A repository analyzer (WHZ0005) fails the build on the pattern, so it cannot return while
   the SDK's own rule, CA2026, ships only with SDK 11; `.editorconfig` raises CA2026 to an error for that SDK.
 - **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
   burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
