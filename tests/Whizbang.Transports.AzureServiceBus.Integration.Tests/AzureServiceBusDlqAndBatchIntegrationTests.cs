@@ -828,9 +828,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   /// <summary>
   /// Waits (broker-side) for a specific message to arrive in the subscription's
-  /// dead-letter sub-queue. Completes and returns the match; completes and skips
+  /// dead-letter sub-queue. Removes and returns the match; removes and skips
   /// stray dead-lettered messages from earlier runs. Returns null if the message
   /// never arrives within ~60 seconds of broker-side waits.
+  /// <para>
+  /// Receive-and-delete, not peek-lock: these helpers only consume, and completing a
+  /// peek-locked dead-letter message intermittently failed with MessageLockLost on the
+  /// emulator, failing a test whose assertion had nothing to do with locks.
+  /// </para>
   /// </summary>
   private async Task<ServiceBusReceivedMessage?> _receiveDeadLetteredMessageAsync(
     string topicName,
@@ -838,7 +843,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     string expectedMessageId
   ) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var attempt = 0; attempt < 12; attempt++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
@@ -846,7 +851,6 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
           continue;
         }
 
-        await receiver.CompleteMessageAsync(message);
         if (message.MessageId == expectedMessageId) {
           return message;
         }
@@ -858,14 +862,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
+      new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();
@@ -874,14 +878,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   private async Task _drainDeadLetterQueueAsync(string topicName, string subscriptionName) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();
