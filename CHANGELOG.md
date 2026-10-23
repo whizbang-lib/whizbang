@@ -332,6 +332,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records the normalized bootstrap closure hash beside the old one, so nothing is applied again and the bootstrap does
   not re-run; a row matching neither form belongs to a file that really changed and is applied as before. Later starts
   find nothing to rewrite.
+- **The unread `table_rewrite_policy` setting is retired (#1667).** Migration 089 seeded it in `wh_settings` and
+  nothing ever read it: table rewrites are governed by `AllowTableRewrite` alone. Migration 233 deletes the row, so
+  behavior is the same whatever it held. `table_rewrite_bloat_threshold`, `table_rewrite_min_rows` and
+  `pending_table_rewrites` stay.
 - **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
   `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
   `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes

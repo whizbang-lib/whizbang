@@ -101,6 +101,8 @@ Each slice is one red-then-green increment and its own commit.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
+   **Status (2026-10-23):** done in #1667, migration 233. Nothing in `src/` read the key, so behavior is
+   unchanged for any value it held.
 5. **PgRepack strategy.** A fifth `TableRewriteStrategy` value, `PgRepack`, carrying
    `[RequiresPostgresExtension("pg_repack")]`. The extension is provisioned and the client program
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or

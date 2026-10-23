@@ -1,0 +1,24 @@
+-- Migration: 233_RetireTableRewritePolicySetting.sql
+-- Date: 2026-10-22
+-- Description: Retires the table_rewrite_policy setting (#1667, WS-4 slice C1.4).
+--
+--              089 inserted table_rewrite_policy ('off' or 'immediate') next to the rewrite queue, and nothing has
+--              ever read it: rewrites run post-ready under the maintainer duty and are governed by the
+--              AllowTableRewrite option alone. A row that looks like a switch and is not one tells an operator that
+--              setting it to 'immediate' does something, so it is deleted.
+--
+--              Nothing changes for any database, whatever the row held: no function, worker or driver reads it, so a
+--              database that had it 'off' (the only value 089 wrote) behaves exactly as before, and so does one where
+--              an operator had changed it. The detector's own settings (table_rewrite_bloat_threshold,
+--              table_rewrite_min_rows) and the request list (pending_table_rewrites) stay.
+--
+--              089 still inserts the key and is never edited; a fresh database applies 089 and then this file, so it
+--              ends without the key too. Deleting an absent row is a no-op, so a re-run changes nothing.
+--
+--              Number 233: 232 is the applied-event ledger's autovacuum (#1666).
+--
+-- Dependencies: 032 (wh_settings), 089 (the key)
+-- Objects: none
+-- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
+
+DELETE FROM __SCHEMA__.wh_settings WHERE setting_key = 'table_rewrite_policy';
