@@ -105,6 +105,7 @@
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Component.Tests/Whizbang.Partitioning.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
+    <Project Path="tests/Whizbang.RepoAnalyzers.Tests/Whizbang.RepoAnalyzers.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Tests/Whizbang.Sagas.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Component.Tests/Whizbang.Sagas.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Component.Tests/Whizbang.Sequencing.Component.Tests.csproj" />
@@ -135,5 +136,6 @@
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
     <Project Path="tools/Whizbang.LanguageServer/Whizbang.LanguageServer.csproj" />
     <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
+    <Project Path="tools/Whizbang.RepoAnalyzers/Whizbang.RepoAnalyzers.csproj" />
   </Folder>
 </Solution>
