@@ -242,7 +242,7 @@ public sealed class MessageParseRecorder : IMessageParseObserver, IDisposable {
 
   /// <inheritdoc/>
   public void OnParse(in MessageParse parse) {
-    if (_tracked is null || _tracked.ContainsKey(parse.MessageId)) {
+    if (_tracked?.ContainsKey(parse.MessageId) != false) {
       _parses.Enqueue(parse);
     }
   }
