@@ -10,11 +10,13 @@ This document explains the performance-critical patterns that MUST be followed w
 
 1. [Overview](#overview)
 2. [Syntactic Filtering First](#syntactic-filtering-first)
-3. [Value Type Records for Caching](#value-type-records-for-caching)
-4. [Early Null Returns](#early-null-returns)
-5. [Static Methods Where Possible](#static-methods-where-possible)
-6. [Keeping Output Cached Across Edits](#keeping-output-cached-across-edits)
-7. [Performance Impact Summary](#performance-impact-summary)
+3. [Every Predicate Is a Named Candidate Method](#every-predicate-is-a-named-candidate-method)
+4. [Value Type Records for Caching](#value-type-records-for-caching)
+5. [Early Null Returns](#early-null-returns)
+6. [Static Methods Where Possible](#static-methods-where-possible)
+7. [Keeping Output Cached Across Edits](#keeping-output-cached-across-edits)
+8. [Timing Benchmark](#timing-benchmark)
+9. [Performance Impact Summary](#performance-impact-summary)
 
 ---
 
@@ -119,8 +121,10 @@ predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.
 // Classes with attributes
 predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 }
 
-// Method invocations (dispatcher calls, etc.)
-predicate: static (node, _) => node is InvocationExpressionSyntax
+// Method invocations: always narrow to the method names the transform handles. A bare
+// `node is InvocationExpressionSyntax` admits every call in the consumer (#1649)
+predicate: static (node, _) => node is InvocationExpressionSyntax {
+    Expression: MemberAccessExpressionSyntax { Name.Identifier.ValueText: "SendAsync" or "PublishAsync" } }
 
 // Properties with attributes
 predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 }
@@ -131,6 +135,63 @@ predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeList
 - Access cheap properties
 - Filter out 95%+ of nodes
 - Take microseconds to execute
+
+---
+
+## Every Predicate Is a Named Candidate Method
+
+### The Rule
+
+> **A `CreateSyntaxProvider` predicate is a `public static bool Is…Candidate(SyntaxNode node)` method on the
+> generator, and it admits no ordinary code.**
+
+```csharp
+/// <summary>Syntax predicate: admits a class with a base list.</summary>
+/// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+    node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+var receptors = context.SyntaxProvider.CreateSyntaxProvider(
+    predicate: static (node, _) => IsClassWithBaseListCandidate(node),
+    transform: static (ctx, ct) => _extractReceptor(ctx, ct));
+```
+
+The predicate is passed as a method group or forwarded by exactly `static (node, _) => IsXCandidate(node)`; any
+other lambda fails the build-cost tests. `ForAttributeWithMetadataName` pipelines are narrow by construction and
+exempt.
+
+### Why: the guard
+
+`tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs`:
+
+1. parses every generator source file and fails when a `CreateSyntaxProvider` predicate is not a named candidate
+   method, so a new pipeline cannot escape the guard;
+2. finds each candidate method on its `[Generator]` class by reflection; and
+3. runs every one over 200 files of ordinary code (`OrdinaryCodeCorpus`: classes, records, structs, interfaces
+   and enums with fields, properties and thousands of ordinary calls, lambdas and generic types, and no base list,
+   attribute, partial modifier or nested type) and fails when any admits a node. A predicate that legitimately
+   must admit some ordinary code goes in the test's commented exemption list, with the most it may admit and why;
+   the list is empty today.
+
+The predicate is called directly because counting a generator's tracked steps cannot see a broad predicate:
+Roslyn does not record a transform result equal to the default value, so a transform that returns null for a
+node it declines reads the same whether the predicate admitted the node or not. That is how a predicate that
+admitted every member-access call (#1649) passed every build-cost check and cost a large consumer 60% of its
+build.
+
+### Narrowing without changing output
+
+`SyntaxCandidates` (`Whizbang.Generators.Shared.Utilities`) holds the cheap checks:
+
+| Check | Admits | Use when the transform needs |
+|---|---|---|
+| `MayHaveBaseTypes(type)` | a base list, or `partial` | an interface or base type (a type with no base list implements nothing) |
+| `MayHaveAttributes(type)` | an attribute, or `partial` | an attribute on the type |
+| `DeclaresAttributedProperty(type)` | an attributed property, indexer, event or positional parameter | an attribute on a property it declares |
+
+A partial declaration always passes because another declaration of the same type, which the predicate cannot see,
+may carry the base list or the attribute, and the transform binds the whole type from any of them; admitting it
+keeps the output byte-identical even when a type's declarations are split.
 
 ---
 
@@ -447,6 +508,26 @@ names the model that lacks value equality. `WithTrackingName("...")` on a step m
 
 ---
 
+## Timing Benchmark
+
+Timing is not a test (tests are deterministic), so it is a tool: `benchmarks/Whizbang.BuildCost.Benchmarks` builds a
+large consumer in memory (1,000 features of messages, receptors and perspectives plus 3,000 files of ordinary code),
+loads every generator package from its build output as a consumer's compiler does, and times each generator
+(`GeneratorDriver.GetTimingInfo`) and each analyzer assembly (`CompilationWithAnalyzers` with
+`logAnalyzerExecutionTime`), median of 5 runs after a warm-up. It checks them against `build-cost-thresholds.json`
+and exits 1 when one is over; the advisory CI job "Build · Generator and analyzer timing" runs it and puts the table
+in the job summary.
+
+```bash
+dotnet build -c Release benchmarks/Whizbang.BuildCost.Benchmarks
+dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --runs 5
+```
+
+A new generator needs a threshold in the file (`BuildCostThresholdsFileTests` fails without one). Thresholds start
+generous and are tightened from CI data.
+
+---
+
 ## Performance Impact Summary
 
 ### Good Practices vs. Bad Practices
@@ -490,7 +571,7 @@ Incremental build (receptor changed): 5,000ms
 Before claiming generator work complete:
 
 - [ ] Predicate uses syntactic filtering only (no semantic analysis)
-- [ ] Predicate filters out 95%+ of nodes
+- [ ] Predicate is a `public static bool Is…Candidate(SyntaxNode)` method and `SyntaxCandidateGuardTests` passes (it admits no ordinary code)
 - [ ] Info types are `sealed record` (not classes)
 - [ ] Models and transform results hold `EquatableArray<T>`, never `T[]`, `ImmutableArray<T>`, `List<T>`, symbols or syntax
 - [ ] `CompilationProvider` is projected with `Select` to a value before any `Combine`; no `Compilation` reaches `RegisterSourceOutput`

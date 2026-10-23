@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Times every Whizbang generator and analyzer over a large generated consumer and checks each against the
+       thresholds in build-cost-thresholds.json (#1651). Timing is not a test (tests are deterministic), so this is
+       a tool run by the advisory "Build · Generator and analyzer timing" CI job, not part of any test suite. The
+       generator packages are loaded from their build output, as a consumer's compiler loads them; the references
+       below only make sure they are built first. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <SonarQubeExclude>true</SonarQubeExclude>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Whizbang.Sagas.Generators/Whizbang.Sagas.Generators.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="build-cost-thresholds.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

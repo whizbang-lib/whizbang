@@ -1,9 +1,12 @@
 <Project>
   <!-- Whizbang Message Registry: compiler settings for NuGet consumers -->
   <PropertyGroup>
-    <!-- Consumers can set WhizbangEmitMessageRegistry=false to opt out -->
-    <WhizbangEmitMessageRegistry Condition="'$(WhizbangEmitMessageRegistry)' == ''">true</WhizbangEmitMessageRegistry>
-    <!-- Rename platform: consumers can set WhizbangIncludePinnedTypeLedger=false to opt out -->
+    <!-- The message registry (.whizbang/cache/message-registry.json) is IDE tooling for the VS Code extension, so it
+         is off by default: set WhizbangEmitMessageRegistry=true to have the generator embed it and the build write
+         it. Off, the generator embeds nothing and the extraction target is skipped (#1609). -->
+    <WhizbangEmitMessageRegistry Condition="'$(WhizbangEmitMessageRegistry)' == ''">false</WhizbangEmitMessageRegistry>
+    <!-- Rename platform: the pinned-type ledger is the committed rename lockfile, on by default and independent of
+         the registry; consumers can set WhizbangIncludePinnedTypeLedger=false to opt out -->
     <WhizbangIncludePinnedTypeLedger Condition="'$(WhizbangIncludePinnedTypeLedger)' == ''">true</WhizbangIncludePinnedTypeLedger>
     <!-- Drop a single README.md at the root of the .whizbang/ folder explaining what it holds and
          whether to commit or ignore each part. Consumers can set WhizbangEmitFolderReadmes=false to
@@ -40,11 +43,11 @@
     <AdditionalFiles Include="$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json" />
   </ItemGroup>
 
-  <PropertyGroup Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
-    <!-- Enable emitting compiler-generated files (only if consumer hasn't already set it) -->
-    <EmitCompilerGeneratedFiles Condition="'$(EmitCompilerGeneratedFiles)' == ''">true</EmitCompilerGeneratedFiles>
-    <!-- Default output path for generated files (only if consumer hasn't already set it): the
-         ignored .whizbang/cache/ subfolder, so all regenerable Whizbang output lives in one place. -->
+  <!-- The package no longer turns EmitCompilerGeneratedFiles on: writing every generated file to disk on every build
+       cost each consumer build, and the registry and ledger are now read from the built assembly (#1609). A project
+       that sets EmitCompilerGeneratedFiles=true itself still gets the files, by default in the ignored
+       .whizbang/cache/ subfolder, so all regenerable Whizbang output lives in one place. -->
+  <PropertyGroup>
     <CompilerGeneratedFilesOutputPath Condition="'$(CompilerGeneratedFilesOutputPath)' == ''">$(MSBuildProjectDirectory)/.whizbang/cache</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
 </Project>

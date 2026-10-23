@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Whizbang.BuildCost.Benchmarks;
 
 namespace Whizbang.Generators.Tests.BuildCost;
 

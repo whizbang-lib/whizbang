@@ -821,6 +821,13 @@
           "TUnit.Core": "1.12.125"
         }
       },
+      "SoftwareExtravaganza.Whizbang.BuildCost.Benchmarks": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.CSharp": "[5.0.0, )",
+          "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )"
+        }
+      },
       "SoftwareExtravaganza.Whizbang.Core": {
         "type": "Project",
         "dependencies": {

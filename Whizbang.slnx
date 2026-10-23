@@ -5,6 +5,7 @@
     <Platform Name="x86" />
   </Configurations>
   <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Whizbang.BuildCost.Benchmarks/Whizbang.BuildCost.Benchmarks.csproj" />
     <Project Path="benchmarks/Whizbang.Benchmarks/Whizbang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/samples/" />

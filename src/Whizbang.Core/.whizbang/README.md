@@ -10,7 +10,8 @@ Whizbang writes files here in two categories.
 
 ## Ignored — everything under `cache/`
 
-- generated `.cs` and `message-registry.json`, rebuilt from source on every build.
+- `message-registry.json` (when `WhizbangEmitMessageRegistry=true`) and generated `.cs` files (when
+  `EmitCompilerGeneratedFiles=true`), rebuilt from source on every build.
 
 Add `**/.whizbang/cache/` to your `.gitignore`. Commit everything else in `.whizbang/`
 (including this README).

@@ -28,11 +28,25 @@ namespace Whizbang.Generators;
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 [Generator]
 public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// The switch: <c>WhizbangIncludePinnedTypeLedger</c>, on by default. When it is off nothing is embedded in the
+  /// assembly and the extraction target is skipped. Independent of <c>WhizbangEmitMessageRegistry</c>.
+  /// </summary>
+  private const string INCLUDE_PROPERTY = "build_property.WhizbangIncludePinnedTypeLedger";
+
+  /// <summary>
+  /// Syntax predicate: admits a type declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover every [PinnedId] message/perspective type in this assembly.
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedTypeCandidate(node),
         transform: static (ctx, ct) => _tryDiscover(ctx, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)
@@ -44,8 +58,15 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
         .Select(static (f, ct) => f.GetText(ct)?.ToString())
         .Collect();
 
-    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger),
-        static (ctx, data) => _emit(ctx, data.Left, data.Right));
+    var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
+        !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, INCLUDE_PROPERTY));
+
+    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger).Combine(enabled),
+        static (ctx, data) => {
+          if (data.Right) {
+            _emit(ctx, data.Left.Left, data.Left.Right);
+          }
+        });
   }
 
   /// <summary>Discovers a single <c>[PinnedId]</c> message/perspective type, or null if the node is neither.</summary>

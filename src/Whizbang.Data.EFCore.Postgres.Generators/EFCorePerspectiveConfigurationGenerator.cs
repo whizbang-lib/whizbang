@@ -35,6 +35,22 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a class declaration with at least one attribute and a base list.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { AttributeLists.Count: > 0, BaseList.Types.Count: > 0 };
+
+  /// <summary>
   /// Initializes the incremental generator by discovering perspectives and registering source generation.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedCode_ImplementsIDiagnosticsInterfaceAsync</tests>
@@ -56,13 +72,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Discover classes implementing IPerspectiveFor<TModel>
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover DbContexts with [WhizbangDbContext] attribute to extract schema
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0, BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsAttributedClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractDbContextSchema(ctx, ct)
     ).Where(static schema => schema is not null);
 
