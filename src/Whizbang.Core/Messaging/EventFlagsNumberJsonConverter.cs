@@ -13,6 +13,11 @@ namespace Whizbang.Core.Messaging;
 /// to <see cref="OutboxMessage.Flags"/> and <see cref="InboxMessage.Flags"/>; a property-level converter outranks
 /// the options' converters.
 /// </summary>
+/// <remarks>
+/// Reads the number, and also the comma-separated name list <see cref="JsonStringEnumConverter"/> writes, so a
+/// message written before the flags were pinned still reads. No reflection: the names are parsed by the generic
+/// <see cref="Enum.TryParse{TEnum}(string, bool, out TEnum)"/>.
+/// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs</tests>
 public sealed class EventFlagsNumberJsonConverter : JsonConverter<EventFlags> {
@@ -21,7 +26,11 @@ public sealed class EventFlagsNumberJsonConverter : JsonConverter<EventFlags> {
     if (reader.TokenType == JsonTokenType.Number) {
       return (EventFlags)reader.GetInt32();
     }
-    throw new JsonException($"Event flags must be a number; read {reader.TokenType}.");
+    if (reader.TokenType == JsonTokenType.String
+        && Enum.TryParse<EventFlags>(reader.GetString(), ignoreCase: true, out var named)) {
+      return named;
+    }
+    throw new JsonException($"Event flags must be a number or a list of EventFlags names; read {reader.TokenType}.");
   }
 
   /// <inheritdoc />
