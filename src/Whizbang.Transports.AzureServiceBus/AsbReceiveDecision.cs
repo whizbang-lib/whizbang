@@ -83,7 +83,11 @@ internal sealed record AsbReceiveDecision {
   /// Topology arc phase 8.5 — set when the <c>DeadLetter</c> action was chosen by the Core poison
   /// detector rather than by a broker-metadata failure. The transport carries it to
   /// <see cref="Whizbang.Core.Routing.IPoisonMessageDetector.RecordQuarantine"/> so the quarantine
-  /// telemetry names the layer that fired. Null on every non-poison decision.
+  /// telemetry names the layer that fired. Also set, on whatever action the message otherwise
+  /// gets, when the detector accepted an aged message
+  /// (<see cref="Whizbang.Core.Routing.PoisonQuarantineReason.AgedOnReceive"/>, issue #1663), so the
+  /// transport can report it with
+  /// <see cref="Whizbang.Core.Routing.IPoisonMessageDetector.RecordAgedOnReceive"/>. Null otherwise.
   /// </summary>
   public Whizbang.Core.Routing.PoisonVerdict? PoisonVerdict { get; init; }
 }

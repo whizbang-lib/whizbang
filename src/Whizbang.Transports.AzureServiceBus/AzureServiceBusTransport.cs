@@ -1607,10 +1607,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Topology arc phase 8.5 — adapts a broker message into the transport-NEUTRAL poison context
   /// Core decides on, and declares this surface's age capability.
   /// <para>
-  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery, which
-  /// is what makes it the only usable signal on a session-enabled entity: a lock lost to connection
-  /// death does not increment <c>DeliveryCount</c>, so the broker's MaxDeliveryCount valve and this
-  /// transport's own <c>MaxDeliveryAttempts</c> branch are both structurally unreachable there.
+  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery. Since
+  /// issue #1663 it only REPORTS an aged message (the receive gate never quarantines on age); a
+  /// session lock-loss storm, whose <c>DeliveryCount</c> never moves, is bounded after storage by
+  /// durable observations.
   /// A real Service Bus namespace always stamps it; a message arriving without one (default) means
   /// this surface cannot do age detection at all, and says so rather than silently treating an
   /// absent stamp as an infinitely old message.
@@ -1639,6 +1639,30 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       BrokerDeliveryCount: message.DeliveryCount,
       DurableObservationCount: null,
       Now: _timeProvider.GetUtcNow());
+  }
+
+  /// <summary>
+  /// Issue #1663 — reports an aged message the receive gate accepted, so a backlog stays visible.
+  /// No-op unless the decision carries an aged-on-receive verdict, so the caller invokes it
+  /// unconditionally.
+  /// </summary>
+  private void _recordAgedOnReceive(
+      AsbReceiveDecision decision,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext,
+      TransportDestination destination,
+      string subscription) {
+    if (_poisonDetector is null || decision.PoisonVerdict is not { ShouldQuarantine: false } verdict) {
+      return;
+    }
+    _poisonDetector.RecordAgedOnReceive(
+      Whizbang.Core.Routing.PoisonQuarantineGate.Receive,
+      verdict,
+      poisonContext,
+      new Dictionary<string, object?> {
+        ["transport"] = ASB_TRANSPORT_TAG,
+        ["topic"] = destination.Address,
+        ["subscription"] = subscription,
+      });
   }
 
   /// <summary>
@@ -1693,6 +1717,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       absorbedNamespaces: _absorbedNamespaces,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1778,6 +1803,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       absorbedNamespaces: _absorbedNamespaces,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:

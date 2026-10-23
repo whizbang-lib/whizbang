@@ -489,6 +489,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A backlog of aged messages is no longer dead-lettered on arrival (#1663).** The receive gate quarantined any
+  message first enqueued longer ago than the poison age threshold (by default 50 minutes, derived from lock renewal
+  times delivery attempts), even on its first delivery. A backlog that took longer than that to drain, such as
+  ordinary events queued behind a large backfill, was dead-lettered by every subscriber without ever being
+  attempted. Age measures queueing, not failure, so the receive gate now accepts every message until it is stored
+  and never quarantines on age: an aged message is reported on the `whizbang.message.aged_on_receive` counter
+  (tagged by gate, with the transport and entity) and a warning, and proceeds. A redelivery loop, including a
+  session lock-loss storm whose broker delivery count never moves, is bounded after storage: every redelivery of a
+  stored message raises its durable observation count before any handler runs, and the inbox gate quarantines it
+  once the count reaches `MaxDurableObservations` and processing has started. `PoisonQuarantineReason.AgedOnReceive`
+  and `IPoisonMessageDetector.RecordAgedOnReceive` are new (the latter has a no-op default, so custom detectors
+  are unaffected); `MessageAgeExceeded` is no longer produced by the default detector. The age threshold option is
+  unchanged and now only decides what is reported.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a

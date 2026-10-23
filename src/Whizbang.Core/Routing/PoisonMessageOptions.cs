@@ -15,6 +15,9 @@ namespace Whizbang.Core.Routing;
 /// consumer-death storm. Those messages are hostage, not poison, and nothing else bounds the
 /// loop. These options bound it on signals that DO survive redelivery: the broker's first-enqueue
 /// timestamp (layer 1) and a durable redelivery-observation counter (layer 2).
+/// Since issue #1663 the first-enqueue timestamp only reports a backlog: the receive gate accepts
+/// every message until it is stored, and the loop is bounded after storage by the durable
+/// observation counter, which rises on every redelivery of a stored message before any handler runs.
 /// </para>
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
@@ -59,7 +62,9 @@ public sealed class PoisonMessageOptions {
   public bool Enabled { get; set; } = true;
 
   /// <summary>
-  /// Explicit age threshold. <c>null</c> (the default) derives it from
+  /// Explicit age threshold. Since issue #1663 a message past it is REPORTED on receive
+  /// (<c>whizbang.message.aged_on_receive</c> plus a warning) and accepted, never quarantined: age
+  /// measures queueing, not failure. <c>null</c> (the default) derives it from
   /// <see cref="LockRenewalDuration"/>, <see cref="MaxDeliveryAttempts"/> and
   /// <see cref="AgeThresholdFloor"/> — see <see cref="DeriveAgeThreshold"/>. Set this only to
   /// override a derivation that is wrong for a specific workload.
