@@ -53,7 +53,7 @@ public class PoisonAgedOnReceiveTests {
 
     await Assert.That(verdict.ShouldQuarantine).IsFalse();
     await Assert.That(verdict.Reason).IsEqualTo(PoisonQuarantineReason.AgedOnReceive);
-    await Assert.That(verdict.Detail!).Contains(MESSAGE_ID);
+    await Assert.That(verdict.Detail).Contains(MESSAGE_ID);
   }
 
   [Test]
@@ -133,7 +133,7 @@ public class PoisonAgedOnReceiveTests {
 
     _ = _detector(meter: new Meter(meterName));
 
-    var gates = recorder.Collect().Select(m => m.Gate).ToList();
+    var gates = recorder.Collect().ConvertAll(m => m.Gate);
     await Assert.That(gates).Contains("receive");
     await Assert.That(gates).Contains("inbox");
   }

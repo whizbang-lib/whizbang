@@ -38,7 +38,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
     var messageId = (Guid)TrackedGuid.New();
     var streamId = (Guid)TrackedGuid.New();
     var deadLetterId = (Guid)TrackedGuid.New();
-    using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: false);
+    await using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: false);
     var envelope = _envelope(messageId, streamId);
 
     var delivered = ReceivedInboxMessageBuilder.Build(
@@ -73,7 +73,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
   [Test]
   public async Task BuildRedelivery_OfARowThatRecordedItsEnvelopeType_NamesThePayloadAsync() {
     var messageId = (Guid)TrackedGuid.New();
-    using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
+    await using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
     var envelope = _envelope(messageId, (Guid)TrackedGuid.New());
 
     // A broker import made before #934 recorded the wire's envelope type name.
@@ -88,7 +88,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
   [Test]
   public async Task BuildRedelivery_OfATypeTheCatalogDoesNotName_IsNotAnEventAsync() {
     var messageId = (Guid)TrackedGuid.New();
-    using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
+    await using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
     var commandType = typeof(RedeliveredCommand).FullName + ", " + typeof(RedeliveredCommand).Assembly.GetName().Name;
 
     var recovered = ReceivedInboxMessageBuilder.BuildRedelivery(provider,
@@ -100,7 +100,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
 
   [Test]
   public async Task ClassifiesAsEvent_WithoutACatalog_FallsBackToThePayloadsMarkerAsync() {
-    using var provider = _services(NullEventTypeProvider.Instance, registerOptions: false);
+    await using var provider = _services(NullEventTypeProvider.Instance, registerOptions: false);
 
     await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, _eventType, new RedeliveredOrderPlaced(Guid.Empty))).IsTrue();
     await Assert.That(ReceivedInboxMessageBuilder.ClassifiesAsEvent(provider, _eventType, new RedeliveredCommand(Guid.Empty))).IsFalse();
@@ -108,7 +108,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
 
   [Test]
   public async Task BuildRedelivery_OfAnEnvelopeForAnotherMessage_IsRefusedAsync() {
-    using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
+    await using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
     var redelivery = new DeadLetterRedelivery((Guid)TrackedGuid.New(), DeadLetterSourceTable.BROKER, (Guid)TrackedGuid.New(),
       _eventType, _wire(_envelope((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New())));
 
@@ -118,7 +118,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
 
   [Test]
   public async Task BuildRedelivery_OfAnEmptyEnvelope_IsRefusedAsync() {
-    using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
+    await using var provider = _services(new FixedEventTypeProvider(typeof(RedeliveredOrderPlaced)), registerOptions: true);
     var redelivery = new DeadLetterRedelivery((Guid)TrackedGuid.New(), DeadLetterSourceTable.BROKER, (Guid)TrackedGuid.New(),
       _eventType, "null");
 

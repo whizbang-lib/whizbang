@@ -83,9 +83,7 @@ public class BlankConnectionStringTests {
   public async Task ABlankMainConnectionString_IsReportedAsNotFoundAsync(string blank) {
     using var host = _buildHost(new() { ["ConnectionStrings:db"] = blank });
 
-    var resolve = () => host.Services.GetRequiredService<NpgsqlDataSource>();
-
-    await Assert.That(resolve).Throws<InvalidOperationException>()
+    await Assert.That(() => host.Services.GetRequiredService<NpgsqlDataSource>()).Throws<InvalidOperationException>()
       .WithMessageContaining("Connection string 'db' not found");
   }
 }

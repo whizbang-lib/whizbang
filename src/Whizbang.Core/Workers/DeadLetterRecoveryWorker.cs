@@ -731,7 +731,8 @@ public partial class DeadLetterRecoveryWorker(
       return false;
     }
     // The partition count every arrival is stored with: ClaimWorkerOptions is its one source (see the consumers).
-    var partitionCount = (scope.GetService<IOptions<ClaimWorkerOptions>>()?.Value ?? new ClaimWorkerOptions()).PartitionCount;
+    var claimOptions = scope.GetService<IOptions<ClaimWorkerOptions>>();
+    var partitionCount = claimOptions is null ? new ClaimWorkerOptions().PartitionCount : claimOptions.Value.PartitionCount;
     await coordinator.StoreInboxMessagesAsync([message], partitionCount, ct).ConfigureAwait(false);
     return true;
   }
