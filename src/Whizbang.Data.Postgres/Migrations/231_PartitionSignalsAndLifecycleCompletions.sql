@@ -123,7 +123,7 @@ DECLARE
   v_nsp OID;
   v_schema TEXT;
   v_parent OID;
-  v_kind "char";
+  v_kind TEXT;
   v_key TEXT;
   v_type REGTYPE;
   v_default OID;
@@ -291,7 +291,7 @@ DECLARE
   v_nsp OID;
   v_schema TEXT;
   v_table OID;
-  v_kind "char";
+  v_kind TEXT;
   v_owner OID;
   v_type REGTYPE;
   v_bound TIMESTAMPTZ;
@@ -446,7 +446,7 @@ DECLARE
   v_nsp OID;
   v_schema TEXT;
   v_table OID;
-  v_kind "char";
+  v_kind TEXT;
   v_default TEXT;
 BEGIN
   SELECT c.relnamespace INTO v_nsp FROM pg_class c WHERE c.oid = '__SCHEMA__.wh_settings'::regclass;

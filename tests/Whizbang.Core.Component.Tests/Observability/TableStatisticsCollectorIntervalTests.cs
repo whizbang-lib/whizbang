@@ -50,7 +50,7 @@ public class TableStatisticsCollectorIntervalTests {
   [Test]
   public async Task WithoutSettings_TheWaitIsThirtySecondsAsync() {
     var clock = new ArmedTimerClock();
-    await using var host = new CollectorHost(options: null, clock);
+    await using var host = new CollectorHost(Options.Create(new TableStatisticsOptions()), clock);
 
     var first = host.NextCycle();
     await host.StartAsync();
@@ -68,7 +68,7 @@ public class TableStatisticsCollectorIntervalTests {
     private readonly TestMeterFactory _meters = new();
     private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public CollectorHost(IOptions<TableStatisticsOptions>? options, TimeProvider clock) {
+    public CollectorHost(IOptions<TableStatisticsOptions> options, TimeProvider clock) {
       var services = new ServiceCollection();
       services.AddSingleton<ITableStatisticsProvider>(Provider);
       _container = services.BuildServiceProvider();

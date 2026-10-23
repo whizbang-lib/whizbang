@@ -22,7 +22,7 @@ namespace Whizbang.Core.Observability;
 /// <param name="metrics">The meter the readings are reported on.</param>
 /// <param name="schemaReadyGate">Holds the first cycle until the schema exists; null starts at once.</param>
 /// <param name="logger">Optional logger.</param>
-/// <param name="options">The interval between cycles; null keeps the thirty-second default.</param>
+/// <param name="options">The interval between cycles; an unset interval is thirty seconds.</param>
 /// <param name="timeProvider">The clock the interval is measured on; null is the system clock.</param>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs</tests>
@@ -31,7 +31,7 @@ public sealed partial class TableStatisticsCollector(
   TableStatisticsMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
   ILogger<TableStatisticsCollector> logger,
-  Microsoft.Extensions.Options.IOptions<TableStatisticsOptions>? options = null,
+  Microsoft.Extensions.Options.IOptions<TableStatisticsOptions> options,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
 
@@ -51,7 +51,7 @@ public sealed partial class TableStatisticsCollector(
   /// <summary>The unused indexes last seen, so the log line is written when the set changes rather than every cycle.</summary>
   private HashSet<string> _lastUnusedIndexes = new(StringComparer.Ordinal);
 
-  private readonly TimeSpan _interval = options?.Value.CollectionInterval ?? TableStatisticsOptions.DefaultCollectionInterval;
+  private readonly TimeSpan _interval = options.Value.CollectionInterval;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>
