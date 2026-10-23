@@ -234,9 +234,14 @@ Each slice is one red-then-green increment and its own commit.
 - Setting `TableRewriteStrategy=PgSqueeze` on a server without it stops startup with the fix text.
 - A deployment still carrying `MaintenanceInterval` logs one warning naming the replacement.
 
-## Open questions
+## Decisions (formerly open questions)
 
-- Should Unknown plus explicit throw after a bounded retry, rather than warn?
-- Does `Throw` for unknown keys belong in 1.0, or only `Warn`?
-- The `Capabilities` startup step runs after `Migrate`; a provider that needs no schema may want an
-  earlier dependency.
+All decided on 2026-10-22 in #1672 (the owner accepted the recommendations).
+
+1. **Unknown plus explicit.** When the probe can't tell whether an explicitly configured extension
+   is usable, startup throws after a bounded retry. Explicit configuration means the feature is
+   required.
+2. **Unknown configuration keys.** 1.0 ships `Warn` as the default, with `Throw` available as an
+   opt-in.
+3. **Startup order.** The `Capabilities` step stays after `Migrate` in 1.0. A provider that needs no
+   schema does not get an earlier step.

@@ -117,10 +117,11 @@ Each slice is one red-then-green increment and its own commit.
 - The sampled type breakdown agrees in rank with a one-off full scan on a copied table.
 - The meter's series count stays under `MaxTrackedTables + MaxEventTypes` plus a small constant.
 
-## Open questions
+## Decisions (formerly open questions)
 
-- Add a `database` tag to the table gauges? A host with several databases reports colliding series
-  today; adding the tag changes every existing series.
-- Should the sample also cover `wh_event_store` pointer rows and the inline metadata on the outbox?
-- Is 500 the right table cap for services with many perspectives?
-- Where does the dashboard live long term: this repository, or a separate observability package?
+All decided on 2026-10-22 in #1675 (the owner accepted the recommendations).
+
+1. **A `database` tag** is added to the table gauges before 1.0, while the series are new.
+2. **The bytes sample** also covers `wh_event_store` pointer rows and the inline outbox metadata.
+3. **The table cap** stays at 500 and becomes configurable.
+4. **The dashboard** lives in this repository for 1.0.

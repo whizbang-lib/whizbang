@@ -245,16 +245,15 @@ an arity change, header block, `COMMENT ON`, `debug_mode` guard on destructive w
 - A rewind and a full rebuild of a perspective over archived streams produce the same rows as before
   archiving.
 
-## Open questions
+## Decisions (formerly open questions)
 
-1. What identifies a stream's type? Candidates: the existing `wh_event_store.aggregate_type` column,
-   the type of the stream's first event, or an explicit marker type registered with the policy.
+Decided on 2026-10-22 in #1673 (the owner accepted the recommendations).
+
+1. **A stream's type** is identified by the existing `wh_event_store.aggregate_type` column.
 2. ~~Cursor re-anchoring in S1 versus dropping the cursor?~~ Re-anchor (S1, #1486). Dropping the
    cursor would make the next apply start from an empty position and the next rewind replay from an
    empty model; the kept exact-floor snapshot is what keeps a later rewind correct.
-3. zstd needs a new dependency (no zstd codec in the base class library on the current target).
-   Accept a managed port, or ship Brotli first?
-4. `Compact` has a vocabulary and no implementation (the `Compacted<T>` summary is unbuilt). Is a
-   developer-supplied compaction handler enough for 1.0?
-5. Does the lifecycle sweep run under the maintainer duty only? Same question as open issue #1377
-   for the maintenance sweep.
+3. **Archive compression** ships Brotli first, because it is in the base class library. zstd comes
+   later and needs a new dependency.
+4. **`Compact`** is a developer-supplied compaction handler in 1.0.
+5. **The lifecycle sweep** runs under the maintainer duty only, as the partition manager does.
