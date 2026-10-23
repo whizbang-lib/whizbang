@@ -517,6 +517,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a live write the ordering guard refuses re-folds the stream instead of being reported applied. Rows already
   missing an event are repaired by rebuilding the perspective (any mode); on earlier releases only a blue-green
   rebuild repairs them, because an in-place rebuild of a strictly ordered row was refused the same way.
+- **The rollback outbox publisher's not-ready hold now keeps its leases (#1606).** `OutboxPublishWorker` (off by
+  default; `OutboxDrainWorker` is the default publisher) held rows while the transport reported not ready by queueing
+  their ids on the lease renewal channel, which drops any id with no registered lease handle, and a held row has
+  none. The leases lapsed, another claim took the rows, and each re-claim charged an attempt. The hold now renews the
+  held rows' leases directly through the work coordinator, as the drain worker does (#1558): when a row is first held
+  and again once half of `LeaseRenewalWorkerOptions.LeaseSeconds` has passed, so it does not make a round trip on
+  every retry. A renewal that fails is logged and retried on the next pass; it is not reported as a failed publish.
+  The worker's constructor no longer takes an `ILeaseRenewalChannel`.
 - **A failed backlog head peek on Azure Service Bus is logged (#1643).** The backlog sample reports an entity whose
   oldest-message peek throws (a missing permission, a deleted entity, a broker error) with its depth and no age, as it
   does an empty entity, and nothing said why. The failure is now logged at Warning with the entity, the exception type

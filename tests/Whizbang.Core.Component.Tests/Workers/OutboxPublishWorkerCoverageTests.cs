@@ -73,14 +73,6 @@ public class OutboxPublishWorkerCoverageTests {
     }
   }
 
-  private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ConcurrentBag<(WorkCategory Cat, Guid Id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
-      All.Add((category, id));
-      return ValueTask.CompletedTask;
-    }
-  }
-
   private sealed class FakeSingularStrategy : IMessagePublishStrategy {
     public bool ReadyValue { get; set; } = true;
     public ConcurrentBag<OutboxWork> Published { get; } = [];
@@ -180,7 +172,6 @@ public class OutboxPublishWorkerCoverageTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
 
     var sp = new ServiceCollection().BuildServiceProvider();
@@ -189,7 +180,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions()),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -226,7 +216,6 @@ public class OutboxPublishWorkerCoverageTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate(); // never marked ready
 
@@ -236,7 +225,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -282,7 +270,6 @@ public class OutboxPublishWorkerCoverageTests {
     channel.Complete();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -293,7 +280,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -327,7 +313,6 @@ public class OutboxPublishWorkerCoverageTests {
     channel.Complete();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeBulkStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -338,7 +323,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -375,7 +359,6 @@ public class OutboxPublishWorkerCoverageTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeThrowingStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -386,7 +369,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -453,7 +435,6 @@ public class OutboxPublishWorkerCoverageTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -463,7 +444,6 @@ public class OutboxPublishWorkerCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,

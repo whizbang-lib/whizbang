@@ -36,7 +36,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// <remarks>
 /// Every readiness check waits for the test's permission, so each pass of the hold runs at a point the test
 /// chose, and the clock is a <see cref="FakeTimeProvider"/> the test advances between passes. The coordinator
-/// keeps each row's lease expiry on that clock and records a renewal that arrived after the lease had lapsed.
+/// (<see cref="HeldLeaseCoordinator"/>) keeps each row's lease expiry on that clock and records a renewal that
+/// arrived after the lease had lapsed.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/OutboxPublishWorker.cs</code-under-test>
 [NotInParallel("WhizbangBackgroundServiceTests")]
@@ -56,7 +57,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var start = clock.GetUtcNow();
     var work = _work();
-    var coordinator = new LeaseTrackingCoordinator(clock);
+    var coordinator = new HeldLeaseCoordinator(clock, _lease);
     coordinator.Claim(work.MessageId);
     var strategy = new SteppedReadinessStrategy(bulk: false);
     var fx = _build(strategy, coordinator, clock);
@@ -125,7 +126,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var first = _work();
     var second = _work();
-    var coordinator = new LeaseTrackingCoordinator(clock);
+    var coordinator = new HeldLeaseCoordinator(clock, _lease);
     coordinator.Claim(first.MessageId);
     coordinator.Claim(second.MessageId);
     var strategy = new SteppedReadinessStrategy(bulk: true);
@@ -175,7 +176,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
   public async Task Held_RenewalFails_KeepsHoldingAndRenewsOnTheNextPassAsync() {
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     var work = _work();
-    var coordinator = new LeaseTrackingCoordinator(clock) { FailingRenewals = 1 };
+    var coordinator = new HeldLeaseCoordinator(clock, _lease) { FailingRenewals = 1 };
     coordinator.Claim(work.MessageId);
     var strategy = new SteppedReadinessStrategy(bulk: false);
     var fx = _build(strategy, coordinator, clock);
@@ -207,12 +208,40 @@ public class OutboxPublishWorkerHoldRenewalTests {
     }
   }
 
+  /// <summary>
+  /// A renewal in flight when the host stops ends with the worker: the shutdown is not logged as a failed
+  /// renewal and not reported as a failed publish, and the worker stops cleanly.
+  /// </summary>
+  [Test]
+  public async Task Held_StoppedDuringRenewal_StopsCleanlyWithoutReportingAFailureAsync() {
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var coordinator = new HeldLeaseCoordinator(clock, _lease) { BlockRenewalsUntilCanceled = entered };
+    var strategy = new SteppedReadinessStrategy(bulk: false);
+    var fx = _build(strategy, coordinator, clock);
+
+    using var cts = new CancellationTokenSource();
+    await fx.Worker.StartAsync(cts.Token);
+    await fx.Channel.WriteAsync(_work(), cts.Token);
+    await strategy.PassAsync(ready: false);
+    await entered.Task.WaitAsync(_signal);
+
+    await cts.CancelAsync();
+    await fx.Worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(fx.Worker.ExecuteTask!.IsCompleted).IsTrue();
+    await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a renewal canceled by shutdown ends the worker, it does not fault it");
+    await Assert.That(fx.Failure.All).IsEmpty()
+      .Because("a shutdown is not a failed publish");
+  }
+
   // ── harness ──────────────────────────────────────────────────────────────────────────────────
 
   private sealed record Fixture(
     OutboxPublishWorker Worker, WorkChannel Channel, CompletionChannel Completion, FailureChannel Failure);
 
-  private static Fixture _build(SteppedReadinessStrategy strategy, LeaseTrackingCoordinator coordinator, TimeProvider clock) {
+  private static Fixture _build(SteppedReadinessStrategy strategy, HeldLeaseCoordinator coordinator, TimeProvider clock) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var sp = services.BuildServiceProvider();
@@ -226,7 +255,6 @@ public class OutboxPublishWorkerHoldRenewalTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: new DroppingLeaseRenewalChannel(),
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions {
         Enabled = true,
@@ -312,73 +340,6 @@ public class OutboxPublishWorkerHoldRenewalTests {
 
     private static MessagePublishResult _success(OutboxWork work) =>
       new() { MessageId = work.MessageId, Success = true, CompletedStatus = work.Status };
-  }
-
-  private sealed record Renewal(WorkCategory Category, IReadOnlyList<Guid> Ids, int LeaseSeconds, DateTimeOffset At);
-
-  /// <summary>
-  /// Keeps each claimed row's lease expiry on the test clock, as <c>wh_outbox.lease_expiry</c> does, and records
-  /// every renewal; a renewal that arrives after a lease lapsed is recorded in <see cref="Lapsed"/>, because by
-  /// then another claim could have taken the row and charged it an attempt.
-  /// </summary>
-  private sealed class LeaseTrackingCoordinator(TimeProvider clock) : IWorkCoordinator {
-    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _expiry = new();
-    private readonly System.Threading.Channels.Channel<bool> _renewed = System.Threading.Channels.Channel.CreateUnbounded<bool>();
-    private int _waitedFor;
-    public ConcurrentQueue<Renewal> Renewals { get; } = new();
-    public ConcurrentQueue<Guid> Lapsed { get; } = new();
-
-    public void Claim(Guid messageId) => _expiry[messageId] = clock.GetUtcNow() + _lease;
-
-    public DateTimeOffset ExpiryOf(Guid messageId) => _expiry[messageId];
-
-    /// <summary>How many of the next renewals throw, as an unreachable database would.</summary>
-    public int FailingRenewals { get; set; }
-
-    public Task<int> RenewLeasesAsync(
-        WorkCategory category, IReadOnlyList<Guid> ids, int leaseSeconds = 300, CancellationToken cancellationToken = default) {
-      if (FailingRenewals > 0) {
-        FailingRenewals--;
-        return Task.FromException<int>(new InvalidOperationException("database unreachable"));
-      }
-      var now = clock.GetUtcNow();
-      foreach (var id in ids) {
-        if (_expiry.TryGetValue(id, out var expiry) && expiry <= now) {
-          Lapsed.Enqueue(id);
-        }
-        _expiry[id] = now + TimeSpan.FromSeconds(leaseSeconds);
-      }
-      Renewals.Enqueue(new Renewal(category, [.. ids], leaseSeconds, now));
-      _renewed.Writer.TryWrite(true);
-      return Task.FromResult(ids.Count);
-    }
-
-    /// <summary>Waits until <paramref name="total"/> renewals have been made in all.</summary>
-    public async Task WaitForRenewalsAsync(int total) {
-      while (_waitedFor < total) {
-        await _renewed.Reader.ReadAsync().AsTask().WaitAsync(_signal);
-        _waitedFor++;
-      }
-    }
-
-    public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(
-        IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) =>
-      Task.FromResult<IReadOnlyList<OutboxBatchRow>>([]);
-    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) => Task.FromResult(Guid.CreateVersion7());
-    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
-    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
-    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCursorInfo?>(null);
-  }
-
-  /// <summary>Behaves as the lease renewal worker does for a held row: it has no registered lease handle, so the id is dropped.</summary>
-  private sealed class DroppingLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
   private sealed class WorkChannel : IWorkChannelWriter {

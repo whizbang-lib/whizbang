@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// Drains outbox work from <see cref="IWorkChannelWriter"/> and publishes each item to transport via
 /// <see cref="IMessagePublishStrategy"/>. On success enqueues to <see cref="IOutboxCompletionChannel"/>;
 /// on failure routes to <see cref="IFailureChannel"/>; on transport-not-ready re-buffers to the same
-/// channel and queues a lease renewal via <see cref="ILeaseRenewalChannel"/>. Fires Pre/Post Outbox
+/// channel and renews the held rows' leases through <see cref="IWorkCoordinator"/> (#1606). Fires Pre/Post Outbox
 /// lifecycle stages (PreOutboxDetached/Inline before publish, PostOutboxDetached/Inline +
 /// PostLifecycleDetached/Inline after publish) when the lifecycle deps are wired.
 /// </summary>
@@ -41,7 +41,6 @@ public sealed partial class OutboxPublishWorker(
   IWorkChannelWriter workChannelWriter,
   IOutboxCompletionChannel outboxCompletionChannel,
   IFailureChannel failureChannel,
-  ILeaseRenewalChannel leaseRenewalChannel,
   ISchemaReadyGate schemaReadyGate,
   IOptions<OutboxPublishWorkerOptions> options,
   ILogger<OutboxPublishWorker> logger,
@@ -73,7 +72,10 @@ public sealed partial class OutboxPublishWorker(
   private readonly IWorkChannelWriter _workChannelWriter = ArgumentGuard.NotNull(workChannelWriter);
   private readonly IOutboxCompletionChannel _outboxCompletionChannel = ArgumentGuard.NotNull(outboxCompletionChannel);
   private readonly IFailureChannel _failureChannel = ArgumentGuard.NotNull(failureChannel);
-  private readonly ILeaseRenewalChannel _leaseRenewalChannel = ArgumentGuard.NotNull(leaseRenewalChannel);
+  // #1606: when each row held for a not-ready transport last had its lease renewed. Read and written only by
+  // the publish loop (one flow of control), so a plain dictionary; an entry is dropped when its row next
+  // reaches a ready transport.
+  private readonly Dictionary<Guid, DateTimeOffset> _holdRenewedAt = [];
   private readonly ISchemaReadyGate _schemaReadyGate = ArgumentGuard.NotNull(schemaReadyGate);
   private readonly OutboxPublishWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<OutboxPublishWorker> _logger = ArgumentGuard.NotNull(logger);
@@ -162,9 +164,10 @@ public sealed partial class OutboxPublishWorker(
     await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
       try {
         if (!await _publishStrategy.IsReadyAsync(stoppingToken)) {
-          await _handleTransportNotReadyAsync(work, stoppingToken);
+          await _holdForTransportAsync([work], stoppingToken);
           continue;
         }
+        _holdRenewedAt.Remove(work.MessageId);
 
         // Phase H step 9 slice 5: lease-tied cancellation. Wrap the publish + lifecycle stages
         // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. A hung
@@ -260,10 +263,11 @@ public sealed partial class OutboxPublishWorker(
 
       try {
         if (!await _publishStrategy.IsReadyAsync(stoppingToken)) {
-          foreach (var w in batch) {
-            await _handleTransportNotReadyAsync(w, stoppingToken);
-          }
+          await _holdForTransportAsync(batch, stoppingToken);
           continue;
+        }
+        foreach (var w in batch) {
+          _holdRenewedAt.Remove(w.MessageId);
         }
 
         // Phase H step 9 slice 5: bulk lease. One LeaseHandle for the whole batch keyed off the
@@ -429,9 +433,34 @@ public sealed partial class OutboxPublishWorker(
     }
   }
 
-  private async Task _handleTransportNotReadyAsync(OutboxWork work, CancellationToken ct) {
-    await _leaseRenewalChannel.EnqueueAsync(WorkCategory.Outbox, work.MessageId, ct);
-    _workChannelWriter.TryWrite(work);
+  /// <summary>
+  /// Holds rows while the transport reports not ready (#1606): nothing is published and no failure is
+  /// reported, so no attempt is charged. The rows go back on the work channel, and their leases are renewed
+  /// directly through the work coordinator, as <see cref="OutboxDrainWorker"/> does (#1558): the lease renewal
+  /// channel drops any id with no registered lease handle, which a held row never has, so its lease would
+  /// lapse and its re-claim would charge an attempt.
+  /// </summary>
+  /// <remarks>
+  /// A row is renewed when first held and again once half of
+  /// <see cref="LeaseRenewalWorkerOptions.LeaseSeconds"/> has passed, not on every pass, so a hold that re-reads
+  /// its rows every <see cref="OutboxPublishWorkerOptions.TransportNotReadyRetryDelayMilliseconds"/> does not
+  /// make a database round trip each time.
+  /// </remarks>
+  private async Task _holdForTransportAsync(List<OutboxWork> held, CancellationToken ct) {
+    var now = _timeProvider.GetUtcNow();
+    var renewEvery = TimeSpan.FromSeconds(_leaseRenewalOptions.LeaseSeconds) / 2;
+    var due = held
+      .Select(work => work.MessageId)
+      .Where(id => !_holdRenewedAt.TryGetValue(id, out var renewedAt) || now - renewedAt >= renewEvery)
+      .ToList();
+    if (due.Count > 0 && await _tryRenewHeldLeasesAsync(due, ct)) {
+      foreach (var id in due) {
+        _holdRenewedAt[id] = now;
+      }
+    }
+    foreach (var work in held) {
+      _workChannelWriter.TryWrite(work);
+    }
     var delayMs = _options.TransportNotReadyRetryDelayMilliseconds;
     if (delayMs > 0) {
       try {
@@ -439,6 +468,23 @@ public sealed partial class OutboxPublishWorker(
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
       }
+    }
+  }
+
+  /// <summary>
+  /// Renews the leases of held rows. A failure is logged and reported as false, so the rows stay held and the
+  /// next pass renews them: a failed renewal must not become a failed publish, which would charge an attempt.
+  /// </summary>
+  private async Task<bool> _tryRenewHeldLeasesAsync(List<Guid> ids, CancellationToken ct) {
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await coordinator.RenewLeasesAsync(WorkCategory.Outbox, ids, _leaseRenewalOptions.LeaseSeconds, ct);
+      LogHeldLeasesRenewed(_logger, ids.Count, _leaseRenewalOptions.LeaseSeconds);
+      return true;
+    } catch (Exception ex) when (!ct.IsCancellationRequested) {
+      LogHeldLeaseRenewalFailed(_logger, ids.Count, ex);
+      return false;
     }
   }
 
@@ -584,6 +630,14 @@ public sealed partial class OutboxPublishWorker(
   [LoggerMessage(EventId = 7, Level = LogLevel.Warning,
     Message = "OutboxPublishWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling through to failure channel")]
   static partial void LogOutboxDlqMoveFailed(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Information,
+    Message = "OutboxPublishWorker: transport not ready; holding {Rows} row(s) and renewed their leases by {LeaseSeconds}s without publishing")]
+  static partial void LogHeldLeasesRenewed(ILogger logger, int rows, int leaseSeconds);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Warning,
+    Message = "OutboxPublishWorker: transport not ready; renewing the leases of {Rows} held row(s) failed, retrying on the next pass")]
+  static partial void LogHeldLeaseRenewalFailed(ILogger logger, int rows, Exception exception);
 
   /// <summary>
   /// Asks the discard policy whether an outbox row should be short-circuited before

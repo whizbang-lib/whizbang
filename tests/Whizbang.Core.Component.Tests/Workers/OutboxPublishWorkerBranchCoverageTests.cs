@@ -81,10 +81,6 @@ public class OutboxPublishWorkerBranchCoverageTests {
     }
   }
 
-  private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-  }
-
   private sealed class SucceedingStrategy : IMessagePublishStrategy {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
@@ -292,7 +288,6 @@ public class OutboxPublishWorkerBranchCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: new FakeLeaseRenewalChannel(),
       schemaReadyGate: gate,
       options: options,
       logger: logger ?? NullLogger<OutboxPublishWorker>.Instance,

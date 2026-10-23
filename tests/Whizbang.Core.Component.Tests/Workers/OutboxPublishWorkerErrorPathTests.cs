@@ -110,23 +110,6 @@ public class OutboxPublishWorkerErrorPathTests {
     public void Dispose() => _signal.Dispose();
   }
 
-  private sealed class RecordingLeaseRenewalChannel : ILeaseRenewalChannel, IDisposable {
-    private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
-    public ConcurrentBag<(WorkCategory Category, Guid Id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
-      All.Add((category, id));
-      _signal.Release();
-      return ValueTask.CompletedTask;
-    }
-    public async Task WaitForCountAsync(int count, TimeSpan timeout) {
-      for (var i = 0; i < count; i++) {
-        if (!await _signal.WaitAsync(timeout)) {
-          throw new TimeoutException($"Only saw {i} of {count} lease-renewal enqueues within {timeout}");
-        }
-      }
-    }
-    public void Dispose() => _signal.Dispose();
-  }
 
   // ============================================================
   // Publish strategy fakes
@@ -432,7 +415,7 @@ public class OutboxPublishWorkerErrorPathTests {
     FakeWorkChannelWriter Channel,
     RecordingCompletionChannel Completion,
     RecordingFailureChannel Failure,
-    RecordingLeaseRenewalChannel Renewal,
+    HeldLeaseCoordinator Coordinator,
     OutboxPublishWorkerOptions Options,
     SchemaReadyGate Gate);
 
@@ -446,13 +429,14 @@ public class OutboxPublishWorkerErrorPathTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new RecordingCompletionChannel();
     var failure = new RecordingFailureChannel();
-    var renewal = new RecordingLeaseRenewalChannel();
+    // The not-ready hold renews the held rows' leases through the work coordinator (#1606).
+    var coordinator = new HeldLeaseCoordinator(TimeProvider.System, TimeSpan.FromMinutes(5));
     var gate = new SchemaReadyGate();
     if (markGateReady) {
       gate.MarkReady();
     }
 
-    var sp = serviceProvider ?? new ServiceCollection().BuildServiceProvider();
+    var sp = serviceProvider ?? new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
     var options = new OutboxPublishWorkerOptions {
       Enabled = true,
       MaxOutboxAttempts = null,
@@ -463,7 +447,6 @@ public class OutboxPublishWorkerErrorPathTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(options),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -477,7 +460,7 @@ public class OutboxPublishWorkerErrorPathTests {
       generationProvider: new DefaultGenerationProvider(),
       pinnedPool: NoOpPinnedConnectionPool.Instance,
       occurrenceGate: occurrenceGate ?? new NoOpOccurrencePublishGate());
-    return new Fixture(worker, channel, completion, failure, renewal, options, gate);
+    return new Fixture(worker, channel, completion, failure, coordinator, options, gate);
   }
 
   // ============================================================
@@ -497,11 +480,11 @@ public class OutboxPublishWorkerErrorPathTests {
     var published = await strategy.Published.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(published.MessageId).IsEqualTo(work.MessageId)
       .Because("The not-ready path MUST re-buffer the same work item so the retry publishes it, not lose it.");
-    await fx.Renewal.WaitForCountAsync(1, TimeSpan.FromSeconds(5));
-    var (Category, Id) = fx.Renewal.All.Single();
-    await Assert.That(Category).IsEqualTo(WorkCategory.Outbox)
+    await fx.Coordinator.WaitForRenewalsAsync(1);
+    var renewal = fx.Coordinator.Renewals.Single();
+    await Assert.That(renewal.Category).IsEqualTo(WorkCategory.Outbox)
       .Because("Not-ready re-queue must renew the OUTBOX lease so another instance doesn't steal the row mid-wait.");
-    await Assert.That(Id).IsEqualTo(work.MessageId)
+    await Assert.That(renewal.Ids).IsEquivalentTo([work.MessageId])
       .Because("The lease renewal must reference the re-buffered row.");
 
     await cts.CancelAsync();
@@ -545,7 +528,7 @@ public class OutboxPublishWorkerErrorPathTests {
 
     await fx.Channel.WriteAsync(_work(), cts.Token);
     await strategy.NotReadySeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await fx.Renewal.WaitForCountAsync(1, TimeSpan.FromSeconds(5));
+    await fx.Coordinator.WaitForRenewalsAsync(1);
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
@@ -579,12 +562,12 @@ public class OutboxPublishWorkerErrorPathTests {
       .Because("Bulk not-ready must re-buffer EVERY row in the batch — losing any row strands it in wh_outbox.");
     await Assert.That(strategy.PublishedIds).Contains(work2.MessageId)
       .Because("Bulk not-ready must re-buffer EVERY row in the batch — losing any row strands it in wh_outbox.");
-    await fx.Renewal.WaitForCountAsync(2, TimeSpan.FromSeconds(5));
-    var renewedIds = fx.Renewal.All.Select(r => r.Id).ToList();
+    await fx.Coordinator.WaitForRenewalsAsync(1);
+    var renewedIds = fx.Coordinator.Renewals.SelectMany(r => r.Ids).ToList();
     await Assert.That(renewedIds).Contains(work1.MessageId)
-      .Because("Each re-buffered row needs its own lease renewal — a shared renewal would let the other row's lease lapse.");
+      .Because("Every re-buffered row of the batch has its lease renewed; a row left out would lapse and be charged an attempt on its re-claim.");
     await Assert.That(renewedIds).Contains(work2.MessageId)
-      .Because("Each re-buffered row needs its own lease renewal — a shared renewal would let the other row's lease lapse.");
+      .Because("Every re-buffered row of the batch has its lease renewed; a row left out would lapse and be charged an attempt on its re-claim.");
 
     await cts.CancelAsync();
     await fx.Worker.StopAsync(CancellationToken.None);
