@@ -118,6 +118,8 @@ Each slice is one red-then-green increment and its own commit.
    Update 088's comment about the event store, whose reason (dead tuples) does not cover the insert
    threshold. RED: a migration test reading `pg_class.reloptions` and the TOAST relation's
    reloptions per table; idempotence on re-run. Docs: storage-maintenance page.
+   **Status (2026-10-23):** shipped in 222 (#1582). `wh_perspective_applied`, which stays unpartitioned
+   (#1577), gets the same shape for deletes and inserts in migration 232 (#1666).
 7. **Perspective tables, by attribute.** Extend `[PerspectiveTableStorage]` with
    `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold` and
    matching TOAST properties. `TableStorageInfo.From` reads them; `ColumnStorageSql.ForTable` emits

@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
   table and detached later. Migration 226.
 
+- **The applied-event ledger vacuums after a fixed number of changes (#1666).** Migration 232 sets scale factor 0
+  with a threshold of 10000 for both dead rows and inserts on `wh_perspective_applied`, which takes a row for every
+  completed apply and prunes it an hour later. A scale factor made its vacuum wait on a share of a window that grows
+  with the traffic.
+
 - **A perspective table can declare when autovacuum runs (#1584).** `[PerspectiveTableStorage]` gains
   `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold`,
   `AutovacuumInsertScaleFactor`, `ToastAutovacuumVacuumThreshold` and `ToastAutovacuumVacuumScaleFactor`. The schema
