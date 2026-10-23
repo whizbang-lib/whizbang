@@ -18,7 +18,7 @@ namespace Whizbang.Core.Messaging;
 /// flushed at shutdown.
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/DetachedLifecycleWorkTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/DetachedLifecycleWorkTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/BatchStrategyShutdownFlushTests.cs</tests>
 public sealed class DetachedLifecycleWork {
   private readonly ConcurrentDictionary<Task, byte> _inFlight = new();
