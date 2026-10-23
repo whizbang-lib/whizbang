@@ -34,7 +34,7 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"test_{((Guid)TrackedGuid.New()):N}";
+    _databaseName = $"test_{TrackedGuid.New().Value:N}";
     await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
     await admin.OpenAsync();
     await admin.ExecuteAsync($"CREATE DATABASE {_databaseName}");

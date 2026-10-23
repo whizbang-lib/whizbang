@@ -78,21 +78,28 @@ public static class MigrationSqlNormalizer {
         } else if (c is ' ' or '\t' or '\f' or '\v') {
           _pendingSpace = true;
           _i++;
-        } else if (c == '-' && _peek(1) == '-') {
-          _skipLineComment();
-        } else if (c == '/' && _peek(1) == '*') {
-          _skipBlockComment();
-        } else if (c == '\'') {
-          _copyQuoted('\'', backslashEscapes: _isEscapeStringPrefix());
-        } else if (c == '"') {
-          _copyQuoted('"', backslashEscapes: false);
-        } else if (c == '$' && _dollarTagLength() is var tagLength and > 0) {
-          _copyDollarQuoted(tagLength);
         } else {
-          _content(_i, 1);
+          _token(c);
         }
       }
       return _out.ToString();
+    }
+
+    /// <summary>Reads what starts at a character that is not whitespace: a comment, a quoted run, or content.</summary>
+    private void _token(char c) {
+      if (c == '-' && _peek(1) == '-') {
+        _skipLineComment();
+      } else if (c == '/' && _peek(1) == '*') {
+        _skipBlockComment();
+      } else if (c == '\'') {
+        _copyQuoted('\'', backslashEscapes: _isEscapeStringPrefix());
+      } else if (c == '"') {
+        _copyQuoted('"', backslashEscapes: false);
+      } else if (c == '$' && _dollarTagLength() is var tagLength and > 0) {
+        _copyDollarQuoted(tagLength);
+      } else {
+        _content(_i, 1);
+      }
     }
 
     private char _peek(int offset) => _i + offset < sql.Length ? sql[_i + offset] : '\0';
