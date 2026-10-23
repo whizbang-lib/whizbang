@@ -116,7 +116,8 @@ public class PhysicalPromotionIndexGenerationTests {
   public async Task TheColumnBtree_IsEmittedOnceAsync() {
     var schema = await _schemaAsync();
     var entry = schema[schema.IndexOf("-- testapp.wh_per_item", StringComparison.Ordinal)..];
-    entry = entry[..entry.IndexOf("-- testapp.wh_per_item", 1, StringComparison.Ordinal)];
+    // The whole-script fallback ends where the step that applies it tests it.
+    entry = entry[..entry.IndexOf("if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema))", StringComparison.Ordinal)];
 
     await Assert.That(entry.Split("idx_item_name ON").Length - 1).IsEqualTo(1);
   }

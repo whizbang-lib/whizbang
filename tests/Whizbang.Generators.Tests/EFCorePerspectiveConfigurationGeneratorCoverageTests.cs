@@ -164,6 +164,49 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
   #endregion
 
+  #region Declared but unset table-naming property (#1660)
+
+  /// <summary>
+  /// The package declares WhizbangStripTableNameSuffixes compiler-visible, so a project that never sets it
+  /// still hands the generator an empty value. The table keeps its stripped name, the one it had before the
+  /// property became visible, instead of gaining the model's suffix.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task Generator_WithBlankStripSuffixesProperty_KeepsStrippedTableNameAsync(string raw) {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public record ActiveTenantModel(string Name);
+
+        public class ActiveTenantPerspective(IPerspectiveStore<ActiveTenantModel> store)
+          : IPerspectiveFor<ActiveTenantModel, TenantActivated> {
+          public ActiveTenantModel Apply(ActiveTenantModel currentData, TenantActivated @event) => currentData;
+        }
+
+        public record TenantActivated : IEvent;
+        """;
+    var globalOptions = new Dictionary<string, string> {
+      ["build_property.WhizbangStripTableNameSuffixes"] = raw
+    };
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source, globalOptions);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains("entity.ToTable(\"wh_per_active_tenant\");");
+    await Assert.That(generated).DoesNotContain("wh_per_active_tenant_model");
+  }
+
+  #endregion
+
   #region DbContext schema discovery fallbacks
 
   /// <summary>

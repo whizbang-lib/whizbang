@@ -121,10 +121,10 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
                "over-correct and reject legitimate advancement.");
   }
 
-  // ── RED 3: idempotent re-apply of same EventId is a no-op (does not bump version) ─────
+  // ── A write at the stored position lands (#1608) ─────────────────────────────────────
 
   [Test]
-  public async Task IdempotentReapply_OnVersionedTarget_DoesNotBumpVersionAsync() {
+  public async Task WriteAtTheStoredEventId_OnVersionedTarget_LandsAsync() {
     var id = TrackedGuid.New().Value;
     var strategy = new PostgresUpsertStrategy();
     var scope = new PerspectiveScope();
@@ -138,11 +138,12 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
         new VersionedItem { Id = id, State = "Completed", Value = 2 },
         meta, scope);
     }
-    // Re-apply the same event (transport redelivery / consumer retry).
+    // A re-fold of the stream (a rewind or a rebuild) records the stream's frontier, which is the event the row
+    // already holds when the late event sits below the newest one, and carries the corrected state.
     await using (var ctxB = CreateDbContext()) {
       await strategy.UpsertPerspectiveRowAsync(
         ctxB, "wh_per_versioned_item", id,
-        new VersionedItem { Id = id, State = "Completed", Value = 2 },
+        new VersionedItem { Id = id, State = "Completed", Value = 3 },
         meta, scope);
     }
 
@@ -150,9 +151,10 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
     var row = await read.Set<PerspectiveRow<VersionedItem>>().AsNoTracking()
       .FirstAsync(r => r.Id == id);
 
-    await Assert.That(row.Version).IsEqualTo(1)
-      .Because("Strict-greater EventId comparison: same EventId means same event being re-applied — " +
-               "the UPSERT WHERE filter MUST skip the redundant UPDATE so the version stays at 1, " +
-               "matching the at-most-once Apply contract.");
+    await Assert.That(row.Data.Value).IsEqualTo(3)
+      .Because("a write at the stored event id is a re-fold of the same stream position: refusing it refused every "
+             + "rewind of a row that had applied its newest event first, and the late event it carried was lost. A "
+             + "redelivery of the row's own event never reaches the store: the runner's idempotency filter drops it.");
+    await Assert.That(row.Version).IsEqualTo(2);
   }
 }
