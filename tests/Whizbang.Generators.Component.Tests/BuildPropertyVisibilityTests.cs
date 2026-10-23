@@ -44,6 +44,21 @@ public partial class BuildPropertyVisibilityTests {
       .Because($"{package} reads these as build_property.* but none of its packed build files declares them a CompilerVisibleProperty, so a project setting never reaches the generator");
   }
 
+  /// <summary>
+  /// The reverse: every property a package declares visible is read by its generators. A declared property nothing
+  /// reads is written into every consumer's build for no reason, and it reads as a setting that does something.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(GeneratorPackages))]
+  public async Task EveryPropertyAPackageDeclares_IsReadByItsGeneratorsAsync(string package) {
+    var read = _propertiesRead(package);
+
+    var orphaned = _declaredVisible(package).Where(name => !read.Contains(name)).Order(StringComparer.Ordinal).ToList();
+
+    await Assert.That(orphaned).IsEmpty()
+      .Because($"{package} declares these a CompilerVisibleProperty but none of its generators reads them as build_property.*");
+  }
+
   /// <summary>The scan finds the properties it is meant to find, so an empty result above is not a blind scan.</summary>
   [Test]
   public async Task TheScan_FindsTheTableNamingPropertiesTheCoreGeneratorsReadAsync() {

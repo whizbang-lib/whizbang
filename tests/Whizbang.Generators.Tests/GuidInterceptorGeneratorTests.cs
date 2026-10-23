@@ -574,6 +574,55 @@ public class GuidInterceptorGeneratorTests {
     await Assert.That(generatedSource).IsNull();
   }
 
+  /// <summary>
+  /// The package declares the property, so a project that never sets it hands the generator an empty value (#1660),
+  /// and a whitespace value is no setting either. Both are the default: interception stays off.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task Generator_BlankInterceptionProperty_KeepsInterceptionOffAsync(string raw) {
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, new Dictionary<string, string> {
+      ["build_property.WhizbangGuidInterceptionEnabled"] = raw
+    });
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNull();
+    await Assert.That(result.Diagnostics.Count(d => d.Id == "WHIZ058")).IsEqualTo(1)
+      .Because("the call is still discovered and reported; only the interceptor is withheld");
+  }
+
+  /// <summary>The same through the options a real build delivers: every declared property present, none set.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_DeclaredButUnsetInterceptionProperty_KeepsInterceptionOffAsync() {
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, MSBuildGlobalOptions.For());
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNull();
+  }
+
+  /// <summary>And a project that sets it gets interception through the same delivered options.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_InterceptionPropertySetInTheProject_TurnsInterceptionOnAsync() {
+    var result = GeneratorTestHelper.RunGenerator<GuidInterceptorGenerator>(NEW_GUID_SOURCE, MSBuildGlobalOptions.For(
+      new Dictionary<string, string> { ["WhizbangGuidInterceptionEnabled"] = "true" }));
+
+    await Assert.That(GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs")).IsNotNull();
+  }
+
+  private const string NEW_GUID_SOURCE = """
+    using System;
+
+    namespace TestApp;
+
+    public class MyService {
+      public Guid CreateId() {
+        return Guid.NewGuid();
+      }
+    }
+    """;
+
   // ========================================
   // Pragma Suppression Tests
   // ========================================
