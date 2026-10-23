@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -106,7 +107,7 @@ public class SchemaInitializationRunnersTests {
       gate,
       Options.Create(new ClaimWorkerOptions()),
       Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false }),
-      TimeProvider.System,
+      new FakeTimeProvider(),
       NullLogger<WhizbangDatabaseInitializerService>.Instance,
       []);
 

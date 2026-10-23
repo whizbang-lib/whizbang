@@ -391,7 +391,9 @@ public class StartupStageReporterTests {
         throw Failure;
       }
       if (Hang) {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var _ = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
+        await canceled.Task;
       }
       if (!RowExists) {
         return false;
