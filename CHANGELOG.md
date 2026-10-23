@@ -558,6 +558,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the role elector warns, as the duty elector and the stamper already did, when its bridge lock resolves through a
   pooled connection-string key.
 
+- **An event audit record's envelope names the audited event as its cause.** The emitter built the audit envelope's
+  hop with no causation, so the record could be traced to the event it audits only through the payload's
+  `OriginalEventId`; the hop's `CausationId` is now that event's message id. The test meant to hold this had passed
+  without checking anything: its `IsNotNull()` on a nullable value passes on null under the pinned TUnit (#1642).
 - **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
   its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
   associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
