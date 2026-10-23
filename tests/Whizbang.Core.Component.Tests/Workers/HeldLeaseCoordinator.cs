@@ -76,8 +76,9 @@ internal sealed class HeldLeaseCoordinator(TimeProvider clock, TimeSpan claimLea
   }
 
   private static async Task<int> _waitForCancellationAsync(CancellationToken cancellationToken) {
-    await Task.Delay(Timeout.Infinite, cancellationToken);
-    return 0;
+    var canceled = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var _ = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
+    return await canceled.Task;
   }
 
   public Task<IReadOnlyList<OutboxBatchRow>> FetchOutboxBatchAsync(

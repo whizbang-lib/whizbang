@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -430,7 +431,7 @@ public class OutboxPublishWorkerErrorPathTests {
     var completion = new RecordingCompletionChannel();
     var failure = new RecordingFailureChannel();
     // The not-ready hold renews the held rows' leases through the work coordinator (#1606).
-    var coordinator = new HeldLeaseCoordinator(TimeProvider.System, TimeSpan.FromMinutes(5));
+    var coordinator = new HeldLeaseCoordinator(new FakeTimeProvider(), TimeSpan.FromMinutes(5));
     var gate = new SchemaReadyGate();
     if (markGateReady) {
       gate.MarkReady();

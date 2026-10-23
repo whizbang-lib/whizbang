@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -240,7 +241,7 @@ public class OutboxPublishWorkerTests {
     gate.MarkReady();
 
     // The not-ready hold renews the held row's lease through the work coordinator (#1606).
-    var coordinator = new HeldLeaseCoordinator(TimeProvider.System, TimeSpan.FromMinutes(5));
+    var coordinator = new HeldLeaseCoordinator(new FakeTimeProvider(), TimeSpan.FromMinutes(5));
     var sp = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),

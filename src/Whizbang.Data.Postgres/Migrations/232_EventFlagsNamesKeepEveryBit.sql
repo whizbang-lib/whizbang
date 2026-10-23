@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 232_EventFlagsNamesKeepEveryBit.sql
 -- Date: 2026-10-22
 -- Description: An event's flags written as names keep every bit when the event is stored (#1612).
