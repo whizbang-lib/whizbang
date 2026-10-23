@@ -190,6 +190,45 @@ public partial class MigrationStepTransactionTests {
   }
 
   /// <summary>
+  /// An instance that continues a pass another instance began on an empty database leaves every file the first one
+  /// applied recorded as applied, not as skipped.
+  /// </summary>
+  /// <remarks>
+  /// The first instance is held between two of its migration files, holding no lock; the second takes the first
+  /// step's lock in that gap and continues the pass. The beginning of a pass records the skip on every file it will not
+  /// run; a continuation must not, because the files it will not run are the ones the pass already applied, and
+  /// recording a skip over them leaves the ledger saying they were never applied (#1687). This is the deterministic
+  /// form of the gap <see cref="TwoInstancesOnAnEmptyDatabase_ConvergeAsync"/> only lands in now and then.
+  /// </remarks>
+  [Test]
+  [Timeout(300000)]
+  public async Task AnInstanceContinuingAPass_KeepsTheFilesTheFirstAppliedRecordedAsAppliedAsync(
+      CancellationToken cancellationToken) {
+    var files = MigrationFiles();
+    var observer = new HoldAfterStep(files[10]);
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(observer);
+    await using var provider = services.BuildServiceProvider();
+
+    var first = _initializeAsync(provider, cancellationToken: cancellationToken);
+    var reached = await Task.WhenAny(observer.Holding, first);
+    await Assert.That(ReferenceEquals(reached, observer.Holding)).IsTrue()
+      .Because("precondition: the first instance is between two steps, after the eleventh file committed");
+
+    await _initializeAsync(cancellationToken: cancellationToken);
+    observer.Release();
+    await first;
+
+    await Assert.That(await _listAsync(
+        "SELECT file_name FROM public.wh_schema_migrations WHERE owner = 'whizbang' AND status = 3 ORDER BY file_name"))
+      .IsEmpty()
+      .Because("the pass skipped no file on an empty database; the first instance applied the first eleven, the second the rest");
+    await Assert.That(await _appliedFilesAsync()).IsEquivalentTo(files)
+      .Because("every migration is recorded as applied exactly as one instance alone would leave it");
+    await Assert.That(await _outstandingStepsAsync()).IsEqualTo(0L);
+  }
+
+  /// <summary>
   /// Two instances starting together on an empty database both succeed and leave every file recorded.
   /// </summary>
   /// <remarks>

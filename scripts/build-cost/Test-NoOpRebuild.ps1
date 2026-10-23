@@ -22,7 +22,11 @@
   Build configuration. Default: Debug.
 
 .PARAMETER Targets
-  The targets that must be skipped on a no-op rebuild. Default: CoreCompile and MergeSharedAssembly.
+  The targets that must be skipped on a no-op rebuild. Default: CoreCompile, MergeSharedAssembly, and the
+  generators package's WhizbangExtractMessageRegistry and WhizbangExtractPinnedTypeLedger, which run in every
+  consumer's build. The sample consumes the generators by project reference, which does not import the
+  package's targets, but the library projects it builds import them from the repository's
+  Directory.Build.targets, so the check still sees them run.
 
 .PARAMETER OutputDirectory
   Where the binary and text logs are written. Default: a new folder under the temp directory.
@@ -42,7 +46,7 @@ param(
   [string]$Configuration = 'Debug',
 
   [Parameter()]
-  [string[]]$Targets = @('CoreCompile', 'MergeSharedAssembly'),
+  [string[]]$Targets = @('CoreCompile', 'MergeSharedAssembly', 'WhizbangExtractMessageRegistry', 'WhizbangExtractPinnedTypeLedger'),
 
   [Parameter()]
   [string]$OutputDirectory = (Join-Path ([System.IO.Path]::GetTempPath()) "noop-rebuild-$([guid]::NewGuid().ToString('N'))")
@@ -64,7 +68,7 @@ function Get-NoOpRebuildWork {
     [string]$LogPath,
 
     [Parameter()]
-    [string[]]$Targets = @('CoreCompile', 'MergeSharedAssembly')
+    [string[]]$Targets = @('CoreCompile', 'MergeSharedAssembly', 'WhizbangExtractMessageRegistry', 'WhizbangExtractPinnedTypeLedger')
   )
 
   $startPattern = '^\s*(?:\d+:\d+>)?Target "(?<target>[^"]+)" in (?:file "[^"]*" from )?project "(?<project>[^"]+)"'

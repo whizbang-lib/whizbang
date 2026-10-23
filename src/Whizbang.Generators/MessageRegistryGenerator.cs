@@ -88,13 +88,44 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <summary>
+  /// The switch: <c>WhizbangEmitMessageRegistry</c>. The registry is IDE tooling, so the package turns it off by
+  /// default, and when it is off nothing is embedded in the assembly and the extraction target is skipped.
+  /// </summary>
+  private const string EMIT_PROPERTY = "build_property.WhizbangEmitMessageRegistry";
+
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a member-access call named SendAsync or PublishAsync.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsDispatchCallCandidate(SyntaxNode node) =>
+      node is InvocationExpressionSyntax invocation &&
+      invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+      (memberAccess.Name.Identifier.Text == "SendAsync" || memberAccess.Name.Identifier.Text == "PublishAsync");
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
-                                       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractMessageType(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -102,10 +133,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover dispatchers (SendAsync and PublishAsync calls)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var dispatchers = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
-                                       invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
-                                       (memberAccess.Name.Identifier.Text == "SendAsync" ||
-                                        memberAccess.Name.Identifier.Text == "PublishAsync"),
+        predicate: static (node, _) => IsDispatchCallCandidate(node),
         transform: static (ctx, ct) => _extractDispatcher(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -113,7 +141,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover receptors (IReceptor implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var receptors = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptor(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -121,7 +149,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover perspectives (IPerspectiveFor<TEvent> implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspective(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -136,7 +164,13 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // The referenced Whizbang packages, the one fact read from the compilation. Projected to values before the
     // combine: combining the compilation itself would regenerate the registry on every edit, since every edit is a
     // new compilation, while the packages it references change only when a reference does.
-    var whizbangPackages = context.CompilationProvider.Select(static (compilation, _) => _referencedWhizbangPackages(compilation));
+    // Whether to embed the registry at all (#1609). Not set reads as on, for a project that loads the generators
+    // without the package's props; the props set it, off by default.
+    var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
+        !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, EMIT_PROPERTY));
+
+    var whizbangPackages = context.CompilationProvider.Combine(enabled)
+        .Select(static (pair, _) => pair.Right ? _referencedWhizbangPackages(pair.Left) : []);
 
     // Combine all discoveries + referenced package versions
     var allData = messageTypes.Collect()
@@ -144,12 +178,16 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         .Combine(receptors.Collect())
         .Combine(perspectives.Collect())
         .Combine(whizbangPackages)
-        .Combine(docsLocation);
+        .Combine(docsLocation)
+        .Combine(enabled);
 
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data;
+          if (!data.Right) {
+            return;
+          }
+          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data.Left;
           _generateMessageRegistry(ctx,
             (((messages, dispatchers2), receptors2), perspectives2),
             packages,

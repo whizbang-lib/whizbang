@@ -24,10 +24,18 @@ namespace Whizbang.Generators;
 public class AuditEventRegistryGenerator : IIncrementalGenerator {
   private const string AUDIT_EVENT_ATTRIBUTE = "Whizbang.Core.Attributes.AuditEventAttribute";
 
+  /// <summary>
+  /// Syntax predicate: admits a type declaration with an attribute or a base list.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedOrDerivedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax t && (t.AttributeLists.Any() || t.BaseList is not null);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var audited = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax t && (t.AttributeLists.Any() || t.BaseList is not null),
+        predicate: static (node, _) => IsAttributedOrDerivedTypeCandidate(node),
         transform: static (ctx, ct) => _extract(ctx, ct)
     ).Where(static info => info is not null);
 

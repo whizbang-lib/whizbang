@@ -18,13 +18,20 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PinnedIdRegistryGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a class, record or struct that can implement an interface and carry an
+  /// attribute (each from its own syntax, or partial). The transform takes only a message or perspective with [PinnedId].
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsPinnedTypeCandidate(SyntaxNode node) =>
+      node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
+      SyntaxCandidates.MayHaveBaseTypes(type) && SyntaxCandidates.MayHaveAttributes(type);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax
-                 or RecordDeclarationSyntax
-                 or StructDeclarationSyntax,
+        predicate: static (node, _) => IsPinnedTypeCandidate(node),
         transform: static (ctx, ct) => _extractPinnedInfo(ctx, ct)
     ).Where(static info => info is not null);
 

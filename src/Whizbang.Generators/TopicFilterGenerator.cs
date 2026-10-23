@@ -33,14 +33,20 @@ namespace Whizbang.Generators;
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassOrRecordCandidate(SyntaxNode node) =>
+      (node is ClassDeclarationSyntax or RecordDeclarationSyntax) && ((TypeDeclarationSyntax)node).AttributeLists.Any();
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
     var topicFilters = context.SyntaxProvider.CreateSyntaxProvider(
         // Syntactic filtering: Classes/records with attributes (cheap, filters ~99% of nodes)
-        predicate: static (node, _) =>
-            (node is ClassDeclarationSyntax or RecordDeclarationSyntax) &&
-            ((TypeDeclarationSyntax)node).AttributeLists.Any(),
+        predicate: static (node, _) => IsAttributedClassOrRecordCandidate(node),
 
         // Semantic analysis: Extract topic filter info (expensive, only on filtered nodes)
         transform: static (ctx, ct) => _extractTopicFilters(ctx, ct)

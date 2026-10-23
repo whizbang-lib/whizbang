@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace Whizbang.Generators.Tests.BuildCost;
+namespace Whizbang.BuildCost.Benchmarks;
 
 /// <summary>
 /// A synthetic consumer codebase shaped like a real service: commands, events, receptors, read models and

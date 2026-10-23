@@ -27,26 +27,31 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_COMMAND_TYPE = "__COMMAND_TYPE__";
   private const string TYPE_STRING = "string";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IEvent types with [StreamId] attribute
     var eventsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover IEvent types WITHOUT [StreamId] for diagnostics
     var eventsWithoutStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _findEventWithoutStreamId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover ICommand types with [StreamId] attribute
     var commandsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCommandStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -54,8 +59,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // [StreamId] (via CompositeEventBase) — the stream its fanned-out inner events inherit. The extractor
     // must resolve it via the object-typed resolver so producer-side fan-out routes children correctly.
     var compositesWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCompositeStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 

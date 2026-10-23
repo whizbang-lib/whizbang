@@ -65,6 +65,64 @@ public class PinnedIdRegistryGeneratorCoverageTests {
   // regressed and an empty-string id were accepted, GetPinnedId(typeof(...)) would return "" (an
   // invalid identity) instead of null, and every event stored under it would fail the round-trip
   // through a real pinned-id lookup with no compiler error to catch the mistake.
+  // The syntax filter admits any attributed type with a base list, so the transform must still drop a
+  // pinned type that is neither a message nor a perspective (PinnedIdRegistryGenerator.cs:79). If it did
+  // not, the registry would map an id to a type no store or transport ever reads.
+  [Test]
+  public async Task Generator_PinnedTypeThatIsNotAMessageOrPerspective_ExcludedFromRegistryAsync() {
+    const string source = """
+
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp.Events;
+
+      [PinnedId("44444444-4444-4444-4444-444444444444")]
+      public record PinnedEvent : IEvent;
+
+      [PinnedId("55555555-5555-5555-5555-555555555555")]
+      public class PinnedHelper : System.Collections.Generic.List<int>;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PinnedIdRegistryGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)).IsEmpty();
+    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.PinnedEvent)");
+    await Assert.That(registryCode).DoesNotContain("PinnedHelper")
+      .Because("only messages and perspectives carry a pinned identity the registry maps");
+  }
+
+  // A message that passes the syntax filter because of some other attribute, with no [PinnedId], is
+  // dropped (PinnedIdRegistryGenerator.cs:87). If it were not, the registry would carry an entry with no id.
+  [Test]
+  public async Task Generator_AttributedMessageWithoutPinnedId_ExcludedFromRegistryAsync() {
+    const string source = """
+
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Attributes;
+
+      namespace MyApp.Events;
+
+      [PinnedId("66666666-6666-6666-6666-666666666666")]
+      public record PinnedEvent : IEvent;
+
+      [Obsolete("not pinned")]
+      public record UnpinnedEvent : IEvent;
+
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PinnedIdRegistryGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)).IsEmpty();
+    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "PinnedIdRegistry.g.cs");
+    await Assert.That(registryCode).Contains("typeof(global::MyApp.Events.PinnedEvent)");
+    await Assert.That(registryCode).DoesNotContain("UnpinnedEvent")
+      .Because("a message without [PinnedId] has no pinned identity to register");
+  }
+
   [Test]
   public async Task Generator_WhitespacePinnedId_ExcludedFromRegistryAsync() {
     const string source = """

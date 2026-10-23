@@ -44,7 +44,7 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var exposures = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => _isPotentialSurface(node),
+        predicate: static (node, _) => IsExposureSurfaceCandidate(node),
         transform: static (ctx, ct) => _extract(ctx, ct))
       .Where(static found => found is not null)
       .Select(static (found, _) => found!.Value);
@@ -56,7 +56,9 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   /// A type or member that carries at least one attribute, which is the cheapest thing an exposure
   /// cannot be without.
   /// </summary>
-  private static bool _isPotentialSurface(SyntaxNode node) => node switch {
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsExposureSurfaceCandidate(SyntaxNode node) => node switch {
     InterfaceDeclarationSyntax { AttributeLists.Count: > 0 } => true,
     ClassDeclarationSyntax { AttributeLists.Count: > 0 } => true,
     RecordDeclarationSyntax { AttributeLists.Count: > 0 } => true,

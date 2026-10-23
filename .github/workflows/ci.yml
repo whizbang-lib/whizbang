@@ -720,7 +720,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -736,6 +736,12 @@ jobs:
         shell: pwsh
         run: ./scripts/build-cost/Test-NoOpRebuild.ps1 -OutputDirectory noop-rebuild
 
+      # The generators package's ledger and registry are read from the built assembly, so a consumer with
+      # EmitCompilerGeneratedFiles off (the default) still gets them, updated on change and skipped on a no-op (#1609).
+      - name: A consumer writes and updates the ledger and registry with generated files off
+        shell: pwsh
+        run: ./scripts/build-cost/Test-GeneratedJsonFiles.ps1 -OutputDirectory noop-rebuild/generated-json
+
       - name: Upload the logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -743,6 +749,45 @@ jobs:
           name: noop-rebuild-${{ github.run_id }}
           path: noop-rebuild/
           retention-days: 7
+
+  # How long each generator and analyzer takes over a large generated consumer (1,000 features and 3,000 files of
+  # ordinary code), median of 5 runs, against benchmarks/Whizbang.BuildCost.Benchmarks/build-cost-thresholds.json
+  # (#1651). Timing is not a test, so this is a tool and an advisory job: not in ci-result's needs until its numbers
+  # are stable. The table is the job summary and an artifact. Runs beside the build, off its critical path.
+  build-cost-timing:
+    name: Build · Generator and analyzer timing
+    needs: [ff-validated, release-pr]
+    if: >-
+      ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
+      needs.release-pr.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the benchmark and the generator packages
+        run: dotnet build benchmarks/Whizbang.BuildCost.Benchmarks -c Release -nologo -v:q
+
+      - name: Time every generator and analyzer against its threshold
+        run: |
+          mkdir -p build-cost
+          dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --output build-cost/timing.md
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-cost-timing-${{ github.run_id }}
+          path: build-cost/
+          retention-days: 14
 
   build:
     name: Build · Compile
@@ -1265,6 +1310,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write   # the comment
+      # The pull request's labels (docs:not-needed and the like). Without it the token reads them as an
+      # empty list instead of failing, so a label never reaches the rules (#1659).
+      issues: read
     steps:
       # The full history: the DCO check reads base..head with git log.
       - name: Checkout
@@ -1292,6 +1340,7 @@ jobs:
           TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
           LABELS=$(jq -r '[.[].labels[]] | unique | join(",")' <<< "$CLOSING_JSON")
           PR_LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | join(",")')
+          echo "Labels read: $PR_LABELS"
           # The docs-site pull requests that document this one: found from the one link either side makes
           DOCS_JSON=$(pwsh -NoProfile -File .github/scripts/Get-DocsPullRequests.ps1 -Repository "${{ github.repository }}" -PullRequest "$PR")
           BOT=()
