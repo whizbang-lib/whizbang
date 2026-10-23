@@ -92,6 +92,9 @@ function New-PinnedCommandSource {
   )
 
   return @"
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 using Whizbang.Core;
 using Whizbang.Core.Attributes;
 
