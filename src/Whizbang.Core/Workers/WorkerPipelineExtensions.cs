@@ -186,7 +186,7 @@ public static class WorkerPipelineExtensions {
     // stops, and Stopped after everything has; schema initialization reports Elect, Migrate, Converge and Coordinate.
     services.TryAddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(sp => new Whizbang.Core.Startup.StartupStageReporter(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      sp.GetService<Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<Observability.IServiceInstanceProvider>(),
       sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
       sp.GetService<TimeProvider>()));
@@ -267,7 +267,7 @@ public static class WorkerPipelineExtensions {
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>(),
-      sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),

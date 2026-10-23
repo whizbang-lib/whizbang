@@ -272,18 +272,6 @@ public class StartupStageReporterTests {
   }
 
   [Test]
-  public async Task WithoutAnInstanceIdentity_NothingIsWrittenAsync() {
-    var (reporter, coordinator, observer, _, _) = _build(withIdentity: false);
-    await reporter.EnterAsync(StartupStage.Running, "serving");
-
-    await reporter.InstanceRegisteredAsync();
-
-    await Assert.That(coordinator.Writes).IsEmpty()
-      .Because("a host with no instance identity has no row to record on");
-    await Assert.That(observer.Changes[^1].Recorded).IsFalse();
-  }
-
-  [Test]
   public async Task WithoutAWorkCoordinator_NothingIsWrittenAsync() {
     var (reporter, _, observer, _, _) = _build(withCoordinator: false);
     await reporter.InstanceRegisteredAsync();
@@ -316,7 +304,7 @@ public class StartupStageReporterTests {
   [Test]
   public async Task WithoutAClock_TheSystemClockStampsTheStageAsync() {
     var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-    var reporter = new StartupStageReporter(scopes, null, [], new FakeLogger<StartupStageReporter>());
+    var reporter = new StartupStageReporter(scopes, new StubInstanceProvider(), [], new FakeLogger<StartupStageReporter>());
 
     await reporter.EnterAsync(StartupStage.Preflight, "host starting");
 
@@ -328,16 +316,19 @@ public class StartupStageReporterTests {
     var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
     var logger = new FakeLogger<StartupStageReporter>();
 
-    await Assert.That(() => new StartupStageReporter(null!, null, [], logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new StartupStageReporter(scopes, null, null!, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new StartupStageReporter(scopes, null, [], null!)).Throws<ArgumentNullException>();
+    var instance = new StubInstanceProvider();
+
+    await Assert.That(() => new StartupStageReporter(null!, instance, [], logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, null!, [], logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, instance, null!, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new StartupStageReporter(scopes, instance, [], null!)).Throws<ArgumentNullException>();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
 
   private static (StartupStageReporter Reporter, RecordingCoordinator Coordinator, RecordingObserver Observer,
       FakeLogger<StartupStageReporter> Logger, FakeTimeProvider Clock) _build(
-      bool withIdentity = true, bool withCoordinator = true) {
+      bool withCoordinator = true) {
     var instance = new StubInstanceProvider();
     var coordinator = new RecordingCoordinator(instance.InstanceId);
     var services = new ServiceCollection();
@@ -349,7 +340,7 @@ public class StartupStageReporterTests {
     var logger = new FakeLogger<StartupStageReporter>();
     var clock = new FakeTimeProvider(_start);
     var reporter = new StartupStageReporter(
-      scopes, withIdentity ? instance : null, [observer], logger, clock);
+      scopes, instance, [observer], logger, clock);
     return (reporter, coordinator, observer, logger, clock);
   }
 
@@ -391,7 +382,8 @@ public class StartupStageReporterTests {
         throw Failure;
       }
       if (Hang) {
-        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Completed by the reporter's write budget on the test's fake clock, inline in the test's own flow.
+        var canceled = new TaskCompletionSource();
         await using var _ = cancellationToken.Register(() => canceled.TrySetCanceled(cancellationToken));
         await canceled.Task;
       }

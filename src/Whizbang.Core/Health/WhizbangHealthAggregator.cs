@@ -35,20 +35,24 @@ public readonly record struct AggregatedHealth(HealthStatus Status, IReadOnlyLis
 public sealed class WhizbangHealthAggregator {
   private readonly IReadOnlyList<IWhizbangHealthSource> _sources;
   private readonly WhizbangHealthOptions _options;
-  private readonly Startup.IStartupStageReporter? _stages;
+  private readonly Startup.IStartupStageReporter _stages;
 
   /// <summary>Creates an aggregator over the given health sources and policy options.</summary>
   /// <param name="sources">The health sources.</param>
   /// <param name="options">The per-component policies.</param>
-  /// <param name="stages">The startup stage reporter, whose current stage every evaluation carries; optional.</param>
+  /// <param name="stages">
+  /// The startup stage reporter, whose current stage every evaluation carries. A host with no stages passes
+  /// <see cref="Startup.NullStartupStageReporter.Instance"/>.
+  /// </param>
   public WhizbangHealthAggregator(
       IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
-      Startup.IStartupStageReporter? stages = null) {
+      Startup.IStartupStageReporter stages) {
     ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(options);
     // Materialised once: the sources are asked concurrently and then indexed to pair each
     // result with its component, which a lazily-enumerated sequence cannot support.
     _sources = sources as IReadOnlyList<IWhizbangHealthSource> ?? [.. sources];
+    ArgumentNullException.ThrowIfNull(stages);
     _options = options;
     _stages = stages;
   }
@@ -83,7 +87,7 @@ public sealed class WhizbangHealthAggregator {
         worst = status;
       }
     }
-    return new AggregatedHealth(worst, reports) { Stage = _stages?.Current };
+    return new AggregatedHealth(worst, reports) { Stage = _stages.Current };
   }
 
   /// <summary>

@@ -38,7 +38,7 @@ public class StartupPipelineHealthSourceTests {
 
   [Test]
   public async Task NotStarted_ReportsStartingWithAStatedDetailAsync() {
-    var source = new StartupPipelineHealthSource(state: new StartupPipelineState(), readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: new StartupPipelineState(), readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -54,7 +54,7 @@ public class StartupPipelineHealthSourceTests {
       _completed("Assess"));
     await state.OnStepStartingAsync(
       new StartupStepContext(_step(FrameworkStartupSteps.MIGRATE)), CancellationToken.None);
-    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -70,7 +70,7 @@ public class StartupPipelineHealthSourceTests {
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
       new StartupStepResult(FrameworkStartupSteps.MIGRATE, StartupStepOutcome.Failed,
         TimeSpan.FromMilliseconds(2), "42P01: relation tenant_secrets does not exist"));
-    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -91,7 +91,7 @@ public class StartupPipelineHealthSourceTests {
     await state.OnStepStartingAsync(new StartupStepContext(_step("Rewrite", blocking: false)), CancellationToken.None);
     var signal = new StartupReadySignal();
     signal.MarkReady();
-    var source = new StartupPipelineHealthSource(state, signal);
+    var source = new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -109,7 +109,7 @@ public class StartupPipelineHealthSourceTests {
     var signal = new StartupReadySignal();
     signal.MarkReady();
 
-    var health = await new StartupPipelineHealthSource(state, signal).ReportAsync(CancellationToken.None);
+    var health = await new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance).ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Ready);
     await Assert.That(health.Detail).IsEqualTo("ready (1/1 steps complete)");
@@ -121,7 +121,7 @@ public class StartupPipelineHealthSourceTests {
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
       _completed(FrameworkStartupSteps.MIGRATE));
     var signal = new StartupReadySignal();   // transports have not subscribed yet
-    var source = new StartupPipelineHealthSource(state, signal);
+    var source = new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 

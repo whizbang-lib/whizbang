@@ -32,7 +32,7 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   private static readonly TimeSpan _writeTimeout = TimeSpan.FromSeconds(5);
 
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider? _instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IStartupStageObserver[] _observers;
   private readonly ILogger<StartupStageReporter> _logger;
   private readonly TimeProvider _time;
@@ -45,17 +45,18 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
 
   /// <summary>Creates the reporter.</summary>
   /// <param name="scopeFactory">Resolves the work coordinator that writes the instance's row.</param>
-  /// <param name="instanceProvider">This instance's identity; without one nothing is written.</param>
+  /// <param name="instanceProvider">This instance's identity: the row each stage is written to.</param>
   /// <param name="observers">Told of every change.</param>
   /// <param name="logger">Where each stage is logged.</param>
   /// <param name="timeProvider">The clock a stage's entry time and a write's timeout are read from.</param>
   public StartupStageReporter(
       IServiceScopeFactory scopeFactory,
-      IServiceInstanceProvider? instanceProvider,
+      IServiceInstanceProvider instanceProvider,
       IEnumerable<IStartupStageObserver> observers,
       ILogger<StartupStageReporter> logger,
       TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
+    ArgumentNullException.ThrowIfNull(instanceProvider);
     ArgumentNullException.ThrowIfNull(observers);
     ArgumentNullException.ThrowIfNull(logger);
     _scopeFactory = scopeFactory;
@@ -146,9 +147,6 @@ public sealed partial class StartupStageReporter : IStartupStageReporter, IDispo
   }
 
   private async Task<bool> _writeAsync(StartupStageSnapshot snapshot, CancellationToken cancellationToken) {
-    if (_instanceProvider is null) {
-      return false;   // no identity in this host: no row to record on
-    }
     try {
       await using var scope = _scopeFactory.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();

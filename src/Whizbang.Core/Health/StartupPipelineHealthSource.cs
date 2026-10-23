@@ -35,18 +35,20 @@ namespace Whizbang.Core.Health;
 public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   private readonly IStartupPipelineState _state;
   private readonly IStartupReadySignal _readySignal;
-  private readonly IStartupStageReporter? _stages;
+  private readonly IStartupStageReporter _stages;
 
   /// <summary>Creates the source over the pipeline state and, when registered, the composite signal.</summary>
   /// <param name="state">The startup pipeline's state.</param>
   /// <param name="readySignal">The composite ready signal.</param>
   /// <param name="stages">
   /// The startup stage reporter. When it has entered a stage, the detail leads with the stage's line
-  /// (<c>Stage X of 7: &lt;name&gt; - &lt;message&gt;</c>, #1636); optional.
+  /// (<c>Stage X of 7: &lt;name&gt; - &lt;message&gt;</c>, #1636). A host with no stages passes
+  /// <see cref="NullStartupStageReporter.Instance"/>.
   /// </param>
   public StartupPipelineHealthSource(
-      IStartupPipelineState state, IStartupReadySignal readySignal, IStartupStageReporter? stages = null) {
+      IStartupPipelineState state, IStartupReadySignal readySignal, IStartupStageReporter stages) {
     ArgumentNullException.ThrowIfNull(state);
+    ArgumentNullException.ThrowIfNull(stages);
     _state = state;
     _readySignal = readySignal;
     _stages = stages;
@@ -63,7 +65,7 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   /// </remarks>
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
     var health = _report();
-    return new ValueTask<ComponentHealth>(_stages?.Current is { } stage
+    return new ValueTask<ComponentHealth>(_stages.Current is { } stage
       ? health with { Detail = $"{stage.Text}; {health.Detail}" }
       : health);
   }

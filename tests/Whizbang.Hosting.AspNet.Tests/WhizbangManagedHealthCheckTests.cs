@@ -24,7 +24,7 @@ public class WhizbangManagedHealthCheckTests {
   }
 
   private static WhizbangManagedHealthCheck _check(HealthProbe probe, params IWhizbangHealthSource[] sources)
-    => new(new WhizbangHealthAggregator(sources, new WhizbangHealthOptions()), probe);
+    => new(new WhizbangHealthAggregator(sources, new WhizbangHealthOptions(), Whizbang.Core.Startup.NullStartupStageReporter.Instance), probe);
 
   [Test]
   public async Task Readiness_MigratingUnderLenient_IsDegradedButServingAsync() {

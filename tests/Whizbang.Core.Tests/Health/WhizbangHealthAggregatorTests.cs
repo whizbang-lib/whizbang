@@ -27,7 +27,7 @@ public class WhizbangHealthAggregatorTests {
   }
 
   private static WhizbangHealthAggregator _agg(WhizbangHealthOptions options, params IWhizbangHealthSource[] sources)
-    => new(sources, options);
+    => new(sources, options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
   [Test]
   public async Task LenientDefault_Migrating_IsDegradedButServingAsync() {
