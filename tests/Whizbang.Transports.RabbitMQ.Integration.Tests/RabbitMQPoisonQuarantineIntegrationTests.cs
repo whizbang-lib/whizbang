@@ -119,18 +119,20 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
     await using var __transport = transport;
     await transport.InitializeAsync(cancellationToken);
 
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS message, so the assertion proves the published message was delivered rather than
+    // that something arrived.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler, _destination(exchange, subscriber), cancellationToken);
 
     try {
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(
         envelope, new TransportDestination(exchange, "#"), cancellationToken: cancellationToken);
 
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
 
-      await Assert.That(receivedMessageId).IsNotNull()
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString())
         .Because("a fresh message must never be quarantined");
     } finally {
       subscription.Dispose();
@@ -152,17 +154,19 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
     await using var __transport = transport;
     await transport.InitializeAsync(cancellationToken);
 
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS message, so the assertion proves the published message was delivered rather than
+    // that something arrived.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler, _destination(exchange, subscriber), cancellationToken);
 
     try {
-      var envelope = _createTestEnvelope();
       await _publishWithoutTimestampAsync(exchange, envelope, cancellationToken);
 
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
 
-      await Assert.That(receivedMessageId).IsNotNull()
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString())
         .Because("no timestamp means layer 1 cannot judge age — it must not quarantine on a guess");
       await Assert.That(capability.HasDegradedSurface).IsTrue()
         .Because("the fallback to layer 2 must be visible, never silent");
