@@ -169,7 +169,7 @@ public interface IPoisonMessageDetector {
   /// <summary>
   /// Declares whether a receive surface can supply a trustworthy broker first-enqueue timestamp.
   /// A surface that cannot has no aged-on-receive reporting (layer 1 only reports since issue
-  /// #1663) — and says so, loudly and once, on the log and health surfaces; redelivery loops stay
+  /// #1663), and says so, loudly and once, on the log and health surfaces; redelivery loops stay
   /// bounded by layer 2. A signal must never go silently inert; that silence is exactly how the
   /// delivery-count valve failed.
   /// </summary>
@@ -201,7 +201,7 @@ public interface IPoisonMessageDetector {
 /// older than the age threshold and lets it be stored (issue #1663), because age measures queueing,
 /// not failure, and a backlog ages every message in it. Layer 2 quarantines on durable redelivery
 /// observations after storage, which is what bounds a redelivery loop, including a session lock-loss
-/// storm whose broker delivery count never moves. The broker delivery count is carried but never acted on — see
+/// storm whose broker delivery count never moves. The broker delivery count is carried but never acted on; see
 /// <see cref="PoisonEvaluationContext.BrokerDeliveryCount"/>.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
@@ -223,7 +223,7 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 
   /// <summary>
   /// OTel counter for aged messages the receive gate accepted (issue #1663). Tagged by <c>gate</c>.
-  /// Keep stable — dashboards depend on it.
+  /// Keep stable: dashboards depend on it.
   /// </summary>
   public const string AGED_ON_RECEIVE_COUNTER_NAME = "whizbang.message.aged_on_receive";
 #pragma warning restore CA1707
@@ -293,7 +293,7 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
         + "redelivery is not making progress.");
     }
 
-    // Layer 1 — age at the receive gate (issue #1663). It REPORTS, never quarantines: age measures
+    // Layer 1, age at the receive gate (issue #1663). It REPORTS, never quarantines: age measures
     // queueing, not failure, so a backlog that took longer than the threshold to drain would be
     // dead-lettered on its first delivery. Every message is accepted until it is stored; a loop is
     // bounded after storage by layer 2, whose observation counter rises on every redelivery of a

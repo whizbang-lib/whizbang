@@ -1642,7 +1642,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
-  /// Issue #1663 — reports an aged message the receive gate accepted, so a backlog stays visible.
+  /// Issue #1663: reports an aged message the receive gate accepted, so a backlog stays visible.
   /// No-op unless the decision carries an aged-on-receive verdict, so the caller invokes it
   /// unconditionally.
   /// </summary>

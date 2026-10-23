@@ -15,12 +15,18 @@ namespace Whizbang.Generators.Tests;
 /// missing one (#1660), and the parser trims what a project does set.
 /// </summary>
 /// <remarks>
-/// The declared names are read from the packages' own build files, so a property added there is delivered here too.
+/// The declared names are read from the packages' own build files (embedded in this assembly by the project file), so a
+/// property added there is delivered here too.
 /// A real build also sets <c>ProjectDir</c>; it stays empty here unless a test sets it, so nothing is discovered from
 /// the machine running the test.
 /// </remarks>
 internal static class MSBuildGlobalOptions {
   private static readonly string[] _packages = ["Whizbang.Generators", "Whizbang.Data.EFCore.Postgres.Generators"];
+
+  private const string RESOURCE_PREFIX = "WhizbangBuild/";
+
+  // Roslyn requires a rooted path for a global config; nothing is read from it.
+  private const string GLOBAL_CONFIG_PATH = "/consumer/obj/Consumer.GeneratedMSBuildEditorConfig.editorconfig";
 
   private static readonly Lazy<IReadOnlyList<string>> _declared = new(_readDeclared);
 
@@ -40,35 +46,29 @@ internal static class MSBuildGlobalOptions {
       text.Append("build_property.").Append(name).Append(" = ").Append(value).Append('\n');
     }
 
-    var config = AnalyzerConfig.Parse(
-      text.ToString(), Path.Combine(_repoRoot(), "obj", "Consumer.GeneratedMSBuildEditorConfig.editorconfig"));
+    var config = AnalyzerConfig.Parse(text.ToString(), GLOBAL_CONFIG_PATH);
     var options = AnalyzerConfigSet.Create(ImmutableArray.Create(config)).GlobalConfigOptions.AnalyzerOptions;
     return new Dictionary<string, string>(options, StringComparer.OrdinalIgnoreCase);
   }
 
   private static List<string> _readDeclared() {
-    var root = _repoRoot();
+    var assembly = typeof(MSBuildGlobalOptions).Assembly;
+    var resources = assembly.GetManifestResourceNames();
     var names = new List<string>();
     foreach (var package in _packages) {
-      var build = Path.Combine(root, "src", package, "build");
-      foreach (var file in Directory.EnumerateFiles(build).Where(_isBuildFile).Order(StringComparer.Ordinal)) {
-        names.AddRange(XDocument.Load(file).Descendants("CompilerVisibleProperty")
+      var prefix = RESOURCE_PREFIX + package + "/";
+      var files = resources.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToList();
+      if (files.Count == 0) {
+        throw new InvalidOperationException($"No build files of {package} are embedded; see the test project file");
+      }
+      foreach (var file in files) {
+        using var stream = assembly.GetManifestResourceStream(file)!;
+        names.AddRange(XDocument.Load(stream).Descendants("CompilerVisibleProperty")
           .Select(item => (string?)item.Attribute("Include"))
           .OfType<string>()
           .Where(name => !names.Contains(name, StringComparer.Ordinal)));
       }
     }
     return names;
-  }
-
-  private static bool _isBuildFile(string path) =>
-    path.EndsWith(".props", StringComparison.Ordinal) || path.EndsWith(".targets", StringComparison.Ordinal);
-
-  private static string _repoRoot() {
-    var dir = AppContext.BaseDirectory;
-    while (dir is not null && !Directory.Exists(Path.Combine(dir, "src", "Whizbang.Core"))) {
-      dir = Path.GetDirectoryName(dir);
-    }
-    return dir ?? throw new InvalidOperationException("Could not locate the repository root from AppContext.BaseDirectory");
   }
 }

@@ -19,6 +19,14 @@
     <Compile Remove=".whizbang/cache/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The generator packages' build files, read by MSBuildGlobalOptions for the properties they declare
+         compiler-visible. Embedded so the tests read no files at run time. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Generators\build\*.props;..\..\src\Whizbang.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.props;..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Data.EFCore.Postgres.Generators/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj">
       <Aliases>global,core_generators</Aliases>
