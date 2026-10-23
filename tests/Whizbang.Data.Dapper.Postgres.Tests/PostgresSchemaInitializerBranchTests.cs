@@ -118,6 +118,33 @@ public class PostgresSchemaInitializerBranchTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A migration that failed for a reason outside its text (here a table it needs, standing in for a deadlock or a
+  /// dropped connection) runs again on the next start. Its failure record must not carry the file's hash, or the next
+  /// start reads the file as current and never applies it (#1637).
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_AMigrationThatFailed_RunsAgainOnTheNextStartAsync() {
+    var provider = new CustomMigrationProvider("9.9.1-test", [
+      _realBootstrap(),
+      new MigrationScript("100_needs_a_table", "INSERT INTO wh_failure_probe VALUES (1);")
+    ]);
+    await Assert.That(() => new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider)
+      .InitializeSchemaAsync()).Throws<PostgresException>();
+
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+    await connection.ExecuteAsync("CREATE TABLE wh_failure_probe (id int)");
+    await new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: null, migrationProvider: provider)
+      .InitializeSchemaAsync();
+
+    await Assert.That(await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_failure_probe")).IsEqualTo(1L)
+      .Because("the failed migration ran on the next start");
+    await Assert.That(await connection.ExecuteScalarAsync<int>(
+        "SELECT status FROM wh_schema_migrations WHERE file_name = '100_needs_a_table'")).IsEqualTo(2)
+      .Because("the next start updated the failure record into an applied row");
+  }
+
+  /// <summary>
   /// A core migration whose recorded hash no longer matches must show as Update in the preview and
   /// re-execute as an update (status 2, "Updated from hash ...") on the next initialization.
   /// </summary>

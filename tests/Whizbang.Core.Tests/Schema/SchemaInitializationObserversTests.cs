@@ -37,11 +37,49 @@ public class SchemaInitializationObserversTests {
       .ThrowsNothing();
   }
 
+  [Test]
+  public async Task StepCommitted_TellsEveryRegisteredObserverWhichStepAsync() {
+    var first = new Recorder();
+    var second = new Recorder();
+    var services = new ServiceCollection();
+    services.AddSingleton<ISchemaInitializationObserver>(first);
+    services.AddSingleton<ISchemaInitializationObserver>(second);
+    await using var provider = services.BuildServiceProvider();
+
+    await SchemaInitializationObservers.StepCommittedAsync(provider, "orders", "110_StandbyHandshake.sql", CancellationToken.None);
+
+    await Assert.That(first.Steps).IsEquivalentTo(["orders/110_StandbyHandshake.sql"]);
+    await Assert.That(second.Steps).IsEquivalentTo(["orders/110_StandbyHandshake.sql"]);
+  }
+
+  [Test]
+  public async Task StepCommitted_WithNoProvider_TellsNobodyAsync() {
+    await Assert.That(async () => await SchemaInitializationObservers.StepCommittedAsync(null, "orders", "constraints", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task StepCommitted_IsANoOpForAnObserverThatDoesNotWatchItAsync() {
+    ISchemaInitializationObserver observer = new Silent();
+
+    await Assert.That(async () => await observer.OnSchemaStepCommittedAsync("orders", "constraints", CancellationToken.None))
+      .ThrowsNothing();
+  }
+
+  /// <summary>Watches nothing, so every member is the interface's default.</summary>
+  private sealed class Silent : ISchemaInitializationObserver;
+
   private sealed class Recorder : ISchemaInitializationObserver {
     public List<string> Schemas { get; } = [];
+    public List<string> Steps { get; } = [];
 
     public ValueTask OnSchemaLockContendedAsync(string schema, CancellationToken cancellationToken) {
       Schemas.Add(schema);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask OnSchemaStepCommittedAsync(string schema, string stepName, CancellationToken cancellationToken) {
+      Steps.Add($"{schema}/{stepName}");
       return ValueTask.CompletedTask;
     }
   }

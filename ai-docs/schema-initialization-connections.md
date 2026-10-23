@@ -4,11 +4,11 @@ Read this before changing anything in `DbContextSchemaExtensionTemplate.cs`, `Sc
 `SchemaBoundaryConnections`, `SchemaMigrationDeferral`, `AdvisoryLockProbe`,
 `OptionalExtensionBlocks`, or the SQL the perspective pass emits.
 
-Traps 1, 2 and 6 each shipped once, and each passed every local test first. Traps 3 and 5 are the
+Traps 1, 2, 6 and 7 each shipped once, and each passed every local test first. Traps 3 and 5 are the
 ones that look solved and are not: the lock has always excluded correctly and the hashes have always
 been compared, so nothing fails, and the cost is paid quietly by every replica on every startup.
 
-None of the six is discoverable by reading the code, which is why they are written down here.
+None of the seven is discoverable by reading the code, which is why they are written down here.
 
 ---
 
@@ -414,6 +414,64 @@ Two things about this are easy to get wrong:
 | `OptionalExtensionBlocksTests.ADefectInsideABlockStillFailsAsync` | the skip widening into a catch-all that hides real failures |
 | `OptionalExtensionBlocksTests.TheReaderReadsTheGeneratorsOwnScriptAsync` | the generator and the reader drifting on the marker text |
 
+## Trap 7: one transaction for the whole pass throws away everything that succeeded
+
+The pass used to open one transaction, take the schema lock in it, and run the core tables, every migration file
+and its ledger row, the perspective tables, the constraints, the associations and the registries before committing
+once. A failure anywhere (a `40P01` in one file on a fresh database, #1636) rolled back every file that had
+succeeded, ledger rows included. The retry started from nothing, took every lock again in the same order and held all
+of them until the final commit, which kept the deadlock window as wide as it could be. It is also why every retry
+logged "re-running because the database's definition of ... (missing)" for files that had already run.
+
+**Each step is now a transaction of its own** (#1637): one per migration file with that file's ledger row inside it,
+and one each for the core tables, each perspective table, the constraints, the associations and the registries.
+`SchemaStepRunner` owns the mechanics; the generated initializer decides what the steps are.
+
+How the steps stay serialized without a session-scoped lock:
+
+1. **The lock is still transaction-scoped**, taken with `pg_try_advisory_xact_lock` at the start of each step's
+   transaction and released by its commit or rollback. Nothing session-scoped exists, so nothing can leak through a
+   pooler (the same reasoning as the bootstrap lock above).
+2. **Every step re-checks its own ledger row under the lock** and does nothing when it is already current. A
+   migration file and a perspective table have always had a row whose hash says so. The steps that had none get one
+   (`step:<context>:<step>`, owner `step`), marked pending when a pass that needs them begins and marked applied in
+   the step's own transaction.
+3. **The plan is written down before any of it runs.** The first step (`pass`) re-checks the hashes under the lock,
+   exactly as the old in-lock re-check did, and when anything is owed it records the step rows, the skip on every
+   file it will not run, and `pending-rerun` in place of the hash of every file it runs although its hash is current
+   (the redefinition closure and the two sweeps). Without that, a failure after an earlier definer committed would
+   leave the later one with a current hash, and nothing would ever re-run it.
+4. **A pass of this build part way through is continued, never restarted.** A step row carries the build's
+   fingerprint (`SchemaPassLedger.Fingerprint`). While a row with this build's fingerprint is outstanding, a retry or
+   a second instance continues that pass from its rows; re-marking them would apply committed steps again. A pass
+   another build left behind starts afresh and keeps every step that pass still owed.
+5. **A loser waits exactly as before, per step.** Losing a step's try-lock rolls back and goes into
+   `SchemaMigrationDeferral.DeferAsync`. The schema current means the other instance finished the whole pass: this
+   one stops. The lock free with work outstanding means the holder failed, died, or is simply between two steps: this
+   one backs off and contends, and point 2 is what keeps the two from applying anything twice. Two instances can take
+   turns through one pass; each step is still applied once.
+6. **The failure record is written after the rollback**, on the same connection with no transaction open (status -1,
+   `Failed: <SQLSTATE> <message>`). It never carries the file's hash: a row inserted for a file that never applied
+   gets `pending-rerun`, and an existing row keeps its old hash, so a failure cannot make a step look current. (The
+   Dapper driver wrote the file's own hash and so skipped a failed file on every later start; fixed alongside.)
+
+Statements that swallow their own failure (the compatibility renames, the constraints, the two registry reconciles,
+an existing perspective table, an existing function) now run under a savepoint, because a handled failure inside the
+step's transaction otherwise aborts it and the commit silently rolls the whole step back.
+
+Every step logs one fixed form against the whole pass (`Migration X of Y - Started : <name>`, then `Succeeded`,
+`Skipped` or `Failed : <name> : <SQLSTATE> <message>`), and the pass ends with `Migration complete: ...` or
+`Migration stopped at X of Y: ...`.
+
+| Guard | What it catches |
+|---|---|
+| `MigrationStepTransactionTests.AFailureInOneFile_KeepsTheFilesBeforeIt_AndTheRetryAppliesOnlyFromItOnAsync` | the pass becoming one transaction again, a failure record that makes a file look current, a retry that re-runs committed steps |
+| `MigrationStepTransactionTests.ASecondInstance_FinishesAPassPartWayThrough_AndNothingIsAppliedTwiceAsync` | a step trusting a plan made before it took the lock |
+| `MigrationStepTransactionTests.TwoInstancesOnAnEmptyDatabase_ConvergeAsync` | two instances interleaving badly on an empty database |
+| `SchemaStepRunnerTests` | the lock, the re-check, the rollback, the record after it, and the step lines |
+| `SchemaPassLedgerTests` | continuing a pass of this build versus starting afresh |
+
+
 ## A fixture does not create its own database
 
 Every test here wants a database of its own, and dozens of fixtures in one shard ask for one at the
@@ -449,6 +507,9 @@ is where to look rather than the assertions.
 0c. **Did a migration gain a dependency?** If anything in a bootstrap region now references a new
    object, that object joins the closure. `AnEmptyDatabaseCanElectAfterTheBootstrapAsync` is what
    catches it; the migration headers are not reliable and three of them are already wrong.
+0c2. **Is it a step of the pass?** It runs in a transaction of its own through `SchemaStepRunner`, re-checks its
+   own ledger row under the lock, and writes that row in the same transaction. A statement that may fail without
+   failing the step runs under a savepoint (Trap 7).
 0d. **Does it run before the DDL transaction and need the schema key?** Then a lost try-lock means
    wait, not skip: the holder may be a sibling's bootstrap or DDL, which does not do your work, and a
    sibling staged as a waiter never will. Test it with two instances, one holding the key in an open

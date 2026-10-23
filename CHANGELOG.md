@@ -489,6 +489,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
+  burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
+  reach the row first. The framework answers that by folding the earlier event onto the row the other worker
+  committed, rewinding the stream when the event sits below the row's position. On a model opted into strict
+  ordering (`IVersionedApplyTarget`, which per-item saga rows use) the store refused that corrective write, because
+  the rewind records the row's own newest event id and the guard admitted only a strictly newer one, and a live
+  fold of the earlier event alone was refused the same way; both refusals were reported as applied, so the work
+  rows were retired and the row kept only the later event. The guard now admits a write at the stored event id,
+  and a live write the ordering guard refuses re-folds the stream instead of being reported applied. Rows already
+  missing an event are repaired by rebuilding the perspective (any mode); on earlier releases only a blue-green
+  rebuild repairs them, because an in-place rebuild of a strictly ordered row was refused the same way.
+- **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
+  its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
+  associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
+  (#1636), rolled back every file that had already applied and each retry started from nothing while holding every
+  lock until the final commit. Each step is now a transaction of its own, taking the schema advisory lock (still
+  transaction-scoped) at its start and re-checking its own ledger row under it: a failure rolls back only that step,
+  the retry resumes at it, and a second instance that starts part way through finishes the pass without applying
+  any step twice. The steps with no ledger row of their own are recorded as `step:<context>:<step>` rows, and a file
+  re-run by the redefinition closure or a sweep is marked `pending-rerun` before anything runs, so the plan survives
+  a failure. The failed step's record (status -1, `Failed: <SQLSTATE> <message>`) is written after its rollback and
+  never carries the file's hash; the Dapper driver wrote the hash, so a file that failed for a reason outside its
+  text was skipped on every later start, and now runs again. Every step logs `Migration X of Y - Started : <name>`
+  and then `Succeeded`, `Skipped` or `Failed : <name> : <SQLSTATE> <message>` (at Error, saying when a retry comes),
+  and the pass ends with `Migration complete: Y of Y succeeded (N applied, M skipped) in <duration>` or
+  `Migration stopped at X of Y: <name> : <error>`. `ISchemaInitializationObserver.OnSchemaStepCommittedAsync` reports
+  each committed step.
+- **Perspective tables keep their names when `WhizbangStripTableNameSuffixes` is not set (#1660).** Since the
+  table-naming properties became visible to the generators (#1426), a project that never set the property handed
+  the generators an empty value, which was read as "do not strip". Every perspective table then gained its model's
+  suffix, so `ActiveTenantModel` mapped to `wh_per_active_tenant_model` instead of `wh_per_active_tenant`, and an
+  upgraded service looked for tables that did not exist. An empty or blank value now counts as unset, so suffixes
+  are stripped by default and tables keep the names they had on 0.2623 again. A project that sets the property to
+  `false` still keeps the suffix, and a set value is trimmed before it is read. The suffix list and identifier
+  length properties already ignored a blank value and behave as before.
 - **A backlog of aged messages is no longer dead-lettered on arrival (#1663).** The receive gate quarantined any
   message first enqueued longer ago than the poison age threshold (by default 50 minutes, derived from lock renewal
   times delivery attempts), even on its first delivery. A backlog that took longer than that to drain, such as
