@@ -1,7 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-namespace Whizbang.Generators.Tests.BuildCost;
+namespace Whizbang.BuildCost.Benchmarks;
 
 /// <summary>
 /// Ordinary application code that no Whizbang generator has any interest in: classes, records, structs,

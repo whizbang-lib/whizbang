@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Whizbang.BuildCost.Benchmarks;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Whizbang.Generators.Tests.BuildCost;
