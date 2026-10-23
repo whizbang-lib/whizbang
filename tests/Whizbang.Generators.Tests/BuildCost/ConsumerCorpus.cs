@@ -19,17 +19,35 @@ public static class ConsumerCorpus {
   public const string FIRST_RECEPTOR_FILE = "Feature0/Receptors.cs";
 
   /// <summary>
+  /// The path of the file that creates identifiers with <c>Guid.NewGuid()</c>, so the GUID interceptor has
+  /// output to keep: without a GUID call it produces nothing and passes the caching test vacuously.
+  /// </summary>
+  public const string IDS_FILE = "Ids/IdFactory.cs";
+
+  private const string IDS_SOURCE = """
+    using System;
+
+    namespace Consumer.Ids;
+
+    public static class IdFactory {
+      public static Guid NewThingId() => Guid.NewGuid();
+    }
+    """;
+
+  /// <summary>
   /// Builds the corpus as (path, source) pairs: <paramref name="features"/> features of one command, one event,
-  /// one receptor, one read model and one perspective each, plus the file of ordinary code.
+  /// one receptor, one read model and one perspective each, plus the file of ordinary code and the file that
+  /// creates identifiers.
   /// </summary>
   public static IReadOnlyList<(string Path, string Source)> Build(int features) {
-    var files = new List<(string, string)>((features * 3) + 1);
+    var files = new List<(string, string)>((features * 3) + 2);
     for (var i = 0; i < features; i++) {
       files.Add(($"Feature{i}/Messages.cs", _messages(i)));
       files.Add(($"Feature{i}/Receptors.cs", _receptor(i, "\"created\"")));
       files.Add(($"Feature{i}/Perspectives.cs", _perspective(i)));
     }
     files.Add((UNRELATED_FILE, Unrelated(1)));
+    files.Add((IDS_FILE, IDS_SOURCE));
     return files;
   }
 

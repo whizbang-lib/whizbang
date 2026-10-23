@@ -32,6 +32,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private const string SUPPRESS_ATTRIBUTE_NAME = "SuppressGuidInterceptionAttribute";
   private const string SUPPRESS_SHORT_NAME = "SuppressGuidInterception";
   private const string METHOD_NEW_GUID = "NewGuid";
+  private const string METHOD_CREATE_VERSION_7 = "CreateVersion7";
   private const string GUID_VERSION_7 = "Version7";
 
   // Third-party library patterns
@@ -40,6 +41,14 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     ("UUIDNext.Uuid", "NewDatabaseFriendly", GUID_VERSION_7, "SourceUuidNext"),
     ("UUIDNext.Uuid", "NewSequential", GUID_VERSION_7, "SourceUuidNext"),
     ("Medo.Uuid7", "NewUuid7", GUID_VERSION_7, "SourceMedo"),
+  ];
+
+  // Every method name _resolveGuidVersionAndSource can match, derived from the same constants and table so
+  // the predicate cannot drift from the transform.
+  private static readonly HashSet<string> _interceptableMethodNames = [
+    METHOD_NEW_GUID,
+    METHOD_CREATE_VERSION_7,
+    .. _thirdPartyMethods.Select(static m => m.MethodName),
   ];
 
   /// <inheritdoc/>
@@ -54,10 +63,9 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     // Discover GUID creation calls (Guid.NewGuid(), Guid.CreateVersion7())
     var guidCalls = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
-                                       invocation.Expression is MemberAccessExpressionSyntax,
+        predicate: static (node, _) => IsGuidCallCandidate(node),
         transform: static (ctx, ct) => _extractGuidCallInfo(ctx, ct)
-    );
+    ).WithTrackingName("GuidCallCandidates");
 
     // Separate intercepted and suppressed calls
     var interceptedCalls = guidCalls
@@ -68,22 +76,36 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         .Where(static info => info.Suppressed is not null)
         .Select(static (info, _) => info.Suppressed!);
 
-    // Combine with compilation and enabled flag for generation
-    var compilationAndCalls = context.CompilationProvider
-        .Combine(interceptedCalls.Collect())
+    // Combine the calls with the enabled flag for generation. Not with the compilation: the output reads
+    // nothing from it, and the compilation changes on every edit, so combining it re-ran the output each time.
+    var callsAndEnabled = interceptedCalls.Collect()
         .Combine(suppressedCalls.Collect())
         .Combine(interceptionEnabled);
 
     context.RegisterSourceOutput(
-        compilationAndCalls,
+        callsAndEnabled,
         static (ctx, data) => {
-          var intercepted = data.Left.Left.Right;
+          var intercepted = data.Left.Left;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
           _generateInterceptors(ctx, intercepted, suppressed, enabled);
         }
     );
   }
+
+  /// <summary>
+  /// The syntax-only test that decides which nodes reach the semantic transform. Runs on every node of every
+  /// edited file, so it must stay cheap and allocation-free, and it admits only a member-access call to a
+  /// method name the generator can intercept: a consumer has tens of thousands of member-access calls and a
+  /// handful of GUID calls, and the symbol lookup in the transform is the expensive part.
+  /// </summary>
+  /// <param name="node">The syntax node to test.</param>
+  /// <returns><see langword="true"/> when the node is a member-access call to an interceptable method name.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorCandidateFilterTests.cs:IsGuidCallCandidate_OrdinaryMemberAccessCalls_AreRejectedAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorCandidateFilterTests.cs:IsGuidCallCandidate_EveryInterceptableMethodName_IsAcceptedAsync</tests>
+  public static bool IsGuidCallCandidate(SyntaxNode node) =>
+      node is InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax memberAccess } &&
+      _interceptableMethodNames.Contains(memberAccess.Name.Identifier.Text);
 
   // S3776: Complexity is from sequential validation checks with early returns — already well-structured
 #pragma warning disable S3776
@@ -172,7 +194,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       if (methodName == METHOD_NEW_GUID) {
         return ("Version4", "SourceMicrosoft");
       }
-      if (methodName == "CreateVersion7") {
+      if (methodName == METHOD_CREATE_VERSION_7) {
         return (GUID_VERSION_7, "SourceMicrosoft");
       }
     }
