@@ -1243,6 +1243,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write   # the comment
+      # The pull request's labels (docs:not-needed and the like). Without it the token reads them as an
+      # empty list instead of failing, so a label never reaches the rules (#1659).
+      issues: read
     steps:
       # The full history: the DCO check reads base..head with git log.
       - name: Checkout
@@ -1270,6 +1273,7 @@ jobs:
           TITLE=$(gh pr view "$PR" --repo "${{ github.repository }}" --json title --jq '.title')
           LABELS=$(jq -r '[.[].labels[]] | unique | join(",")' <<< "$CLOSING_JSON")
           PR_LABELS=$(gh pr view "$PR" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | join(",")')
+          echo "Labels read: $PR_LABELS"
           # The docs-site pull requests that document this one: found from the one link either side makes
           DOCS_JSON=$(pwsh -NoProfile -File .github/scripts/Get-DocsPullRequests.ps1 -Repository "${{ github.repository }}" -PullRequest "$PR")
           BOT=()
