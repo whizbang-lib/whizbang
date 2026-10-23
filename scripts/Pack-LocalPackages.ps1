@@ -779,6 +779,7 @@ if (-not (Test-Path $localPackagesDir)) {
 # Internal packages to skip (IsPackable=false - not published to NuGet)
 $internalPackages = @(
     'Whizbang.Generators.Shared',    # ILMerged into generator packages
+    'Whizbang.TestAnalyzers',        # Repository-internal analyzer for this repository's test projects
     'Whizbang.Testing'               # Empty placeholder
 )
 
