@@ -230,7 +230,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
     await fx.Worker.StopAsync(CancellationToken.None);
 
     await Assert.That(fx.Worker.ExecuteTask!.IsCompleted).IsTrue();
-    await Assert.That(fx.Worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(fx.Worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("a renewal canceled by shutdown ends the worker, it does not fault it");
     await Assert.That(fx.Failure.All).IsEmpty()
       .Because("a shutdown is not a failed publish");
