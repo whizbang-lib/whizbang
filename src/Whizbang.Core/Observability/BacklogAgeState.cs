@@ -18,7 +18,7 @@ namespace Whizbang.Core.Observability;
 /// <param name="TrafficClass">The traffic class the entity carries.</param>
 /// <param name="Depth">Messages waiting.</param>
 /// <param name="OldestAge">Age of the oldest waiting message.</param>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 public sealed record BacklogAgeFinding(
   string Entity,
   string Transport,
@@ -39,7 +39,7 @@ public sealed record BacklogAgeFinding(
 /// only ever goes up is indistinguishable from a stuck one after the first occurrence; this one
 /// clears itself the moment the entity drains, which is what makes it a state and not an event log.
 /// </remarks>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs:PeekOnce_EmptyEntity_ClearsAPreviousFindingAsync</tests>
 public sealed class BacklogAgeState {
   private volatile IReadOnlyList<BacklogAgeFinding> _findings = [];
