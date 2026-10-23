@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
   Builds a consumer of the generators package and checks the message registry and pinned-type ledger it writes.
