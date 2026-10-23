@@ -139,7 +139,7 @@ public class BuildTargetsEmbeddedJsonTests {
       """;
     var compilation = CSharpCompilation.Create("Consumer", [CSharpSyntaxTree.ParseText(source)], BuildCostReferences.All(),
         new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-    CSharpGeneratorDriver.Create(generator).RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    _ = CSharpGeneratorDriver.Create(generator).RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
     var field = (IFieldSymbol)output.GetTypeByMetadataName(holder)!.GetMembers("Json").Single();
     return (_emitCompilation(output), (string)field.ConstantValue!);
   }

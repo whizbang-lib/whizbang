@@ -29,6 +29,12 @@ namespace Whizbang.Generators;
 [Generator]
 public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
   /// <summary>
+  /// The switch: <c>WhizbangIncludePinnedTypeLedger</c>, on by default. When it is off nothing is embedded in the
+  /// assembly and the extraction target is skipped. Independent of <c>WhizbangEmitMessageRegistry</c>.
+  /// </summary>
+  private const string INCLUDE_PROPERTY = "build_property.WhizbangIncludePinnedTypeLedger";
+
+  /// <summary>
   /// Syntax predicate: admits a type declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
@@ -52,8 +58,15 @@ public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
         .Select(static (f, ct) => f.GetText(ct)?.ToString())
         .Collect();
 
-    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger),
-        static (ctx, data) => _emit(ctx, data.Left, data.Right));
+    var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
+        !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, INCLUDE_PROPERTY));
+
+    context.RegisterSourceOutput(pinnedTypes.Combine(existingLedger).Combine(enabled),
+        static (ctx, data) => {
+          if (data.Right) {
+            _emit(ctx, data.Left.Left, data.Left.Right);
+          }
+        });
   }
 
   /// <summary>Discovers a single <c>[PinnedId]</c> message/perspective type, or null if the node is neither.</summary>

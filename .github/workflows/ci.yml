@@ -717,7 +717,7 @@ jobs:
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -732,6 +732,12 @@ jobs:
       - name: Build twice and check the second build did no work
         shell: pwsh
         run: ./scripts/build-cost/Test-NoOpRebuild.ps1 -OutputDirectory noop-rebuild
+
+      # The generators package's ledger and registry are read from the built assembly, so a consumer with
+      # EmitCompilerGeneratedFiles off (the default) still gets them, updated on change and skipped on a no-op (#1609).
+      - name: A consumer writes and updates the ledger and registry with generated files off
+        shell: pwsh
+        run: ./scripts/build-cost/Test-GeneratedJsonFiles.ps1 -OutputDirectory noop-rebuild/generated-json
 
       - name: Upload the logs
         if: failure()

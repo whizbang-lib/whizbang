@@ -13,7 +13,7 @@
     1. a build with the package defaults writes the ledger and no registry, and no generated source on disk;
     2. a build with WhizbangEmitMessageRegistry=true writes the registry as well;
     3. after a new [PinnedId] message is added, a build adds it to both;
-    4. a build with nothing changed runs neither extraction target (#1665).
+    4. once settled, a build with nothing changed compiles nothing and runs neither extraction target (#1665).
 
 .PARAMETER OutputDirectory
   Where the consumer and the logs are written. Default: a new folder under the temp directory.
@@ -143,13 +143,17 @@ Invoke-ConsumerBuild 'a new pinned message' $on
 Test-FileHas $ledger $SecondPinnedId '3. new message'
 Test-FileHas $registry 'Consumer.SecondCommand' '3. new message'
 
+# The ledger is also an input to the generators (an AdditionalFile), so a build that changes it makes the next build
+# compile once more; that build writes nothing new, and only the one after it has nothing to do.
+Invoke-ConsumerBuild 'settle after the ledger changed' $on
+
 $binlog = Join-Path $OutputDirectory 'noop.binlog'
 $textLog = Join-Path $OutputDirectory 'noop.log'
 Write-Host 'Building the consumer again with nothing changed'
 dotnet build $project -c $Configuration -nologo -v:q --no-restore -m:1 @on "-bl:$binlog" "-flp:logfile=$textLog;verbosity=detailed" | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "The no-op consumer build failed (exit $LASTEXITCODE)." }
 $consumerProject = (Resolve-Path $project).Path
-foreach ($w in @(Get-NoOpRebuildWork -LogPath $textLog -Targets @('WhizbangExtractMessageRegistry', 'WhizbangExtractPinnedTypeLedger') |
+foreach ($w in @(Get-NoOpRebuildWork -LogPath $textLog -Targets @('CoreCompile', 'WhizbangExtractMessageRegistry', 'WhizbangExtractPinnedTypeLedger') |
     Where-Object Project -EQ $consumerProject)) {
   $failures.Add("4. no-op: $($w.Target) ran ($($w.Reason))")
 }

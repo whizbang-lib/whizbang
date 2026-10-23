@@ -10,51 +10,185 @@
   <ItemGroup>
     <CompilerVisibleProperty Include="WhizbangDocsPath" />
     <CompilerVisibleProperty Include="ProjectDir" />
+    <!-- The two embedded-JSON switches, read by MessageRegistryGenerator and PinnedTypeLedgerGenerator. Declared here
+         rather than in the props so the repository's own projects, which import only this file, pass them too. -->
+    <CompilerVisibleProperty Include="WhizbangEmitMessageRegistry" />
+    <CompilerVisibleProperty Include="WhizbangIncludePinnedTypeLedger" />
   </ItemGroup>
 
-  <!-- Whizbang Message Registry: extract JSON from generated C# (cross-platform) -->
-  <UsingTask TaskName="WhizbangExtractMessageRegistryJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+  <!-- Whizbang Message Registry and pinned-type ledger: read the JSON a generator embedded in the BUILT assembly.
+
+       MessageRegistryGenerator and PinnedTypeLedgerGenerator each emit one `internal const string Json`, and the
+       compiler stores a constant's value in the assembly's metadata as UTF-16. Reading it from the assembly in obj/
+       works with EmitCompilerGeneratedFiles off (the default since #1609), where reading the generated .g.cs did not.
+
+       Why a byte scan and not a metadata read: RoslynCodeTaskFactory compiles against its own netstandard reference
+       set and cannot reference System.Reflection.Metadata portably (by name it is not found; by path it conflicts
+       with that set, and Visual Studio's .NET Framework MSBuild resolves differently again). A compiled task
+       assembly could, but every project in this repository imports this file, so each would first need that task
+       project built: a repo-wide bootstrapping change. So the task decodes the assembly as UTF-16LE at both byte
+       alignments, finds the JSON by its generator-fixed opening (the Opening pattern, pinned against the generators by
+       BuildTargetsEmbeddedJsonTests), and takes it to its matching close brace, reading JSON strings and escapes so a
+       brace or quote inside a value cannot end it early. No assembly is loaded. What it extracts must be one
+       balanced object that ends at a top-level close, and must be the only distinct match; otherwise it warns, names
+       the assembly and the opening, and leaves the existing file untouched. It never fails the build. -->
+  <UsingTask TaskName="WhizbangExtractEmbeddedJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>
-      <SourceFile ParameterType="System.String" Required="true" />
+      <AssemblyFile ParameterType="System.String" Required="true" />
+      <Opening ParameterType="System.String" Required="true" />
       <OutputFile ParameterType="System.String" Required="true" />
+      <WarnWhenAbsent ParameterType="System.Boolean" Required="true" />
+      <Found ParameterType="System.Boolean" Output="true" />
     </ParameterGroup>
     <Task>
       <Using Namespace="System" />
       <Using Namespace="System.IO" />
-      <Code Type="Fragment" Language="cs">
+      <Code Type="Class" Language="cs">
         <![CDATA[
-        var content = File.ReadAllText(SourceFile);
-        var marker = "internal const string Json = @\"";
-        var start = content.IndexOf(marker);
-        if (start < 0) {
-            Log.LogError("Could not find JSON marker in " + SourceFile);
-            return false;
-        }
-        start += marker.Length;
-        var end = content.IndexOf("\";", start);
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.Build.Framework;
+using Microsoft.Build.Utilities;
+
+public class WhizbangExtractEmbeddedJson : Task {
+  [Required] public string AssemblyFile { get; set; }
+  [Required] public string Opening { get; set; }
+  [Required] public string OutputFile { get; set; }
+  [Required] public bool WarnWhenAbsent { get; set; }
+  [Output] public bool Found { get; set; }
+
+  public override bool Execute() {
+    if (!File.Exists(AssemblyFile)) {
+      Log.LogWarning("Whizbang: " + AssemblyFile + " does not exist, so " + OutputFile + " was not updated.");
+      return true;
+    }
+
+    var scan = WhizbangEmbeddedJsonScanner.Scan(File.ReadAllBytes(AssemblyFile), Opening);
+    if (scan.Problem != null) {
+      Log.LogWarning("Whizbang: " + scan.Problem + " in " + AssemblyFile + " (opening " + Opening + "), so " + OutputFile + " was not updated.");
+      return true;
+    }
+    if (scan.Json == null) {
+      var absent = "Whizbang: no JSON opening " + Opening + " in " + AssemblyFile + ", so " + OutputFile + " was not updated.";
+      if (WarnWhenAbsent) {
+        Log.LogWarning(absent);
+      } else {
+        Log.LogMessage(MessageImportance.Normal, absent);
+      }
+      return true;
+    }
+
+    Found = true;
+    var outputDir = Path.GetDirectoryName(OutputFile);
+    if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir)) {
+      Directory.CreateDirectory(outputDir);
+    }
+    var bytes = new UTF8Encoding(false).GetBytes(scan.Json);
+    if (File.Exists(OutputFile) && WhizbangEmbeddedJsonScanner.SameBytes(File.ReadAllBytes(OutputFile), bytes)) {
+      Log.LogMessage(MessageImportance.Low, "Whizbang: " + OutputFile + " unchanged, skipping write");
+      return true;
+    }
+    File.WriteAllBytes(OutputFile, bytes);
+    return true;
+  }
+}
+
+// Pure, so BuildTargetsEmbeddedJsonTests compiles this class alone, from this file, and runs it over an assembly
+// it built with the constant.
+public static class WhizbangEmbeddedJsonScanner {
+  public sealed class Result {
+    public string Json;
+    public string Problem;
+  }
+
+  public static Result Scan(byte[] assembly, string opening) {
+    var pattern = new Regex(opening, RegexOptions.CultureInvariant);
+    var found = new List<string>();
+    for (var alignment = 0; alignment < 2; alignment++) {
+      var text = Encoding.Unicode.GetString(assembly, alignment, assembly.Length - alignment);
+      foreach (Match match in pattern.Matches(text)) {
+        var end = _matchingClose(text, match.Index);
         if (end < 0) {
-            Log.LogError("Could not find end of JSON string in " + SourceFile);
-            return false;
+          return new Result { Problem = "the JSON does not end at a matching close brace" };
         }
-        var json = content.Substring(start, end - start).Replace("\"\"", "\"");
-
-        var outputDir = Path.GetDirectoryName(OutputFile);
-        if (!Directory.Exists(outputDir)) {
-            Directory.CreateDirectory(outputDir);
+        var json = text.Substring(match.Index, end - match.Index + 1);
+        if (!found.Contains(json)) {
+          found.Add(json);
         }
+      }
+    }
+    if (found.Count > 1) {
+      return new Result { Problem = "the JSON was found " + found.Count + " times with different content" };
+    }
+    return new Result { Json = found.Count == 1 ? found[0] : null };
+  }
 
-        // Only write if content changed (avoids triggering file watchers unnecessarily)
-        if (File.Exists(OutputFile)) {
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var existingHash = Convert.ToBase64String(sha.ComputeHash(File.ReadAllBytes(OutputFile)));
-            var newHash = Convert.ToBase64String(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json)));
-            if (existingHash == newHash) {
-                Log.LogMessage(MessageImportance.Low, "Whizbang: Registry unchanged, skipping write");
-                return true;
-            }
+  public static bool SameBytes(byte[] left, byte[] right) {
+    if (left.Length != right.Length) {
+      return false;
+    }
+    for (var i = 0; i < left.Length; i++) {
+      if (left[i] != right[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // The index of the brace that closes the object opening at start, or -1 when the text ends first, a close
+  // does not match its open, or a character no JSON text holds (a control character outside a string, a NUL
+  // anywhere) shows the scan has run past the constant.
+  private static int _matchingClose(string text, int start) {
+    var stack = new Stack<char>();
+    var inString = false;
+    var escaped = false;
+    for (var i = start; i < text.Length; i++) {
+      var c = text[i];
+      if (c == '\0') {
+        return -1;
+      }
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          inString = false;
         }
-
-        File.WriteAllText(OutputFile, json);
+        continue;
+      }
+      switch (c) {
+        case '"':
+          inString = true;
+          break;
+        case '{':
+          stack.Push('}');
+          break;
+        case '[':
+          stack.Push(']');
+          break;
+        case '}':
+        case ']':
+          if (stack.Count == 0 || stack.Pop() != c) {
+            return -1;
+          }
+          if (stack.Count == 0) {
+            return i;
+          }
+          break;
+        default:
+          if (c < ' ' && c != '\t' && c != '\r' && c != '\n') {
+            return -1;
+          }
+          break;
+      }
+    }
+    return -1;
+  }
+}
         ]]>
       </Code>
     </Task>
@@ -85,7 +219,8 @@
             "\n" +
             "## Ignored — everything under `cache/`\n" +
             "\n" +
-            "- generated `.cs` and `message-registry.json`, rebuilt from source on every build.\n" +
+            "- `message-registry.json` (when `WhizbangEmitMessageRegistry=true`) and generated `.cs` files (when\n" +
+            "  `EmitCompilerGeneratedFiles=true`), rebuilt from source on every build.\n" +
             "\n" +
             "Add `**/.whizbang/cache/` to your `.gitignore`. Commit everything else in `.whizbang/`\n" +
             "(including this README).\n" +
@@ -104,102 +239,116 @@
     </Task>
   </UsingTask>
 
-  <!-- Where the two extraction targets below read and write. Set in a target they depend on, not inside them,
-       because a target's Inputs and Outputs are evaluated before its body runs (after its DependsOnTargets), and
-       not at file level, where IntermediateOutputPath may not be set yet when this file is imported. -->
+  <!-- Where the two extraction targets below read and write, and whether this project runs the generators at all.
+       Set in a target they depend on, not inside them, because a target's Inputs and Outputs are evaluated before
+       its body runs (after its DependsOnTargets), and not at file level, where IntermediateOutputPath may not be set
+       yet when this file is imported. -->
   <Target Name="WhizbangResolveExtractionPaths">
     <PropertyGroup>
-      <WhizbangCacheDir>$(MSBuildProjectDirectory)/.whizbang/cache</WhizbangCacheDir>
-      <WhizbangGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</WhizbangGeneratedCSharpFile>
-      <WhizbangRegistryJsonFile>$(WhizbangCacheDir)/message-registry.json</WhizbangRegistryJsonFile>
+      <WhizbangRegistryJsonFile>$(MSBuildProjectDirectory)/.whizbang/cache/message-registry.json</WhizbangRegistryJsonFile>
       <WhizbangRegistryStampFile>$(IntermediateOutputPath)whizbang-message-registry.stamp</WhizbangRegistryStampFile>
-      <WhizbangLedgerGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.PinnedTypeLedgerGenerator/PinnedTypeLedger.g.cs</WhizbangLedgerGeneratedCSharpFile>
       <WhizbangPinnedTypeLedgerFile>$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json</WhizbangPinnedTypeLedgerFile>
       <WhizbangFolderReadmeFile>$(MSBuildProjectDirectory)/.whizbang/README.md</WhizbangFolderReadmeFile>
       <WhizbangLedgerStampFile>$(IntermediateOutputPath)whizbang-pinned-type-ledger.stamp</WhizbangLedgerStampFile>
+      <!-- The opening each generator's JSON starts with (MessageRegistryGenerator, PinnedTypeLedgerGenerator). -->
+      <WhizbangRegistryOpening>\{\s*"messages"\s*:\s*\[</WhizbangRegistryOpening>
+      <WhizbangLedgerOpening>\{\s*"version"\s*:\s*\d+\s*,\s*"types"\s*:\s*\[</WhizbangLedgerOpening>
     </PropertyGroup>
-    <!-- A generated file that does not exist is left out of the Inputs: MSBuild treats a missing input as out of
-         date, so a project the generator writes nothing for would run the target on every build. -->
     <ItemGroup>
-      <WhizbangRegistryInput Include="$(MSBuildThisFileFullPath)" />
-      <WhizbangRegistryInput Include="$(WhizbangGeneratedCSharpFile)" Condition="Exists('$(WhizbangGeneratedCSharpFile)')" />
-      <WhizbangLedgerInput Include="$(MSBuildThisFileFullPath)" />
-      <WhizbangLedgerInput Include="$(WhizbangLedgerGeneratedCSharpFile)" Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)')" />
+      <WhizbangGeneratorAnalyzer Include="@(Analyzer)" Condition="'%(Filename)' == 'Whizbang.Generators'" />
     </ItemGroup>
+    <PropertyGroup>
+      <WhizbangGeneratorsLoaded Condition="'@(WhizbangGeneratorAnalyzer)' != ''">true</WhizbangGeneratorsLoaded>
+    </PropertyGroup>
   </Target>
 
-  <!-- Both extraction targets run in every build of a consuming project, so each declares Inputs (the generated
-       file it reads, and this file, whose extraction logic it runs) and Outputs (a stamp in obj/) and is skipped
-       on a build where the generated file did not change (#1665). The JSON itself is not the output: the task
-       writes it only when its content changes, so it can stay older than a regenerated .g.cs and would make the
-       target run on every build. The stamp is touched every time the target runs, and a missing JSON file
-       deletes the stamp first, so deleting the JSON brings it back on the next build. -->
+  <!-- Both extraction targets run in every build of a consuming project, so each declares Inputs (the assembly it
+       reads, and this file, whose extraction logic it runs) and Outputs (a stamp in obj/) and is skipped on a build
+       that did not recompile (#1665). The JSON itself is not the output: the task writes it only when its content
+       changes, so it can stay older than a recompiled assembly and would make the target run on every build. The
+       stamp records whether the JSON was found; when it was and the JSON file is now missing, the stamp is deleted
+       first, so deleting the JSON brings it back on the next build. -->
 
-  <!-- Post-build task to extract message registry JSON from generated C# file.
-       message-registry.json is a REGENERABLE artifact (rebuilt from source on every compile), so it
-       lives in the git-ignored .whizbang/cache/ subfolder — NOT beside the committed ledger at the
-       .whizbang/ root. Convention: .whizbang/cache/ = ephemeral/ignored, .whizbang/ = committed. -->
+  <!-- message-registry.json is a REGENERABLE artifact for IDE tooling (the VS Code extension), so it lives in the
+       git-ignored .whizbang/cache/ subfolder, NOT beside the committed ledger at the .whizbang/ root. Off unless a
+       project sets WhizbangEmitMessageRegistry=true; when off the generator embeds nothing and this target is skipped. -->
   <Target Name="WhizbangPrepareMessageRegistry" DependsOnTargets="WhizbangResolveExtractionPaths"
           Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
+    <PropertyGroup>
+      <WhizbangRegistryStamp Condition="Exists('$(WhizbangRegistryStampFile)')">$([System.IO.File]::ReadAllText('$(WhizbangRegistryStampFile)').Trim())</WhizbangRegistryStamp>
+    </PropertyGroup>
     <Delete Files="$(WhizbangRegistryStampFile)"
-            Condition="Exists('$(WhizbangGeneratedCSharpFile)') And !Exists('$(WhizbangRegistryJsonFile)')" />
+            Condition="'$(WhizbangRegistryStamp)' == 'found' And !Exists('$(WhizbangRegistryJsonFile)')" />
   </Target>
 
   <Target Name="WhizbangExtractMessageRegistry" AfterTargets="Build" Condition="'$(WhizbangEmitMessageRegistry)' == 'true'"
           DependsOnTargets="WhizbangPrepareMessageRegistry"
-          Inputs="@(WhizbangRegistryInput)"
+          Inputs="@(IntermediateAssembly);$(MSBuildThisFileFullPath)"
           Outputs="$(WhizbangRegistryStampFile)">
-    <!-- Extract JSON from generated C# file (cross-platform) -->
-    <WhizbangExtractMessageRegistryJson
-      SourceFile="$(WhizbangGeneratedCSharpFile)"
+    <WhizbangExtractEmbeddedJson
+      AssemblyFile="@(IntermediateAssembly->'%(FullPath)')"
+      Opening="$(WhizbangRegistryOpening)"
       OutputFile="$(WhizbangRegistryJsonFile)"
-      Condition="Exists('$(WhizbangGeneratedCSharpFile)')" />
+      WarnWhenAbsent="true"
+      Condition="'$(WhizbangGeneratorsLoaded)' == 'true'">
+      <Output TaskParameter="Found" PropertyName="WhizbangRegistryFound" />
+    </WhizbangExtractEmbeddedJson>
 
     <Message
       Text="Whizbang: Message registry extracted to $(WhizbangRegistryJsonFile)"
       Importance="normal"
-      Condition="Exists('$(WhizbangRegistryJsonFile)')" />
+      Condition="'$(WhizbangRegistryFound)' == 'true'" />
 
-    <Touch Files="$(WhizbangRegistryStampFile)" AlwaysCreate="true" />
+    <WriteLinesToFile File="$(WhizbangRegistryStampFile)" Lines="found" Overwrite="true" Condition="'$(WhizbangRegistryFound)' == 'true'" />
+    <WriteLinesToFile File="$(WhizbangRegistryStampFile)" Lines="absent" Overwrite="true" Condition="'$(WhizbangRegistryFound)' != 'true'" />
     <ItemGroup>
       <FileWrites Include="$(WhizbangRegistryStampFile)" />
     </ItemGroup>
   </Target>
 
-  <!-- Rename platform: extract the pinned-type ledger JSON from generated C# to the committed .whizbang/ lockfile.
-       Reuses the generic extraction task above. The generator MERGES with the existing committed ledger, so this
-       write is a monotonic lockfile update (adds new pinned types; never rewrites a recorded name/history). -->
+  <!-- Rename platform: extract the pinned-type ledger JSON to the committed .whizbang/ lockfile. The generator
+       MERGES with the existing committed ledger, so this write is a monotonic lockfile update (adds new pinned types;
+       never rewrites a recorded name/history). On by default and independent of the registry; a project with no
+       [PinnedId] type embeds no ledger, so its absence is only logged. -->
   <Target Name="WhizbangPreparePinnedTypeLedger" DependsOnTargets="WhizbangResolveExtractionPaths"
-          Condition="'$(WhizbangEmitMessageRegistry)' == 'true' And '$(WhizbangIncludePinnedTypeLedger)' != 'false'">
+          Condition="'$(WhizbangIncludePinnedTypeLedger)' != 'false'">
+    <PropertyGroup>
+      <WhizbangLedgerStamp Condition="Exists('$(WhizbangLedgerStampFile)')">$([System.IO.File]::ReadAllText('$(WhizbangLedgerStampFile)').Trim())</WhizbangLedgerStamp>
+    </PropertyGroup>
     <Delete Files="$(WhizbangLedgerStampFile)"
-            Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)') And !Exists('$(WhizbangPinnedTypeLedgerFile)')" />
+            Condition="'$(WhizbangLedgerStamp)' == 'found' And !Exists('$(WhizbangPinnedTypeLedgerFile)')" />
     <Delete Files="$(WhizbangLedgerStampFile)"
             Condition="'$(WhizbangEmitFolderReadmes)' != 'false' And Exists('$(WhizbangPinnedTypeLedgerFile)') And !Exists('$(WhizbangFolderReadmeFile)')" />
   </Target>
 
   <Target Name="WhizbangExtractPinnedTypeLedger" AfterTargets="Build"
-          Condition="'$(WhizbangEmitMessageRegistry)' == 'true' And '$(WhizbangIncludePinnedTypeLedger)' != 'false'"
+          Condition="'$(WhizbangIncludePinnedTypeLedger)' != 'false'"
           DependsOnTargets="WhizbangPreparePinnedTypeLedger"
-          Inputs="@(WhizbangLedgerInput)"
+          Inputs="@(IntermediateAssembly);$(MSBuildThisFileFullPath)"
           Outputs="$(WhizbangLedgerStampFile)">
-    <WhizbangExtractMessageRegistryJson
-      SourceFile="$(WhizbangLedgerGeneratedCSharpFile)"
+    <WhizbangExtractEmbeddedJson
+      AssemblyFile="@(IntermediateAssembly->'%(FullPath)')"
+      Opening="$(WhizbangLedgerOpening)"
       OutputFile="$(WhizbangPinnedTypeLedgerFile)"
-      Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)')" />
+      WarnWhenAbsent="false"
+      Condition="'$(WhizbangGeneratorsLoaded)' == 'true'">
+      <Output TaskParameter="Found" PropertyName="WhizbangLedgerFound" />
+    </WhizbangExtractEmbeddedJson>
 
     <Message
       Text="Whizbang: Pinned-type ledger extracted to $(WhizbangPinnedTypeLedgerFile)"
       Importance="normal"
-      Condition="Exists('$(WhizbangPinnedTypeLedgerFile)')" />
+      Condition="'$(WhizbangLedgerFound)' == 'true'" />
 
     <!-- Self-documenting: single committed README at the .whizbang/ root. Only written when a ledger
-         exists — i.e. when .whizbang/ actually has committed content to explain. Projects with only
+         exists, i.e. when .whizbang/ actually has committed content to explain. Projects with only
          the ignored cache/ subfolder stay fully ignored and invisible to git. -->
     <WhizbangWriteFolderReadme
       OutputFile="$(WhizbangFolderReadmeFile)"
       Condition="'$(WhizbangEmitFolderReadmes)' != 'false' And Exists('$(WhizbangPinnedTypeLedgerFile)')" />
 
-    <Touch Files="$(WhizbangLedgerStampFile)" AlwaysCreate="true" />
+    <WriteLinesToFile File="$(WhizbangLedgerStampFile)" Lines="found" Overwrite="true" Condition="'$(WhizbangLedgerFound)' == 'true'" />
+    <WriteLinesToFile File="$(WhizbangLedgerStampFile)" Lines="absent" Overwrite="true" Condition="'$(WhizbangLedgerFound)' != 'true'" />
     <ItemGroup>
       <FileWrites Include="$(WhizbangLedgerStampFile)" />
     </ItemGroup>

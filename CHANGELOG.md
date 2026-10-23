@@ -284,6 +284,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The generators package writes no generated source to disk and embeds no message registry by default (#1609).
+  Behavior change.** The package's props no longer turn `EmitCompilerGeneratedFiles` on, and
+  `WhizbangEmitMessageRegistry` now defaults to `false`: the generator embeds no registry JSON in the assembly and the
+  build writes no `.whizbang/cache/message-registry.json`. `WhizbangIncludePinnedTypeLedger` stays `true`, no longer
+  depends on the registry switch, and `.whizbang/pinned-type-ledger.json` keeps updating with generated files off,
+  because both files are now read from the built assembly instead of from generated `.cs` files on disk. Both
+  extraction targets are skipped on a build that did not recompile. **Upgrade:** for the VS Code extension's message
+  registry, set `<WhizbangEmitMessageRegistry>true</WhizbangEmitMessageRegistry>` in the project; to keep generated
+  files on disk, set `<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>` (they still go to
+  `.whizbang/cache/` unless `CompilerGeneratedFilesOutputPath` says otherwise).
 - **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
   `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
   `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes

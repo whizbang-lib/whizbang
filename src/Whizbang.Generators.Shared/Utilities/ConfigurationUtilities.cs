@@ -34,6 +34,16 @@ public static class ConfigurationUtilities {
   public const string MAX_IDENTIFIER_LENGTH_PROPERTY = "build_property.WhizbangMaxIdentifierLength";
 
   /// <summary>
+  /// Whether a switch property is set to <c>false</c> (any case, surrounding space ignored). Not set, empty or any
+  /// other value reads as on, so a switch defaults on unless the package's props turn it off.
+  /// </summary>
+  /// <param name="globalOptions">The analyzer config options containing MSBuild properties.</param>
+  /// <param name="property">The property key, <c>build_property.</c> and its name.</param>
+  public static bool IsTurnedOff(AnalyzerConfigOptions globalOptions, string property) =>
+      globalOptions.TryGetValue(property, out var value) &&
+      string.Equals(value.Trim(), "false", StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>
   /// Reads table name configuration from MSBuild properties.
   /// Falls back to TableNameConfig.Default if properties are not set.
   /// </summary>

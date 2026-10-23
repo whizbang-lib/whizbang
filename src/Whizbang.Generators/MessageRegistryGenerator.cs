@@ -89,6 +89,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
   /// <summary>
+  /// The switch: <c>WhizbangEmitMessageRegistry</c>. The registry is IDE tooling, so the package turns it off by
+  /// default, and when it is off nothing is embedded in the assembly and the extraction target is skipped.
+  /// </summary>
+  private const string EMIT_PROPERTY = "build_property.WhizbangEmitMessageRegistry";
+
+  /// <summary>
   /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
@@ -158,7 +164,13 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // The referenced Whizbang packages, the one fact read from the compilation. Projected to values before the
     // combine: combining the compilation itself would regenerate the registry on every edit, since every edit is a
     // new compilation, while the packages it references change only when a reference does.
-    var whizbangPackages = context.CompilationProvider.Select(static (compilation, _) => _referencedWhizbangPackages(compilation));
+    // Whether to embed the registry at all (#1609). Not set reads as on, for a project that loads the generators
+    // without the package's props; the props set it, off by default.
+    var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
+        !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, EMIT_PROPERTY));
+
+    var whizbangPackages = context.CompilationProvider.Combine(enabled)
+        .Select(static (pair, _) => pair.Right ? _referencedWhizbangPackages(pair.Left) : []);
 
     // Combine all discoveries + referenced package versions
     var allData = messageTypes.Collect()
@@ -166,12 +178,16 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         .Combine(receptors.Collect())
         .Combine(perspectives.Collect())
         .Combine(whizbangPackages)
-        .Combine(docsLocation);
+        .Combine(docsLocation)
+        .Combine(enabled);
 
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data;
+          if (!data.Right) {
+            return;
+          }
+          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data.Left;
           _generateMessageRegistry(ctx,
             (((messages, dispatchers2), receptors2), perspectives2),
             packages,
