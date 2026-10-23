@@ -2283,15 +2283,21 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   /// The repair is only worth running if it inoculates: the row must come out carrying a position this
   /// library can compare, or the next event on that stream is discarded exactly as before.
   /// </summary>
+  /// <remarks>
+  /// The stream's events are stamped, as a pre-cutover stream's events long since are: the row records the commit
+  /// sequence of the event it folded last, so over unstamped events it would record none, which is the stamper's
+  /// lag rather than this repair's result.
+  /// </remarks>
   [Test]
   public async Task RebuildStreamsAsync_OverAPreCutoverRow_ReplacesTheUnreadablePositionAsync() {
     var streamId = Guid.NewGuid();
     await using var sp = _buildRebuildServices();
+    var head = MessageId.New();
 
     await using (var scope = sp.CreateAsyncScope()) {
       var eventStore = scope.ServiceProvider.GetRequiredService<IEventStore>();
-      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
-      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m }, MessageId.New());
+      await _appendCommittedAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m }, head);
     }
     await _seedPreCutoverRowAsync(streamId, balance: 100m, version: 1);
 
@@ -2305,7 +2311,11 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     var row = await verify.Set<PerspectiveRow<RebuildBalanceModel>>()
         .AsNoTracking().FirstAsync(r => r.Id == streamId);
 
-    await Assert.That(row.Metadata.CommitSequence).IsNotNull();
+    var headSequence = await verify.Database
+        .SqlQueryRaw<long>("SELECT commit_sequence AS \"Value\" FROM wh_event_store WHERE event_id = {0}", head.Value)
+        .SingleAsync();
+    await Assert.That(row.Metadata.CommitSequence).IsEqualTo(headSequence)
+      .Because("the repaired row must carry the stream head's position, which this library can compare");
     await Assert.That(row.Metadata.EventId).IsNotEqualTo(PRE_CUTOVER_EVENT_ID.ToString());
     await Assert.That(row.Metadata.EventType).IsNotEqualTo("Unknown");
   }
