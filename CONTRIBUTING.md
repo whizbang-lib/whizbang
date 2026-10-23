@@ -75,7 +75,8 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 
 ### Prerequisites
 
-- .NET 10 SDK
+- .NET 10 SDK or newer. The projects target `net10.0`; a newer SDK builds them faster (see
+  [Faster local builds](#faster-local-builds)).
 - PowerShell 7+ (cross-platform)
 - Git
 
@@ -101,6 +102,26 @@ dotnet build
 ```bash
 pwsh scripts/Run-Tests.ps1
 ```
+
+### Faster local builds
+
+`global.json` sets `10.0.100` as the floor with `rollForward: latestMajor`, so command-line builds use the
+newest SDK installed. The projects still target `net10.0`, and tests still run on the .NET 10 runtime.
+CI is unaffected: `setup-dotnet-retry` installs only the feature band `sdk.version` names, so CI builds
+on SDK 10.
+
+- **SDK 11.** A .NET 11 SDK (11.0.100-rc.2 at the time of writing) builds a .NET 10 solution of this size
+  roughly 40% faster than SDK 10. Install it next to SDK 10, for example with
+  [`dotnetup`](https://learn.microsoft.com/dotnet/core/tools/dotnetup/), which installs per user without
+  administrator rights: `dotnetup sdk install 11.0 10.0` and `dotnetup runtime install 10.0
+  aspnetcore@10.0`. Builds print `NETSDK1057` (a preview SDK) as a message, not a warning.
+- **Multithreaded MSBuild (`-mt`).** Builds projects on threads in one process instead of in separate
+  node processes; with SDK 11 it saves roughly another 10 to 15%. MSBuild labels it experimental. Pass it
+  per command, or put it in a `Directory.Build.rsp` in a folder **above** your clone (MSBuild reads that
+  file from the project's folder and every folder above it). Don't add it to the repository's own
+  `Directory.Build.rsp`: that file is tracked and applies to everyone.
+- **When your build and CI disagree, CI decides.** CI builds on SDK 10 without `-mt`.
+- **To go back,** uninstall the newer SDK, or delete the `-mt` line.
 
 ## Development Workflow
 

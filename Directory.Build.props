@@ -24,10 +24,11 @@
     <!-- XML files are included in NuGet packages automatically when this is enabled -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
-    <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
-    <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
-    <!-- Options: latest-minimum, latest-recommended, latest-all -->
-    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Code analysis (CA rules), recommended set, pinned to the .NET 10 rule set rather than "latest".
+         global.json rolls forward to the newest installed SDK, and "latest" would turn on each newer SDK's
+         rules locally while CI builds on SDK 10 (#1678). Move it when CI moves; SDK 11's CA2026 findings
+         are tracked in #1679. -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
 
     <!-- Treat code analysis warnings as errors (separate from compiler warnings) -->
     <!-- This ensures CA rules fail the build just like compiler errors -->
