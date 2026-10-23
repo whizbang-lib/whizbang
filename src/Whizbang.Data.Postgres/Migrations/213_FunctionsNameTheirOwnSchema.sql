@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 213_FunctionsNameTheirOwnSchema.sql
 -- Date: 2026-10-19
 -- Description: The run-time functions that found perspective and framework tables through current_schema() now

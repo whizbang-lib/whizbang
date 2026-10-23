@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 110_StandbyHandshake.sql
 -- Date: 2026-08-16
 -- Description: The standby request. A breaking migration is a planned outage — the honest

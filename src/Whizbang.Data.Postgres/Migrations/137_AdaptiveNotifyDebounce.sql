@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 137_AdaptiveNotifyDebounce
 -- Date: 2026-09-06
 -- Description: The doorbell debounce (130-133) becomes ADAPTIVE per (instance, payload_kind).

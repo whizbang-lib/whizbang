@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 127_DlqCanaryCampaigns
 -- Date: 2026-09-03
 -- Description: Held-cohort canary campaign persistence (P1 of plans/dlq-stack-intelligence.md).

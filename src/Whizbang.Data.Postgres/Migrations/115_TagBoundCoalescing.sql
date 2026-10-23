@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 115_TagBoundCoalescing.sql
 -- Date: 2026-08-18
 -- Description: Tag-bound coalescing storage (proposal: tag-bound policies & message coalescing).

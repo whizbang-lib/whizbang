@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Feature
 description: A new capability that was discussed and accepted in Discussions, Ideas.
 title: "[Feature]: "

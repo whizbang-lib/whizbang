@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 013_ProcessOutboxCompletions.sql
 -- Date: 2025-12-25
 -- Description: Creates process_outbox_completions function for marking outbox messages as complete.

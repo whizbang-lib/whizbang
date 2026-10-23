@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The CI image mirror: the manifest, the prefix rule, the source selection, the copy, and the drift guard

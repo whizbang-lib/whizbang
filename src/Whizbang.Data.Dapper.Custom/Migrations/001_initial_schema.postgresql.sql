@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Whizbang Messaging Infrastructure - PostgreSQL Migration
 -- Version: 001
 -- Description: Initial schema for inbox, outbox, request/response store, and event store

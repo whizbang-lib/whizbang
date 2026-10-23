@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 038_GetStreamEvents.sql
 -- Date: 2026-04-13 (updated 2026-04-14 to include metadata + scope for envelope reconstruction)
 -- Description: Creates get_stream_events function for batch-fetching events for multiple streams.

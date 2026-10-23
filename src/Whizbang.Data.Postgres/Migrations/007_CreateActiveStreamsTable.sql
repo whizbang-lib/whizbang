@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 007_CreateActiveStreamsTable.sql
 -- Date: 2025-12-25
 -- Description: Creates wh_active_streams table for ephemeral stream ownership coordination.

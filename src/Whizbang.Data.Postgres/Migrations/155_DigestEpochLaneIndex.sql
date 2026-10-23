@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 155_DigestEpochLaneIndex.sql
 -- Date: 2026-09-16
 -- Description: The digest-epoch lane probes are served by an index.

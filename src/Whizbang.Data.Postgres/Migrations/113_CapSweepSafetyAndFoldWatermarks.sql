@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 113_CapSweepSafetyAndFoldWatermarks
 -- Purpose:  Close the retention deferrals that gate safe adoption.
 --           (1) CAP SWEEP SAFETY: the cap sweep gains the same two guards the expiry sweep has had

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Whizbang Infrastructure Schema for SQLite
 -- Generated: 2025-12-17 15:30:23 UTC
 -- Infrastructure Prefix: wh_

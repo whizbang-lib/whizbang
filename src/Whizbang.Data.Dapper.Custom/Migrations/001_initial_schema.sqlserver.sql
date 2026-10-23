@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Whizbang Messaging Infrastructure - SQL Server Migration
 -- Version: 001
 -- Description: Initial schema for inbox, outbox, request/response store, event store, and sequences

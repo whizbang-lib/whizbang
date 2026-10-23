@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- ============================================================================
 -- Migration: 120_DeadLetterRetryBudgetPerMessage.sql
 -- Date: 2026-08-20

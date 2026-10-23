@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 179_PhysicalFieldPromotion
 -- Date: 2026-09-30
 -- Description: Promoting a document field to a physical column moves its indexes and catches the rows

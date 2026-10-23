@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Test Shard Report
 
 # The test suites run in parallel, so a pull request waits for the slowest one. Shards drift out of

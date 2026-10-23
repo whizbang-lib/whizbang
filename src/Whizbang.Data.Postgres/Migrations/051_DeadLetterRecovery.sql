@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 051_DeadLetterRecovery.sql
 -- Date: 2026-06-03 (v0.502 slice C.7 foundation)
 -- Description: SQL surface for the recovery worker:

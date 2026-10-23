@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 065_SignalBusDurableLog.sql
 -- Date: 2026-07-12
 -- Description: F1 signal-bus durable delivery. Adds wh_signals (durable log for

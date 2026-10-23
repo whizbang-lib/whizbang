@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 124_PurgeRecoveredDeadLetters.sql
 -- Date: 2026-09-01
 -- Description: Re-creates perform_maintenance VERBATIM from 107 plus a new Task 11 that purges

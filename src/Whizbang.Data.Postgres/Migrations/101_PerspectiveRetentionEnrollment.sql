@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 101_PerspectiveRetentionEnrollment
 -- Purpose:  Carry a perspective's row-retention DECLARATION into SQL, so the reaper can sweep only
 --           enrolled perspectives instead of enumerating every table that happens to have an

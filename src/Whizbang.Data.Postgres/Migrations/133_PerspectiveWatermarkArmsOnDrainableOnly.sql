@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 133_PerspectiveWatermarkArmsOnDrainableOnly
 -- Date: 2026-09-05
 -- Description: claim_work arms the perspective doorbell-debounce watermark only for DRAINABLE

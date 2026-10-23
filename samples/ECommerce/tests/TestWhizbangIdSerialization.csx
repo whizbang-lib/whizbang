@@ -1,4 +1,7 @@
 #!/usr/bin/env dotnet-script
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 #r "nuget: System.Text.Json, 9.0.0"
 
 using System;

@@ -284,6 +284,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A migration edit that changes no executable SQL is no longer a change (#1648).** Both drivers and the bootstrap
+  closure hash a migration's normalized SQL: comments (`--` and nested `/* */`), whitespace at line edges and runs of it
+  between tokens, blank lines and the line ending convention are left out, while string literals, `E'...'` strings,
+  quoted identifiers and dollar-quoted bodies are hashed exactly as written (so a comment inside a function body is
+  still a change). A comment, license header or whitespace edit to a shipped migration is skipped by every database,
+  and the review checks' `migrations.edited` rule no longer flags it; an executable edit is still applied and flagged.
+  **Upgrade:** the first start after upgrading rewrites, under the migration lock and before deciding what to run,
+  every `wh_schema_migrations` row whose hash is the raw-text hash of its file as shipped to the normalized hash, and
+  records the normalized bootstrap closure hash beside the old one, so nothing is applied again and the bootstrap does
+  not re-run; a row matching neither form belongs to a file that really changed and is applied as before. Later starts
+  find nothing to rewrite.
 - **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
   `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
   `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes

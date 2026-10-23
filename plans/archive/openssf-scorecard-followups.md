@@ -185,7 +185,7 @@ the same attachments; today it does not.
 
 Scorecard gives License 9 because GitHub's license detection reports `NOASSERTION` for this repo
 (`gh api repos/whizbang-lib/whizbang/license -q .license.spdx_id`). The `LICENSE` file is the MIT
-text plus an extra `SPDX-License-Identifier: MIT` line under the title, and that extra line stops
+text plus an extra SPDX license-identifier line (MIT) under the title, and that extra line stops
 GitHub's matcher from recognizing the standard text. Remove that line (keep the copyright line and
 the standard MIT body exactly), then confirm the API reports `MIT` after merge and Scorecard shows
 License 10. Package metadata already declares the license separately, so nothing else changes.

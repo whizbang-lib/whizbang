@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 053_DeadLetterFingerprint.sql
 -- Date: 2026-06-05 (release/v0.645.0-alpha.1 — Slice 2 of outbox-DLQ + dual-hash analysis)
 -- Description: Adds the SQL fingerprint utility used by Slice 3's live capture

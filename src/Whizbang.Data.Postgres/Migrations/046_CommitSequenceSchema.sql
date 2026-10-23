@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 046_CommitSequenceSchema.sql
 -- Date: 2026-05-23
 -- Description: Slice 26 step 1 — foundational schema for commit-sequence stamping.

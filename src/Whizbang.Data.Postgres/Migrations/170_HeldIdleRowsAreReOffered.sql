@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 170_HeldIdleRowsAreReOffered.sql
 -- Date: 2026-09-25
 -- Description: A row the claim holds is always handed to the drain, whatever band it sits in.

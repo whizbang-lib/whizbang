@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 222_FrameworkTableAutovacuum.sql
 -- Date: 2026-10-21
 -- Description: The large framework tables vacuum after a fixed number of changes rather than a fraction of the table

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 164_DropUnreachableOutboxStatusIndexes.sql
 -- Date: 2026-09-19
 -- Description: Drops the four outbox indexes that are partial on a status bitmask. Nothing can

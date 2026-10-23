@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 195_EventStoreTypeTenantIndex.sql
 -- Date: 2026-10-07
 -- Description: An event-store read by event type and tenant is served by an index (#1216).

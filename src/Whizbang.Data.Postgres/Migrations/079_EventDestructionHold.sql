@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 079_EventDestructionHold.sql
 -- Date: 2026-07-16
 -- Description: E2-3 — honor a PreDestruction hook's Cancel / Defer decision. A hook that returns Cancel (keep

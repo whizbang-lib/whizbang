@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 168_AdvisoryLedger.sql
 -- Date: 2026-09-22
 -- Description: Advisory findings are remembered in the database, so a finding is raised once for

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 086_ConsumedTypeRegistry.sql
 -- Date: 2026-07-31
 -- Description: Stream-integrity Phase S — the consumed-type registry. Records WHEN each event type

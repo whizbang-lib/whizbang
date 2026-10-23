@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 184_RoleAssignmentResilience.sql
 -- Date: 2026-10-01
 -- Description: Duty role assignment, phases 3 and 4 (issue #966), with the decisions recorded on #968.

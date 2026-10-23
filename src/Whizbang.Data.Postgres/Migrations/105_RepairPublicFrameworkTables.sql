@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Objects: none  (data-only carry; defines no SQL objects — closure-exempt)
 -- Migration: 105_RepairPublicFrameworkTables
 -- Date:      2026-08-14

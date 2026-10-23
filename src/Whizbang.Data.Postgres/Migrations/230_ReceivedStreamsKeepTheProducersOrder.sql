@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 230_ReceivedStreamsKeepTheProducersOrder.sql
 -- Date: 2026-10-21
 -- Description: A receiver stores one source stream's events in the producer's order, however many claims carry

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 143_NotifyStateNeverWaits
 -- Date: 2026-09-07
 -- Description: the doorbell debounce never waits on another writer's transaction (issue #713).

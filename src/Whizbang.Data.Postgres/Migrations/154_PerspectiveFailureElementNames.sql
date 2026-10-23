@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 154_PerspectiveFailureElementNames.sql
 -- Date: 2026-09-15
 -- Description: process_perspective_event_failures reads the failure element the runtime writes.

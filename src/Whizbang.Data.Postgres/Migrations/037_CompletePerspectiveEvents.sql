@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 037_CompletePerspectiveEvents.sql
 -- Date: 2026-04-13
 -- Description: Creates complete_perspective_events function for immediate per-stream completion.

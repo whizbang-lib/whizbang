@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The type guard (#1264). A <WhizbangTestType> that one tool does not know is a project whose tests

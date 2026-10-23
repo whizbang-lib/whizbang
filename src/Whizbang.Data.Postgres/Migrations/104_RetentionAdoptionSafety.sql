@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 104_RetentionAdoptionSafety
 -- Purpose:  Make ADOPTING retention a decision rather than a side effect of a deploy, and stop the
 --           first sweep from being one large delete against a shared database.

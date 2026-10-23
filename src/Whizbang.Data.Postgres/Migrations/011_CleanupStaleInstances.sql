@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 011_CleanupStaleInstances.sql
 -- Date: 2025-12-25 (last revised 2026-06-12 for v0.687 definitive-dead cutoff)
 -- Description: Creates cleanup_stale_instances function for removing inactive instances.
