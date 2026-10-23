@@ -72,7 +72,7 @@ Each slice is one red-then-green increment and its own commit.
 5. **Growth.** No new instrument: growth is `deriv()` or `delta()` over the gauges, which every
    Prometheus-compatible backend computes. The dashboard ships those panels. RED: the dashboard
    drift test (slice 7) checks each panel names a real instrument.
-6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is still a constant. On `EventTypeSampleInterval`, one instance per window (the
+6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is a bound, validated setting since #1668 (2026-10-23). On `EventTypeSampleInterval`, one instance per window (the
    claim `IndexStatisticsMaintenanceStep` uses in `wh_unique_emission_claims`,
    `src/Whizbang.Data.EFCore.Postgres/IndexStatisticsMaintenanceStep.cs:42`) samples
    `wh_event_body TABLESAMPLE SYSTEM (EventTypeSamplePercent)` joined to `wh_event_store` for

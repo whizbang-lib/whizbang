@@ -11,17 +11,27 @@ namespace Whizbang.Core.Observability;
 /// <summary>
 /// Background service that periodically queries <see cref="ITableStatisticsProvider"/>
 /// and updates <see cref="TableStatisticsMetrics"/> caches.
-/// Runs every 30 seconds. Waits for database readiness before starting. Registered by
+/// Runs every <see cref="TableStatisticsOptions.CollectionInterval"/> (thirty seconds unless configured). Waits for
+/// database readiness before starting. Registered by
 /// <see cref="TableStatisticsServiceCollectionExtensions.AddWhizbangTableStatistics"/>, which both
 /// PostgreSQL drivers call.
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
+/// <param name="scopeFactory">Resolves the provider for each cycle.</param>
+/// <param name="metrics">The meter the readings are reported on.</param>
+/// <param name="schemaReadyGate">Holds the first cycle until the schema exists; null starts at once.</param>
+/// <param name="logger">Optional logger.</param>
+/// <param name="options">The interval between cycles; null keeps the thirty-second default.</param>
+/// <param name="timeProvider">The clock the interval is measured on; null is the system clock.</param>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs</tests>
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
-  ILogger<TableStatisticsCollector> logger
+  ILogger<TableStatisticsCollector> logger,
+  Microsoft.Extensions.Options.IOptions<TableStatisticsOptions>? options = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =
@@ -37,7 +47,8 @@ public sealed partial class TableStatisticsCollector(
   /// </remarks>
   private QueryExposureAdvisory? _exposureAdvisory;
 
-  private const int COLLECTION_INTERVAL_SECONDS = 30;
+  private readonly TimeSpan _interval = options?.Value.CollectionInterval ?? TableStatisticsOptions.DefaultCollectionInterval;
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// Raised once every collection cycle, after every metric cache has been written.
@@ -126,7 +137,7 @@ public sealed partial class TableStatisticsCollector(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromSeconds(COLLECTION_INTERVAL_SECONDS), stoppingToken);
+        await Task.Delay(_interval, _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }

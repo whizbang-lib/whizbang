@@ -262,6 +262,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and call site; with no observer subscribed a parse site costs one volatile read. `MessageParseRecorder` counts and
   summarizes the parses of chosen messages. Regression tests pin today's counts per flow (a locally published event
   feeding two perspectives is parsed 17 times), and `plans/message-cache.md` proposes the cache that lowers them.
+- **The table-statistics collection interval is a setting (#1668).** `Whizbang:TableStatistics:CollectionInterval`
+  (default `00:00:30`, the interval the collector always used) sets how often each instance reads the tables into the
+  `Whizbang.TableStatistics` gauges. Zero or negative fails host start naming the key.
 - **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
   rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
   `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is
