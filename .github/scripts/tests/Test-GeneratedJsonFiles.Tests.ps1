@@ -41,4 +41,10 @@ Describe 'New-PinnedCommandSource' {
     $source | Should -Match '\[PinnedId\("abc"\)\]'
     $source | Should -Match 'public sealed record ProbeCommand\(Guid Id\) : ICommand;'
   }
+
+  It 'starts with the license header the repository build requires (IDE0073)' {
+    $source = New-PinnedCommandSource -Name 'ProbeCommand' -PinnedId 'abc'
+    $source | Should -BeLike "// Copyright (c) whizbang-lib contributors.*// SPDX-License-Identifier: MIT*"
+    ($source -split "`r?`n")[0] | Should -Be '// Copyright (c) whizbang-lib contributors.'
+  }
 }
