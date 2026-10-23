@@ -173,6 +173,29 @@ public class AsbPoisonQuarantineTests {
   }
 
   [Test]
+  public async Task ProcessSessionMessage_DetectorQuarantines_DeadLettersToThePerNamespaceDlqAsync() {
+    // The quarantine mechanism stays for any detector that does quarantine (a custom one): the
+    // verdict lands in the entity DLQ the existing dead-letter drainer replays, and is recorded once.
+    var detector = new StubPoisonDetector(
+      PoisonVerdict.Quarantine(PoisonQuarantineReason.ObservationCountExceeded, "custom policy"));
+    var (transport, client) = _createTransport(enableSessions: true, poisonDetector: detector);
+    var handlerInvoked = false;
+    await transport.SubscribeAsync((_, _, _) => { handlerInvoked = true; return Task.CompletedTask; }, _destination());
+    var receiver = new RecordingTransportSessionReceiver();
+
+    await client.LastSessionProcessor!.RaiseSessionMessageAsync(
+      AsbTransportTestData.SessionArgs(
+        AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope(), deliveryCount: 1),
+        receiver));
+
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1);
+    await Assert.That(receiver.DeadLettered[0].Reason).IsEqualTo("PoisonQuarantine");
+    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(handlerInvoked).IsFalse();
+    await Assert.That(detector.Recorded).Count().IsEqualTo(1);
+  }
+
+  [Test]
   public async Task ProcessSessionMessage_FreshMessage_ProcessesNormallyAsync() {
     var detector = _detector(ageThreshold: TimeSpan.FromMinutes(30));
     var (transport, client) = _createTransport(enableSessions: true, poisonDetector: detector);
@@ -249,6 +272,24 @@ public class AsbPoisonQuarantineTests {
   #endregion
 
   #region Transport execution — non-session pipeline
+
+  [Test]
+  public async Task ProcessMessage_DetectorQuarantines_DeadLettersAsync() {
+    var detector = new StubPoisonDetector(
+      PoisonVerdict.Quarantine(PoisonQuarantineReason.ObservationCountExceeded, "custom policy"));
+    var (transport, client) = _createTransport(enableSessions: false, poisonDetector: detector);
+    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
+    var receiver = new RecordingTransportReceiver();
+
+    await client.LastProcessor!.RaiseMessageAsync(
+      AsbTransportTestData.MessageArgs(
+        AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
+
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1);
+    await Assert.That(receiver.DeadLettered[0].Reason).IsEqualTo("PoisonQuarantine");
+    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(detector.Recorded).Count().IsEqualTo(1);
+  }
 
   [Test]
   public async Task ProcessMessage_AgedRedelivery_IsAcceptedAndReportedAsync() {
