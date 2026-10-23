@@ -44,7 +44,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -61,7 +61,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   private static InboxMessage _makeInbox(Guid msgId, Guid streamId, bool isEvent) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = msgId,

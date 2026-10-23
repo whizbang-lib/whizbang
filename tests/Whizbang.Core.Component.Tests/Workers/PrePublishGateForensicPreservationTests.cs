@@ -149,7 +149,7 @@ public class PrePublishGateForensicPreservationTests {
   private static OutboxBatchRow _row(Guid messageId, Guid streamId, int attempts, string? rowError, string? messageType = null) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };

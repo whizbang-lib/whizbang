@@ -248,7 +248,7 @@ public class OutboxPublishWorkerBranchCoverageTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = nullHops ? null! : hops,
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       },

@@ -84,7 +84,7 @@ public class PerspectiveDocumentSerializationTests {
     var document = _document();
 
     var stored = (string)converter.ConvertToProvider(document)!;
-    var root = JsonDocument.Parse(stored).RootElement;
+    var root = JsonElement.Parse(stored);
     await Assert.That(root.GetProperty("StartedAt").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_startedAt));
     await Assert.That(root.GetProperty("EndedAt").ValueKind).IsEqualTo(JsonValueKind.Number);
@@ -105,7 +105,7 @@ public class PerspectiveDocumentSerializationTests {
 
     var storedMetadata = (string)metadata.ConvertToProvider(
       new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _startedAt })!;
-    await Assert.That(JsonDocument.Parse(storedMetadata).RootElement.GetProperty("Timestamp").GetInt64())
+    await Assert.That(JsonElement.Parse(storedMetadata).GetProperty("Timestamp").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_startedAt));
 
     var storedScope = (string)scope.ConvertToProvider(new PerspectiveScope())!;
@@ -145,7 +145,7 @@ public class PerspectiveDocumentSerializationTests {
     var info = (JsonTypeInfo<OpaqueDocument>)PerspectiveDocumentSerialization.Options.GetTypeInfo(typeof(OpaqueDocument));
     var stored = JsonSerializer.Serialize(_document(), info);
 
-    await Assert.That(JsonDocument.Parse(stored).RootElement.GetProperty("StartedAt").ValueKind)
+    await Assert.That(JsonElement.Parse(stored).GetProperty("StartedAt").ValueKind)
       .IsEqualTo(JsonValueKind.Number)
       .Because("the registered context answers for the type, and the profile's converters apply to it");
   }

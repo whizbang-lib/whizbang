@@ -150,7 +150,7 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
 
   private static PerspectiveRowDestructionTarget _followerTarget(Guid id) => new(
     typeof(FollowerModel).FullName!, FOLLOWER_TABLE, id, null,
-    JsonDocument.Parse("{}").RootElement, "cascade");
+    JsonElement.Parse("{}"), "cascade");
 
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
       CascadeCoordinator coord, IPerspectiveRowDestructionGuard? guard = null) {

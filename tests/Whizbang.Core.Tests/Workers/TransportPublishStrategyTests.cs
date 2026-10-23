@@ -30,7 +30,7 @@ public class TransportPublishStrategyTests {
   private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement>(
       messageId: MessageId.From(messageId),
-      payload: JsonDocument.Parse("{}").RootElement,
+      payload: JsonElement.Parse("{}"),
       hops: []
     );
   }

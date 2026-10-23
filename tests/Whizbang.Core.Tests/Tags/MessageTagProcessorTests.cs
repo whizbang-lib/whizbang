@@ -567,7 +567,7 @@ public class MessageTagProcessorTests {
       Attribute = new SignalTagAttribute { Tag = "t" },
       Message = new TaggedTestMessage("1"),
       MessageType = typeof(TaggedTestMessage),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Changes = changes,
     }, default);
 

@@ -92,9 +92,7 @@ public static class ControlMessageTtl {
       }
     }
 
-    metadata[METADATA_KEY] = JsonDocument
-      .Parse(timeToLive.TotalSeconds.ToString("R", CultureInfo.InvariantCulture))
-      .RootElement.Clone();
+    metadata[METADATA_KEY] = JsonElement.Parse(timeToLive.TotalSeconds.ToString("R", CultureInfo.InvariantCulture));
 
     return destination with { Metadata = metadata };
   }

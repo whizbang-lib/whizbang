@@ -89,7 +89,7 @@ public class AsbReceiveDecisionMakerTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From((Guid)TrackedGuid.New()),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = new ServiceInstanceInfo {
@@ -464,7 +464,7 @@ public class AsbReceiveDecisionMakerTests {
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.From((Guid)TrackedGuid.New()),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [new MessageHop {
       Type = HopType.Current,
       ServiceInstance = new ServiceInstanceInfo {

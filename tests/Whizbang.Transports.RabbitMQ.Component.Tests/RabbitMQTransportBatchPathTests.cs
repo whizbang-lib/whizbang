@@ -209,12 +209,12 @@ public class RabbitMQTransportBatchPathTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
 
     var destinationMetadata = new Dictionary<string, JsonElement> {
-      ["shared"] = JsonDocument.Parse("\"from-destination\"").RootElement.Clone(),
-      ["overlap"] = JsonDocument.Parse("\"from-destination\"").RootElement.Clone()
+      ["shared"] = JsonElement.Parse("\"from-destination\""),
+      ["overlap"] = JsonElement.Parse("\"from-destination\"")
     };
     var perItemMetadata = new Dictionary<string, JsonElement> {
-      ["overlap"] = JsonDocument.Parse("\"from-item\"").RootElement.Clone(),
-      ["extra"] = JsonDocument.Parse("7").RootElement.Clone()
+      ["overlap"] = JsonElement.Parse("\"from-item\""),
+      ["extra"] = JsonElement.Parse("7")
     };
     var items = new List<BulkPublishItem> {
       _newItem(RabbitTestWire.NewEnvelope(), perItemMetadata: perItemMetadata)
@@ -810,7 +810,7 @@ internal static class RabbitTestWire {
     IReadOnlyDictionary<string, JsonElement>? extraMetadata = null
   ) {
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     if (extraMetadata != null) {
       foreach (var (key, value) in extraMetadata) {

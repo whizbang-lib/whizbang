@@ -62,7 +62,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
         SequenceNumber = 42,
         ExecutionStrategy = "SerialExecutor",
         Metadata = new Dictionary<string, JsonElement> {
-          ["k1"] = JsonDocument.Parse("\"v1\"").RootElement,
+          ["k1"] = JsonElement.Parse("\"v1\""),
         },
       },
       new MessageHop {
@@ -84,7 +84,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       Guid msgId, Guid streamId, List<MessageHop> hops, bool isEvent = false, string? destination = "orders-topic", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       hops) { Priority = priority };
     return new OutboxMessage {
       Priority = priority,
@@ -104,7 +104,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       Guid msgId, Guid streamId, List<MessageHop> hops, string messageType = "Test.X, Test", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       hops) { Priority = priority };
     return new InboxMessage {
       Priority = priority,

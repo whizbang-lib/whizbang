@@ -32,7 +32,7 @@ public class ReceivedOriginStampMonitorBranchCoverageTests {
     monitor.Record(new InboxMessage {
       MessageId = id,
       HandlerName = "OrderShippedHandler",
-      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(id), JsonDocument.Parse("{}").RootElement, []),
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(id), JsonElement.Parse("{}"), []),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.OrderShipped, MyApp]], Whizbang.Core",
       MessageType = "MyApp.Events.OrderShipped, MyApp",
       StreamId = id,

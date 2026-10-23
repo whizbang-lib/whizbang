@@ -480,7 +480,7 @@ public class PerspectiveRebuilderTests {
           AggregateType = "Test",
           Version = 1,
           EventType = "TestEvent",
-          EventData = JsonDocument.Parse("{}").RootElement,
+          EventData = JsonElement.Parse("{}"),
           Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
           CreatedAt = DateTime.UtcNow
         }).AsQueryable();

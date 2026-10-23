@@ -342,7 +342,7 @@ public class TransportConsumerWorkerBranchCoverageTests {
 
   private static MessageEnvelope<JsonElement> _jsonEnvelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
@@ -452,7 +452,7 @@ public class TransportConsumerWorkerBranchCoverageTests {
       var jsonEnv = new MessageEnvelope<JsonElement> {
         DispatchContext = envelope.DispatchContext,
         MessageId = envelope.MessageId,
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = envelope.Hops?.ToList() ?? [],
       };
       var aqn = typeof(BranchNullablePayload).AssemblyQualifiedName!;

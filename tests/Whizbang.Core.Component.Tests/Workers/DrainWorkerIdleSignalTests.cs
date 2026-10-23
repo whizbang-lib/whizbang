@@ -264,7 +264,7 @@ public class DrainWorkerIdleSignalTests {
   private static OutboxBatchRow _outboxRow(Guid messageId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -290,7 +290,7 @@ public class DrainWorkerIdleSignalTests {
   private static InboxBatchRow _inboxRow(Guid messageId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };

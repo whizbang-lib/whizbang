@@ -91,7 +91,7 @@ public class EventFlagsTransportTests {
   public async Task MessageEnvelope_Flags_CarriesNoRebroadcastAsync() {
     var env = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [],
       Flags = EventFlags.NoRebroadcast,
@@ -115,7 +115,7 @@ public class EventFlagsTransportTests {
     // or wrapping a fan-out child for cascade would silently drop its NoRebroadcast marker.
     var inner = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [],
       Flags = EventFlags.NoRebroadcast,
@@ -162,7 +162,7 @@ public class EventFlagsTransportTests {
 
   private static MessageEnvelope<JsonElement> _envelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     DispatchContext = new MessageDispatchContext {
       Mode = DispatchModes.Outbox,
       Source = MessageSource.Outbox,

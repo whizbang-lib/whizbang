@@ -176,7 +176,7 @@ public class OpenTelemetryMetricHookTests {
 
     // Test with different numeric formats
     const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":123.45}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 123.45m };
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -238,7 +238,7 @@ public class OpenTelemetryMetricHookTests {
 
     // Payload with string representation of number
     const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","AmountStr":"456.78"}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
       Message = new { OrderId = Guid.NewGuid(), AmountStr = "456.78" },
@@ -292,7 +292,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":100}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
       Message = new { OrderId = Guid.NewGuid(), Amount = 100m },
@@ -319,7 +319,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     const string json = """{"Id":"00000000-0000-0000-0000-000000000001","IsActive":true,"IsPremium":false}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
       Message = new { Id = Guid.NewGuid(), IsActive = true, IsPremium = false },
@@ -380,7 +380,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     const string json = """{"Id":"00000000-0000-0000-0000-000000000001","BadValue":"not-a-number"}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
       Message = new { Id = Guid.NewGuid(), BadValue = "not-a-number" },
@@ -407,7 +407,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     const string json = """{"Id":"00000000-0000-0000-0000-000000000001","TenantId":"payload-tenant"}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var scope = new ScopeContext {
       Scope = new PerspectiveScope { TenantId = "scope-tenant" },
       Roles = new HashSet<string>(),
@@ -442,7 +442,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     const string json = """{"StringVal":"hello","NumVal":42,"BoolVal":true,"ArrayVal":[1,2,3]}""";
-    var payload = JsonDocument.Parse(json).RootElement;
+    var payload = JsonElement.Parse(json);
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
       Message = new { StringVal = "hello", NumVal = 42, BoolVal = true, ArrayVal = new[] { 1, 2, 3 } },

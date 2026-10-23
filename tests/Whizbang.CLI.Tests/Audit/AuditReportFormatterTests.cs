@@ -103,7 +103,7 @@ public class AuditReportFormatterTests {
   public async Task FormatJson_CarriesEveryFieldOfEveryFindingAsync() {
     var report = new AuditReport([_core, _data], [_finding()], AdvisorySeverity.Moderate);
 
-    var json = JsonDocument.Parse(AuditReportFormatter.FormatJson(report)).RootElement;
+    var json = JsonElement.Parse(AuditReportFormatter.FormatJson(report));
 
     await Assert.That(json.GetProperty("packagesChecked").GetInt32()).IsEqualTo(2);
     await Assert.That(json.GetProperty("failOn").GetString()).IsEqualTo("moderate");
@@ -127,7 +127,7 @@ public class AuditReportFormatterTests {
     // missing CVE apart from a renamed field.
     var report = new AuditReport([_core], [_finding(cve: null, summary: null, fixedVersion: null)], FailOn: null);
 
-    var json = JsonDocument.Parse(AuditReportFormatter.FormatJson(report)).RootElement;
+    var json = JsonElement.Parse(AuditReportFormatter.FormatJson(report));
 
     await Assert.That(json.GetProperty("failOn").GetString()).IsEqualTo("none");
     await Assert.That(json.GetProperty("fails").GetBoolean()).IsFalse();

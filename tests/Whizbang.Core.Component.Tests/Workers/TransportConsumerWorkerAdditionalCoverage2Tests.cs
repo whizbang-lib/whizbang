@@ -171,7 +171,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
 
     // Envelope that returns JsonElement as payload from the object property but is not IMessageEnvelope<JsonElement>
-    var jsonPayload = JsonDocument.Parse("{}").RootElement;
+    var jsonPayload = JsonElement.Parse("{}");
     var envelope = new Cov2JsonElementPayloadEnvelope(messageId, jsonPayload);
 
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -393,7 +393,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [new MessageHop {
         Type = HopType.Current,
@@ -871,7 +871,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
@@ -1071,7 +1071,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
         MessageId = expectedMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(expectedMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
           Hops = [
             new MessageHop {
@@ -1155,7 +1155,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {
       SerializeCallCount++;
-      var jsonPayload = JsonDocument.Parse("{}").RootElement;
+      var jsonPayload = JsonElement.Parse("{}");
       var jsonEnvelope = new MessageEnvelope<JsonElement> {
         MessageId = envelope.MessageId,
         Payload = jsonPayload,

@@ -31,7 +31,7 @@ public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
   private static InboxMessage _makeInbox(Guid messageId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = messageId,

@@ -29,7 +29,7 @@ public class NonDisposingStrategyAdapterTests {
 
   private static MessageEnvelope<JsonElement> _envelope(Guid id) => new() {
     MessageId = MessageId.From(id),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
   };

@@ -206,7 +206,7 @@ public sealed class RabbitMqHostRegistrationIntegrationTests {
 
   private static TransportDestination _destination(string exchange, string subscriber) =>
     new(exchange, "#", new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"{subscriber}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"{subscriber}\"")
     });
 
   /// <summary>

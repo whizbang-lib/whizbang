@@ -123,7 +123,7 @@ public class InboxDispatchWorkerParallelismTests {
     public int CallCount;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) { Interlocked.Increment(ref CallCount); return JsonDocument.Parse(jsonBytes).RootElement; }
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) { Interlocked.Increment(ref CallCount); return JsonElement.Parse(jsonBytes); }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) { Interlocked.Increment(ref CallCount); return jsonElement; }
   }
 
@@ -132,7 +132,7 @@ public class InboxDispatchWorkerParallelismTests {
       MessageId = messageId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },

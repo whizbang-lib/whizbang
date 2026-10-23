@@ -506,6 +506,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   perspective table the pass had already applied, so `wh_schema_migrations` said they were never applied. The schema
   itself was complete and every hash was right, so nothing re-ran; the ledger was wrong. Only the beginning of a pass
   records skips now.
+- **Parsed JSON values no longer strand pooled buffers (#1679).** Twenty-three places in the libraries built a
+  `JsonElement` with `JsonDocument.Parse(json).RootElement` (outbox and transport metadata, body offload claims,
+  control-message lifetimes, audit payloads, the Dapper envelope adapter and the EF Core orphaned-event fallback)
+  and never disposed the document, so the buffers it rented from the shared pool were never returned, on paths that
+  run per message. They now use `JsonElement.Parse`, whose element owns its memory; every returned element keeps the
+  same content and stays valid after the call. Generated message-tag registries with `ExtraJson` now dispose the
+  document they merge from. A repository analyzer (WHZ0004) fails the build on the pattern, so it cannot return while
+  the SDK's own rule, CA2026, ships only with SDK 11; `.editorconfig` raises CA2026 to an error for that SDK.
 - **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
   burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
   reach the row first. The framework answers that by folding the earlier event onto the row the other worker

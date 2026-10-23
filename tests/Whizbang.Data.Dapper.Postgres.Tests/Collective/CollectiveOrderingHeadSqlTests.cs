@@ -41,7 +41,7 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
       MessageId = MessageId.From(id),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
       Hops = [],
-      Payload = JsonDocument.Parse(payload).RootElement,
+      Payload = JsonElement.Parse(payload),
     },
     Metadata = new EnvelopeMetadata { MessageId = MessageId.From(id), Hops = [] },
     EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,

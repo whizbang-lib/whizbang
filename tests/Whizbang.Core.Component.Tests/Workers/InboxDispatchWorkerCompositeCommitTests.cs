@@ -125,7 +125,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       var jsonEnv = new MessageEnvelope<JsonElement> {
         DispatchContext = envelope.DispatchContext,
         MessageId = envelope.MessageId,
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = envelope.Hops?.ToList() ?? [],
       };
       return new SerializedEnvelope(jsonEnv, $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core", aqn);
@@ -156,7 +156,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },

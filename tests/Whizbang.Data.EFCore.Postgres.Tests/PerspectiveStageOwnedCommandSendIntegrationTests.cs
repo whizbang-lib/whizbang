@@ -355,7 +355,7 @@ public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
         MessageId = MessageId.From(eventId),
         DispatchContext = dispatchContext,
         Hops = hops,
-        Payload = JsonDocument.Parse(payloadJson).RootElement
+        Payload = JsonElement.Parse(payloadJson)
       };
       var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
       // The metadata column is where the drain fetch reads hops back from, so the foreign hop is

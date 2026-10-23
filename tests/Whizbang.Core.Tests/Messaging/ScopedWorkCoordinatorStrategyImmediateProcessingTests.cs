@@ -257,7 +257,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");  // Test payload
     object IMessageEnvelope.Payload => Payload;  // Explicit interface implementation
 
     public void AddHop(MessageHop hop) {

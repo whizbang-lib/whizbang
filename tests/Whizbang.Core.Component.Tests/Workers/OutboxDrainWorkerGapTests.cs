@@ -345,7 +345,7 @@ public class OutboxDrainWorkerGapTests {
       int priority = 0, int storedEnvelopePriority = 0, string? target = null, bool stateOnly = false) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
       Priority = storedEnvelopePriority,
@@ -1215,7 +1215,7 @@ public class OutboxDrainWorkerGapTests {
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -1269,7 +1269,7 @@ public class OutboxDrainWorkerGapTests {
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };

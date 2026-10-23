@@ -87,7 +87,7 @@ public class PersistenceProfileConverterReachProbeTests {
     var info = (JsonTypeInfo<ReachModel>)options.GetTypeInfo(typeof(ReachModel));
 
     var json = JsonSerializer.Serialize(_model(), info);
-    var doc = JsonDocument.Parse(json).RootElement;
+    var doc = JsonElement.Parse(json);
 
     await Assert.That(doc.GetProperty("OccurredAt").ValueKind).IsEqualTo(JsonValueKind.Number);
     await Assert.That(doc.GetProperty("RecordedAt").ValueKind).IsEqualTo(JsonValueKind.Number)
@@ -108,7 +108,7 @@ public class PersistenceProfileConverterReachProbeTests {
 
     var json = JsonSerializer.Serialize(
       new PerspectiveMetadata { EventType = "probe", EventId = "1", Timestamp = _occurredAt }, info);
-    var doc = JsonDocument.Parse(json).RootElement;
+    var doc = JsonElement.Parse(json);
 
     await Assert.That(doc.GetProperty("Timestamp").ValueKind).IsEqualTo(JsonValueKind.Number);
   }

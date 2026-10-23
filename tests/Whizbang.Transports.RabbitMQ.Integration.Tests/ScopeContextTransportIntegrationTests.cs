@@ -290,7 +290,7 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
   private static TransportDestination _createUniqueDestination() {
     var address = $"scope-test-{Guid.NewGuid():N}";
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"scope-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"scope-sub-{Guid.NewGuid():N}\"")
     };
     return new TransportDestination(address, null, metadata);
   }

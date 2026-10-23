@@ -12,6 +12,11 @@
     <!-- Release tracking files are for shipped analyzer packages; these rules never ship. -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
+    <!-- Directory.Build.props turns the AOT analyzers on before this file sets netstandard2.0, where they are
+         unsupported (NETSDK1210). An analyzer runs inside the compiler, never in a trimmed app. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
   </PropertyGroup>
 
   <ItemGroup>

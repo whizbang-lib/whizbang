@@ -374,7 +374,7 @@ public class AzureServiceBusTransportUnitTests {
     var envelope = _createTestEnvelope();
     var streamId = Guid.NewGuid();
     var metadata = new Dictionary<string, System.Text.Json.JsonElement> {
-      ["StreamId"] = System.Text.Json.JsonDocument.Parse($"\"{streamId}\"").RootElement
+      ["StreamId"] = System.Text.Json.JsonElement.Parse($"\"{streamId}\"")
     };
     var destination = new TransportDestination("fifo-topic") { Metadata = metadata };
 
@@ -400,7 +400,7 @@ public class AzureServiceBusTransportUnitTests {
 
     var envelope = _createTestEnvelope();
     var metadata = new Dictionary<string, System.Text.Json.JsonElement> {
-      ["StreamId"] = System.Text.Json.JsonDocument.Parse("\"\"").RootElement
+      ["StreamId"] = System.Text.Json.JsonElement.Parse("\"\"")
     };
     var destination = new TransportDestination("fifo-topic") { Metadata = metadata };
 

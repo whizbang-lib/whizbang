@@ -40,7 +40,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId, string? destination = "test-dest") {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,

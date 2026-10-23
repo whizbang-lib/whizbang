@@ -31,7 +31,7 @@ public class ReceivedOriginStampMonitorTests {
     return new InboxMessage {
       MessageId = id,
       HandlerName = "OrderShippedHandler",
-      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(id), JsonDocument.Parse("{}").RootElement, []),
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(id), JsonElement.Parse("{}"), []),
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType}]], Whizbang.Core",
       MessageType = messageType,
       StreamId = id,
@@ -163,7 +163,7 @@ public class ReceivedOriginStampMonitorTests {
   [Test]
   public async Task TheRowBuilder_RecordsEveryReceivedRowAsync() {
     var (monitor, logger, time) = _create();
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.New(), JsonDocument.Parse("{}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.New(), JsonElement.Parse("{}"), []);
     var received = new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, envelope,
       "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.OrderShipped, MyApp]], Whizbang.Core",
       "MyApp.Events.OrderShipped, MyApp", IsEvent: true);

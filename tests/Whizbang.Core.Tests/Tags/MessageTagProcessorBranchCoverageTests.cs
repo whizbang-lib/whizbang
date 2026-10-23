@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Tags;
 public class MessageTagProcessorBranchCoverageTests {
 
   private const string TAG = "branch-custom-tag";
-  private static readonly JsonElement _modifiedPayload = JsonDocument.Parse("""{"modified":true}""").RootElement.Clone();
+  private static readonly JsonElement _modifiedPayload = JsonElement.Parse("""{"modified":true}""");
 
   [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
   private sealed class BranchCustomTagAttribute : MessageTagAttribute;

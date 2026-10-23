@@ -41,7 +41,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
         Type messageType, JsonElement payload, IScopeContext? scope, LifecycleStage stage) => null;
 
     public ValueTask<JsonElement?> TryDispatchAsync(object hookInstance, object context, Type attributeType, CancellationToken ct) =>
-      ValueTask.FromResult<JsonElement?>(JsonDocument.Parse("""{"handled":true}""").RootElement);
+      ValueTask.FromResult<JsonElement?>(JsonElement.Parse("""{"handled":true}"""));
   }
 
   [After(Test)]
@@ -74,7 +74,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
 
     var result = MessageTagHookDispatcherRegistry.TryCreateContext(
       typeof(SignalTagAttribute), new SignalTagAttribute { Tag = "t" }, new object(),
-      typeof(object), JsonDocument.Parse("{}").RootElement, scope: null, LifecycleStage.ImmediateDetached);
+      typeof(object), JsonElement.Parse("{}"), scope: null, LifecycleStage.ImmediateDetached);
 
     await Assert.That(result).IsNull()
       .Because("every registered dispatcher declining must fall through to null instead of stopping early on a false positive");

@@ -224,7 +224,7 @@ public class TransportPublishStrategyBranchCoverageTests {
     var envelope = new MessageEnvelope<JsonElement> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":\"hello\"}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":\"hello\"}"),
       Hops = [
         new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }
       ]
@@ -323,7 +323,7 @@ public class TransportPublishStrategyBranchCoverageTests {
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) =>
       Task.FromResult(new PostSerializeResult {
         AdditionalDestinationMetadata = new Dictionary<string, JsonElement> {
-          [key] = JsonDocument.Parse($"\"{value}\"").RootElement
+          [key] = JsonElement.Parse($"\"{value}\"")
         }
       });
   }

@@ -159,15 +159,15 @@ public class RabbitMQTransportFailurePathTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["str"] = JsonDocument.Parse("\"text\"").RootElement.Clone(),
-      ["int"] = JsonDocument.Parse("42").RootElement.Clone(),
-      ["long"] = JsonDocument.Parse("9999999999").RootElement.Clone(),
-      ["dbl"] = JsonDocument.Parse("1.5").RootElement.Clone(),
-      ["yes"] = JsonDocument.Parse("true").RootElement.Clone(),
-      ["no"] = JsonDocument.Parse("false").RootElement.Clone(),
-      ["nil"] = JsonDocument.Parse("null").RootElement.Clone(),
-      ["arr"] = JsonDocument.Parse("[1,\"two\",true]").RootElement.Clone(),
-      ["obj"] = JsonDocument.Parse("{\"k\":\"v\",\"n\":3}").RootElement.Clone()
+      ["str"] = JsonElement.Parse("\"text\""),
+      ["int"] = JsonElement.Parse("42"),
+      ["long"] = JsonElement.Parse("9999999999"),
+      ["dbl"] = JsonElement.Parse("1.5"),
+      ["yes"] = JsonElement.Parse("true"),
+      ["no"] = JsonElement.Parse("false"),
+      ["nil"] = JsonElement.Parse("null"),
+      ["arr"] = JsonElement.Parse("[1,\"two\",true]"),
+      ["obj"] = JsonElement.Parse("{\"k\":\"v\",\"n\":3}")
     };
 
     await transport.PublishAsync(
@@ -517,7 +517,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_RoutingPatternsArrayMetadata_BindsEachPatternAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPatterns"] = JsonDocument.Parse("[\"orders.*\",\"payments.#\"]").RootElement.Clone()
+      ["RoutingPatterns"] = JsonElement.Parse("[\"orders.*\",\"payments.#\"]")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(extraMetadata: extraMetadata));
@@ -534,7 +534,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_SingularRoutingPatternMetadata_BindsThatPatternAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPattern"] = JsonDocument.Parse("\"orders.created\"").RootElement.Clone()
+      ["RoutingPattern"] = JsonElement.Parse("\"orders.created\"")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(extraMetadata: extraMetadata));
@@ -564,7 +564,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_EmptyRoutingPatternsArray_FallsBackToMatchAllAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPatterns"] = JsonDocument.Parse("[]").RootElement.Clone()
+      ["RoutingPatterns"] = JsonElement.Parse("[]")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(routingKey: "#", extraMetadata: extraMetadata));

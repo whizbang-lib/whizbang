@@ -108,7 +108,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -183,7 +183,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     // Envelope with empty Hops (no metadata at all)
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -257,7 +257,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -587,7 +587,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1023,7 +1023,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1344,7 +1344,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     // Hop with null metadata (no Metadata property set)
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1435,7 +1435,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1708,7 +1708,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         MessageId = _expectedMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(_expectedMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,
