@@ -257,6 +257,26 @@ public class ConfigurationUtilitiesTests {
   }
 
   [Test]
+  [Arguments("false", true)]
+  [Arguments("FALSE", true)]
+  [Arguments(" false ", true)]
+  [Arguments("true", false)]
+  [Arguments("", false)]
+  [Arguments("no", false)]
+  public async Task IsTurnedOff_OnlyFalseTurnsASwitchOffAsync(string raw, bool expected) {
+    var options = new StubOptions(new Dictionary<string, string> { ["build_property.Switch"] = raw });
+
+    await Assert.That(ConfigurationUtilities.IsTurnedOff(options, "build_property.Switch")).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task IsTurnedOff_NotSet_IsOnAsync() {
+    var options = new StubOptions([]);
+
+    await Assert.That(ConfigurationUtilities.IsTurnedOff(options, "build_property.Switch")).IsFalse();
+  }
+
+  [Test]
   [Arguments("true", true)]
   [Arguments("TRUE", true)]
   [Arguments(" true ", true)]

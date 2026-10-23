@@ -26,7 +26,7 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     // Discover types with [CommandEndpoint] attribute that have RestRoute set
     // Syntactic filtering: only look at classes with attributes
     var mutations = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => _isPotentialCommandEndpoint(node),
+        predicate: static (node, _) => IsCommandEndpointCandidate(node),
         transform: static (ctx, ct) => _extractMutationInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -40,7 +40,9 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   /// <summary>
   /// Syntactic predicate: quickly filter to types that might have [CommandEndpoint].
   /// </summary>
-  private static bool _isPotentialCommandEndpoint(SyntaxNode node) {
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsCommandEndpointCandidate(SyntaxNode node) {
     // Look for classes with at least one attribute
     return node is ClassDeclarationSyntax { AttributeLists.Count: > 0 };
   }

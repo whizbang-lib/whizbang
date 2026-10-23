@@ -119,3 +119,21 @@ Describe 'Get-ReviewChecks.ps1' {
     Get-Content $outputs | Should -Contain "findings=$count"
   }
 }
+
+Describe 'the Gate · Review checks job in ci.yml' {
+  BeforeAll {
+    $ci = Get-Content -Raw (Join-Path $Root '.github' 'workflows' 'ci.yml')
+    $script:Job = [regex]::Match($ci, '(?ms)^  review-checks:\s*$.*?(?=^  [\w-]+:\s*$)').Value
+  }
+
+  # Without issues: read the job's token reads a pull request's labels as an empty list rather than
+  # failing, so docs:not-needed never reached the rules and pr.docs-link stayed open (#1659).
+  It 'can read the pull request''s labels' {
+    $Job | Should -Not -BeNullOrEmpty -Because 'the job must be found for this check to mean anything'
+    $Job | Should -Match '(?m)^      issues: read\b'
+  }
+
+  It 'logs the labels it read, so an empty read is visible' {
+    $Job | Should -Match 'echo "Labels read: \$PR_LABELS"'
+  }
+}

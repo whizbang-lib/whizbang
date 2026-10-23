@@ -63,6 +63,23 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private const string CLOSE_BRACE_ONLY_INDENT_10 = "          }";
   private const string PERSPECTIVE_TABLE_PREFIX = "wh_per_";
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a parameter typed by the generic name ILensQuery with two or more type
+  /// arguments. The transform takes only that interface, and C# has no generic alias that could name it otherwise.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsMultiLensQueryParameterCandidate(SyntaxNode node) =>
+      node is ParameterSyntax { Type: GenericNameSyntax { Identifier.ValueText: "ILensQuery", TypeArgumentList.Arguments.Count: >= 2 } };
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Generate marker file to confirm generator is running
     context.RegisterPostInitializationOutput(ctx => {
@@ -79,7 +96,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Discover all perspective classes that implement IPerspectiveFor<TModel>
     // Phase 1: Extract candidates (config-independent data only)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveModelCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -90,20 +107,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Discover DbContext classes
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractDbContextInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover multi-model ILensQuery<T1, T2, ...> constructor parameters
     var multiLensQueries = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ParameterSyntax { Type: GenericNameSyntax { TypeArgumentList.Arguments.Count: >= 2 } },
+        predicate: static (node, _) => IsMultiLensQueryParameterCandidate(node),
         transform: static (ctx, ct) => _extractMultiLensQueryInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover the app's custom stored-form migrations (IStoredFormMigration<TModel>)
     var storedFormMigrations = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractStoredFormMigration(ctx, ct)
     ).Where(static info => info is not null);
 

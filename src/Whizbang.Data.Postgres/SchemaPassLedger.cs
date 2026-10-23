@@ -99,7 +99,7 @@ public static class SchemaPassLedger {
     var outstanding = rows.Where(r => IsOutstanding(r.Value.Status)).Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
     if (rows.Any(r => IsOutstanding(r.Value.Status) && r.Value.Fingerprint == fingerprint)) {
       // A pass of this build is part way through; its rows already say what is owed.
-      return new SchemaPassSteps([], outstanding);
+      return new SchemaPassSteps([], outstanding) { Continues = true };
     }
 
     var toMark = needed.Union(outstanding, StringComparer.Ordinal).ToList();
@@ -118,4 +118,11 @@ public sealed class SchemaPassSteps(IReadOnlyList<string> toMark, IReadOnlySet<s
 
   /// <summary>The steps the pass runs.</summary>
   public IReadOnlySet<string> ToRun { get; } = toRun;
+
+  /// <summary>
+  /// Whether this continues a pass of this build part way through rather than beginning one. A continuation records
+  /// nothing about the files and tables it will not run: the pass's beginning recorded the skips, and every one it will
+  /// not run now that the beginning did not skip is one the pass has since applied, whose row says so (#1687).
+  /// </summary>
+  public bool Continues { get; init; }
 }

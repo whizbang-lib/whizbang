@@ -38,23 +38,47 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
+  /// <summary>
+  /// Syntax predicate: admits a struct declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedStructCandidate(SyntaxNode node) =>
+      node is StructDeclarationSyntax { AttributeLists.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a property declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedPropertyCandidate(SyntaxNode node) =>
+      node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a parameter with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedParameterCandidate(SyntaxNode node) =>
+      node is ParameterSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Phase 2.1: Type-based discovery - [WhizbangId] on struct declarations
     var typeBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is StructDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedStructCandidate(node),
         transform: static (ctx, ct) => _extractTypeBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.2: Property-based discovery - [WhizbangId] on property types
     var propertyBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedPropertyCandidate(node),
         transform: static (ctx, ct) => _extractPropertyBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.3: Parameter-based discovery - [WhizbangId] on primary constructor parameters
     var parameterBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ParameterSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedParameterCandidate(node),
         transform: static (ctx, ct) => _extractParameterBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
