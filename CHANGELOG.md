@@ -497,6 +497,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are stripped by default and tables keep the names they had on 0.2623 again. A project that sets the property to
   `false` still keeps the suffix, and a set value is trimmed before it is read. The suffix list and identifier
   length properties already ignored a blank value and behave as before.
+- **A blank configuration value no longer changes runtime behavior (#1660 sweep).** A key that is present with an
+  empty or whitespace value (an appsettings placeholder, or an environment variable set to nothing) now behaves as
+  if it were absent in four places that used to act on it. A blank `Whizbang:ServiceName` no longer becomes the
+  service name. A blank `ConnectionStrings:db` (or its `-direct` and `-init` variants) no longer counts as
+  configured, so a service still on its legacy connection string name keeps using it. A blank `-init` connection
+  string no longer stops startup: schema initialization runs on the main connection, as it does when the key is
+  absent, and a blank main connection string is reported as not found. A blank `Whizbang:Scope` key no longer
+  replaces a GraphQL scope claim-type list with a name that never matches, which silently dropped the tenant, user,
+  roles or permissions from every request. It now leaves the default, or the value set in code.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
