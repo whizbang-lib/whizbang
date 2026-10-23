@@ -61,6 +61,7 @@
     <Project Path="src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <Project Path="src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
     <Project Path="src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
     <Project Path="src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
@@ -111,6 +112,7 @@
     <Project Path="tests/Whizbang.Testing.Tests/Whizbang.Testing.Tests.csproj" />
     <Project Path="tests/Whizbang.Testing.Component.Tests/Whizbang.Testing.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Testing.Integration.Tests/Whizbang.Testing.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.TestAnalyzers.Tests/Whizbang.TestAnalyzers.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Component.Tests/Whizbang.Transports.RabbitMQ.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
