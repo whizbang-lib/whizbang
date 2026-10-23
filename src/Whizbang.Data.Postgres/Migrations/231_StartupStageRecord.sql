@@ -73,7 +73,7 @@ SELECT __SCHEMA__.drop_all_overloads('wh_record_startup_stage');
 -- <docs>operations/startup/startup-status#startup-stages</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs:Record_ARegisteredInstance_WritesTheStageMessageTimeAndPhaseAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs:Record_AnInstanceWithNoRow_ReportsNothingWrittenAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs:Record_ProgressWithinAStage_KeepsWhenItWasEnteredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs:Record_ProgressWithinAStage_KeepsWhenItWasEntered_AndANewStageStartsItsOwnAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_record_startup_stage(
   p_instance_id UUID,
   p_stage SMALLINT,

@@ -64,7 +64,7 @@ public class SchemaInitializationStagesTests {
 
     await Assert.That(stages.Calls).IsEquivalentTo([
       "Skip Elect: no election could be held, so this instance migrates under the schema lock",
-   ]);
+    ]);
   }
 
   [Test]
@@ -76,7 +76,7 @@ public class SchemaInitializationStagesTests {
 
     await Assert.That(stages.Calls).IsEquivalentTo([
       "Skip Elect: no election could be held, so this instance migrates under the schema lock",
-   ]);
+    ]);
   }
 
   [Test]
@@ -103,6 +103,15 @@ public class SchemaInitializationStagesTests {
   public async Task MigrationNotNeeded_BeforeMigrate_SkipsItAsync() {
     var (stages, services) = _build();
     stages.Current = new StartupStageSnapshot(StartupStage.Elect, "this instance migrates the schema", false, DateTimeOffset.UnixEpoch);
+
+    await SchemaInitializationStages.MigrationNotNeededAsync(services, "the schema is already current", CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo(["Skip Migrate: the schema is already current"]);
+  }
+
+  [Test]
+  public async Task MigrationNotNeeded_BeforeAnyStage_SkipsItAsync() {
+    var (stages, services) = _build();
 
     await SchemaInitializationStages.MigrationNotNeededAsync(services, "the schema is already current", CancellationToken.None);
 

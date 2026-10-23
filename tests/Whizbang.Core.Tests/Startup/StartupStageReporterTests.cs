@@ -67,7 +67,7 @@ public class StartupStageReporterTests {
       "Stage 5 of 7: Coordinate - in Coordinate",
       "Stage 6 of 7: Accept commands - in AcceptingCommands",
       "Stage 7 of 7: Running - in Running",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(observer.Changes.Select(c => c.Snapshot.Stage)).IsEquivalentTo(
       StartupStages.Startup, TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(observer.Changes.Select(c => c.Snapshot.EnteredAt)).IsEquivalentTo(
@@ -311,6 +311,16 @@ public class StartupStageReporterTests {
     await Assert.That(async () => await reporter.EnterAsync((StartupStage)15, "x"))
       .Throws<ArgumentOutOfRangeException>();
     await Assert.That(reporter.Current).IsNull();
+  }
+
+  [Test]
+  public async Task WithoutAClock_TheSystemClockStampsTheStageAsync() {
+    var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var reporter = new StartupStageReporter(scopes, null, [], new FakeLogger<StartupStageReporter>());
+
+    await reporter.EnterAsync(StartupStage.Preflight, "host starting");
+
+    await Assert.That(reporter.Current!.EnteredAt).IsNotEqualTo(default(DateTimeOffset));
   }
 
   [Test]

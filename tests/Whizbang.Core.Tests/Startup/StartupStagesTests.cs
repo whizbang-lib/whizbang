@@ -30,7 +30,7 @@ public class StartupStagesTests {
     await Assert.That(StartupStages.Startup).IsEquivalentTo([
       StartupStage.Preflight, StartupStage.Elect, StartupStage.Migrate, StartupStage.Converge,
       StartupStage.Coordinate, StartupStage.AcceptingCommands, StartupStage.Running,
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
@@ -56,8 +56,19 @@ public class StartupStagesTests {
   }
 
   [Test]
-  public async Task AnUndefinedValue_HasNoName_AndNoPhaseAsync() {
-    var undefined = (StartupStage)15;
+  [Arguments((short)-1)]
+  [Arguments((short)0)]
+  [Arguments((short)15)]
+  [Arguments((short)25)]
+  [Arguments((short)35)]
+  [Arguments((short)45)]
+  [Arguments((short)55)]
+  [Arguments((short)65)]
+  [Arguments((short)75)]
+  [Arguments((short)85)]
+  [Arguments((short)95)]
+  public async Task AnUndefinedValue_HasNoName_AndNoPhaseAsync(short value) {
+    var undefined = (StartupStage)value;
 
     await Assert.That(() => StartupStages.NameOf(undefined)).Throws<ArgumentOutOfRangeException>();
     await Assert.That(() => StartupStages.LifecyclePhaseOf(undefined)).Throws<ArgumentOutOfRangeException>();

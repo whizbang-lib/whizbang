@@ -53,7 +53,7 @@ public class StartupStageSqlTests : EFCoreTestBase {
       "startup_stage smallint",
       "startup_stage_entered_at timestamp with time zone",
       "startup_stage_message text",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
   }
 
   [Test]
@@ -209,7 +209,7 @@ public class StartupStageSqlTests : EFCoreTestBase {
     await Assert.That(rows[migrating]).IsEqualTo("30|Migrate|3|7|migration 42 of 231|True|Migrating|False");
     await Assert.That(rows[draining]).IsEqualTo("80|Draining||7|host stopping|True|Stopping|False")
       .Because("a shutdown stage has no position among the seven startup stages");
-    await Assert.That(rows[older]).IsEqualTo("||||7||False|Running|True")
+    await Assert.That(rows[older]).IsEqualTo("|||7||False|Running|True")
       .Because("an older build records no stage, and is listed with the phase it records");
   }
 

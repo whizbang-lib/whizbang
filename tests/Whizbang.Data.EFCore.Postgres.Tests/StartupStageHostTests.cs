@@ -81,12 +81,13 @@ public sealed partial class StartupStageHostTests {
     await host.StartAsync(cancellationToken);
     await watch.Reached(StartupStage.Running).WaitAsync(_deadline, cancellationToken);
 
-    var transitions = log.Lines.Select(l => _stagePrefix().Match(l).Value).Distinct().ToList();
+    var transitions = log.Lines.Select(l => _stagePrefix().Match(l).Groups[1].Value).Distinct().ToList();
     await Assert.That(transitions).IsEquivalentTo([
       "Information Stage 1 of 7: Preflight", "Information Stage 2 of 7: Elect", "Information Stage 3 of 7: Migrate",
       "Information Stage 4 of 7: Converge", "Information Stage 5 of 7: Coordinate",
       "Information Stage 6 of 7: Accept commands", "Information Stage 7 of 7: Running",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching).Because("each stage is entered once, in order, and logged as it is");
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because($"each stage is entered once, in order, and logged as it is; logged: {string.Join(" | ", log.Lines)}");
     await Assert.That(log.Lines).Contains("Information Stage 1 of 7: Preflight - host starting");
     await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - joining the registry and voting for the migrator duty");
     await Assert.That(log.Lines).Contains("Information Stage 2 of 7: Elect - this instance migrates the schema");
@@ -106,10 +107,10 @@ public sealed partial class StartupStageHostTests {
       "recomputing partitions before the schema-ready gate opens",
       "the schema is ready; commands are accepted while the read models catch up",
       "reads and writes are served",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(recorded.Select(r => r.Phase)).IsEquivalentTo([
       "Migrating", "Migrating", "AcceptingCommands", "Running",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     await Assert.That(recorded.Zip(recorded.Skip(1)).All(p => p.First.EnteredAt <= p.Second.EnteredAt)).IsTrue()
       .Because("each stage is entered after the one before it");
     await Assert.That(recorded.Select(r => r.Eligible)).IsEquivalentTo([false, false, true, true],
@@ -160,7 +161,7 @@ public sealed partial class StartupStageHostTests {
       "50 recomputing partitions before the schema-ready gate opens",
       "60 the schema is ready; commands are accepted while the read models catch up",
       "70 reads and writes are served",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("Elect, held until the election registered the row, is written at registration; every stage after it as it is entered");
     await Assert.That(recorded[0].EnteredAt).IsEqualTo(recorded[1].EnteredAt)
       .Because("the election's outcome is progress within Elect, not a new stage");
@@ -187,7 +188,7 @@ public sealed partial class StartupStageHostTests {
     await Assert.That(log.Lines.TakeLast(2)).IsEquivalentTo([
       "Information Shutdown stage: Draining - host stopping, finishing in-flight work",
       "Information Shutdown stage: Stopped - host stopped",
-   ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     var draining = watch.Recorded.Single(r => r.Stage == 80);
     await Assert.That(draining.Message).IsEqualTo("host stopping, finishing in-flight work");
     await Assert.That(draining.Eligible).IsFalse()
@@ -197,7 +198,7 @@ public sealed partial class StartupStageHostTests {
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  [GeneratedRegex(@"^Information (Stage \d of 7: [A-Za-z]+?|Shutdown stage: \w+)(?= - )")]
+  [GeneratedRegex(@"^(Information (?:Stage \d of 7|Shutdown stage): [A-Za-z]+(?: [A-Za-z]+)*) - ")]
   private static partial Regex _stagePrefix();
 
   [GeneratedRegex(@"^Information Stage 3 of 7: Migrate - \d+ migration steps? to apply$")]
