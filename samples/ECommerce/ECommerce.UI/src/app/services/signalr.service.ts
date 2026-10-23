@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { Injectable } from '@angular/core';
 import { Observable, Subject, from } from 'rxjs';
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';

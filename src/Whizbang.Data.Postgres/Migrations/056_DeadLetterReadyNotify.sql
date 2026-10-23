@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 056_DeadLetterReadyNotify.sql
 -- Date: 2026-06-10
 -- Description: Fires a 'deadletter' NOTIFY on every active instance's channel when a

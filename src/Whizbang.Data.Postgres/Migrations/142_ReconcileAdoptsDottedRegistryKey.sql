@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 142_ReconcileAdoptsDottedRegistryKey
 -- Date: 2026-09-07
 -- Description: reconcile_perspective_registry adopts a row keyed in the previous display-string form

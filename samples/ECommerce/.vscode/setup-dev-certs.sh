@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 # Setup .NET development certificates for HTTPS
 
 echo "Checking .NET development certificates..."

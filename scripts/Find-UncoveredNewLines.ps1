@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
     Lists every library line a branch adds or changes that no test executed, and every added line with a

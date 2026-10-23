@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 176_StoredFormMigrations
 -- Date: 2026-09-30
 -- Description: The journal of app-declared stored-form migrations (#986).

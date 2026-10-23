@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 108_InstanceCapabilities.sql
 -- Date: 2026-08-16
 -- Description: Recorded capability holdings. A capability (an exclusive one is a duty — migrator,

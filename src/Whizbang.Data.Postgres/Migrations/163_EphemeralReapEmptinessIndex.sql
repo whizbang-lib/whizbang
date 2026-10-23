@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 163_EphemeralReapEmptinessIndex.sql
 -- Date: 2026-09-18
 -- Description: The ephemeral reap's two candidate scans answer from an index instead of scanning

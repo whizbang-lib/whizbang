@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 097_PacedRepairDrain.sql
 --
 -- The paced-repair-drain substrate (discovery/dispatch separation): discovery stamps the

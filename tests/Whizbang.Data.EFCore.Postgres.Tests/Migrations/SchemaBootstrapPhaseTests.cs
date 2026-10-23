@@ -586,6 +586,123 @@ public class SchemaBootstrapPhaseTests {
       .IsEqualTo(1L);
   }
 
+  /// <summary>The bootstrap scripts with a marker whose legacy closure hash differs from its normalized one.</summary>
+  private static List<(string Name, string Sql)> _scriptsWithMarker() {
+    var scripts = _bootstrapScripts();
+    scripts.Add(("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); -- a comment on a statement's line\n"
+      + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"));
+    return scripts;
+  }
+
+  /// <summary>Stands a database where an earlier release recorded <paramref name="scripts"/> under the legacy hash.</summary>
+  private async Task _recordUnderTheLegacyHashAsync(List<(string Name, string Sql)> scripts, CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    await using var db = _connect();
+    await db.OpenAsync(cancellationToken);
+    await using var legacy = new NpgsqlCommand("UPDATE wh_bootstrap_closure SET closure_hash = $1", db);
+    legacy.Parameters.AddWithValue(SchemaBootstrapPhase.LegacyClosureHash(scripts));
+    await legacy.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  private async Task<bool> _isRecordedAsync(string hash) =>
+    await _scalarAsync<long>($"SELECT count(*) FROM wh_bootstrap_closure WHERE closure_hash = '{hash}'") == 1L;
+
+  /// <summary>
+  /// A closure an earlier release recorded under its legacy hash is current: nothing is applied, and the normalized
+  /// hash is recorded beside it, so the next start finds it directly.
+  /// </summary>
+  /// <remarks>
+  /// The upgrade path. Without it every database would re-run the bootstrap DDL on its first start after the hash
+  /// became normalized, which is the per-statement lock on hot tables the record exists to avoid. The legacy row is
+  /// kept: an instance of the earlier release still running in the fleet keeps finding its own record.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AClosureRecordedUnderItsLegacyHashIsCurrentAndRecordedAgainAsync(CancellationToken cancellationToken) {
+    var scripts = _scriptsWithMarker();
+    await _recordUnderTheLegacyHashAsync(scripts, cancellationToken);
+    await Assert.That(await _isRecordedAsync(SchemaBootstrapPhase.ClosureHash(scripts))).IsFalse()
+      .Because("precondition: only the legacy hash is recorded");
+
+    var logger = new RecordingLogger();
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
+
+    await Assert.That(ready).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L)
+      .Because("the database holds exactly this closure, recorded under the hash an earlier release computed");
+    await Assert.That(await _isRecordedAsync(SchemaBootstrapPhase.ClosureHash(scripts))).IsTrue();
+    await Assert.That(await _isRecordedAsync(SchemaBootstrapPhase.LegacyClosureHash(scripts))).IsTrue()
+      .Because("an instance of the earlier release still in the fleet keeps finding its own record");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("legacy", StringComparison.Ordinal))).IsTrue();
+
+    var second = new RecordingLogger();
+    await SchemaBootstrapPhase.ApplyAsync(_connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, second, cancellationToken);
+    await Assert.That(second.Entries.Any(e => e.Message.Contains("legacy", StringComparison.Ordinal))).IsFalse()
+      .Because("the next start finds the normalized hash and has nothing to record again");
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// An instance that finds the legacy record while another holds the lock applies nothing and records nothing; the
+  /// closure is still current.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ALegacyRecordFoundWhileTheLockIsHeldIsCurrentAndLeftAsync(CancellationToken cancellationToken) {
+    var scripts = _scriptsWithMarker();
+    await _recordUnderTheLegacyHashAsync(scripts, cancellationToken);
+
+    await using var holder = _connect();
+    await holder.OpenAsync(cancellationToken);
+    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({LOCK_ID})", holder)) {
+      await take.ExecuteScalarAsync(cancellationToken);
+    }
+
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(ready).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L);
+    await Assert.That(await _isRecordedAsync(SchemaBootstrapPhase.ClosureHash(scripts))).IsFalse()
+      .Because("the holder of the lock records it; this instance only reads");
+
+    await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder);
+    await release.ExecuteScalarAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Recording the normalized hash beside a legacy record is not allowed to fail the start: the closure is current
+  /// either way, and the next start tries again.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ALegacyRecordThatCannotBeRecordedAgainIsReportedNotThrownAsync(CancellationToken cancellationToken) {
+    var scripts = _scriptsWithMarker();
+    await _recordUnderTheLegacyHashAsync(scripts, cancellationToken);
+    await using (var db = _connect()) {
+      await db.OpenAsync(cancellationToken);
+      await using var refuse = new NpgsqlCommand("""
+        CREATE FUNCTION refuse_closure_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'closure record refused'; END $$;
+        CREATE TRIGGER refuse_closure_insert BEFORE INSERT ON wh_bootstrap_closure
+          FOR EACH ROW EXECUTE FUNCTION refuse_closure_insert();
+        """, db);
+      await refuse.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var logger = new RecordingLogger();
+    var ready = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
+
+    await Assert.That(ready).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker")).IsEqualTo(1L);
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains("legacy", StringComparison.Ordinal)))
+      .IsTrue().Because("a record that could not be written is said out loud, with what it was");
+    await Assert.That(await _lockHoldersAsync()).IsEqualTo(0L);
+  }
+
   /// <summary>Missing arguments are caller errors.</summary>
   [Test]
   public async Task MissingArgumentsAreRefusedAsync() {

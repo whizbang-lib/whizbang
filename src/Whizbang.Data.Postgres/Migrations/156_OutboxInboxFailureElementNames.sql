@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 156_OutboxInboxFailureElementNames.sql
 -- Date: 2026-09-16
 -- Description: process_outbox_failures and process_inbox_failures read the failure element the

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The lock-file regeneration pushes to Dependabot's branches with a GitHub App token, so what it decides

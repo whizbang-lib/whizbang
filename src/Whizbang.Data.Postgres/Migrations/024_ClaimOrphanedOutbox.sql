@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 024_ClaimOrphanedOutbox.sql
 -- Date: 2026-04-21 (owner-preferring claim — fixes rank-churn wedge, production incident)
 -- Description: Creates claim_orphaned_outbox function for claiming orphaned outbox messages.

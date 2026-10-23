@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 009_CreatePerspectiveEventsTable.sql
 -- Date: 2025-12-25
 -- Description: Creates wh_perspective_events table for ephemeral per-event work tracking.

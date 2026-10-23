@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 111_PerspectiveRowDestructionSeam
 -- Purpose:  Give the perspective-row retention sweeps a pre-destruction seam: a durable HOLD that
 --           postpones a row's eviction, and a COLLECT function that exposes each sweep's DELETE

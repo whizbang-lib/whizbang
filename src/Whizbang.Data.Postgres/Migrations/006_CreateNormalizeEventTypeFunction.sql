@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 006_CreateNormalizeEventTypeFunction.sql
 -- Date: 2025-12-23
 -- Description: The canonical SQL form of a stored CLR type name (wh_normalize_clr_type_name) and the

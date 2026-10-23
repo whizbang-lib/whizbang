@@ -467,7 +467,12 @@ pull request, and every pull request is reviewed against the same standard.
   dependency a package ships is under a license on the allow list in `.github/dependency-review-config.yml`
   (**Gate · Dependency review** for npm and GitHub Actions; NuGetAudit at restore and the license check at
   pack for NuGet). A license outside the list needs a reviewed exception in that file;
-- `dotnet format` makes no changes, and every source file carries the copyright and license header;
+- `dotnet format` makes no changes, and every file states its copyright and license (**Gate · License headers**,
+  `reuse lint`): a source file in any language starts with the two-line header
+  (`Copyright (c) whizbang-lib contributors.` then `SPDX-License-Identifier: MIT`, in that language's comment
+  syntax), and a file that cannot carry one (documentation, data, project files, images, generator templates)
+  is covered by `REUSE.toml`. Check locally with
+  `docker run --rm -v "$PWD":/data:ro fsfe/reuse:6.2.0 lint`;
 - a change to the pipeline, the gates or the build inputs (the files `.github/CODEOWNERS` assigns to
   `build-admins`) is approved by a build admin on its latest commit, unless a build admin opened it
   (**Gate · Pipeline owner**; [GOVERNANCE.md](GOVERNANCE.md#roles));

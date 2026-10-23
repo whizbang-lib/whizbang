@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 205_StampWalksOnlyEligibleRows.sql
 -- Date: 2026-10-11
 -- Description: A stamp reads only rows it may stamp, so an open transaction behind the horizon costs it nothing (#1217).

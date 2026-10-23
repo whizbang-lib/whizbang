@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 153_PerspectiveForms.sql
 -- Date: 2026-09-15
 -- Description: The stored form of a perspective's dates, times and durations, and the ledger that

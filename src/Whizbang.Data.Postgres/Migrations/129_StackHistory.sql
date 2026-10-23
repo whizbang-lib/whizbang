@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 129_StackHistory
 -- Date: 2026-09-04
 -- Description: Rolling stack-history log (P4 of plans/dlq-stack-intelligence.md). wh_stack_daily

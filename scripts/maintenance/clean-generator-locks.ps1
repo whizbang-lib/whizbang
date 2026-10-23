@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #
 # Clean ILRepack file locks from lingering Aspire/ECommerce processes (PowerShell version)
 #

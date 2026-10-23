@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The release promotes exactly the packages its suites ran against, so the lookup must fail closed, and

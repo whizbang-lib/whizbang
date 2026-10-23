@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 209_SnapshotsCarryTheirStreamVersion.sql
 -- Date: 2026-10-13
 -- Description: A perspective snapshot records the stream version it was taken at, and the two places that

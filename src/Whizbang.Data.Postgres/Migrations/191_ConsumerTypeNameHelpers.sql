@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 191_ConsumerTypeNameHelpers.sql
 -- Date: 2026-10-04
 -- Description: Help for type names inside a consumer's own data (#1035). Migration 063 normalized the

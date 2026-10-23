@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 096_OutboxDrainFetchByteBudget.sql
 --
 -- Bound the OUTBOX drain fetch by BYTES as well as by row count — the sibling of 091's inbox

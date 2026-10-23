@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 177_PerspectiveAppliedLedger.sql
 -- Date: 2026-09-29
 -- Description: The applied-event ledger (#959): a durable record, shared by every instance, of which

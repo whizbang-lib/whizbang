@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 093_OriginGeneration.sql
 --
 -- #80-F: origin generation — seal coherence across LEGITIMATE history mutation

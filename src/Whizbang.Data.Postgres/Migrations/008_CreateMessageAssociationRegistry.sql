@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 007_CreateRegisterMessageAssociationsFunction
 -- Description: Creates register_message_associations() reconciliation function
 -- Date: 2025-12-21

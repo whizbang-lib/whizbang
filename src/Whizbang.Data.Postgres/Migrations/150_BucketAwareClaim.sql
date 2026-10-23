@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 150_BucketAwareClaim
 -- Date: 2026-09-09
 -- Description: The claim schedules by bucket (priority step 3). claim_orphaned_inbox picks in three lanes: every

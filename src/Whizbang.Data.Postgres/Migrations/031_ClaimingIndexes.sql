@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 031_ClaimingIndexes.sql
 -- Date: 2026-03-12
 -- Description: Partial indexes to speed up orphan claiming and process_work_batch queries.

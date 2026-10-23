@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 022_StorePerspectiveEvents.sql
 -- Date: 2025-12-25
 -- Description: Creates store_perspective_events function for inserting new perspective events with immediate lease.

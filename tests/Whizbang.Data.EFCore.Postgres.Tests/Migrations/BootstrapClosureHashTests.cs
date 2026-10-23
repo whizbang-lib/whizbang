@@ -78,5 +78,46 @@ public class BootstrapClosureHashTests {
   [Test]
   public async Task MissingScriptsAreRefusedAsync() {
     await Assert.That(() => SchemaBootstrapPhase.ClosureHash(null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => SchemaBootstrapPhase.LegacyClosureHash(null!)).Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// The closure hashes the same normalized text a migration's ledger row does, so a block comment, a comment at the
+  /// end of a statement's line and a run of spaces take no part either.
+  /// </summary>
+  [Test]
+  public async Task TheClosureHashesNormalizedTextAsync() {
+    var commented = new[] {
+      ("core", "/* header */\nCREATE TABLE IF NOT EXISTS   wh_a (id uuid); -- why\nCREATE INDEX IF NOT EXISTS ix_a ON wh_a (id);   "),
+      ("000", "CREATE TABLE IF NOT EXISTS wh_b /* inline */ (id uuid);"),
+    };
+
+    await Assert.That(SchemaBootstrapPhase.ClosureHash(commented)).IsEqualTo(SchemaBootstrapPhase.ClosureHash(_scripts))
+      .Because("only what executes names a closure");
+  }
+
+  /// <summary>A change inside a literal is a different closure, though it looks like a comment.</summary>
+  [Test]
+  public async Task AChangeInsideALiteralIsADifferentClosureAsync() {
+    var before = new[] { ("000", "SELECT 'a -- b';") };
+    var after = new[] { ("000", "SELECT 'a -- c';") };
+
+    await Assert.That(SchemaBootstrapPhase.ClosureHash(after)).IsNotEqualTo(SchemaBootstrapPhase.ClosureHash(before));
+  }
+
+  /// <summary>
+  /// The legacy closure hash is what earlier releases recorded: comment-only and blank lines dropped, line endings
+  /// ignored, and everything else hashed as written. The step that rewrites a recorded closure reads it.
+  /// </summary>
+  [Test]
+  public async Task TheLegacyClosureHashIsWhatEarlierReleasesRecordedAsync() {
+    var scripts = new[] { ("core", "-- header\r\nCREATE TABLE wh_a (id uuid); -- why\r\n\r\n  SELECT 1;  ") };
+    using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+    sha.AppendData(System.Text.Encoding.UTF8.GetBytes("core\nCREATE TABLE wh_a (id uuid); -- why\n  SELECT 1;  \n\n"));
+    var expected = Convert.ToHexStringLower(sha.GetHashAndReset());
+
+    await Assert.That(SchemaBootstrapPhase.LegacyClosureHash(scripts)).IsEqualTo(expected);
+    await Assert.That(SchemaBootstrapPhase.ClosureHash(scripts)).IsNotEqualTo(expected)
+      .Because("the trailing comment and the line-edge spaces are part of the legacy hash and not of the current one");
   }
 }

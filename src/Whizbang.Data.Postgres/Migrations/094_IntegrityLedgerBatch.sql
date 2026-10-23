@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 094_IntegrityLedgerBatch.sql
 --
 -- Set-based entry points for the stream-integrity ledger (docs: resilience/stream-integrity).

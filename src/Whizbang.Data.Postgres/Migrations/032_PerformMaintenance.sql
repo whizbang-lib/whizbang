@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 032_PerformMaintenance.sql
 -- Date: 2026-03-12
 -- Description: Creates perform_maintenance function for startup database health tasks.

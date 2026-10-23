@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 161_PerspectiveStreamEmptinessProbeIndex.sql
 -- Date: 2026-09-17
 -- Description: The store's perspective emptiness probe answers from an index instead of scanning,

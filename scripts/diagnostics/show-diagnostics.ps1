@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 # Show all WHIZ diagnostics from the Whizbang source generator
 
 Write-Host "🔍 Running Whizbang source generator diagnostics..." -ForegroundColor Cyan

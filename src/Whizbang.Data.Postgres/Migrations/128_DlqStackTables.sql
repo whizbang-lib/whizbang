@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 128_DlqStackTables
 -- Date: 2026-09-03
 -- Description: Relational stack layer (P2 of plans/dlq-stack-intelligence.md) — the inverted

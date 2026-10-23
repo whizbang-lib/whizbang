@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 125_RecoveryCountsItsRedelivery.sql
 -- Date: 2026-09-02
 -- Description: Re-creates recover_dead_letter VERBATIM from 119 plus redelivery accounting on the

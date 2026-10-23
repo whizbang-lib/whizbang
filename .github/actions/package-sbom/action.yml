@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Generate a software bill of materials for each package
 description: >-
   Writes a CycloneDX SBOM beside every package in .github/nuget-packages.txt, as

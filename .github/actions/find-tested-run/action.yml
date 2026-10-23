@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Find the run that tested a develop commit
 description: >-
   Given a commit that landed on develop through the merge queue, finds the CI runs holding the

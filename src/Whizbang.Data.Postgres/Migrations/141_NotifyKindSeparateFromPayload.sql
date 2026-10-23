@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 141_NotifyKindSeparateFromPayload
 -- Date: 2026-09-07
 -- Description: The doorbell-debounce KEY and the NOTIFY PAYLOAD are separate arguments (issue #702).

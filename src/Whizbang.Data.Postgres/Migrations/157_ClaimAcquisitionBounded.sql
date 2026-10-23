@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 157_ClaimAcquisitionBounded.sql
 -- Date: 2026-09-16
 -- Description: The outbox and perspective acquisitions read a few batches, not the backlog.

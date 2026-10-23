@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 167_IdleBandIsWithheldWhileBusy.sql
 -- Date: 2026-09-21
 -- Description: The idle band (priority 400 and up) is withheld from the claim while the service is

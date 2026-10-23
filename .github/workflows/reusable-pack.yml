@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Pack (Reusable)
 
 # Packs an ALREADY-BUILT tree into NuGet packages at a given version, without rebuilding, so the

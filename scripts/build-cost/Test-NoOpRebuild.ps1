@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
   Fails when a build with nothing changed still does work.

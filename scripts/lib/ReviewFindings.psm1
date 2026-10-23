@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 7.0
 
 <#
@@ -236,7 +239,7 @@ function Read-UnifiedDiff {
     if ($line.StartsWith('diff --git ')) {
       $m = [regex]::Match($line, '^diff --git a/(?<a>.+) b/(?<b>.+)$')
       $file = [pscustomobject]@{
-        Path = $m.Groups['b'].Value; IsNew = $false; IsDeleted = $false
+        Path = $m.Groups['b'].Value; OldPath = $m.Groups['a'].Value; IsNew = $false; IsDeleted = $false
         Lines = [System.Collections.Generic.List[object]]::new()
       }
       $files.Add($file)
@@ -247,6 +250,7 @@ function Read-UnifiedDiff {
     if (-not $inHunk) {
       if ($line.StartsWith('new file mode')) { $file.IsNew = $true }
       elseif ($line.StartsWith('deleted file mode')) { $file.IsDeleted = $true }
+      elseif ($line.StartsWith('--- a/')) { $file.OldPath = $line.Substring(6) }
       elseif ($line.StartsWith('+++ b/')) { $file.Path = $line.Substring(6) }
     }
     $hunk = [regex]::Match($line, '^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,\d+)? @@')
@@ -344,6 +348,115 @@ function ConvertTo-EnUsSpelling {
   return $us
 }
 
+function ConvertTo-NormalizedSql {
+  <#
+  .SYNOPSIS
+      A migration's SQL with everything that changes nothing executable removed.
+  .DESCRIPTION
+      The port of Whizbang.Data.Postgres.MigrationSqlNormalizer, the form every driver hashes to decide
+      whether a migration changed. tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationSqlNormalizerTests.cs
+      and .github/scripts/tests/ReviewFindings.Tests.ps1 hold the two to the same cases.
+
+      Removed: -- line comments and /* */ block comments (nested, as PostgreSQL reads them), spaces and tabs
+      at line edges and runs of them between tokens (one space), blank lines, and the line ending
+      convention. Copied verbatim: '...' strings, E'...' strings with backslash escapes, "..." identifiers
+      and dollar-quoted bodies ($$...$$, $tag$...$tag$), so a comment marker inside a literal is text.
+  #>
+  [CmdletBinding()]
+  [OutputType([string])]
+  param([Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Sql)
+
+  # A hashtable so the helper below can update it in place.
+  $state = @{ Out = [System.Text.StringBuilder]::new($Sql.Length); PendingSpace = $false; LineHasContent = $false; PendingNewline = $false }
+  $n = $Sql.Length
+  $i = 0
+  while ($i -lt $n) {
+    $c = $Sql[$i]
+    $next = if ($i + 1 -lt $n) { $Sql[$i + 1] } else { [char]0 }
+    if ($c -eq "`n" -or $c -eq "`r") {
+      $i++
+      if ($c -eq "`r" -and $next -eq "`n") { $i++ }
+      $state.PendingSpace = $false
+      if ($state.LineHasContent) { $state.PendingNewline = $true; $state.LineHasContent = $false }
+    } elseif ($c -eq ' ' -or $c -eq "`t" -or $c -eq "`f" -or $c -eq "`v") {
+      $state.PendingSpace = $true
+      $i++
+    } elseif ($c -eq '-' -and $next -eq '-') {
+      while ($i -lt $n -and $Sql[$i] -ne "`n" -and $Sql[$i] -ne "`r") { $i++ }
+    } elseif ($c -eq '/' -and $next -eq '*') {
+      $depth = 0
+      while ($i -lt $n) {
+        $after = if ($i + 1 -lt $n) { $Sql[$i + 1] } else { [char]0 }
+        if ($Sql[$i] -eq '/' -and $after -eq '*') { $depth++; $i += 2 }
+        elseif ($Sql[$i] -eq '*' -and $after -eq '/') { $depth--; $i += 2; if ($depth -eq 0) { break } }
+        else { $i++ }
+      }
+      $state.PendingSpace = $true
+    } elseif ($c -eq "'" -or $c -eq '"') {
+      $escapes = $c -eq "'" -and $i -gt 0 -and ($Sql[$i - 1] -ceq 'E' -or $Sql[$i - 1] -ceq 'e') -and
+        ($i -lt 2 -or -not (_isSqlIdentifierChar $Sql[$i - 2]))
+      $end = _quotedEnd $Sql $i $escapes
+      _appendSqlContent $state $Sql $i ($end - $i)
+      $i = $end
+    } elseif ($c -eq '$' -and ($tag = _dollarTagLength $Sql $i) -gt 0) {
+      $close = $Sql.IndexOf($Sql.Substring($i, $tag), $i + $tag, [StringComparison]::Ordinal)
+      $end = if ($close -lt 0) { $n } else { $close + $tag }
+      _appendSqlContent $state $Sql $i ($end - $i)
+      $i = $end
+    } else {
+      _appendSqlContent $state $Sql $i 1
+      $i++
+    }
+  }
+  return $state.Out.ToString()
+}
+
+function _appendSqlContent([hashtable]$State, [string]$Sql, [int]$Start, [int]$Length) {
+  # Content, preceded by whatever separator is pending: a line ending, or one space within a line.
+  if ($State.PendingNewline) { [void]$State.Out.Append("`n"); $State.PendingNewline = $false }
+  elseif ($State.PendingSpace -and $State.LineHasContent) { [void]$State.Out.Append(' ') }
+  $State.PendingSpace = $false
+  $State.LineHasContent = $true
+  [void]$State.Out.Append($Sql, $Start, $Length)
+}
+
+function _quotedEnd([string]$Sql, [int]$At, [bool]$Escapes) {
+  # Where the quoted literal opening at At ends (its doubled quote escapes it); the text's end when unterminated.
+  $quote = $Sql[$At]
+  $j = $At + 1
+  while ($j -lt $Sql.Length) {
+    if ($Escapes -and $Sql[$j] -eq '\') { $j += 2 }
+    elseif ($Sql[$j] -eq $quote) {
+      if ($j + 1 -lt $Sql.Length -and $Sql[$j + 1] -eq $quote) { $j += 2 } else { return $j + 1 }
+    } else { $j++ }
+  }
+  return $Sql.Length
+}
+
+function _isSqlIdentifierChar([char]$C) { return [char]::IsLetterOrDigit($C) -or $C -eq '_' -or $C -eq '$' }
+
+function _dollarTagLength([string]$Sql, [int]$At) {
+  # The length of the $$ or $tag$ delimiter at At, or 0 when the dollar opens no quote.
+  if ($At -gt 0 -and (_isSqlIdentifierChar $Sql[$At - 1])) { return 0 }
+  $j = $At + 1
+  while ($j -lt $Sql.Length -and $Sql[$j] -ne '$') {
+    $ch = $Sql[$j]
+    $valid = if ($j -eq $At + 1) { [char]::IsLetter($ch) -or $ch -eq '_' } else { [char]::IsLetterOrDigit($ch) -or $ch -eq '_' }
+    if (-not $valid) { return 0 }
+    $j++
+  }
+  if ($j -lt $Sql.Length) { return $j - $At + 1 }
+  return 0
+}
+
+function _isInertMigrationEdit($File, [scriptblock]$ReadMigrationVersions) {
+  # True only when both sides were read and normalize to the same SQL; anything unreadable is flagged.
+  if (-not $ReadMigrationVersions) { return $false }
+  $versions = & $ReadMigrationVersions $File.OldPath $File.Path
+  if ($null -eq $versions) { return $false }
+  return (ConvertTo-NormalizedSql ([string]$versions.Old)) -ceq (ConvertTo-NormalizedSql ([string]$versions.New))
+}
+
 function Find-DiffFindings {
   <#
   .SYNOPSIS
@@ -353,11 +466,18 @@ function Find-DiffFindings {
       .github/review-checks-ignore.txt) are skipped, as is any line containing "review-checks:allow".
       Each finding's id is "rule:path:line", so a re-run on the same diff produces the same ids and a
       draft review never gets the same comment twice.
+
+      ReadMigrationVersions, when given, is called with an edited migration's old and new path and returns
+      an object with Old and New (the file's text on each side), or $null when either cannot be read. An
+      edit whose normalized SQL is unchanged (ConvertTo-NormalizedSql: comments, line-edge whitespace,
+      blank lines and line endings only) changes nothing a database executes and is not flagged. Without
+      it, or when the text cannot be read, every edit to an existing migration is flagged.
   #>
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][AllowEmptyString()][string]$DiffText,
-    [AllowEmptyCollection()][string[]]$IgnorePaths = @()
+    [AllowEmptyCollection()][string[]]$IgnorePaths = @(),
+    [scriptblock]$ReadMigrationVersions
   )
 
   foreach ($file in Read-UnifiedDiff -DiffText $DiffText) {
@@ -370,7 +490,8 @@ function Find-DiffFindings {
     $isLibrary = $path.StartsWith('src/') -and $extension -eq '.cs'
     $added = @($file.Lines | Where-Object { $_.Added -and -not $_.Text.Contains('review-checks:allow') })
 
-    if ($path -match '^src/[^/]+/Migrations/[^/]+\.sql$' -and -not $file.IsNew -and $added.Count -gt 0) {
+    if ($path -match '^src/[^/]+/Migrations/[^/]+\.sql$' -and -not $file.IsNew -and $added.Count -gt 0 -and
+      -not (_isInertMigrationEdit $file $ReadMigrationVersions)) {
       New-ReviewFinding -Id "migrations.edited:${path}:$($added[0].Line)" -Rule 'migrations.edited' -Severity blocking `
         -Path $path -Line $added[0].Line `
         -Body 'This migration already exists and is being edited. A database that has run it never runs it again, so the change would reach new databases only. Add a new migration instead.'
@@ -677,4 +798,4 @@ function _markerId([string]$Id) {
 Export-ModuleMember -Function New-ReviewFinding, Find-PullRequestTypeFindings, ConvertTo-ReviewBlock, ConvertFrom-ReviewBlock, Test-RepoRelativePath,
   Get-GateFindings, Read-UnifiedDiff, Get-DiffFiles, Get-AddedLines, Get-CommentableLines, ConvertTo-EnUsSpelling,
   Find-DiffFindings, Find-PullRequestFindings, ConvertTo-DcoFindings, Format-ReviewChecksComment,
-  Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText
+  Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText, ConvertTo-NormalizedSql

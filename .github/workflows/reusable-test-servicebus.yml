@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Azure Service Bus Integration Tests (Reusable)
 
 on:

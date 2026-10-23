@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Design proposal or open question
 description: A design decision that needs to be made before work can start.
 title: "[Proposal]: "

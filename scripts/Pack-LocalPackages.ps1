@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
     Packs all Whizbang NuGet packages to local-packages directory.

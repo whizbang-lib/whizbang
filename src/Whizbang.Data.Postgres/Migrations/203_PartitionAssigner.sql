@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 203_PartitionAssigner.sql
 -- Date: 2026-10-09
 -- Description: One elected instance assigns partitions; claimers stop guessing about their peers (#1254).

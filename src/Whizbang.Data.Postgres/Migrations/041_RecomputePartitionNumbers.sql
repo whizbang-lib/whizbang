@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 041_RecomputePartitionNumbers.sql
 -- Date: 2026-04-21
 -- Description: Recompute wh_inbox.partition_number, wh_outbox.partition_number, and

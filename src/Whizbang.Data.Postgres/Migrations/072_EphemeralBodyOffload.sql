@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 072_EphemeralBodyOffload.sql
 -- Date: 2026-07-15 (E1 ephemeral events — #13b1: optional body-offload table)
 -- Description: Additive, strangler-first step toward the pointer+body event-store split. Introduces an

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 082_ReapExpiredPerspectiveRows.sql
 -- Date: 2026-07-17
 -- Description: E2-4d d-4 — physically reap logically-expired TransientStorage.TtlRow perspective rows.

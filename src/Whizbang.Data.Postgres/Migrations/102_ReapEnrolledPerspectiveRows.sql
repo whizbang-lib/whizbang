@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 102_ReapEnrolledPerspectiveRows
 -- Purpose:  Sweep perspective rows by the EFFECTIVE-EXPIRY LADDER, driven by enrolment rather than
 --           by "does this table happen to have an expires_at column".

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration 001: Create compute_partition function for consistent hashing
 -- Date: 2025-12-07
 -- Description: Helper function to compute partition number from stream_id using consistent hashing
