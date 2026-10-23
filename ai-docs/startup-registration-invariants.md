@@ -177,3 +177,30 @@ registration order, then opens `ISchemaReadyGate`; with no runner (Dapper, `init
   `data/turnkey-initialization#idempotency`, `operations/startup/rolling-upgrades#assess`,
   `data/drivers#bring-your-own-dbcontext`, `messaging/work-coordinator#local-service-identity`,
   `operations/deployment/troubleshooting#workers-not-wired`, `data/turnkey-initialization#both-drivers`.
+
+---
+
+## The startup stage record (#1636)
+
+`IStartupStageReporter` is the one owner of the stage an instance is in. Four rules keep the row, the log and the
+health surface telling the same story; each one is pinned by `StartupStageReporterTests` and, end to end, by
+`StartupStageHostTests`.
+
+- **Forward only.** Entering an earlier stage is ignored, because a second schema initialization in the same process
+  (a second DbContext, or a consumer calling `EnsureWhizbangDatabaseInitializedAsync` again after start) and a retry
+  pass back through stages the instance has left. The current stage with a new message is progress: same prefix,
+  same entry time. A skip only applies to a stage the instance has not reached.
+- **Held until the row exists.** Nothing is written before the first `InstanceRegisteredAsync`, which the migrator
+  election's registration and every accepted heartbeat call. On a fresh database the stage columns arrive with
+  migration 231 during Migrate, so Preflight, Elect and Migrate are in the log only and the row's first stage is
+  Converge; on a restart the row records Elect from the moment the election registers it.
+- **A failed write is held, never thrown.** A stage the row does not show yet is the safe direction (only 60 and 70
+  are eligible for work), and the next accepted heartbeat writes it, so a lost write cannot strand an instance
+  outside the fleet.
+- **The stage and the phase both decide eligibility.** `wh_instance_is_eligible_for_work` requires a recorded stage
+  of 60 or 70 and a recorded phase of AcceptingCommands or Running. A pause or a stand-by is a lifecycle phase, not a
+  stage, so dropping the phase test would make a paused instance eligible again. `lifecycle_phase` is still written
+  by its own writers; the stage write sets it from the stage too. At Draining the heartbeat can write `Running` back
+  over `Stopping` until it stops, because the host's stop does not advance the lifecycle; the stage alone already
+  keeps the instance out.
+

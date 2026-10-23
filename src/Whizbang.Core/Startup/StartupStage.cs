@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Whizbang.Core.RunControl;
 
 namespace Whizbang.Core.Startup;
@@ -61,19 +62,38 @@ public enum StartupStage : short {
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStagesTests.cs</tests>
 public static class StartupStages {
+  private static readonly StartupStage[] _startup = [
+    StartupStage.Preflight, StartupStage.Elect, StartupStage.Migrate, StartupStage.Converge,
+    StartupStage.Coordinate, StartupStage.AcceptingCommands, StartupStage.Running,
+  ];
+
   /// <summary>The startup stages in order; a stage's <c>X</c> in <c>Stage X of Y</c> is its position here, from 1.</summary>
-  public static IReadOnlyList<StartupStage> Startup { get; } = [];
+  public static IReadOnlyList<StartupStage> Startup { get; } = Array.AsReadOnly(_startup);
 
   /// <summary>The stage's name as it is logged and reported, for example <c>Accept commands</c>.</summary>
   /// <param name="stage">The stage.</param>
   /// <returns>The display name.</returns>
   /// <exception cref="ArgumentOutOfRangeException">The value is not a defined stage.</exception>
-  public static string NameOf(StartupStage stage) => throw new NotImplementedException();
+  public static string NameOf(StartupStage stage) => stage switch {
+    StartupStage.Preflight => "Preflight",
+    StartupStage.Elect => "Elect",
+    StartupStage.Migrate => "Migrate",
+    StartupStage.Converge => "Converge",
+    StartupStage.Coordinate => "Coordinate",
+    StartupStage.AcceptingCommands => "Accept commands",
+    StartupStage.Running => "Running",
+    StartupStage.Draining => "Draining",
+    StartupStage.Stopped => "Stopped",
+    _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "Not a startup stage."),
+  };
 
   /// <summary>The stage's position in <see cref="Startup"/>, from 1, or <see langword="null"/> for a shutdown stage.</summary>
   /// <param name="stage">The stage.</param>
   /// <returns>The ordinal, or null.</returns>
-  public static int? OrdinalOf(StartupStage stage) => throw new NotImplementedException();
+  public static int? OrdinalOf(StartupStage stage) {
+    var index = Array.IndexOf(_startup, stage);
+    return index < 0 ? null : index + 1;
+  }
 
   /// <summary>
   /// The lifecycle phase the instance's row records alongside the stage (<c>lifecycle_phase</c>, kept for the readers
@@ -82,7 +102,15 @@ public static class StartupStages {
   /// <param name="stage">The stage.</param>
   /// <returns>The mapped phase.</returns>
   /// <exception cref="ArgumentOutOfRangeException">The value is not a defined stage.</exception>
-  public static LifecyclePhase LifecyclePhaseOf(StartupStage stage) => throw new NotImplementedException();
+  public static LifecyclePhase LifecyclePhaseOf(StartupStage stage) => stage switch {
+    StartupStage.Preflight => LifecyclePhase.Connecting,
+    StartupStage.Elect or StartupStage.Migrate or StartupStage.Converge or StartupStage.Coordinate => LifecyclePhase.Migrating,
+    StartupStage.AcceptingCommands => LifecyclePhase.AcceptingCommands,
+    StartupStage.Running => LifecyclePhase.Running,
+    StartupStage.Draining => LifecyclePhase.Stopping,
+    StartupStage.Stopped => LifecyclePhase.Stopped,
+    _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "Not a startup stage."),
+  };
 
   /// <summary>
   /// The line an instance logs on entering the stage, and the text the <c>startup</c> health component reports:
@@ -92,7 +120,12 @@ public static class StartupStages {
   /// <param name="stage">The stage.</param>
   /// <param name="message">What the stage is doing.</param>
   /// <returns>The text.</returns>
-  public static string Describe(StartupStage stage, string message) => throw new NotImplementedException();
+  public static string Describe(StartupStage stage, string message) {
+    var name = NameOf(stage);
+    return OrdinalOf(stage) is { } position
+      ? string.Create(CultureInfo.InvariantCulture, $"Stage {position} of {_startup.Length}: {name} - {message}")
+      : $"Shutdown stage: {name} - {message}";
+  }
 }
 
 /// <summary>The stage an instance is in, as its <see cref="IStartupStageReporter"/> last entered it.</summary>

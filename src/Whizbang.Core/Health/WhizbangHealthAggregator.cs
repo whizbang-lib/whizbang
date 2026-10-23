@@ -35,6 +35,7 @@ public readonly record struct AggregatedHealth(HealthStatus Status, IReadOnlyLis
 public sealed class WhizbangHealthAggregator {
   private readonly IReadOnlyList<IWhizbangHealthSource> _sources;
   private readonly WhizbangHealthOptions _options;
+  private readonly Startup.IStartupStageReporter? _stages;
 
   /// <summary>Creates an aggregator over the given health sources and policy options.</summary>
   /// <param name="sources">The health sources.</param>
@@ -49,6 +50,7 @@ public sealed class WhizbangHealthAggregator {
     // result with its component, which a lazily-enumerated sequence cannot support.
     _sources = sources as IReadOnlyList<IWhizbangHealthSource> ?? [.. sources];
     _options = options;
+    _stages = stages;
   }
 
   /// <summary>Evaluates every source for the given probe and returns the aggregated (worst-wins) result.</summary>
@@ -81,7 +83,7 @@ public sealed class WhizbangHealthAggregator {
         worst = status;
       }
     }
-    return new AggregatedHealth(worst, reports);
+    return new AggregatedHealth(worst, reports) { Stage = _stages?.Current };
   }
 
   /// <summary>

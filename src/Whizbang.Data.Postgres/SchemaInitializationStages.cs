@@ -1,6 +1,8 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Startup;
 
 namespace Whizbang.Data.Postgres;
@@ -10,22 +12,36 @@ namespace Whizbang.Data.Postgres;
 /// stage reporter: the EF Core driver's generated schema pass and the shared initializer call these. Each does
 /// nothing when no <see cref="IStartupStageReporter"/> is registered.
 /// </summary>
+/// <remarks>
+/// The messages are framework-authored text only. The election's own detail can carry a server's words, and the stage
+/// message reaches the health surface, which is usually the least protected surface a pod has; the detail stays in
+/// the election's own log line.
+/// </remarks>
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Schema/SchemaInitializationStagesTests.cs</tests>
 public static class SchemaInitializationStages {
+  private const string UNSTAGED = "this instance migrates under the schema lock";
+
   /// <summary>This instance is about to join the registry and vote for the migrator duty.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
-  public static Task ElectingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task ElectingAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Elect, "joining the registry and voting for the migrator duty", cancellationToken)
+        .ConfigureAwait(false);
+    }
+  }
 
   /// <summary>This instance's row now exists; the stage held until it did is written.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the held stage is written or held again.</returns>
-  public static Task RegisteredAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task RegisteredAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.InstanceRegisteredAsync(cancellationToken).ConfigureAwait(false);
+    }
+  }
 
   /// <summary>
   /// The election is over: reports its outcome, or the election as skipped when it was never held.
@@ -34,16 +50,34 @@ public static class SchemaInitializationStages {
   /// <param name="staging">What the election decided.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the outcome is reported.</returns>
-  public static Task ElectedAsync(IServiceProvider? services, SchemaStaging staging, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task ElectedAsync(IServiceProvider? services, SchemaStaging staging, CancellationToken cancellationToken) {
+    if (_reporter(services) is not { } stages) {
+      return;
+    }
+    if (stages.Current is not { Stage: >= StartupStage.Elect }) {
+      // Elect was never entered: the bootstrap could not make an election possible, or there was no identity to elect.
+      await stages.SkipAsync(StartupStage.Elect, "no election could be held, so " + UNSTAGED, cancellationToken)
+        .ConfigureAwait(false);
+      return;
+    }
+    var outcome = staging.Stage switch {
+      SchemaStage.Migrator => "this instance migrates the schema",
+      SchemaStage.Waiter => "another instance migrates the schema",
+      _ => "no migrator was elected, so " + UNSTAGED,
+    };
+    await stages.EnterAsync(StartupStage.Elect, outcome, cancellationToken).ConfigureAwait(false);
+  }
 
   /// <summary>The schema pass is under way, or this instance is waiting for the one doing it.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="message">What the pass is doing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
-  public static Task MigratingAsync(IServiceProvider? services, string message, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task MigratingAsync(IServiceProvider? services, string message, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Migrate, message, cancellationToken).ConfigureAwait(false);
+    }
+  }
 
   /// <summary>This instance's schema pass begins, with how many steps it owes.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
@@ -51,7 +85,9 @@ public static class SchemaInitializationStages {
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
   public static Task ApplyingAsync(IServiceProvider? services, int steps, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+    MigratingAsync(services, steps == 1
+      ? "1 migration step to apply"
+      : string.Create(CultureInfo.InvariantCulture, $"{steps} migration steps to apply"), cancellationToken);
 
   /// <summary>
   /// The schema needs no pass from this instance: progress within <see cref="StartupStage.Migrate"/> when it was
@@ -61,20 +97,39 @@ public static class SchemaInitializationStages {
   /// <param name="reason">Why no pass is needed.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
-  public static Task MigrationNotNeededAsync(IServiceProvider? services, string reason, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task MigrationNotNeededAsync(IServiceProvider? services, string reason, CancellationToken cancellationToken) {
+    if (_reporter(services) is not { } stages) {
+      return;
+    }
+    if (stages.Current?.Stage == StartupStage.Migrate) {
+      await stages.EnterAsync(StartupStage.Migrate, reason, cancellationToken).ConfigureAwait(false);
+    } else {
+      await stages.SkipAsync(StartupStage.Migrate, reason, cancellationToken).ConfigureAwait(false);
+    }
+  }
 
   /// <summary>The pass committed; new indexes are analyzed and managed objects reconciled.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
-  public static Task ConvergingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task ConvergingAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Converge, "analyzing new indexes and reconciling managed objects", cancellationToken)
+        .ConfigureAwait(false);
+    }
+  }
 
   /// <summary>Every driver's schema is initialized; partitions are recomputed and the schema-ready gate opens next.</summary>
   /// <param name="services">Where the reporter is registered; null reports nothing.</param>
   /// <param name="cancellationToken">Canceled when initialization is.</param>
   /// <returns>A task that completes once the stage is reported.</returns>
-  public static Task CoordinatingAsync(IServiceProvider? services, CancellationToken cancellationToken) =>
-    Task.CompletedTask;
+  public static async Task CoordinatingAsync(IServiceProvider? services, CancellationToken cancellationToken) {
+    if (_reporter(services) is { } stages) {
+      await stages.EnterAsync(StartupStage.Coordinate, "recomputing partitions before the schema-ready gate opens", cancellationToken)
+        .ConfigureAwait(false);
+    }
+  }
+
+  private static IStartupStageReporter? _reporter(IServiceProvider? services) =>
+    services?.GetService<IStartupStageReporter>();
 }

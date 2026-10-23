@@ -19,15 +19,25 @@ namespace Whizbang.Core.Startup;
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageRunControlTests.cs</tests>
 public sealed class StartupStageRunControl : IWhizbangRunControl {
+  private readonly IStartupStageReporter _stages;
+
   /// <summary>Creates the participant over the stage reporter.</summary>
   /// <param name="stages">The reporter whose stage this moves.</param>
   public StartupStageRunControl(IStartupStageReporter stages) {
     ArgumentNullException.ThrowIfNull(stages);
+    _stages = stages;
   }
 
   /// <inheritdoc />
-  public string Component => string.Empty;
+  public string Component => "startup-stage";
 
   /// <inheritdoc />
-  public ValueTask OnPhaseAsync(LifecyclePhase phase, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+  public ValueTask OnPhaseAsync(LifecyclePhase phase, CancellationToken cancellationToken) => phase switch {
+    LifecyclePhase.AcceptingCommands => _stages.EnterAsync(StartupStage.AcceptingCommands,
+      "the schema is ready; commands are accepted while the read models catch up", cancellationToken),
+    LifecyclePhase.Running => _stages.EnterAsync(StartupStage.Running, "reads and writes are served", cancellationToken),
+    LifecyclePhase.Stopping => _stages.EnterAsync(StartupStage.Draining, "stopping, finishing in-flight work", cancellationToken),
+    LifecyclePhase.Stopped => _stages.EnterAsync(StartupStage.Stopped, "stopped", cancellationToken),
+    _ => ValueTask.CompletedTask,
+  };
 }

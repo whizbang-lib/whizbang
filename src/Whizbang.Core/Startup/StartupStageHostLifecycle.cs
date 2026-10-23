@@ -20,14 +20,18 @@ namespace Whizbang.Core.Startup;
 /// <docs>operations/startup/startup-status#startup-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageHostLifecycleTests.cs</tests>
 public sealed class StartupStageHostLifecycle : IHostedLifecycleService {
+  private readonly IStartupStageReporter _stages;
+
   /// <summary>Creates the service over the stage reporter.</summary>
   /// <param name="stages">The reporter whose stage this moves.</param>
   public StartupStageHostLifecycle(IStartupStageReporter stages) {
     ArgumentNullException.ThrowIfNull(stages);
+    _stages = stages;
   }
 
   /// <inheritdoc />
-  public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  public Task StartingAsync(CancellationToken cancellationToken) =>
+    _stages.EnterAsync(StartupStage.Preflight, "host starting", cancellationToken).AsTask();
 
   /// <inheritdoc />
   public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -36,11 +40,13 @@ public sealed class StartupStageHostLifecycle : IHostedLifecycleService {
   public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   /// <inheritdoc />
-  public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  public Task StoppingAsync(CancellationToken cancellationToken) =>
+    _stages.EnterAsync(StartupStage.Draining, "host stopping, finishing in-flight work", CancellationToken.None).AsTask();
 
   /// <inheritdoc />
   public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
   /// <inheritdoc />
-  public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+  public Task StoppedAsync(CancellationToken cancellationToken) =>
+    _stages.EnterAsync(StartupStage.Stopped, "host stopped", CancellationToken.None).AsTask();
 }
