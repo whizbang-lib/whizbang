@@ -436,6 +436,78 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
       .Throws<ArgumentOutOfRangeException>();
   }
 
+  // ==== #1669: indexes nothing has scanned, reported and never dropped ====
+
+  [Test]
+  public async Task GetUnusedIndexesAsync_ReportsTheIndexesNothingScanned_WithTheirSizeAsync() {
+    await _runAsync(
+      "CREATE SCHEMA stats_idx",
+      "CREATE TABLE stats_idx.wh_idx_probe (id int PRIMARY KEY, label text, code int, ref int)",
+      "INSERT INTO stats_idx.wh_idx_probe SELECT g, 'label-' || g, g, g FROM generate_series(1, 2000) g",
+      "CREATE INDEX idx_probe_label ON stats_idx.wh_idx_probe (label)",
+      "CREATE INDEX idx_probe_code ON stats_idx.wh_idx_probe (code)",
+      "CREATE UNIQUE INDEX idx_probe_ref ON stats_idx.wh_idx_probe (ref)",
+      "CREATE TABLE stats_idx.not_framework_probe (id int, label text)",
+      "CREATE INDEX idx_not_framework_label ON stats_idx.not_framework_probe (label)",
+      // One index is scanned, and the session's counters are flushed before it goes idle, so the read below sees
+      // the scan rather than racing the statistics flush.
+      "SET enable_seqscan = off",
+      "SELECT count(*) FROM stats_idx.wh_idx_probe WHERE code = 5",
+      "SELECT pg_stat_force_next_flush()");
+
+    var unused = await new PostgresTableStatisticsProvider(_dataSource, "stats_idx").GetUnusedIndexesAsync();
+    var labelBytes = await _scalarAsync("SELECT pg_relation_size('stats_idx.idx_probe_label')");
+
+    await Assert.That(unused.Keys.ToList()).IsEquivalentTo((List<string>)["idx_probe_label"])
+      .Because("only an index nothing has scanned is reported; a unique or primary-key index enforces a rule "
+             + "whether or not a query reads it, and another table's index is not the framework's");
+    await Assert.That(unused["idx_probe_label"]).IsEqualTo(new UnusedIndex("wh_idx_probe", labelBytes))
+      .Because("the size is what keeping the index costs on disk, which is the reason to look at it");
+  }
+
+  [Test]
+  public async Task GetUnusedIndexesAsync_APartitionedTablesIndex_IsReportedOnceWithItsPartitionsSummedAsync() {
+    await _runAsync(
+      "CREATE SCHEMA stats_idx_part",
+      "CREATE TABLE stats_idx_part.wh_idx_part (id int, label text) PARTITION BY RANGE (id)",
+      "CREATE TABLE stats_idx_part.wh_idx_part_low PARTITION OF stats_idx_part.wh_idx_part FOR VALUES FROM (0) TO (1000)",
+      "CREATE TABLE stats_idx_part.wh_idx_part_high PARTITION OF stats_idx_part.wh_idx_part FOR VALUES FROM (1000) TO (2000)",
+      "INSERT INTO stats_idx_part.wh_idx_part SELECT g, 'row-' || g FROM generate_series(1, 1500) g",
+      "CREATE INDEX idx_part_label ON stats_idx_part.wh_idx_part (label)");
+
+    var unused = await new PostgresTableStatisticsProvider(_dataSource, "stats_idx_part").GetUnusedIndexesAsync();
+    var partitionBytes = await _scalarAsync("""
+      SELECT sum(pg_relation_size(i.indexrelid))::bigint
+      FROM pg_index i JOIN pg_class t ON t.oid = i.indrelid
+      WHERE t.relname IN ('wh_idx_part_low', 'wh_idx_part_high')
+      """);
+
+    await Assert.That(unused.Keys.ToList()).IsEquivalentTo((List<string>)["idx_part_label"])
+      .Because("an index on a partitioned table is one index to its owner, so the series do not grow with the partitions");
+    await Assert.That(unused["idx_part_label"]).IsEqualTo(new UnusedIndex("wh_idx_part", partitionBytes));
+  }
+
+  [Test]
+  public async Task GetUnusedIndexesAsync_PastTheCap_SumsTheSmallestUnderOtherAsync() {
+    await _runAsync(
+      "CREATE SCHEMA stats_idx_cap",
+      "CREATE TABLE stats_idx_cap.wh_idx_cap (a text, b int, c int)",
+      "INSERT INTO stats_idx_cap.wh_idx_cap SELECT repeat('x', 200) || g, g, g FROM generate_series(1, 3000) g",
+      "CREATE INDEX idx_cap_wide ON stats_idx_cap.wh_idx_cap (a)",
+      "CREATE INDEX idx_cap_b ON stats_idx_cap.wh_idx_cap (b)",
+      "CREATE INDEX idx_cap_c ON stats_idx_cap.wh_idx_cap (c)");
+
+    var all = await new PostgresTableStatisticsProvider(_dataSource, "stats_idx_cap").GetUnusedIndexesAsync();
+    var capped = await new PostgresTableStatisticsProvider(_dataSource, "stats_idx_cap", maxTrackedTables: 1).GetUnusedIndexesAsync();
+
+    await Assert.That(capped.Keys.Order(StringComparer.Ordinal).ToList())
+      .IsEquivalentTo((List<string>)["idx_cap_wide", TableStatisticsOptions.OTHER_TABLES])
+      .Because("the largest keeps its name and the rest are summed under one series, so the series stay bounded");
+    await Assert.That(capped[TableStatisticsOptions.OTHER_TABLES])
+      .IsEqualTo(new UnusedIndex(TableStatisticsOptions.OTHER_TABLES, all["idx_cap_b"].Bytes + all["idx_cap_c"].Bytes))
+      .Because("a summed series that lost bytes would understate what the unused indexes cost");
+  }
+
   private async Task _runAsync(params string[] statements) {
     await using var connection = await _dataSource.OpenConnectionAsync();
     foreach (var sql in statements) {
