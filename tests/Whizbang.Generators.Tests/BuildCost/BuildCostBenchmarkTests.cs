@@ -121,7 +121,7 @@ public class BuildCostBenchmarkTests {
   [Arguments("--runs", "0")]
   [Arguments("--features", "-1")]
   [Arguments("--ordinary-files", "many")]
-  [Arguments("--colour", "1")]
+  [Arguments("--no-such-option", "1")]
   public async Task Options_Parse_RejectsABadValueOrAnUnknownOptionAsync(string name, string value) {
     await Assert.That(() => BuildCostOptions.Parse([name, value])).Throws<ArgumentException>();
   }
