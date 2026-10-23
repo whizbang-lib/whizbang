@@ -21,6 +21,8 @@ public class MSBuildGlobalOptionsTests {
       "WhizbangQueryComposingAttributes",
       "WhizbangDocsPath",
       "ProjectDir",
+      "WhizbangEmitMessageRegistry",
+      "WhizbangIncludePinnedTypeLedger",
     ]);
   }
 
