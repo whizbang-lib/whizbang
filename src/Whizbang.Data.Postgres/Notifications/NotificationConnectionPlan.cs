@@ -51,7 +51,8 @@ public sealed class NotificationConnectionPlan {
   /// True when connections open through the pooled connection-string key because no <c>-direct</c> key resolved: a
   /// transaction-pooling pooler does not keep a session-level advisory lock on one backend.
   /// </summary>
-  internal bool ResolvesThroughPooledKey => DataSource is null && StringSource == NotificationConnectionStringResolver.ResolutionSource.None;
+  internal bool ResolvesThroughPooledKey =>
+    DataSource is null && StringSource == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback;
 
   /// <summary>True when either path can open a connection.</summary>
   public bool IsAvailable => DataSource is not null || !string.IsNullOrEmpty(ConnectionString);

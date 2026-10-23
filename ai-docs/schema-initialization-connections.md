@@ -477,6 +477,60 @@ Every step logs one fixed form against the whole pass (`Migration X of Y - Start
 | `SchemaStepRunnerTests` | the lock, the re-check, the rollback, the record after it, and the step lines |
 | `SchemaPassLedgerTests` | continuing a pass of this build versus starting afresh |
 
+## Trap 8: the reconcile ran after the pass, on its own session lock (#1639)
+
+Trap 7 made the schema pass pooler-safe; the managed-object reconcile that runs after it was not. It took the same
+schema key with `pg_try_advisory_lock`, ran its reads, ledger writes and drops as separate autocommit statements, and
+released the key with a separate `pg_advisory_unlock`. Behind a transaction pooler the release ran on another backend:
+PostgreSQL logged `WARNING: you don't own a lock of type ExclusiveLock`, the release returned false (unchecked), and
+the backend that took the lock kept it until that server connection closed. It is the key every schema initialization
+try-locks, so every later initializer on every instance saw it held and waited or deferred, with nothing to say why.
+It showed up on services that run initialization a second time on the pooled connection.
+
+How the reconcile holds the key now (`ManagedSchemaReconciler`, through `IReconcileBackend`):
+
+1. **The plan is one transaction.** `pg_try_advisory_xact_lock`, the reads, the plan and the ledger rows commit
+   together (`WriteLedgerAsync` no longer opens a transaction of its own; it runs in the caller's).
+2. **Every drop but a concurrent index drop is a transaction of its own**, re-taking the key with
+   `pg_try_advisory_xact_lock`. Per drop rather than one transaction for all of them, so the `ACCESS EXCLUSIVE` lock a
+   constraint drop takes is held for that drop only, as it was under autocommit.
+3. **A concurrent index drop cannot run in a transaction**, so it holds the session lock for exactly three statements
+   (drop, ledger row, release), and only when the connection is direct: `SELECT pg_backend_pid()` equals
+   `NpgsqlConnection.ProcessID`. A pooler answers the startup itself and reports a process id of its own making, so
+   the two differ behind any pooler. Behind one, index drops stay pending with a Warning naming them and asking for a
+   direct initialization connection. A session-mode pooler, where the lock would hold, reads as pooled too; that
+   costs deferred index drops, never a leaked lock.
+4. **A drop that loses the key stays pending** (Information, naming the objects). Between the plan's commit and a drop
+   another instance's initialization can take the key; that is expected, and the next run drops it.
+
+### Every session-lock release checks its result
+
+`AdvisoryLockRelease.ReleaseAsync` runs `pg_advisory_unlock` and logs a Warning naming the lock and its key when it
+returns false. False means this session did not hold the lock: a pooler ran the release on a different backend, where
+the lock is still held. The reconcile, `PgDutyElector`, `PgRoleElector`'s bridge and `PgCommitOrderStamperWorker` all
+release through it. The three leadership locks stay session-scoped by design: they are held for a tenure, and a
+transaction-scoped lock would need a transaction open for the whole tenure. They run on the notification plan's
+connection, which must be direct; each warns when it resolves through the pooled key
+(`NotificationConnectionPlan.ResolvesThroughPooledKey`), and the role elector's bridge now does too.
+
+### Simulating a pooler in a test
+
+There is no pooler in the test containers, and two plain connections do not reproduce one: nothing makes a single
+`NpgsqlConnection` change backends. The reconcile's statements therefore go through `IReconcileBackend`, which promises
+one backend per transaction and nothing per statement. `TransactionPoolerSimulation` keeps that promise and nothing
+more: every statement outside a transaction opens a new backend, and every backend stays open until the test ends,
+as a pooler keeps its server connections. A session lock taken in one call and released in another is then left on a
+live backend, which is the production failure. `claimsDirect: true` stands in for a pooler the direct check cannot see.
+
+| Guard | What it catches |
+|---|---|
+| `ManagedSchemaReconcilerPoolerTests.ThroughATransactionPooler_NoLockIsLeftOnTheSchemaKey_AndTheNextInitializationTakesItAsync` | a session lock spanning two calls again |
+| `ManagedSchemaReconcilerPoolerTests.ThroughATransactionPooler_IndexDropsWaitForADirectConnection_AndSayWhyAsync` | a concurrent drop run under a session lock behind a pooler |
+| `ManagedSchemaReconcilerPoolerTests.ThroughAPoolerTheDirectCheckCannotSee_AReleaseThatFindsNothingIsLoggedAsync` | an unchecked release |
+| `ManagedSchemaReconcilerPoolerTests.WhenAnotherSessionTakesTheSchemaLockAfterThePlan_EveryDropStaysPendingAsync` | a drop that runs without the key |
+| `AdvisoryLockReleaseTests` | the release helper's result and its Warning |
+| `PgDutyElectorLockReleaseTests` | a duty release that found nothing, on both release paths |
+
 
 ## A fixture does not create its own database
 

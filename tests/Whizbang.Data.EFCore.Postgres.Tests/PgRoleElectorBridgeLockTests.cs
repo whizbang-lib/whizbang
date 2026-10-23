@@ -53,7 +53,13 @@ public class PgRoleElectorBridgeLockTests : EFCoreTestBase {
     var notification = new WhizbangNotificationOptions { ConnectionStringKey = "app-db" };
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
       // No "app-db-direct" entry, so only the pooled key resolves; the port is closed, so nothing is ever reached.
-      ["ConnectionStrings:app-db"] = "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1",
+      ["ConnectionStrings:app-db"] = new Npgsql.NpgsqlConnectionStringBuilder {
+        Host = "127.0.0.1",
+        Port = 1,
+        Username = "nobody",
+        Database = "nothing",
+        Timeout = 1,
+      }.ConnectionString,
     }).Build();
     var logger = new CapturingLogger();
     var pod = new ServiceInstanceProvider(Guid.NewGuid(), "role-svc", "role-host", processId: 1);

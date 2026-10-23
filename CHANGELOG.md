@@ -542,6 +542,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming policy, and a number among the names. A name `EventFlags` does not define raises SQLSTATE `22P02` naming it,
   so an event whose kind cannot be read is refused rather than stored as Sourced. Events already stored with the lost
   bits are not repaired by this change.
+- **The managed-object reconcile can no longer leave the schema lock held behind a transaction-pooling pooler
+  (#1639).** It took the schema initialization lock with `pg_try_advisory_lock` and released it in a separate
+  statement, so behind a pooler the release could run on another backend: PostgreSQL warned `you don't own a lock of
+  type ExclusiveLock`, the release returned false unchecked, and the backend that took the lock kept it, so every
+  later schema initialization on every instance found the key held. The plan and its ledger rows now run in one
+  transaction under `pg_try_advisory_xact_lock`, and each drop other than a concurrent index drop runs in a
+  transaction of its own under the same lock; the commit or rollback releases it where it was taken. A concurrent
+  index drop cannot run in a transaction, so it holds the session lock for its own statements only on a connection
+  that reaches one backend (the server's process id matches the one the connection was given); behind a pooler it
+  stays pending with a Warning naming the indexes until a direct initialization connection is configured. A drop
+  that finds another session holding the lock stays pending for the next run. Every release of a session-level
+  advisory lock (the reconcile, the duty elector, the role elector's bridge and the commit-order stamper's leader
+  lock) now checks the result and logs a Warning naming the lock and its key when this session did not hold it, and
+  the role elector warns, as the duty elector and the stamper already did, when its bridge lock resolves through a
+  pooled connection-string key.
+
 - **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
   its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
   associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database
