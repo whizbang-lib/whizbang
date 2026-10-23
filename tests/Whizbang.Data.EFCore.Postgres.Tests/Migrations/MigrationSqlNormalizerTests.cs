@@ -194,7 +194,9 @@ public class MigrationSqlNormalizerTests {
   /// <summary>The hash ignores what normalization removes.</summary>
   [Test]
   public async Task ContentHash_OfACommentOnlyEdit_IsUnchangedAsync() {
+    // REUSE-IgnoreStart: a header written into a fixture, not this file's license
     var edited = "-- SPDX-License-Identifier: MIT\r\n" + BASE.Replace("\n", "  -- why\r\n", StringComparison.Ordinal) + "\n\n";
+    // REUSE-IgnoreEnd
 
     await Assert.That(MigrationSqlNormalizer.ContentHash(edited)).IsEqualTo(MigrationSqlNormalizer.ContentHash(BASE));
   }

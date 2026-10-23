@@ -143,7 +143,9 @@ public class NormalizedMigrationHashTests : IAsyncDisposable {
     await _initAsync(new Provider(_bootstrap(), new("100_table", TABLE_SQL), new("101_probe", PROBE_SQL)));
     await Assert.That(await _probeRunsAsync()).IsEqualTo(1L);
 
+    // REUSE-IgnoreStart: a header written into a fixture, not this file's license
     var commented = "/* SPDX-License-Identifier: MIT */\r\n" + PROBE_SQL + "   -- a note\r\n\r\n";
+    // REUSE-IgnoreEnd
     await _initAsync(new Provider(_bootstrap(), new("100_table", TABLE_SQL), new("101_probe", commented)));
     await Assert.That(await _probeRunsAsync()).IsEqualTo(1L)
       .Because("a comment, a header and whitespace change nothing executable");
