@@ -500,6 +500,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A stopping host no longer logs "Error invoking PostDistributeDetached lifecycle receptors ... Cannot access a
+  disposed object".** The outbox batcher's flush runs its detached lifecycle stages (`PreDistributeDetached`,
+  `DistributeDetached`, `PostDistributeDetached`) in the background, and nothing waited for them: one still running
+  when the host disposed its service provider failed for every message it had not reached yet, so those receptors
+  did not run and an error was logged at every shutdown that caught a flush in progress. The shutdown flush now
+  waits for them after flushing the batchers and before the provider is disposed, logging at Information how many
+  it is waiting for, within the host's shutdown timeout. `DistributeLifecycleContext` gains an optional
+  `DetachedWork` (`DetachedLifecycleWork`) that records the background invocations.
 - **A recovered broker or inbox dead letter reaches the event store, and reads Recovered only once processed
   (#1664).** Recovery re-emitted an inbox or broker dead letter with inbox writes of its own that had drifted from a
   delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into

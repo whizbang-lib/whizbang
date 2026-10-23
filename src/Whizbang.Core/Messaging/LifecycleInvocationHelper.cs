@@ -23,6 +23,8 @@ namespace Whizbang.Core.Messaging;
 /// <param name="Logger">Optional logger for error reporting</param>
 /// <param name="EnableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
 /// <param name="Metrics">Optional lifecycle metrics for stage/receptor instrumentation</param>
+/// <param name="DetachedWork">Where the detached stage's background invocation is recorded, so a stopping host can wait
+/// for it before disposing the service provider it resolves receptors from. Without one, nothing waits for it.</param>
 public readonly record struct DistributeLifecycleContext(
   IReadOnlyList<OutboxMessage> OutboxMessages,
   IReadOnlyList<InboxMessage> InboxMessages,
@@ -30,7 +32,8 @@ public readonly record struct DistributeLifecycleContext(
   ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
   ILogger? Logger,
   bool EnableLifecycleTracing = true,
-  LifecycleMetrics? Metrics = null);
+  LifecycleMetrics? Metrics = null,
+  DetachedLifecycleWork? DetachedWork = null);
 
 /// <summary>
 /// Static helper for invoking lifecycle receptors at async and inline stages.
@@ -80,8 +83,8 @@ public static class LifecycleInvocationHelper {
     var inboxSnapshot = context.InboxMessages.ToArray();
     var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
-    // Invoke async stage (non-blocking, backgrounded)
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
+    // Invoke async stage (non-blocking, backgrounded), recorded so a stopping host can wait for it
+    _startDetached(outboxSnapshot, inboxSnapshot, asyncStage, deps, context.DetachedWork, ct);
 
     // Invoke inline stage (blocking, sequential)
     if (context.ScopeFactory is null || context.LifecycleMessageDeserializer is null) {
@@ -118,7 +121,22 @@ public static class LifecycleInvocationHelper {
     var deps = new LifecycleInvocationDependencies(context.ScopeFactory, context.LifecycleMessageDeserializer, context.Logger, context.EnableLifecycleTracing, context.Metrics);
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeDetached
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
+    _startDetached(outboxSnapshot, inboxSnapshot, asyncStage, deps, context.DetachedWork, ct);
+  }
+
+  /// <summary>
+  /// Starts a detached stage in the background and records it in <paramref name="detachedWork"/>: the flush does not
+  /// wait for it, but a stopping host must, or it runs against a disposed service provider.
+  /// </summary>
+  private static void _startDetached(
+      OutboxMessage[] outboxSnapshot,
+      InboxMessage[] inboxSnapshot,
+      LifecycleStage asyncStage,
+      LifecycleInvocationDependencies deps,
+      DetachedLifecycleWork? detachedWork,
+      CancellationToken ct) {
+    var invocation = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
+    detachedWork?.Track(invocation);
   }
 
   /// <summary>
