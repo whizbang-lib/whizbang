@@ -18,13 +18,20 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class TopicRegistryGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a class or record declaration.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsTopicMessageCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax or RecordDeclarationSyntax;
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover event/command types with [Topic] attribute or convention-based routing
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
         // Syntactic filtering: classes/records (cheap, filters ~99% of nodes)
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax or RecordDeclarationSyntax,
+        predicate: static (node, _) => IsTopicMessageCandidate(node),
 
         // Semantic analysis: Extract topic info (expensive, only on filtered nodes)
         transform: static (ctx, ct) => _extractTopicInfo(ctx, ct)

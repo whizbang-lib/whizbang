@@ -23,11 +23,27 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a method declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
+      node is MethodDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveRunnerGenerator
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -39,7 +55,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // type even when it lives in a referenced assembly). Matches CollectiveApplyDiscoveryGenerator's
     // discovery, so the emitted typeof() references the same accessible types.
     var collectiveEventCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is MethodDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedMethodCandidate(node),
         transform: static (ctx, ct) => _extractCollectiveEventType(ctx, ct)
     ).Where(static t => t is not null);
 

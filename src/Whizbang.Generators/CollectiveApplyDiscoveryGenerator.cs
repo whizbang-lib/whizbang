@@ -40,12 +40,20 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     int StatementTimeoutSecondsOverride
   );
 
+  /// <summary>
+  /// Syntax predicate: admits a method declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
+      node is MethodDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Syntactic predicate: method with at least one attribute.
     // Cheap to evaluate, filters out 95%+ of nodes.
     var infos = context.SyntaxProvider.CreateSyntaxProvider(
-      predicate: static (node, _) => node is MethodDeclarationSyntax { AttributeLists.Count: > 0 },
+      predicate: static (node, _) => IsAttributedMethodCandidate(node),
       transform: static (ctx, ct) => _extract(ctx, ct)
     ).Where(static info => info is not null);
 

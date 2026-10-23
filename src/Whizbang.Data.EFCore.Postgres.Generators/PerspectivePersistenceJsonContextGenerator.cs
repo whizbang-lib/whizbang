@@ -50,11 +50,27 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   private const string CLOSE_BRACE_INDENT_4 = "    }";
   private const string CLOSE_BRACE_INDENT_6 = "      }";
 
+  /// <summary>
+  /// Syntax predicate: admits a struct declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedStructCandidate(SyntaxNode node) =>
+      node is StructDeclarationSyntax { AttributeLists.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      (node is ClassDeclarationSyntax cls && cls.BaseList is not null) || (node is RecordDeclarationSyntax rec && rec.BaseList is not null);
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover all [WhizbangId] struct declarations in the compilation.
     // Syntactic predicate filters cheaply, semantic transform confirms the attribute.
     var whizbangIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is StructDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedStructCandidate(node),
         transform: static (ctx, ct) => _extractWhizbangId(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -66,9 +82,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     // and so can we. If a perspective is present in user source, the callback is safe
     // to emit (consumer has a MessageJsonContext by construction).
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            (node is ClassDeclarationSyntax cls && cls.BaseList is not null) ||
-            (node is RecordDeclarationSyntax rec && rec.BaseList is not null),
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _perspectiveModelBehind(ctx, ct))
       .Where(static result => result is not null);
 

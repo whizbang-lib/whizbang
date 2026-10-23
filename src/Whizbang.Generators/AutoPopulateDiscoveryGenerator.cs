@@ -42,11 +42,19 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_KIND_IDENTIFIER = "Identifier";
   private const string POPULATE_KIND_HEADER = "Header";
 
+  /// <summary>
+  /// Syntax predicate: admits a type declaration.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsPopulatedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax;
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with auto-populate attributes on properties
     var populatedProperties = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax,
+        predicate: static (node, _) => IsPopulatedTypeCandidate(node),
         transform: static (ctx, ct) => _extractAutoPopulateInfos(ctx, ct)
     ).SelectMany(static (infos, _) => infos);
 

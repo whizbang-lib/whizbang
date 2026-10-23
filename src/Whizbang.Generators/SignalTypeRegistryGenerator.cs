@@ -23,10 +23,18 @@ namespace Whizbang.Generators;
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 [Generator]
 public class SignalTypeRegistryGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a type with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsTypeWithBaseListCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var signals = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsTypeWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractSignal(ctx, ct)
     ).Where(static info => info is not null);
 

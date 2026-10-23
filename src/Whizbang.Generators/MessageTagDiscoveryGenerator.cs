@@ -39,13 +39,21 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     "global::Whizbang.Core.Attributes.MetricTagAttribute",
   ];
 
+  /// <summary>
+  /// Syntax predicate: admits a type declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with [MessageTag] or derived attributes
     // FIX: Use SelectMany to flatten multiple MessageTagInfo per type
     // This allows events with multiple tag attributes to have ALL attributes registered
     var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedTypeCandidate(node),
         transform: static (ctx, ct) => _extractTagInfos(ctx, ct)
     ).SelectMany(static (infos, _) => infos);
 

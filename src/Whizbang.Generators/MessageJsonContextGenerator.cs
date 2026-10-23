@@ -172,6 +172,25 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PRAGMA_DISABLE_CS0169 = "#pragma warning disable CS0169  // Field is never used";
   private const string PRAGMA_RESTORE_CS0169 = "#pragma warning restore CS0169";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list or an attribute, or nested in another type (a possible perspective model).
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsMessageTypeCandidate(SyntaxNode node) =>
+      (node is RecordDeclarationSyntax rec &&
+          (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
+      (node is ClassDeclarationSyntax cls &&
+          (cls.BaseList?.Types.Any() == true || cls.AttributeLists.Any() || cls.Parent is TypeDeclarationSyntax));
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
@@ -180,11 +199,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // 2. Records/classes with attributes ([WhizbangSerializable], [GraphQLName], etc.)
     // 3. Nested records/classes (potential perspective models like ChatSession.ChatSessionModel)
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            (node is RecordDeclarationSyntax rec &&
-                (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
-            (node is ClassDeclarationSyntax cls &&
-                (cls.BaseList?.Types.Any() == true || cls.AttributeLists.Any() || cls.Parent is TypeDeclarationSyntax)),
+        predicate: static (node, _) => IsMessageTypeCandidate(node),
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -196,8 +211,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // required for drain mode's DeserializeStreamEvents; handled message types must be resolvable by
     // this assembly's own context because a composite's inner list is polymorphic IMessage (#915).
     var perspectiveEventTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractConsumedMessageTypes(ctx, ct)
     ).Where(static info => !info.IsDefaultOrEmpty)
      .SelectMany(static (arr, _) => arr);

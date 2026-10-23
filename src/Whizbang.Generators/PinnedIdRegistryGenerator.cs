@@ -18,13 +18,18 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PinnedIdRegistryGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a class, record or struct declaration.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsPinnedTypeCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax;
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax
-                 or RecordDeclarationSyntax
-                 or StructDeclarationSyntax,
+        predicate: static (node, _) => IsPinnedTypeCandidate(node),
         transform: static (ctx, ct) => _extractPinnedInfo(ctx, ct)
     ).Where(static info => info is not null);
 

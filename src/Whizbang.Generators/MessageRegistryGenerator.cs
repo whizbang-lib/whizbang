@@ -88,13 +88,38 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a member-access call named SendAsync or PublishAsync.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsDispatchCallCandidate(SyntaxNode node) =>
+      node is InvocationExpressionSyntax invocation &&
+      invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+      (memberAccess.Name.Identifier.Text == "SendAsync" || memberAccess.Name.Identifier.Text == "PublishAsync");
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
-                                       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractMessageType(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -102,10 +127,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover dispatchers (SendAsync and PublishAsync calls)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var dispatchers = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
-                                       invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
-                                       (memberAccess.Name.Identifier.Text == "SendAsync" ||
-                                        memberAccess.Name.Identifier.Text == "PublishAsync"),
+        predicate: static (node, _) => IsDispatchCallCandidate(node),
         transform: static (ctx, ct) => _extractDispatcher(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -113,7 +135,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover receptors (IReceptor implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var receptors = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptor(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -121,7 +143,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover perspectives (IPerspectiveFor<TEvent> implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspective(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);

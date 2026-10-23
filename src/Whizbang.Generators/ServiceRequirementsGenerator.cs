@@ -54,7 +54,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var typeRegistrations = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => _isCandidateRegistration(node),
+        predicate: static (node, _) => IsRegistrationCallCandidate(node),
         transform: static (ctx, ct) => _extractRequirement(ctx, ct))
       .Where(static r => r is not null)
       .Select(static (r, _) => r!);
@@ -65,7 +65,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // when something first resolves the service, which may be never in a test run and always in
     // production. What the factory resolves IS the requirement.
     var factoryRegistrations = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => _isFactoryRegistration(node),
+        predicate: static (node, _) => IsFactoryRegistrationCandidate(node),
         transform: static (ctx, ct) => _extractFactoryRequirement(ctx, ct))
       .Where(static r => r is not null)
       .Select(static (r, _) => r!);
@@ -87,7 +87,9 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <summary>
   /// Cheap syntactic filter: a generic invocation whose name is a registration method.
   /// </summary>
-  private static bool _isCandidateRegistration(SyntaxNode node) {
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsRegistrationCallCandidate(SyntaxNode node) {
     if (node is not InvocationExpressionSyntax invocation) {
       return false;
     }
@@ -220,7 +222,9 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <summary>
   /// Cheap syntactic filter: a registration invocation whose argument is a lambda.
   /// </summary>
-  private static bool _isFactoryRegistration(SyntaxNode node) {
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsFactoryRegistrationCandidate(SyntaxNode node) {
     if (node is not InvocationExpressionSyntax invocation) {
       return false;
     }

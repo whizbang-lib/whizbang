@@ -28,11 +28,19 @@ namespace Whizbang.Generators;
 /// <docs>fundamentals/identity/pinned-type-ledger</docs>
 [Generator]
 public class PinnedTypeLedgerGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a type declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
+      node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover every [PinnedId] message/perspective type in this assembly.
     var pinnedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is TypeDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedTypeCandidate(node),
         transform: static (ctx, ct) => _tryDiscover(ctx, ct))
       .Where(static t => t is not null)
       .Select(static (t, _) => t!)

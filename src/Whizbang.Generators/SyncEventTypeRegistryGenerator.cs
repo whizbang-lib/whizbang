@@ -36,11 +36,19 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <summary>
+  /// Syntax predicate: admits a class declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover classes with [AwaitPerspectiveSync] attribute
     var syncMappings = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedClassCandidate(node),
         transform: static (ctx, ct) => _extractSyncMappings(ctx, ct)
     ).Where(static mappings => mappings?.Length > 0);
 
