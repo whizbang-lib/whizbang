@@ -510,6 +510,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A schema pass continued part way through no longer records the files it already applied as skipped (#1687).**
+  When a retry, or a second instance that took the schema lock between two of the first one's steps, continued a pass
+  of the same build, its plan recorded `status 3`, `Skipped (hash unchanged)`, over every migration file and
+  perspective table the pass had already applied, so `wh_schema_migrations` said they were never applied. The schema
+  itself was complete and every hash was right, so nothing re-ran; the ledger was wrong. Only the beginning of a pass
+  records skips now.
 - **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
   burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
   reach the row first. The framework answers that by folding the earlier event onto the row the other worker
