@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 231_RecoveredEventsReachTheEventStore.sql
 -- Date: 2026-10-22
 -- Description: A recovered inbox or broker dead letter re-enters through the inbox's own arrival path, and its
