@@ -595,9 +595,9 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     await Assert.That(held.State).IsEqualTo(RoleAssignmentState.Held);
     await Assert.That(held.HolderInstanceId).IsEqualTo(a.InstanceId);
     await Assert.That(held.Epoch).IsEqualTo(grant.Epoch!.Value);
-    await Assert.That(held.AssignedAt).IsNotNull();
-    await Assert.That(held.RenewedAt).IsNotNull();
-    await Assert.That(held.LeaseRemaining).IsNotNull();
+    await Assert.That(held.AssignedAt.HasValue).IsTrue();
+    await Assert.That(held.RenewedAt.HasValue).IsTrue();
+    await Assert.That(held.LeaseRemaining.HasValue).IsTrue();
     await Assert.That(held.ElectionCount).IsEqualTo(1L);
     await Assert.That(held.PendingWork).IsEqualTo(1L);
 
@@ -611,7 +611,7 @@ public class RoleAssignmentElectorE2ETests : EFCoreTestBase {
     var vacant = (await elector.ReadAssignmentsAsync(cancellationToken)).Single(s => s.Role == ROLE);
     await Assert.That(vacant.State).IsEqualTo(RoleAssignmentState.Vacant);
     await Assert.That(vacant.LastHolderInstanceId).IsEqualTo(a.InstanceId);
-    await Assert.That(vacant.LastVacatedAt).IsNotNull();
+    await Assert.That(vacant.LastVacatedAt.HasValue).IsTrue();
     await Assert.That(vacant.LastVacatedReason).IsEqualTo("released");
   }
 

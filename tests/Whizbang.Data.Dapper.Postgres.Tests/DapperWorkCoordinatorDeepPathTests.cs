@@ -391,7 +391,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
     await Assert.That(affected).IsEqualTo(1);
     var processedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT processed_at FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
-    await Assert.That(processedAt).IsNotNull()
+    await Assert.That(processedAt.HasValue).IsTrue()
       .Because("Debug mode keeps the forensic row with a kept-marker timestamp.");
     var instanceAfter = await conn.ExecuteScalarAsync<Guid?>(
       "SELECT instance_id FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });

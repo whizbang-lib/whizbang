@@ -91,7 +91,7 @@ public class MessageTagHookDispatcherRegistryCoverageTests {
     var result = await MessageTagHookDispatcherRegistry.TryDispatchAsync(
       new object(), new object(), typeof(SignalTagAttribute), CancellationToken.None);
 
-    await Assert.That(result).IsNotNull()
+    await Assert.That(result.HasValue).IsTrue()
       .Because("a dispatcher that handles the attribute type must have its result returned, not silently skipped");
   }
 }

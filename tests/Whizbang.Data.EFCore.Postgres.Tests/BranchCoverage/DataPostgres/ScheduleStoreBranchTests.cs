@@ -67,7 +67,7 @@ public class ScheduleStoreBranchTests : EFCoreTestBase {
 
     var occurrenceId = await manager.TriggerNowAsync(handle.ScheduleId, cancellationToken);
 
-    await Assert.That(occurrenceId).IsNotNull()
+    await Assert.That(occurrenceId.HasValue).IsTrue()
       .Because("the trigger leases its occurrence for the default lease and partitions on the default count");
   }
 
@@ -93,7 +93,7 @@ public class ScheduleStoreBranchTests : EFCoreTestBase {
     }, cancellationToken: cancellationToken);
     var databaseNow = await _databaseNowAsync(cancellationToken);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.NextFireAt).IsEqualTo(databaseNow.AddHours(2)).Within(TimeSpan.FromMinutes(1))
       .Because("with no start given, the next fire is the database's now plus the new interval");
     await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsNull()

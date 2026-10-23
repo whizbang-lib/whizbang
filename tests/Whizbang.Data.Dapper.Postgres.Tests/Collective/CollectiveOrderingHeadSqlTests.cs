@@ -254,6 +254,6 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
 
     await Assert.That(pruned).IsGreaterThanOrEqualTo(1L);
     await Assert.That(await _headAsync(idle)).IsNull();
-    await Assert.That(await _headAsync(active)).IsNotNull();
+    await Assert.That((await _headAsync(active)).HasValue).IsTrue();
   }
 }

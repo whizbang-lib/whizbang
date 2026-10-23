@@ -167,7 +167,7 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Name).IsEqualTo("To Soft Delete");
-    await Assert.That(row.Data.DeletedAt).IsNotNull();
+    await Assert.That(row.Data.DeletedAt.HasValue).IsTrue();
   }
 
   [Test]

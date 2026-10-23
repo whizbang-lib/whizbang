@@ -391,7 +391,7 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.InvokeRawReceptor);
     await Assert.That(decision.Reason).IsEqualTo("RawReceptorMatch");
     await Assert.That(decision.RawReceptor).IsSameReferenceAs(receptor);
-    await Assert.That(decision.RawPayload).IsNotNull();
+    await Assert.That(decision.RawPayload.HasValue).IsTrue();
   }
 
   [Test]

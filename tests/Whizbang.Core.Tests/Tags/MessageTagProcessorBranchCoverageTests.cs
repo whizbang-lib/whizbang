@@ -131,7 +131,7 @@ public class MessageTagProcessorBranchCoverageTests {
         .Because("the registered dispatcher handled the custom attribute and returned a payload");
       await Assert.That(messages.Any(m => m.Contains("Hook invocation complete, result: modified payload", StringComparison.Ordinal))).IsTrue()
         .Because("the first hook returned a payload, and the diagnosis must say it modified it");
-      await Assert.That(observing.SeenPayload).IsNotNull();
+      await Assert.That(observing.SeenPayload.HasValue).IsTrue();
       await Assert.That(observing.SeenPayload!.Value.GetRawText()).IsEqualTo(_modifiedPayload.GetRawText())
         .Because("a hook's modified payload replaces the current payload for every later hook");
     } finally {

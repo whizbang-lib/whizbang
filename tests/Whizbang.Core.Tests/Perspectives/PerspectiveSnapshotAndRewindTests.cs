@@ -592,7 +592,7 @@ public class PerspectiveSnapshotAndRewindTests {
 
     var actual = await store.GetLatestSnapshotWithCommitSequenceAsync(streamId, "p");
 
-    await Assert.That(actual).IsNotNull();
+    await Assert.That(actual.HasValue).IsTrue();
     await Assert.That(actual!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
     await Assert.That(actual.Value.SnapshotCommitSequence)
       .IsNull()

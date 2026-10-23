@@ -187,7 +187,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(claimedBy).IsEqualTo(instanceId);
     var leaseExpiry = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT lease_expiry FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
-    await Assert.That(leaseExpiry).IsNotNull();
+    await Assert.That(leaseExpiry.HasValue).IsTrue();
   }
 
   // ----- ClaimAndFetchPendingPerspectiveEventsAsync -----
@@ -300,7 +300,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(rowA.Status).IsEqualTo(1)
       .Because("store_outbox_messages inserts rows with the Stored flag (1).");
     await Assert.That(rowA.Attempts).IsEqualTo(0);
-    await Assert.That(rowA.PartitionNumber).IsNotNull();
+    await Assert.That(rowA.PartitionNumber.HasValue).IsTrue();
     await Assert.That(rowA.IsEvent).IsFalse();
     await Assert.That(rowA.Error).IsEqualTo("previous publish failure");
 
@@ -387,7 +387,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(row.MessageType).IsEqualTo("Test.X, Test");
     await Assert.That(row.Status).IsEqualTo(1);
     await Assert.That(row.Attempts).IsEqualTo(0);
-    await Assert.That(row.PartitionNumber).IsNotNull();
+    await Assert.That(row.PartitionNumber.HasValue).IsTrue();
     await Assert.That(row.IsEvent).IsTrue();
     await Assert.That(row.Error).IsEqualTo("handler blew up");
 
@@ -444,12 +444,12 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     var cursorProcessedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT processed_at FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
       new { s = streamId, p = perspectiveName });
-    await Assert.That(cursorProcessedAt).IsNotNull();
+    await Assert.That(cursorProcessedAt.HasValue).IsTrue();
 
     // ProcessedEventIds must be marked processed on wh_perspective_events.
     var eventProcessedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT processed_at FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
-    await Assert.That(eventProcessedAt).IsNotNull();
+    await Assert.That(eventProcessedAt.HasValue).IsTrue();
   }
 
   [Test]
@@ -492,7 +492,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(lastEventId).IsEqualTo(eventId);
     var eventProcessedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT processed_at FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
-    await Assert.That(eventProcessedAt).IsNotNull();
+    await Assert.That(eventProcessedAt.HasValue).IsTrue();
   }
 
   // ----- Serialize helpers via public API: non-empty hops / scope / metadata round trip -----
@@ -581,7 +581,7 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
       .Because("process_outbox_failures must OR in the Failed bit (32768).");
     var scheduledFor = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT scheduled_for FROM wh_outbox WHERE message_id = @m", new { m = msgId });
-    await Assert.That(scheduledFor).IsNotNull()
+    await Assert.That(scheduledFor.HasValue).IsTrue()
       .Because("Failures schedule an exponential-backoff retry.");
     var leasedBy = await conn.ExecuteScalarAsync<Guid?>(
       "SELECT instance_id FROM wh_outbox WHERE message_id = @m", new { m = msgId });

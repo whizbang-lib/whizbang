@@ -48,7 +48,7 @@ public class SignalBusTests {
 
     await ((ISignalSink)bus).ReceiveAsync(new TestSignal(42));
 
-    await Assert.That(received).IsNotNull();
+    await Assert.That(received.HasValue).IsTrue();
     await Assert.That(received!.Value.Value).IsEqualTo(42);
   }
 
@@ -64,7 +64,7 @@ public class SignalBusTests {
 
     await bus.PublishAsync(new TestSignal(7));
 
-    await Assert.That(received).IsNotNull();
+    await Assert.That(received.HasValue).IsTrue();
     await Assert.That(received!.Value.Value).IsEqualTo(7);
   }
 

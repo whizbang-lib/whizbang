@@ -353,7 +353,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     await conn.OpenAsync();
     var publishedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT published_at FROM wh_outbox WHERE message_id = @m", new { m = msgId });
-    await Assert.That(publishedAt).IsNotNull();
+    await Assert.That(publishedAt.HasValue).IsTrue();
   }
 
   [Test]

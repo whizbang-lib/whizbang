@@ -69,7 +69,7 @@ public class PerspectiveSyncSignalerTests {
     // Wait for signal with proper timeout (throws TimeoutException if not received)
     await signalReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    await Assert.That(receivedSignal).IsNotNull();
+    await Assert.That(receivedSignal.HasValue).IsTrue();
     await Assert.That(receivedSignal!.Value.PerspectiveType).IsEqualTo(perspectiveType);
     await Assert.That(receivedSignal!.Value.StreamId).IsEqualTo(streamId);
     await Assert.That(receivedSignal!.Value.LastEventId).IsEqualTo(eventId);

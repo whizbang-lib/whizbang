@@ -147,7 +147,7 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
     var (status, recoveredAt, generations, fingerprintAfterRecovery) = await _dlqRowAsync(conn, deadLetterId);
     await Assert.That(status).IsEqualTo(3)
       .Because("recovery_status=3 == Recovered; locks the terminal state of a successful recovery so future-status enum drift doesn't silently mismatch.");
-    await Assert.That(recoveredAt).IsNotNull()
+    await Assert.That(recoveredAt.HasValue).IsTrue()
       .Because("recovered_at being non-NULL is what fetch_dead_letters_due filters on — without it, the row would re-enter the recovery loop on the next tick.");
     await Assert.That(generations).Contains("test-gen-1")
       .Because("Original generation appended to retried_on_generations so the generation-replay sweep never double-replays this row.");

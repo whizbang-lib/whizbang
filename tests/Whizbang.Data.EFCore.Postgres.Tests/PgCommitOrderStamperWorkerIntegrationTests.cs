@@ -140,7 +140,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await stampTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     var seq = await _readCommitSequenceAsync(eventId);
-    await Assert.That(seq).IsNotNull()
+    await Assert.That(seq.HasValue).IsTrue()
       .Because("polling tick must drive stamp_pending_commit_sequences; eventually the row gets a commit_sequence");
 
     await worker.StopAsync(CancellationToken.None);
@@ -491,7 +491,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
     await Assert.That(nextBatch).IsEqualTo(4)
       .Because("the call that timed out asked for 8, and a canceled call stamps nothing, so the next asks for half");
-    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+    await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue()
       .Because("once a call can complete, the backed-off batch stamps the pending row");
     await Assert.That(leaderships).IsEqualTo(1)
       .Because("a timeout is answered by a smaller batch, not by giving up the stamper's lock and electing again");
@@ -527,7 +527,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
     await Assert.That(logged).Contains("a stamp of 8 rows timed out").And.Contains("the next asks for 4")
       .Because("a stamper that backs off is visible as one: the warning names the size that failed and the next");
-    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull();
+    await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue();
   }
 
   /// <summary>
@@ -618,7 +618,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(nextBatch).IsEqualTo(4)
       .Because("the first call filled its batch of 8 and took ten seconds, past the 2.5 s budget, so the next asks for half");
     foreach (var eventId in eventIds) {
-      await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+      await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue()
         .Because("a call that ran long still committed what it stamped; the smaller calls stamp the rest");
     }
     await Assert.That(leaderships).IsEqualTo(1)

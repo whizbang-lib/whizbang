@@ -194,7 +194,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert - Partial status should reflect what completed before failure
-    await Assert.That(reportedPartialStatus).IsNotNull();
+    await Assert.That(reportedPartialStatus.HasValue).IsTrue();
     await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Partial completion should include Stored flag");
     // EventStored flag should NOT be set since that's where processing failed
@@ -643,7 +643,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert
-    await Assert.That(reportedPartialStatus).IsNotNull();
+    await Assert.That(reportedPartialStatus.HasValue).IsTrue();
     await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Partial completion should include Stored flag");
     await Assert.That(reportedError).Contains("Publishing failed");

@@ -55,7 +55,7 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
     var occurrence = await manager.TriggerNowAsync(handle.ScheduleId, cancellationToken);
     var paused = await manager.PauseAsync(handle.ScheduleId, cancellationToken: cancellationToken);
 
-    await Assert.That(occurrence).IsNotNull();
+    await Assert.That(occurrence.HasValue).IsTrue();
     await Assert.That(paused).IsTrue().Because("an active schedule can be paused");
     await Assert.That(await _statusAsync(handle.ScheduleId, cancellationToken)).IsEqualTo((short)1);
   }
@@ -86,7 +86,7 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
       StartAt = start,
     }, cancellationToken: cancellationToken);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.NextFireAt).IsGreaterThanOrEqualTo(start)
       .Because("the start the caller named is the earliest the schedule may fire");
     await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsEqualTo("0 9 * * *");
@@ -104,7 +104,7 @@ public class PgScheduleManagerAllOutcomesTests : EFCoreTestBase {
       Interval = TimeSpan.FromHours(3),
     }, cancellationToken: cancellationToken);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(await _cronAsync(handle.ScheduleId, cancellationToken)).IsNull();
   }
 

@@ -62,7 +62,7 @@ public class BodyOffloadPostSerializeHookTests {
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
 
-    await Assert.That(result.NewSerializedBytes).IsNotNull();
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue();
     await Assert.That(result.NewEnvelope).IsNotNull()
       .Because("Offload replaces the envelope with a MessageEnvelope<BodyClaimEnvelopePayload>; downstream code (transports) need the typed envelope, not just bytes.");
     await Assert.That(result.NewEnvelope).IsTypeOf<MessageEnvelope<BodyClaimEnvelopePayload>>();
@@ -96,7 +96,7 @@ public class BodyOffloadPostSerializeHookTests {
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
 
-    await Assert.That(result.NewSerializedBytes).IsNotNull()
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue()
       .Because("Transport ceiling forces offload regardless of app threshold — otherwise the wire-send would fail.");
     await Assert.That(store.UploadCount).IsEqualTo(1);
   }
@@ -141,7 +141,7 @@ public class BodyOffloadPostSerializeHookTests {
     var ctx = _buildContext(new byte[5_000]);
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
-    await Assert.That(result.NewSerializedBytes).IsNotNull(); // confirms offload path ran
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue(); // confirms offload path ran
 
     // Passive counter: the untagged series always reports (at zero); the type-tagged series is
     // the one this offload counted.
@@ -177,7 +177,7 @@ public class BodyOffloadPostSerializeHookTests {
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
 
-    await Assert.That(result.NewSerializedBytes).IsNotNull();
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue();
     await Assert.That(coordinator.Recorded).Count().IsEqualTo(1);
     await Assert.That(coordinator.Recorded[0].ProviderName).IsEqualTo("memory");
     await Assert.That(coordinator.Recorded[0].StorageKey).IsNotEmpty()
@@ -197,7 +197,7 @@ public class BodyOffloadPostSerializeHookTests {
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
 
-    await Assert.That(result.NewSerializedBytes).IsNotNull();
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue();
     await Assert.That(store.UploadCount).IsEqualTo(1)
       .Because("the offload itself completed; only the ledger write failed");
   }

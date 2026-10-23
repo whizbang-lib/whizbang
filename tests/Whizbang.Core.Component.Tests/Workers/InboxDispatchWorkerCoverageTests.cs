@@ -370,7 +370,7 @@ public class InboxDispatchWorkerCoverageTests {
       await Task.Yield();
     }
 
-    await Assert.That(perf).IsNotNull()
+    await Assert.That(perf.HasValue).IsTrue()
       .Because("crossing the >100ms threshold with Debug enabled must emit the PERF diagnostic line");
     await Assert.That(perf!.Value.Message).Contains(work.MessageId.ToString())
       .Because("the diagnostic must identify WHICH message was slow");

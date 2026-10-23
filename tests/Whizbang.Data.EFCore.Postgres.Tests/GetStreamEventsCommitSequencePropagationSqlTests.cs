@@ -48,7 +48,7 @@ public class GetStreamEventsCommitSequencePropagationSqlTests : EFCoreTestBase {
 
     // Now fetch via get_stream_events and assert commit_sequence is populated.
     var commitSeq = await _readCommitSequenceFromGetStreamEventsAsync(conn, instanceId, streamId);
-    await Assert.That(commitSeq).IsNotNull()
+    await Assert.That(commitSeq.HasValue).IsTrue()
       .Because("after stamper runs, get_stream_events must surface commit_sequence to the C# consumer");
     await Assert.That(commitSeq!.Value).IsGreaterThan(0L);
   }

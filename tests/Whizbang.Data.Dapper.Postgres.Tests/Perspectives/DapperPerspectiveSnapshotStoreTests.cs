@@ -54,7 +54,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotData);
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
 
     var json = result.Value.SnapshotData.RootElement;
@@ -78,7 +78,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, updated);
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotData.RootElement.GetProperty("count").GetInt32()).IsEqualTo(2);
 
     result.Value.SnapshotData.Dispose();
@@ -100,7 +100,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
 
     // Latest should be batch 3
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotData.RootElement.GetProperty("batch").GetInt32()).IsEqualTo(3);
     result.Value.SnapshotData.Dispose();
   }
@@ -200,7 +200,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId3, JsonDocument.Parse("""{"v": 3}"""));
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId3);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(3);
 
@@ -332,7 +332,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
 
     // Should return snapshot at eventId2 (latest before beforeEventId)
     var result = await _store.GetLatestSnapshotBeforeAsync(streamId, perspectiveName, beforeEventId);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId2);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(2);
 
@@ -354,7 +354,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId2, JsonDocument.Parse("""{"v": 2}"""));
 
     var result = await _store.GetLatestSnapshotBeforeAsync(streamId, perspectiveName, beforeEventId);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId1);
 
     result.Value.SnapshotData.Dispose();
@@ -505,7 +505,7 @@ public sealed class DapperPerspectiveSnapshotStoreTests : IDisposable {
     latest.Value.SnapshotData.Dispose();
 
     var oldest = await _store.GetLatestSnapshotBeforeAsync(populatedStream, perspectiveName, eventIds[1]);
-    await Assert.That(oldest).IsNotNull();
+    await Assert.That(oldest.HasValue).IsTrue();
     await Assert.That(oldest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(1);
     oldest.Value.SnapshotData.Dispose();
   }

@@ -86,7 +86,7 @@ public class TransportPublishStrategyHookChainTests {
     var result = await strategy.PublishAsync(_buildWork(), CancellationToken.None);
 
     await Assert.That(result.Success).IsTrue();
-    await Assert.That(transport.LastPreSerializedBytes).IsNotNull()
+    await Assert.That(transport.LastPreSerializedBytes.HasValue).IsTrue()
       .Because("Transport reports a ceiling — strategy MUST serialize to know the size and validate pre-flight.");
     await Assert.That(transport.LastDestination!.Metadata).IsNotNull();
     await Assert.That(transport.LastDestination!.Metadata!.ContainsKey(TransportPublishStrategy.BODY_SIZE_METADATA_KEY)).IsTrue();

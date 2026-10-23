@@ -107,7 +107,7 @@ public class TypeDefinitionReconcilerCoverageTests {
 
     await Assert.That(summary.DriftDetected).IsEqualTo(1)
       .Because("a changed settings hash against the stored definition is drift");
-    await Assert.That(coordinator.Recorded).IsNotNull()
+    await Assert.That(coordinator.Recorded.HasValue).IsTrue()
       .Because("drift between two definitions is always recorded as a lineage edge");
     await Assert.That(coordinator.Recorded!.Value.Relationship).IsEqualTo(DefinitionRelationship.MetadataChangedTo)
       .Because("the schema hash is unchanged and the entry is not ephemeral, so the only remaining reading is a metadata change");
