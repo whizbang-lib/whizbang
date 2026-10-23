@@ -83,10 +83,14 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ResolveServiceName_NoEntryAssembly_UnknownAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ResolveServiceName_NamelessEntry_UnknownAsync</tests>
   internal static string ResolveServiceName(IConfiguration configuration, Assembly? entryAssembly) =>
-    configuration["Whizbang:ServiceName"]
-    ?? configuration["ServiceName"]
+    _unlessBlank(configuration["Whizbang:ServiceName"])
+    ?? _unlessBlank(configuration["ServiceName"])
     ?? entryAssembly?.GetName().Name
     ?? "Unknown";
+
+  // A key present with an empty value (an appsettings placeholder, an environment variable set to nothing) names no
+  // service, so the next source is read, as when the key is absent (#1660).
+  private static string? _unlessBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_ToInfo_ReturnsServiceInstanceInfoAsync</tests>
