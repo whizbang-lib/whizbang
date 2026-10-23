@@ -104,17 +104,51 @@
     </Task>
   </UsingTask>
 
-  <!-- Post-build task to extract message registry JSON from generated C# file.
-       message-registry.json is a REGENERABLE artifact (rebuilt from source on every compile), so it
-       lives in the git-ignored .whizbang/cache/ subfolder — NOT beside the committed ledger at the
-       .whizbang/ root. Convention: .whizbang/cache/ = ephemeral/ignored, .whizbang/ = committed. -->
-  <Target Name="WhizbangExtractMessageRegistry" AfterTargets="Build" Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
+  <!-- Where the two extraction targets below read and write. Set in a target they depend on, not inside them,
+       because a target's Inputs and Outputs are evaluated before its body runs (after its DependsOnTargets), and
+       not at file level, where IntermediateOutputPath may not be set yet when this file is imported. -->
+  <Target Name="WhizbangResolveExtractionPaths">
     <PropertyGroup>
       <WhizbangCacheDir>$(MSBuildProjectDirectory)/.whizbang/cache</WhizbangCacheDir>
       <WhizbangGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</WhizbangGeneratedCSharpFile>
       <WhizbangRegistryJsonFile>$(WhizbangCacheDir)/message-registry.json</WhizbangRegistryJsonFile>
+      <WhizbangRegistryStampFile>$(IntermediateOutputPath)whizbang-message-registry.stamp</WhizbangRegistryStampFile>
+      <WhizbangLedgerGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.PinnedTypeLedgerGenerator/PinnedTypeLedger.g.cs</WhizbangLedgerGeneratedCSharpFile>
+      <WhizbangPinnedTypeLedgerFile>$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json</WhizbangPinnedTypeLedgerFile>
+      <WhizbangFolderReadmeFile>$(MSBuildProjectDirectory)/.whizbang/README.md</WhizbangFolderReadmeFile>
+      <WhizbangLedgerStampFile>$(IntermediateOutputPath)whizbang-pinned-type-ledger.stamp</WhizbangLedgerStampFile>
     </PropertyGroup>
+    <!-- A generated file that does not exist is left out of the Inputs: MSBuild treats a missing input as out of
+         date, so a project the generator writes nothing for would run the target on every build. -->
+    <ItemGroup>
+      <WhizbangRegistryInput Include="$(MSBuildThisFileFullPath)" />
+      <WhizbangRegistryInput Include="$(WhizbangGeneratedCSharpFile)" Condition="Exists('$(WhizbangGeneratedCSharpFile)')" />
+      <WhizbangLedgerInput Include="$(MSBuildThisFileFullPath)" />
+      <WhizbangLedgerInput Include="$(WhizbangLedgerGeneratedCSharpFile)" Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)')" />
+    </ItemGroup>
+  </Target>
 
+  <!-- Both extraction targets run in every build of a consuming project, so each declares Inputs (the generated
+       file it reads, and this file, whose extraction logic it runs) and Outputs (a stamp in obj/) and is skipped
+       on a build where the generated file did not change (#1665). The JSON itself is not the output: the task
+       writes it only when its content changes, so it can stay older than a regenerated .g.cs and would make the
+       target run on every build. The stamp is touched every time the target runs, and a missing JSON file
+       deletes the stamp first, so deleting the JSON brings it back on the next build. -->
+
+  <!-- Post-build task to extract message registry JSON from generated C# file.
+       message-registry.json is a REGENERABLE artifact (rebuilt from source on every compile), so it
+       lives in the git-ignored .whizbang/cache/ subfolder — NOT beside the committed ledger at the
+       .whizbang/ root. Convention: .whizbang/cache/ = ephemeral/ignored, .whizbang/ = committed. -->
+  <Target Name="WhizbangPrepareMessageRegistry" DependsOnTargets="WhizbangResolveExtractionPaths"
+          Condition="'$(WhizbangEmitMessageRegistry)' == 'true'">
+    <Delete Files="$(WhizbangRegistryStampFile)"
+            Condition="Exists('$(WhizbangGeneratedCSharpFile)') And !Exists('$(WhizbangRegistryJsonFile)')" />
+  </Target>
+
+  <Target Name="WhizbangExtractMessageRegistry" AfterTargets="Build" Condition="'$(WhizbangEmitMessageRegistry)' == 'true'"
+          DependsOnTargets="WhizbangPrepareMessageRegistry"
+          Inputs="@(WhizbangRegistryInput)"
+          Outputs="$(WhizbangRegistryStampFile)">
     <!-- Extract JSON from generated C# file (cross-platform) -->
     <WhizbangExtractMessageRegistryJson
       SourceFile="$(WhizbangGeneratedCSharpFile)"
@@ -125,18 +159,29 @@
       Text="Whizbang: Message registry extracted to $(WhizbangRegistryJsonFile)"
       Importance="normal"
       Condition="Exists('$(WhizbangRegistryJsonFile)')" />
+
+    <Touch Files="$(WhizbangRegistryStampFile)" AlwaysCreate="true" />
+    <ItemGroup>
+      <FileWrites Include="$(WhizbangRegistryStampFile)" />
+    </ItemGroup>
   </Target>
 
   <!-- Rename platform: extract the pinned-type ledger JSON from generated C# to the committed .whizbang/ lockfile.
        Reuses the generic extraction task above. The generator MERGES with the existing committed ledger, so this
        write is a monotonic lockfile update (adds new pinned types; never rewrites a recorded name/history). -->
-  <Target Name="WhizbangExtractPinnedTypeLedger" AfterTargets="Build"
+  <Target Name="WhizbangPreparePinnedTypeLedger" DependsOnTargets="WhizbangResolveExtractionPaths"
           Condition="'$(WhizbangEmitMessageRegistry)' == 'true' And '$(WhizbangIncludePinnedTypeLedger)' != 'false'">
-    <PropertyGroup>
-      <WhizbangLedgerGeneratedCSharpFile>$(CompilerGeneratedFilesOutputPath)/Whizbang.Generators/Whizbang.Generators.PinnedTypeLedgerGenerator/PinnedTypeLedger.g.cs</WhizbangLedgerGeneratedCSharpFile>
-      <WhizbangPinnedTypeLedgerFile>$(MSBuildProjectDirectory)/.whizbang/pinned-type-ledger.json</WhizbangPinnedTypeLedgerFile>
-    </PropertyGroup>
+    <Delete Files="$(WhizbangLedgerStampFile)"
+            Condition="Exists('$(WhizbangLedgerGeneratedCSharpFile)') And !Exists('$(WhizbangPinnedTypeLedgerFile)')" />
+    <Delete Files="$(WhizbangLedgerStampFile)"
+            Condition="'$(WhizbangEmitFolderReadmes)' != 'false' And Exists('$(WhizbangPinnedTypeLedgerFile)') And !Exists('$(WhizbangFolderReadmeFile)')" />
+  </Target>
 
+  <Target Name="WhizbangExtractPinnedTypeLedger" AfterTargets="Build"
+          Condition="'$(WhizbangEmitMessageRegistry)' == 'true' And '$(WhizbangIncludePinnedTypeLedger)' != 'false'"
+          DependsOnTargets="WhizbangPreparePinnedTypeLedger"
+          Inputs="@(WhizbangLedgerInput)"
+          Outputs="$(WhizbangLedgerStampFile)">
     <WhizbangExtractMessageRegistryJson
       SourceFile="$(WhizbangLedgerGeneratedCSharpFile)"
       OutputFile="$(WhizbangPinnedTypeLedgerFile)"
@@ -151,7 +196,12 @@
          exists — i.e. when .whizbang/ actually has committed content to explain. Projects with only
          the ignored cache/ subfolder stay fully ignored and invisible to git. -->
     <WhizbangWriteFolderReadme
-      OutputFile="$(MSBuildProjectDirectory)/.whizbang/README.md"
+      OutputFile="$(WhizbangFolderReadmeFile)"
       Condition="'$(WhizbangEmitFolderReadmes)' != 'false' And Exists('$(WhizbangPinnedTypeLedgerFile)')" />
+
+    <Touch Files="$(WhizbangLedgerStampFile)" AlwaysCreate="true" />
+    <ItemGroup>
+      <FileWrites Include="$(WhizbangLedgerStampFile)" />
+    </ItemGroup>
   </Target>
 </Project>
