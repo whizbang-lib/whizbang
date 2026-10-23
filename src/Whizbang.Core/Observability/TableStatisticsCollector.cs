@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -46,6 +47,9 @@ public sealed partial class TableStatisticsCollector(
   /// keeps its own log category without this collector growing another optional injected dependency.
   /// </remarks>
   private QueryExposureAdvisory? _exposureAdvisory;
+
+  /// <summary>The unused indexes last seen, so the log line is written when the set changes rather than every cycle.</summary>
+  private HashSet<string> _lastUnusedIndexes = new(StringComparer.Ordinal);
 
   private readonly TimeSpan _interval = options?.Value.CollectionInterval ?? TableStatisticsOptions.DefaultCollectionInterval;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -129,6 +133,12 @@ public sealed partial class TableStatisticsCollector(
         // rather than having to go looking.
         metrics.UpdateTableBloat(bloat);
 
+        // Indexes nothing has scanned: on the gauge every cycle, in the log only when the set changes, so the
+        // operator is told once. Reported, never dropped.
+        var unused = await provider.GetUnusedIndexesAsync(stoppingToken);
+        metrics.UpdateUnusedIndexes(unused);
+        _reportUnusedIndexes(unused);
+
         CycleCompleted?.Invoke();
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop
@@ -143,6 +153,30 @@ public sealed partial class TableStatisticsCollector(
       }
     }
   }
+
+  /// <summary>
+  /// Logs the unused indexes when the set differs from the one last seen, and nothing when it is empty.
+  /// </summary>
+  private void _reportUnusedIndexes(IReadOnlyDictionary<string, UnusedIndex> unused) {
+    if (_lastUnusedIndexes.SetEquals(unused.Keys)) {
+      return;
+    }
+    _lastUnusedIndexes = [.. unused.Keys];
+    if (unused.Count == 0 || !_logger.IsEnabled(LogLevel.Information)) {
+      return;
+    }
+    var listed = string.Join(", ", unused
+      .OrderByDescending(index => index.Value.Bytes)
+      .ThenBy(index => index.Key, StringComparer.Ordinal)
+      .Select(index => string.Create(CultureInfo.InvariantCulture,
+        $"{index.Key} ({index.Value.TableName}, {index.Value.Bytes} bytes)")));
+    var bytes = unused.Values.Sum(index => index.Bytes);
+    LogUnusedIndexes(_logger, unused.Count, bytes, listed);
+  }
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "{Count} indexes on wh_ tables have not been scanned since the statistics were last reset, {Bytes} bytes in all: {Indexes}. Nothing is dropped; an unused index may serve a rare path")]
+  static partial void LogUnusedIndexes(ILogger logger, int count, long bytes, string indexes);
 
   /// <summary>
   /// Reads the tables: the storage reading, with the sizes and bloat ratios taken from it, or, from a

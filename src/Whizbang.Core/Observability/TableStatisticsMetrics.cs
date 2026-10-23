@@ -28,6 +28,7 @@ public sealed class TableStatisticsMetrics {
   private readonly ConcurrentDictionary<string, double> _tableBloat = new();
   private readonly ConcurrentDictionary<string, TableStorageStatistics> _tableStorage = new();
   private readonly ConcurrentDictionary<string, EventTypeBytes> _eventTypeBytes = new();
+  private readonly ConcurrentDictionary<string, UnusedIndex> _unusedIndexes = new();
 
   /// <summary>Initializes table statistics meters on the shared Whizbang meter.</summary>
   public TableStatisticsMetrics(WhizbangMetrics whizbangMetrics) {
@@ -77,6 +78,17 @@ public sealed class TableStatisticsMetrics {
         new Measurement<long>(kv.Value.LiveRows, new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Key))),
       unit: "rows",
       description: "Estimated live rows per table from the planner statistics");
+
+    // Indexes nothing has scanned since the statistics were last reset, with what each costs on disk. A report only:
+    // an unused index may serve a rare path, so nothing is dropped on the strength of it.
+    meter.CreateObservableGauge(
+      "whizbang.table.unused_index_bytes",
+      observeValues: () => _unusedIndexes.Select(kv =>
+        new Measurement<long>(kv.Value.Bytes,
+          new KeyValuePair<string, object?>(TABLE_NAME_TAG, kv.Value.TableName),
+          new KeyValuePair<string, object?>("index_name", kv.Key))),
+      unit: BYTES_UNIT,
+      description: "Size of each index on a framework table that nothing has scanned since the statistics were last reset");
 
     // Which event types the event store's bytes belong to, and how much of each event is payload and how much
     // metadata: the reading that decides what to exclude from audit, mark ephemeral or slim. Sampled on one
@@ -160,6 +172,15 @@ public sealed class TableStatisticsMetrics {
   /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsStorageTests.cs</tests>
   public void UpdateTableStorage(IReadOnlyDictionary<string, TableStorageStatistics> storage) =>
     _replace(_tableStorage, storage);
+
+  /// <summary>
+  /// Updates the cached unused indexes. Called by <see cref="TableStatisticsCollector"/>.
+  /// </summary>
+  /// <param name="indexes">The latest reading, by index name.</param>
+  /// <remarks>An index missing from <paramref name="indexes"/> (scanned since, or dropped) stops reporting.</remarks>
+  /// <docs>operations/observability/metrics#unused-indexes</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsUnusedIndexTests.cs</tests>
+  public void UpdateUnusedIndexes(IReadOnlyDictionary<string, UnusedIndex> indexes) => _replace(_unusedIndexes, indexes);
 
   /// <summary>
   /// Test seam: reads back a published ratio. Observable gauges are only sampled by an active

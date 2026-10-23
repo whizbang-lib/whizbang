@@ -186,6 +186,9 @@ Each slice is one red-then-green increment and its own commit.
     index (`EXPLAIN` uses it for the range query).
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
+    **Status (2026-10-23):** done in #1669: `whizbang.table.unused_index_bytes` on the table-statistics meter
+    and an Information log line when the set changes. Constraint indexes are left out; partition indexes roll
+    up to their parent; capped by `MaxTrackedTables`.
 13. **`REINDEX CONCURRENTLY` task.** For queue tables that churn to empty (`wh_outbox`, `wh_inbox`,
     `wh_inbox_state`, `wh_perspective_events`): when an index's size over its expected size exceeds
     `ReindexBloatThreshold`, rebuild it concurrently on its own connection (it cannot run in a

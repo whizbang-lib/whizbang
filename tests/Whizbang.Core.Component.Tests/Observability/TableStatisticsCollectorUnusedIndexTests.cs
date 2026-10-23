@@ -75,7 +75,7 @@ public class TableStatisticsCollectorUnusedIndexTests {
   public async Task NoUnusedIndexes_IsNotLogged_AndASetThatReturnsIsLoggedAgainAsync() {
     await using var host = new CollectorHost(
       new Dictionary<string, UnusedIndex> { ["idx_orders_customer"] = _customer },
-      [],
+      new Dictionary<string, UnusedIndex>(),
       new Dictionary<string, UnusedIndex> { ["idx_orders_customer"] = _customer });
 
     await host.StartAndRunCycleAsync();
@@ -92,6 +92,19 @@ public class TableStatisticsCollectorUnusedIndexTests {
       .Because("an index that is unused again after being used is a new finding");
   }
 
+  [Test]
+  public async Task WithInformationLoggingOff_TheGaugeIsStillReportedAsync() {
+    // The line is built only when it would be written; the gauge does not depend on it.
+    await using var host = new CollectorHost(
+      new SilentLogger(),
+      new Dictionary<string, UnusedIndex> { ["idx_orders_customer"] = _customer });
+
+    await host.StartAndRunCycleAsync();
+
+    await Assert.That(host.Read()).Contains(("whizbang.table.unused_index_bytes", 81_920d, "wh_per_orders", "idx_orders_customer"));
+    await Assert.That(host.UnusedIndexLines()).IsEmpty();
+  }
+
   /// <summary>A collector on a fake clock, over a provider that answers each cycle with the next scripted set.</summary>
   private sealed class CollectorHost : IAsyncDisposable {
     private readonly ServiceProvider _container;
@@ -104,7 +117,11 @@ public class TableStatisticsCollectorUnusedIndexTests {
     private readonly TableStatisticsCollector _collector;
     private TaskCompletionSource _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public CollectorHost(params IReadOnlyDictionary<string, UnusedIndex>[] cycles) {
+    public CollectorHost(params IReadOnlyDictionary<string, UnusedIndex>[] cycles)
+      : this(logger: null, cycles) {
+    }
+
+    public CollectorHost(ILogger<TableStatisticsCollector>? logger, params IReadOnlyDictionary<string, UnusedIndex>[] cycles) {
       var services = new ServiceCollection();
       services.AddSingleton<ITableStatisticsProvider>(new ScriptedProvider(cycles));
       _container = services.BuildServiceProvider();
@@ -112,7 +129,7 @@ public class TableStatisticsCollectorUnusedIndexTests {
         _container.GetRequiredService<IServiceScopeFactory>(),
         new TableStatisticsMetrics(new WhizbangMetrics(_meters)),
         SchemaReadyGate.AlreadyReady(),
-        _logger,
+        logger ?? _logger,
         Options.Create(new TableStatisticsOptions { CollectionInterval = _interval }),
         _clock);
       _collector.CycleCompleted += () => Volatile.Read(ref _next).TrySetResult();
@@ -175,6 +192,18 @@ public class TableStatisticsCollectorUnusedIndexTests {
       _meters.Dispose();
       _stopping.Dispose();
       await _container.DisposeAsync();
+    }
+  }
+
+  /// <summary>A logger with every level off, as a host that filters out Information has.</summary>
+  private sealed class SilentLogger : ILogger<TableStatisticsCollector> {
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => false;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      // Nothing is enabled, so nothing is written.
     }
   }
 

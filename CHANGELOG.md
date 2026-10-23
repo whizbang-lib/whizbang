@@ -262,6 +262,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and call site; with no observer subscribed a parse site costs one volatile read. `MessageParseRecorder` counts and
   summarizes the parses of chosen messages. Regression tests pin today's counts per flow (a locally published event
   feeding two perspectives is parsed 17 times), and `plans/message-cache.md` proposes the cache that lowers them.
+- **Unused-index report (#1669).** Each table-statistics cycle reports the indexes on `wh_` tables that nothing has
+  scanned since the statistics were last reset, with their size, on the new gauge
+  `whizbang.table.unused_index_bytes` (tags `table_name`, `index_name`), and logs the set at Information when it
+  changes. Unique, primary-key and exclusion indexes are left out; an index on a partitioned table is one series with
+  its partitions summed; past `MaxTrackedTables` the smallest are summed under `other`. Nothing is ever dropped.
+  `ITableStatisticsProvider.GetUnusedIndexesAsync` defaults to empty.
 - **The table-statistics collection interval is a setting (#1668).** `Whizbang:TableStatistics:CollectionInterval`
   (default `00:00:30`, the interval the collector always used) sets how often each instance reads the tables into the
   `Whizbang.TableStatistics` gauges. Zero or negative fails host start naming the key.
