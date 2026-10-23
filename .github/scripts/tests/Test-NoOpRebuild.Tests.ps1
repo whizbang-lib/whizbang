@@ -82,4 +82,23 @@ Describe 'Get-NoOpRebuildWork' {
     )
     (Get-NoOpRebuildWork -LogPath $log).Project | Should -Be @('/repo/src/A/A.csproj', '/repo/src/C/C.csproj')
   }
+
+  # The generators package's targets run in every consumer's build; one with no Inputs and Outputs runs on a
+  # no-op rebuild too (#1665).
+  It 'watches the shipped generator targets by default, in the check and in the script' {
+    $shipped = @('WhizbangExtractMessageRegistry', 'WhizbangExtractPinnedTypeLedger')
+    $log = New-Log @(
+      foreach ($t in $shipped) {
+        (Get-TargetLine $t '/repo/src/Core/Core.csproj')
+        '       Whizbang: Message registry extracted'
+      }
+    )
+    @(Get-NoOpRebuildWork -LogPath $log | ForEach-Object Target) | Should -Be $shipped
+
+    $script = Join-Path -Path $PSScriptRoot -ChildPath '../../../scripts/build-cost/Test-NoOpRebuild.ps1'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$null, [ref]$null)
+    $default = $ast.ParamBlock.Parameters.Where({ $_.Name.VariablePath.UserPath -eq 'Targets' })[0].DefaultValue.SafeGetValue()
+    $default | Should -Contain $shipped[0]
+    $default | Should -Contain $shipped[1]
+  }
 }
