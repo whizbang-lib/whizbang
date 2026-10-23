@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 220_FunctionCommentsNameTheCurrentFunctions.sql
 -- Date: 2026-10-20
 -- Description: The database comments on two functions named their caller as an orchestrator that no longer

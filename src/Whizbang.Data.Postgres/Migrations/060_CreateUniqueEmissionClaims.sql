@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 060_CreateUniqueEmissionClaims.sql
 -- Date: 2026-06-22
 -- Description: Creates wh_unique_emission_claims table — the atomic claim primitive

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 018_ProcessInboxFailures.sql
 -- Date: 2025-12-25
 -- Description: Creates process_inbox_failures function for handling failed inbox messages.

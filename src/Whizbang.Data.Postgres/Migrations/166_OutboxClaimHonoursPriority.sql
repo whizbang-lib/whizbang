@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 166_OutboxClaimHonoursPriority.sql
 -- Date: 2026-09-21
 -- Description: The claim selects outbox work in priority order, as it already does for inbox work.

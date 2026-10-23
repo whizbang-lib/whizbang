@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 040_FetchOutboxInboxBatch.sql
 -- Date: 2026-04-30
 -- Description: Per-stream-id payload-fetch functions used by the new OutboxDrainWorker /

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Require the PR gate
 description: >-
   Fails unless the pull-request gate passed on EXACTLY the given commit: the pull_request CI run for

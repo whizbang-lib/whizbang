@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 206_OneRingerAtATime.sql
 -- Date: 2026-10-12
 -- Description: One ringer rings at a time per schema, and it drains; the others return at once (#1336).

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # Only allowed actions can run (#1467): the repository's Actions setting allows GitHub's own actions, verified

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 173_RoleAssignments.sql
 -- Date: 2026-09-28
 -- Description: Duty role assignment (issue #966). The advisory lock decides only the VOTE; the

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 178_IndexStatistics
 -- Date: 2026-09-30
 -- Description: A table an index was just created on is analyzed, so the planner has statistics for the

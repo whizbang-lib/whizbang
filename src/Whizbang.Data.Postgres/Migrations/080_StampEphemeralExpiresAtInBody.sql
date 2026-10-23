@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 080_StampEphemeralExpiresAtInBody.sql
 -- Date: 2026-07-17
 -- Description: E2-4 (metadata-carry) — materialise an ephemeral AfterTtl event's expiry into

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 020_StoreOutboxMessages.sql
 -- Date: 2025-12-25
 -- Description: Creates store_outbox_messages function for inserting new outbox messages with immediate lease.

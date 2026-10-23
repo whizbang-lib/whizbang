@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 067_TemporalCronNextFire.sql
 -- Date: 2026-07-13 (F2 temporal engine — increment 3b: DB-side recurrence next-fire)
 -- Description: The DB half of the dual C#/DB recurrence engine. Home-grown (no pg_cron / no

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 059_GetStreamEventsOwnershipGate.sql
 -- Date: 2026-06-21
 -- Description: Enforce single-writer-per-stream in the live drain claim.

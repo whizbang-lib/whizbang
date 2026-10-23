@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 083_DestructionHoldFailureCount.sql
 -- Date: 2026-07-17
 -- Description: E2-5 — destruction failure retry policy. A throwing PreDestruction hook no longer fails open;

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Verify NuGet packages
 description: >-
   Fails unless a directory holds EXACTLY the packages in .github/nuget-packages.txt, each at EXACTLY

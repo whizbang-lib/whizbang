@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 144_RetentionAutoAdoption
 -- Date: 2026-09-07
 -- Description: adopt_enrolled_perspective_retention(), the automatic half of the retention

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 005_CreateCompletePerspectiveCheckpointFunction.sql
 -- Date: 2025-12-21 (merged from 005 and 005a)
 -- Description: Creates complete_perspective_cursor_work function for updating perspective checkpoints

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 212_CloseStreamReanchorsCursorsAndSnapshots.sql
 -- Date: 2026-10-19
 -- Description: Closing a stream settles every row that pointed into the truncated prefix (#1486).

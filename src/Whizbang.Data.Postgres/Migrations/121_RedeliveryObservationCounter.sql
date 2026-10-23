@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 121_RedeliveryObservationCounter.sql
 -- Date: 2026-08-20
 -- Description: Durable redelivery-observation counter for non-count-based poison detection

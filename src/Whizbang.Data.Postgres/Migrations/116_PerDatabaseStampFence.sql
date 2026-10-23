@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 116_PerDatabaseStampFence.sql
 -- Date: 2026-08-19
 -- Description: Scope the commit-order stamper's ordering fence to THIS database.

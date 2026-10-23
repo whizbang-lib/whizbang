@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 109_InstanceState.sql
 -- Date: 2026-08-16
 -- Description: Each instance records its own lifecycle phase and library version on its instance

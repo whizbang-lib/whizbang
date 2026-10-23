@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 169_Fold
 -- Date: 2026-09-25
 -- Description: The folding the framework applies to text for substring search: lowercase, and typographic

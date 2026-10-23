@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 012_CalculateInstanceRank.sql
 -- Date: 2025-12-25
 -- Description: Creates calculate_instance_rank function for partition-based load balancing.

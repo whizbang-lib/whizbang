@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Bug report
 description: Whizbang does not behave as documented.
 title: "[Bug]: "

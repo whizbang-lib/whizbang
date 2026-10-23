@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 services:
   servicebus-emulator:
     container_name: servicebus-emulator

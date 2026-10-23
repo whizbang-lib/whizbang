@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- ============================================================================
 -- Migration 042: purge_orphan_inbox
 -- ----------------------------------------------------------------------------

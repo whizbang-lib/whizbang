@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 190_CollectiveOrderingHeads.sql
 -- Date: 2026-10-02
 -- Description: Each collective stored with an ordering key is linked, in the transaction that stores it, to

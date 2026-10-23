@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 058_GetStreamEventsUnstampedGate.sql
 -- Date: 2026-06-20
 -- Description: Part B — close the stamper-lag inversion at the LIVE drain WITHOUT making the drain

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 131_DebounceArmsOnFoundWorkOnly
 -- Date: 2026-09-05
 -- Description: The doorbell debounce may arm ONLY on found work (issue #677). 130 stamped a

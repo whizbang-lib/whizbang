@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 159_ClaimAcquisitionReadsOnlyClaimableRows.sql
 -- Date: 2026-09-17
 -- Description: The inbox acquisition reads the rows it may take, not every row it may not.

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 197_CommitSequenceInsertionOrder.sql
 -- Date: 2026-10-08
 -- Description: commit_sequence is assigned in insertion order, a stream's versions are never numbered out of

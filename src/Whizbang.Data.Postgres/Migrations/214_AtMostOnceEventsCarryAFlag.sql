@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 214_AtMostOnceEventsCarryAFlag.sql
 -- Date: 2026-10-19
 -- Description: At-most-once events are left out of digests, epochs, checkpoint counts and re-delivery for real (#1484).

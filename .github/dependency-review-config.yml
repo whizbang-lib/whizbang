@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 # Dependency review (#1441): what a pull request may add. Read by the Gate · Dependency review job in ci.yml,
 # which is in Gate · CI result's needs, so a finding blocks the merge.
 #
