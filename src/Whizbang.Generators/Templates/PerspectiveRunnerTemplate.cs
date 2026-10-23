@@ -870,6 +870,25 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           if (rowChanged && resurrected && startedPurged) {
             await _clearPurgeAsync(streamId, perspectiveName, cancellationToken);
           }
+          // A live write the ordering guard refused folded this batch onto a row that is already past it: the row
+          // holds a later event and lacks these (#1608). Reporting the batch applied would retire its work rows with
+          // nothing left pending to repair the row, so the stream is re-folded from its earliest event in the batch
+          // instead, exactly as for an event below the row's recorded position (#1347). A rebuild's refusal stands:
+          // it already folded the whole stream.
+          if (!rowChanged && !rebuilding && processedEvents.Count > 0) {
+            snapshotBeforeWrite?.Dispose();
+            if (backgroundTasks.Count > 0) {
+              await Task.WhenAll(backgroundTasks);
+            }
+            var earliest = global::Whizbang.Core.Perspectives.ReplayEventOrder.Order(processedEvents)[0];
+            _logger.LogWarning(
+                "[diag.write.refused] {PerspectiveName} stream {StreamId}: the row is past the batch starting at event {EventId}; rewinding so the batch is folded rather than reported applied",
+                perspectiveName,
+                streamId,
+                earliest.MessageId.Value);
+            return await _rewindAndRunCoreAsync(
+                streamId, perspectiveName, earliest.MessageId.Value, earliest.LocalCommitSequence, cancellationToken);
+          }
         }
         _reportPurgedEventsSkipped(perspectiveName, streamId, purgedEventsSkipped);
 

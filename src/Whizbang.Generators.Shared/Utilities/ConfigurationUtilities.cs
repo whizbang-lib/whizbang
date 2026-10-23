@@ -46,18 +46,36 @@ public static class ConfigurationUtilities {
 
     // Read StripTableNameSuffixes (default: true)
     var stripSuffixes = true;
-    if (globalOptions.TryGetValue(STRIP_TABLE_NAME_SUFFIXES_PROPERTY, out var stripValue)) {
+    if (_tryGetSetting(globalOptions, STRIP_TABLE_NAME_SUFFIXES_PROPERTY, out var stripValue)) {
       stripSuffixes = string.Equals(stripValue, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     // Read TableNameSuffixesToStrip (default from TableNameConfig.Default)
     string[] suffixesToStrip = TableNameConfig.Default.SuffixesToStrip;
-    if (globalOptions.TryGetValue(TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY, out var suffixesValue) &&
-        !string.IsNullOrWhiteSpace(suffixesValue)) {
+    if (_tryGetSetting(globalOptions, TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY, out var suffixesValue)) {
       suffixesToStrip = ParseSuffixList(suffixesValue);
     }
 
     return new TableNameConfig(stripSuffixes, suffixesToStrip);
+  }
+
+  /// <summary>
+  /// Reads an MSBuild property the project actually set, trimmed. A property the package declares as a
+  /// <c>CompilerVisibleProperty</c> reaches the generator as an empty value when the project never sets it,
+  /// so an empty or whitespace value counts as unset and the caller keeps its default (#1660).
+  /// </summary>
+  /// <param name="globalOptions">The analyzer config options containing MSBuild properties</param>
+  /// <param name="key">The <c>build_property.*</c> key to read</param>
+  /// <param name="value">The trimmed value when set, otherwise an empty string</param>
+  /// <returns>True when the property holds a non-blank value</returns>
+  private static bool _tryGetSetting(AnalyzerConfigOptions globalOptions, string key, out string value) {
+    if (globalOptions.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw)) {
+      value = raw.Trim();
+      return true;
+    }
+
+    value = string.Empty;
+    return false;
   }
 
   /// <summary>
@@ -112,8 +130,7 @@ public static class ConfigurationUtilities {
       return null;
     }
 
-    if (globalOptions.TryGetValue(MAX_IDENTIFIER_LENGTH_PROPERTY, out var lengthValue) &&
-        !string.IsNullOrWhiteSpace(lengthValue) &&
+    if (_tryGetSetting(globalOptions, MAX_IDENTIFIER_LENGTH_PROPERTY, out var lengthValue) &&
         int.TryParse(lengthValue, out var parsed) &&
         parsed > 0) {
       return parsed;
