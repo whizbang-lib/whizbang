@@ -3,11 +3,11 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Whizbang.Core.Notifications;
-using Whizbang.Core.Workers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Workers;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;

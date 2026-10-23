@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   partition, and drops partitions wholly past `log_retention_days` instead of deleting rows. Only the maintainer-duty
   holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
   table and detached later. Migration 226.
+  table and detached later. Migration 226.
+
+- **`wh_signals` and `wh_lifecycle_completions` are partitioned by the partition manager (#1646).** While
+  partitioning is enabled, `wh_signals` converts once to daily partitions by `created_at` (primary key
+  `(id, created_at)`; publishing and the tail are unchanged) and `wh_lifecycle_completions` to daily `event_id` ranges
+  (event ids are UUIDv7, so a day is the range from its first id to the next day's; the key stays `event_id`). Their
+  partitions are dropped past `SignalRetention` and `LifecycleCompletionRetentionDays` (`0` keeps every partition).
+  The manager now accepts a time-ordered `uuid` key as well as a `timestamptz` one, and the conversion moves a row
+  whose key is past the oldest partition's bound (a version-4 id, a clock running ahead) into the default partition
+  instead of failing. Once a table is partitioned and maintained, its row sweep clears only the default partition;
+  switched off, it sweeps the whole table again. Migration 231.
 
 - **The applied-event ledger vacuums after a fixed number of changes (#1666).** Migration 232 sets scale factor 0
   with a threshold of 10000 for both dead rows and inserts on `wh_perspective_applied`, which takes a row for every

@@ -102,7 +102,7 @@ internal static partial class PartitionMaintenance {
     var results = new List<PartitionMaintenanceResult>();
     await using var command = connection.CreateCommand();
     // The window is read in the same statement, so a fixed window, a stored window and the stored window's default
-    // are one expression: COALESCE(fixed, stored days, default days).
+    // are one expression: COALESCE(fixed, stored days, default days). All three null means no window.
     command.CommandText =
       $"SELECT action, partition_name FROM {quotedSchema}.wh_partition_maintain(@table, @interval, @ahead, " +
       $"COALESCE(@keep, (SELECT make_interval(days => s.setting_value::INTEGER) FROM {quotedSchema}.wh_settings s " +
@@ -112,7 +112,10 @@ internal static partial class PartitionMaintenance {
     command.Parameters.AddWithValue("ahead", createAhead);
     command.Parameters.Add(new NpgsqlParameter("keep", NpgsqlDbType.Interval) { Value = table.Retention is { } keep ? keep : (object)DBNull.Value });
     command.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text) { Value = (object?)table.RetentionSettingKey ?? DBNull.Value });
-    command.Parameters.AddWithValue("defaultDays", table.RetentionDefaultDays);
+    // With neither a fixed window nor a key, the default is null too, so the window is null and nothing is dropped.
+    command.Parameters.Add(new NpgsqlParameter("defaultDays", NpgsqlDbType.Integer) {
+      Value = table.RetentionSettingKey is null ? DBNull.Value : table.RetentionDefaultDays,
+    });
     command.Parameters.AddWithValue(nameof(now), now.ToUniversalTime());
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {

@@ -29,9 +29,16 @@ namespace Whizbang.Data.Postgres.Notifications;
 ///    <c>created_at &lt; NOW() - @retention AND id &lt;= (SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors)</c>
 ///    — so an empty cursors table (no pods have ever tailed) does NOT wipe pre-existing signals.
 /// </para>
+/// <para>
+/// Once <c>wh_signals</c> is partitioned and partition maintenance is enabled, expired days are dropped whole by the
+/// partition manager, so the sweep deletes only from the default partition, which no drop reaches
+/// (<c>wh_partition_sweep_relation</c>, #1646). With partitioning switched off it sweeps the whole table again.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Partitioning/SignalPartitionConversionTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "The only text formatted in is the relation wh_partition_sweep_relation returns, an identifier it quoted itself from the catalog; the window and batch size are bound parameters.")]
 public sealed partial class PgDurableSignalRetentionWorker(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -98,15 +105,20 @@ public sealed partial class PgDurableSignalRetentionWorker(
       return 0;
     }
     await using var conn = await plan.OpenAsync(cancellationToken);
+    // The whole table, or only its default partition once the partition manager keeps it (#1646); nothing when a
+    // managed table has no default partition.
+    if (await _sweepRelationAsync(conn, cancellationToken) is not { } relation) {
+      return 0;
+    }
     // In batches, so a large backlog is never one long delete; each batch keeps both guards (the age window and the
     // slowest pod's cursor), and the loop ends on a short batch (#1574).
     var deleted = 0;
     int batch;
     do {
-      await using var cmd = new NpgsqlCommand(@"
-        DELETE FROM wh_signals
+      await using var cmd = new NpgsqlCommand($@"
+        DELETE FROM {relation}
         WHERE id IN (
-          SELECT s.id FROM wh_signals s
+          SELECT s.id FROM {relation} s
           WHERE s.created_at < NOW() - @retention
             AND s.id <= COALESCE((SELECT MIN(last_delivered_signal_id) FROM wh_signal_cursors), 0)
           ORDER BY s.id
@@ -120,6 +132,11 @@ public sealed partial class PgDurableSignalRetentionWorker(
       LogSweepDeleted(_logger, deleted);
     }
     return deleted;
+  }
+
+  private static async Task<string?> _sweepRelationAsync(NpgsqlConnection conn, CancellationToken cancellationToken) {
+    await using var cmd = new NpgsqlCommand("SELECT wh_partition_sweep_relation('wh_signals')", conn);
+    return await cmd.ExecuteScalarAsync(cancellationToken) as string;
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,

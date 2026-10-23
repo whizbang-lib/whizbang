@@ -13,8 +13,8 @@ namespace Whizbang.Core.Workers;
 /// <remarks>
 /// <para>
 /// Off by default until the conversion has soaked. While it is off nothing is converted, created or dropped, and
-/// every table keeps its row-by-row retention. Once on, each registered table (today <c>wh_log</c>, weekly) is
-/// converted once, partitions are created <see cref="CreateAhead"/> intervals forward, and a partition whose whole
+/// every table keeps its row-by-row retention. Once on, each registered table (<c>wh_log</c> weekly;
+/// <c>wh_signals</c> and <c>wh_lifecycle_completions</c> daily) is converted once, partitions are created <see cref="CreateAhead"/> intervals forward, and a partition whose whole
 /// range is past the table's retention window is dropped. Only the instance holding the maintainer duty does this.
 /// </para>
 /// <para>
