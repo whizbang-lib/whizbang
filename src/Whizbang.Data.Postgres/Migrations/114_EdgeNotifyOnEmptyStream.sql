@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 114_EdgeNotifyOnEmptyStream.sql
 -- Date: 2026-08-18
 -- Description: Replace the v0.686.1 cold-only store NOTIFY gate with empty→non-empty

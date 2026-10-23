@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 087_StreamDigests.sql
 -- Date: 2026-07-31
 -- Description: Stream Integrity A1c — the incrementally-maintained digest table. wh_stream_digests

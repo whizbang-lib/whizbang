@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 171_OutboxStreamRuns.sql
 -- Date: 2026-09-27
 -- Description: An outbox claim leases a RUN of a stream's consecutive rows, not one row per stream.

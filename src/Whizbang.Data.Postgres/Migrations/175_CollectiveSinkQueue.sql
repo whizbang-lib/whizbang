@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 175_CollectiveSinkQueue
 -- Date: 2026-09-29
 -- Description: The collective sink queue: a sink stream's unprocessed collectives, in the order they apply (#963).

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 042_FetchPendingPerspectiveEvents.sql
 -- Date: 2026-05-02
 -- Description: Cheap ID-only prefetch for the perspective drainer (Phase H step 7 slice 1).

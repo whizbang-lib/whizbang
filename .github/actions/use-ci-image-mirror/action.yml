@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: 'Use the CI image mirror'
 description: >-
   Logs in to GHCR and, when the mirror holds every image in .github/ci-images.txt, sets

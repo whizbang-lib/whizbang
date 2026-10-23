@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 215_CollectiveSinkQueueReadsOnlyItsHead.sql
 -- Date: 2026-10-20
 -- Description: A collective sink run reads the head of its stream's queue, not the whole queue (#1524).

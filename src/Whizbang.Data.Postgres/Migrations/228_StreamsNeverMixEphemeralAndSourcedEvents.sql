@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 228_StreamsNeverMixEphemeralAndSourcedEvents.sql
 -- Date: 2026-10-21
 -- Description: A stream never holds both ephemeral and Sourced events (WHIZ133, #1546).

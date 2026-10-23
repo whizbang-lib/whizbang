@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 226_PartitionManager.sql
 -- Date: 2026-10-21
 -- Description: A built-in partition manager for time-ordered framework tables, and the one-time conversion that

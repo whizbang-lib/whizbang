@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 089_TableRewriteRequests.sql
 --
 -- A table can hold far more space than its live rows need, and it costs on every read: index

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 078_DropInlineBodyColumns.sql
 -- Date: 2026-07-16
 -- Description: Final cut of the full pointer/body split (E1 #13b4-3). 077 made every write go to

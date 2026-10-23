@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # scripts/Test-SolutionTestProjects.ps1 (run by the CI build job): a test project outside the solution,

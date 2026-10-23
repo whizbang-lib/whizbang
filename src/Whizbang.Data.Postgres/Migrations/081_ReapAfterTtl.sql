@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 081_ReapAfterTtl.sql
 -- Date: 2026-07-17
 -- Description: E2-4c — physical-reap TTL retention floor for Destruction.AfterTtl events. The event's own

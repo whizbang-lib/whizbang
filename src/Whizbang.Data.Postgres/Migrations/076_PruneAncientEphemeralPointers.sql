@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 076_PruneAncientEphemeralPointers.sql
 -- Date: 2026-07-16
 -- Description: Tier-2 deep-maintenance pointer prune (E1 #13b3). The tier-1 reaper (073) deletes consumed,

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 062_PersistEventFlags.sql
 -- Date: 2026-06-29
 -- Description: Persist the EventFlags `flags` column when storing outbox/inbox messages.

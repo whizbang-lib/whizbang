@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration 064: reconcile_message_type_registry() becomes ledger-aware
 --
 -- Supersedes the drift branch of 040. When a pinned_id's stored clr_type_name differs from the

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 085_EventArchive.sql
 -- Date: 2026-07-18
 -- Description: A1 (Archival & Compaction) increment 2 — cold-storage archive. wh_event_archive holds a full

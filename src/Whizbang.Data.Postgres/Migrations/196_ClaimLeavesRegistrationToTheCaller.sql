@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 196_ClaimLeavesRegistrationToTheCaller.sql
 -- Date: 2026-10-08
 -- Description: claim_work no longer writes the calling instance's registration row (#1226).

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 149_MessagePriority
 -- Date: 2026-09-09
 -- Description: Every work row carries an effective priority (priority step 1). One integer, lower is more

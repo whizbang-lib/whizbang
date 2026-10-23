@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
     The whole pull-request health recipe in one run, saved as one report.

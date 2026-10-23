@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration 035: Create lifecycle_completions table
 --
 -- Durable marker recording that PostLifecycle fired for an event.

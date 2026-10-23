@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 172_OutboxLockOrder.sql
 -- Date: 2026-09-28
 -- Description: One lock order for the outbox and its stream ledger, and a continuation that never

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 088_ChurnTableAutovacuum.sql
 -- Description: Aggressive per-table autovacuum for the delete-churned messaging tables, so dead
 --              tuples are reclaimed promptly and the heap settles into a bounded steady state

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: AzureBlob Integration Tests (Reusable)
 
 on:

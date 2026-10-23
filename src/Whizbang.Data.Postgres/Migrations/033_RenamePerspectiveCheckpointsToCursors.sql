@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 033_RenamePerspectiveCheckpointsToCursors.sql
 -- Date: 2026-03-17
 -- Description: Renames wh_perspective_checkpoints table to wh_perspective_cursors.

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 015_ProcessPerspectiveEventCompletions.sql
 -- Date: 2025-12-25
 -- Description: Creates process_perspective_event_completions function for marking perspective events as complete.

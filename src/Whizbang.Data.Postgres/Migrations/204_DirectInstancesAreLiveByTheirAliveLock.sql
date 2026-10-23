@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 204_DirectInstancesAreLiveByTheirAliveLock.sql
 -- Date: 2026-10-10
 -- Description: A direct instance is live while its alive-lock is held, so its heartbeat can run on the slow cadence (#1286).

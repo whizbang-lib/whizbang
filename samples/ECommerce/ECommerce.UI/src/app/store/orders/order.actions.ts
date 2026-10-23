@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { createAction, props } from '@ngrx/store';
 
 // Order models

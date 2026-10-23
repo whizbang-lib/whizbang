@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 010_RegisterInstanceHeartbeat.sql
 -- Date: 2025-12-25
 -- Description: Creates register_instance_heartbeat function for updating instance heartbeats.

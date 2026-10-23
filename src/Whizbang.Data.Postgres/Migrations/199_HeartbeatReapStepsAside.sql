@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 199_HeartbeatReapStepsAside.sql
 -- Date: 2026-10-08
 -- Description: The stale-peer reap inside record_heartbeat steps aside instead of waiting (#1217).

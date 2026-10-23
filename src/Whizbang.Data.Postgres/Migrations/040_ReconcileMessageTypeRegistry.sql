@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration 040: reconcile_message_type_registry() function
 --
 -- Companion to 039_CreateMessageTypeRegistryTable. Consolidates the upsert +

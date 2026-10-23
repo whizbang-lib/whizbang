@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 068_ClaimDueSchedules.sql
 -- Date: 2026-07-13 (F2 temporal engine — increment 4a: authoritative claim+advance)
 -- Description: The temporal engine's authoritative fire. For each due Active schedule owned by the

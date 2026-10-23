@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 162_InboxWorkStateSideTable.sql
 -- Date: 2026-09-17
 -- Description: An inbox message's mutable work state moves into a narrow table of its own, so a

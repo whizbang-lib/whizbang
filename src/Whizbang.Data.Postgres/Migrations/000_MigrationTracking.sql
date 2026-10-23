@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 000_MigrationTracking.sql
 -- Date: 2026-03-15
 -- Description: Creates migration tracking tables for hash-based change detection.

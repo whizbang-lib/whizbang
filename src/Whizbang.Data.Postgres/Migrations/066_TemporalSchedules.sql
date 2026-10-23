@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 066_TemporalSchedules.sql
 -- Date: 2026-07-13 (F2 Temporal Engine — durable schedules + run log + due-notify)
 -- Description: First-class scheduled + recurring events (and saga deadlines). Adds:

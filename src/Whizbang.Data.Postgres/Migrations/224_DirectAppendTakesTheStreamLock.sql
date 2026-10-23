@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 224_DirectAppendTakesTheStreamLock.sql
 -- Date: 2026-10-21
 -- Description: A direct event-store append gets its version from the database, under the same per-stream lock the

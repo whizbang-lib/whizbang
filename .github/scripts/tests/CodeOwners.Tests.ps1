@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The pipeline and build files are owned by the build-admins team (.github/CODEOWNERS), and the

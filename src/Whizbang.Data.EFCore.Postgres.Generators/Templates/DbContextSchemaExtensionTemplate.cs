@@ -1022,9 +1022,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var infraChanged = stepsOutstanding;
     var migrations = GetMigrationScripts();
     foreach (var (name, sql) in migrations) {
-      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-      var hash = Convert.ToHexStringLower(
-          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
+      var hash = _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
       if (!infraHashes.TryGetValue(name, out var existing)) {
         infraChanged = true;
         break;
@@ -1401,7 +1399,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
       var order = executionOrder;
       var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-      var hash = _contentHash(transformedSql);
+      var hash = _migrationHash(transformedSql);
       string? existingHash = null;
       var ran = false;
       await steps.RunAsync(name,
@@ -1486,6 +1484,28 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   private static string _contentHash(string text) =>
     Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+
+  /// <summary>
+  /// A migration's ledger hash: its normalized SQL, so an edit that changes nothing executable (a comment, a header,
+  /// whitespace) is not a change. The same function the Dapper driver and the bootstrap closure hash with, over the
+  /// schema-substituted text, so the drivers agree.
+  /// </summary>
+  private static string _migrationHash(string transformedSql) =>
+    Whizbang.Data.Postgres.MigrationSqlNormalizer.ContentHash(transformedSql);
+
+  /// <summary>
+  /// The pre-migration hash rewrite (#1648), the first thing the pass does under the schema lock: every ledger row
+  /// whose hash is the raw-text hash of its file as shipped, which is what earlier releases recorded, takes the file's
+  /// normalized hash, so a file that did not change is not applied again. A row matching neither form belongs to a
+  /// file that really changed and is left for the plan to apply. A distinct step so the startup phases can move it;
+  /// nothing to latch, since once no row holds a legacy hash the statement updates nothing.
+  /// </summary>
+  private static async Task _rewriteLegacyMigrationHashesAsync(
+      Npgsql.NpgsqlConnection connection, ILogger? logger, CancellationToken ct) {
+    var versionId = await _upsertVersionAsync(connection, ct);
+    await Whizbang.Data.Postgres.MigrationHashUpgrade.RewriteLegacyHashesAsync(
+      connection, "__SCHEMA__", GetHashedMigrationTexts(), versionId, logger, ct);
+  }
 
   /// <summary>
   /// Records a failed step's ledger row once its transaction has rolled back, with no transaction open, so the record
@@ -1589,6 +1609,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return untracked;
     }
 
+    // Before any hash is read: rows an earlier release recorded over the raw text move onto normalized hashes.
+    await _rewriteLegacyMigrationHashesAsync(connection, logger, ct);
+
     var rows = await _bulkGetHashesAsync(connection, ct);
     var (infra, persp, associations) = _compareHashes(rows);
     infra |= sweepPending;
@@ -1659,7 +1682,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
     foreach (var (name, sql) in migrations) {
       var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-      if ((!pass.RecordedHashes.TryGetValue(name, out var recorded) || recorded != _contentHash(transformedSql)) && mayApply(name)) {
+      if ((!pass.RecordedHashes.TryGetValue(name, out var recorded) || recorded != _migrationHash(transformedSql)) && mayApply(name)) {
         toRun.Add(name);
       }
       orderedObjects.Add((name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(transformedSql).Objects));
@@ -1733,7 +1756,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       foreach (var (name, sql) in GetMigrationScripts()) {
         var recorded = pass.RecordedHashes.GetValueOrDefault(name);
         if (pass.MigrationsToRun.TryGetValue(name, out var reason)) {
-          if (recorded == _contentHash(_transformMigrationSql(sql, "__SCHEMA__"))) {
+          if (recorded == _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"))) {
             await _markPendingAsync(connection, name, pass.VersionId, reason ?? "marked to run again", ct);
             pass.RecordedHashes[name] = Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH;
           }
@@ -1925,7 +1948,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       new SchemaConfiguration(InfrastructurePrefix: "wh_", PerspectivePrefix: "wh_per_", SchemaName: "__SCHEMA__")));
     foreach (var (name, sql) in GetMigrationScripts()) {
       yield return name;
-      yield return _contentHash(_transformMigrationSql(sql, "__SCHEMA__"));
+      yield return _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
     }
     foreach (var (name, sql) in GetPerspectiveEntries()) {
       yield return name;
@@ -2038,6 +2061,16 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       #endregion
     };
   }
+
+  /// <summary>
+  /// Each migration with the text its ledger hash is computed over: the embedded text with the schema substituted.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so a test can stand a database on the hashes an earlier release recorded from the
+  /// real texts; a test that rebuilt them would prove its own copy and say nothing about what ships.
+  /// </remarks>
+  internal static (string Name, string Text)[] GetHashedMigrationTexts() =>
+    GetMigrationScripts().Select(m => (m.Name, _transformMigrationSql(m.Sql, "__SCHEMA__"))).ToArray();
 
   /// <summary>
   /// The marked regions of the migrations that have to exist before a migrator can be elected.

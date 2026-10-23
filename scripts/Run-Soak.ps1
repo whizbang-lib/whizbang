@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 <#
 .SYNOPSIS
   Runs the load / stress / soak suite. Never part of the CI gate.

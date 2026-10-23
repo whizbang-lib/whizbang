@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 210_RemoveRewindLifecycleEventsFromApplicationStreams.sql
 -- Date: 2026-10-14
 -- Description: DATA (not schema) migration (#1360). Builds before the fix appended PerspectiveRewindStarted and

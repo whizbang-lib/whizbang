@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 106_OffloadClaimLedger
 -- Date:      2026-08-16
 -- Purpose:   The database's record of every transport body-offload blob, so cleanup is a query

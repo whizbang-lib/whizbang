@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 174_EnsureIndex
 -- Date: 2026-09-28
 -- Description: Create a declared index only when its table has no index with the same definition,

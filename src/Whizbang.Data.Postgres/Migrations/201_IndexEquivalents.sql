@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 201_IndexEquivalents
 -- Date: 2026-10-09
 -- Description: Record which existing index stands for a declared one, so the managed-object reconcile does

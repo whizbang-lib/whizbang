@@ -368,8 +368,8 @@ project has today (see below).
 | `achieve_silver` | Unmet | Silver is in progress; one criterion (continuity of access) remains. <https://www.bestpractices.dev/projects/15090> |
 | `bus_factor` | Unmet | One maintainer does most of the work today, so the bus factor is 1. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
 | `contributors_unassociated` | Unmet | The project has one significant contributor today; other contributions have been occasional. <https://github.com/whizbang-lib/whizbang/graphs/contributors> |
-| `copyright_per_file` | Met | Every C# source file starts with `Copyright (c) whizbang-lib contributors.`, and the build fails on a file without it (`.editorconfig` `file_header_template`, rule IDE0073). Generated code, code-generation templates (copied into consumers' generated code) and SQL migrations (fingerprinted at startup) are exempt. <https://github.com/whizbang-lib/whizbang/blob/develop/.editorconfig> |
-| `license_per_file` | Met | Every C# source file carries `SPDX-License-Identifier: MIT` in its header, enforced the same way. <https://github.com/whizbang-lib/whizbang/blob/develop/.editorconfig> |
+| `copyright_per_file` | Met | Every source file (C#, SQL, PowerShell, shell, YAML, TypeScript, JavaScript, SCSS, Python) starts with `Copyright (c) whizbang-lib contributors.`; C# is enforced by the build (`.editorconfig` `file_header_template`, rule IDE0073) and every file by `reuse lint` on each pull request. Files with no place for a header (documentation, data, project files, images), code-generation templates (copied into consumers' generated code), generated code and line-sensitive test fixtures are declared in `REUSE.toml`. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
+| `license_per_file` | Met | The same header names the license as an SPDX identifier (MIT), and `REUSE.toml` declares it for the files listed there; the repository is REUSE 3.3 compliant, checked by `reuse lint` on every pull request. <https://github.com/whizbang-lib/whizbang/blob/develop/REUSE.toml> |
 
 ## Change Control
 

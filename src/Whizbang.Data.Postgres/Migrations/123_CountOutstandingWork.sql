@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 123_CountOutstandingWork.sql
 -- Date: 2026-08-23
 -- Description: count_outstanding_work — how much leased, unfinished work an instance is holding.

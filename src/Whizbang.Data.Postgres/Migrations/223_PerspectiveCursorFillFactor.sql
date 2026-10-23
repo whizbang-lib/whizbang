@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 223_PerspectiveCursorFillFactor.sql
 -- Date: 2026-10-21
 -- Description: wh_perspective_cursors keeps 10% of each page free for the new versions of its rows (#1592, WS-4
