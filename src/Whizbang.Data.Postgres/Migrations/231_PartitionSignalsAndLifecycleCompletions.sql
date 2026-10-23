@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 231_PartitionSignalsAndLifecycleCompletions.sql
 -- Date: 2026-10-22
 -- Description: The partition manager (226) keeps a table partitioned by a time-ordered uuid as well as one partitioned

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 232_PerspectiveAppliedAutovacuum.sql
 -- Date: 2026-10-22
 -- Description: The applied-event ledger vacuums after a fixed number of changes rather than a fraction of the table
