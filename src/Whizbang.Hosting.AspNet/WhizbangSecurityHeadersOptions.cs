@@ -23,26 +23,26 @@ public sealed class WhizbangSecurityHeadersOptions {
 
   /// <summary>
   /// Value for <c>Strict-Transport-Security</c>. Only emitted when the request is HTTPS or arrived through
-  /// a TLS-terminating proxy (<c>X-Forwarded-Proto: https</c>). <c>null</c> suppresses the header.
+  /// a TLS-terminating proxy (<c>X-Forwarded-Proto: https</c>). <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.
   /// </summary>
   public string? StrictTransportSecurity { get; set; } = "max-age=31536000; includeSubDomains; preload";
 
-  /// <summary>Value for <c>X-Content-Type-Options</c>. <c>null</c> suppresses the header.</summary>
+  /// <summary>Value for <c>X-Content-Type-Options</c>. <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.</summary>
   public string? XContentTypeOptions { get; set; } = "nosniff";
 
-  /// <summary>Value for <c>X-Frame-Options</c>. <c>null</c> suppresses the header.</summary>
+  /// <summary>Value for <c>X-Frame-Options</c>. <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.</summary>
   public string? XFrameOptions { get; set; } = "DENY";
 
   /// <summary>
   /// Value for <c>Content-Security-Policy</c>. The default only forbids framing (<c>frame-ancestors</c>);
-  /// services that serve HTML should replace it with a full policy. <c>null</c> suppresses the header.
+  /// services that serve HTML should replace it with a full policy. <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.
   /// </summary>
   public string? ContentSecurityPolicy { get; set; } = "frame-ancestors 'none'";
 
-  /// <summary>Value for <c>Referrer-Policy</c>. <c>null</c> suppresses the header.</summary>
+  /// <summary>Value for <c>Referrer-Policy</c>. <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.</summary>
   public string? ReferrerPolicy { get; set; } = "strict-origin-when-cross-origin";
 
-  /// <summary>Value for <c>Permissions-Policy</c>. <c>null</c> suppresses the header.</summary>
+  /// <summary>Value for <c>Permissions-Policy</c>. <c>null</c> or empty suppresses the header; an empty value is how configuration turns it off.</summary>
   public string? PermissionsPolicy { get; set; } = "camera=(), microphone=(), geolocation=()";
 
   /// <summary>
