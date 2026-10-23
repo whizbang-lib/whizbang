@@ -30,6 +30,7 @@ public partial class SchemaPassLedgerTests {
 
     await Assert.That(plan.ToMark).IsEquivalentTo(["core-infrastructure", "constraints"]);
     await Assert.That(plan.ToRun).IsEquivalentTo(["core-infrastructure", "constraints"]);
+    await Assert.That(plan.Continues).IsFalse();
   }
 
   /// <summary>
@@ -47,6 +48,8 @@ public partial class SchemaPassLedgerTests {
 
     await Assert.That(plan.ToMark).IsEmpty();
     await Assert.That(plan.ToRun).IsEquivalentTo(["constraints", "registries"]);
+    await Assert.That(plan.Continues).IsTrue()
+      .Because("the pass's beginning already recorded its skips, so the continuation must not record them again (#1687)");
   }
 
   /// <summary>A finished pass of this build does not stop the next one from running what it needs.</summary>
@@ -60,6 +63,7 @@ public partial class SchemaPassLedgerTests {
 
     await Assert.That(plan.ToMark).IsEquivalentTo(["core-infrastructure"]);
     await Assert.That(plan.ToRun).IsEquivalentTo(["core-infrastructure"]);
+    await Assert.That(plan.Continues).IsFalse();
   }
 
   /// <summary>
@@ -76,6 +80,7 @@ public partial class SchemaPassLedgerTests {
 
     await Assert.That(plan.ToMark).IsEquivalentTo(["core-infrastructure", "registries"]);
     await Assert.That(plan.ToRun).IsEquivalentTo(["core-infrastructure", "registries"]);
+    await Assert.That(plan.Continues).IsFalse();
   }
 
   [Test]

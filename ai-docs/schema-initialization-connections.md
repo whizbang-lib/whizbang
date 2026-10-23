@@ -450,7 +450,12 @@ How the steps stay serialized without a session-scoped lock:
    one stops. The lock free with work outstanding means the holder failed, died, or is simply between two steps: this
    one backs off and contends, and point 2 is what keeps the two from applying anything twice. Two instances can take
    turns through one pass; each step is still applied once.
-6. **The failure record is written after the rollback**, on the same connection with no transaction open (status -1,
+6. **Only the beginning of a pass records skips.** A continuation re-plans from the ledger, and the files and tables
+   it will not run are the ones the pass has since applied; recording `Skipped (hash unchanged)` over them left the
+   ledger saying they were never applied (#1687). `SchemaPassSteps.Continues` is what tells the two apart. It showed
+   up only as an occasional `TwoInstancesOnAnEmptyDatabase_ConvergeAsync` failure, when the waiting instance's lock
+   probe happened to land between two steps.
+7. **The failure record is written after the rollback**, on the same connection with no transaction open (status -1,
    `Failed: <SQLSTATE> <message>`). It never carries the file's hash: a row inserted for a file that never applied
    gets `pending-rerun`, and an existing row keeps its old hash, so a failure cannot make a step look current. (The
    Dapper driver wrote the file's own hash and so skipped a failed file on every later start; fixed alongside.)
@@ -467,6 +472,7 @@ Every step logs one fixed form against the whole pass (`Migration X of Y - Start
 |---|---|
 | `MigrationStepTransactionTests.AFailureInOneFile_KeepsTheFilesBeforeIt_AndTheRetryAppliesOnlyFromItOnAsync` | the pass becoming one transaction again, a failure record that makes a file look current, a retry that re-runs committed steps |
 | `MigrationStepTransactionTests.ASecondInstance_FinishesAPassPartWayThrough_AndNothingIsAppliedTwiceAsync` | a step trusting a plan made before it took the lock |
+| `MigrationStepTransactionTests.AnInstanceContinuingAPass_KeepsTheFilesTheFirstAppliedRecordedAsAppliedAsync` | a continuation recording a skip over every file the pass already applied (#1687) |
 | `MigrationStepTransactionTests.TwoInstancesOnAnEmptyDatabase_ConvergeAsync` | two instances interleaving badly on an empty database |
 | `SchemaStepRunnerTests` | the lock, the re-check, the rollback, the record after it, and the step lines |
 | `SchemaPassLedgerTests` | continuing a pass of this build versus starting afresh |

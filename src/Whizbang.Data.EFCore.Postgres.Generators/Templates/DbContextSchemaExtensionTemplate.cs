@@ -1718,7 +1718,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   /// <summary>
   /// Records what the pass owes, in the first step's transaction and before any of it runs: the step rows this pass
   /// needs, the pending hash on every file it runs although its hash is current, and the skip on every file it does not
-  /// run. A failure part way through therefore loses none of the plan.
+  /// run. A failure part way through therefore loses none of the plan. A pass that continues one part way through
+  /// records no skips: its beginning did, and the rest it does not run are the ones the pass has since applied.
   /// </summary>
   private static async Task _recordPassAsync(Npgsql.NpgsqlConnection connection, SchemaPass pass, CancellationToken ct) {
     if (!pass.Tracked) {
@@ -1733,6 +1734,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     }
     pass.StepsToRun = decided.ToRun;
 
+    // A pass of this build part way through, continued by a retry or by another instance that took the lock between
+    // two of its steps: its beginning recorded the skips, and every file or table it will not run now is one the pass
+    // has since applied. Recording a skip over those would leave the ledger saying they were never applied (#1687).
+    var recordSkips = !decided.Continues;
+
     if (pass.Infra) {
       foreach (var (name, sql) in GetMigrationScripts()) {
         var recorded = pass.RecordedHashes.GetValueOrDefault(name);
@@ -1741,13 +1747,13 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
             await _markPendingAsync(connection, name, pass.VersionId, reason ?? "marked to run again", ct);
             pass.RecordedHashes[name] = Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH;
           }
-        } else if (recorded is not null) {
+        } else if (recordSkips && recorded is not null) {
           await _updateMigrationStatusAsync(connection, name, pass.VersionId, 3, "Skipped (hash unchanged)", ct);
         }
       }
     }
 
-    if (pass.RunPerspectives) {
+    if (recordSkips && pass.RunPerspectives) {
       foreach (var (name, _) in GetPerspectiveEntries()) {
         var key = $"perspective:{name}";
         if (!pass.PerspectivesToRun.Contains(key) && pass.RecordedHashes.ContainsKey(key)) {
