@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Workers;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,7 +14,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
 /// Issue #1611: a framework table declares itself to the partition manager with its column, interval and retention
-/// source, and the Dapper driver registers <c>wh_log</c> and its maintenance step.
+/// source, and the Dapper driver registers <c>wh_log</c> and its maintenance step. Issue #1646: <c>wh_signals</c> and
+/// <c>wh_lifecycle_completions</c> join it, daily, each kept for the window its row sweep honored.
 /// </summary>
 /// <docs>operations/infrastructure/partitioned-ledgers#how-a-table-registers</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/PartitionedTable.cs</code-under-test>
@@ -67,6 +71,89 @@ public class PartitionedTableTests {
     await using var provider = services.BuildServiceProvider();
     await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo([PartitionedTables.Log]);
     await Assert.That(() => ((IServiceCollection)null!).AddPartitionedTable(PartitionedTables.Log)).ThrowsExactly<ArgumentNullException>();
-    await Assert.That(() => services.AddPartitionedTable(null!)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(() => services.AddPartitionedTable((PartitionedTable)null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task TheSignals_AreDailyByCreatedAt_KeptForTheDurableSignalWindowAsync() {
+    var signals = PartitionedTables.Signals(TimeSpan.FromHours(36));
+
+    await Assert.That(signals.Table).IsEqualTo("wh_signals");
+    await Assert.That(signals.PartitionColumn).IsEqualTo("created_at");
+    await Assert.That(signals.Interval).IsEqualTo(_day);
+    await Assert.That(signals.Retention).IsEqualTo(TimeSpan.FromHours(36))
+      .Because("the partition drop honors SignalRetention, the window the signal sweep honored");
+    await Assert.That(signals.RetentionSettingKey).IsNull();
+  }
+
+  [Test]
+  public async Task TheLifecycleCompletions_AreDailyByEventId_KeptForTheirRetentionDaysAsync() {
+    var completions = PartitionedTables.LifecycleCompletions(9);
+
+    await Assert.That(completions.Table).IsEqualTo("wh_lifecycle_completions");
+    await Assert.That(completions.PartitionColumn).IsEqualTo("event_id")
+      .Because("event ids are time-ordered, so a day maps to a range of ids");
+    await Assert.That(completions.Interval).IsEqualTo(_day);
+    await Assert.That(completions.Retention).IsEqualTo(TimeSpan.FromDays(9));
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-3)]
+  public async Task LifecycleCompletionsWithNoWindow_AreKeptIndefinitelyAsync(int retentionDays) {
+    var completions = PartitionedTables.LifecycleCompletions(retentionDays);
+
+    await Assert.That(completions.Retention).IsNull()
+      .Because("a window of zero turns the row sweep off, so the partition drop keeps everything too");
+    await Assert.That(completions.RetentionSettingKey).IsNull();
+    await Assert.That(completions).IsEqualTo(PartitionedTable.RetainedIndefinitely("wh_lifecycle_completions", "event_id", _day));
+  }
+
+  [Test]
+  public async Task AnIndefiniteWindow_CarriesNoWindowAsync() {
+    var table = PartitionedTable.RetainedIndefinitely("wh_trace", "at", _day);
+
+    await Assert.That(table.Retention).IsNull();
+    await Assert.That(table.RetentionSettingKey).IsNull();
+    await Assert.That(table.Interval).IsEqualTo(_day);
+  }
+
+  [Test]
+  public async Task AddPartitionedTable_FromTheContainer_BuildsTheDeclarationOnResolveAsync() {
+    var services = new ServiceCollection();
+    services.Configure<WhizbangNotificationOptions>(o => o.SignalRetention = TimeSpan.FromHours(5));
+
+    services.AddPartitionedTable(sp => PartitionedTables.Signals(sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value.SignalRetention));
+
+    await using var provider = services.BuildServiceProvider();
+    await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo([PartitionedTables.Signals(TimeSpan.FromHours(5))]);
+    await Assert.That(() => ((IServiceCollection)null!).AddPartitionedTable(_ => PartitionedTables.Log)).ThrowsExactly<ArgumentNullException>();
+    await Assert.That(() => services.AddPartitionedTable((Func<IServiceProvider, PartitionedTable>)null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task TheFrameworkTables_TakeTheirWindowsFromTheConfiguredOptionsAsync() {
+    var services = new ServiceCollection();
+    services.Configure<WhizbangNotificationOptions>(o => o.SignalRetention = TimeSpan.FromDays(2));
+    services.Configure<MaintenanceWorkerOptions>(o => o.LifecycleCompletionRetentionDays = 4);
+
+    services.AddFrameworkPartitionedTables();
+
+    await using var provider = services.BuildServiceProvider();
+    await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
+      [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(2)), PartitionedTables.LifecycleCompletions(4)]);
+    await Assert.That(() => ((IServiceCollection)null!).AddFrameworkPartitionedTables()).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task TheFrameworkTables_WithNothingConfigured_UseTheOptionDefaultsAsync() {
+    var services = new ServiceCollection();
+
+    services.AddFrameworkPartitionedTables();
+
+    await using var provider = services.BuildServiceProvider();
+    await Assert.That(provider.GetServices<PartitionedTable>()).IsEquivalentTo(
+      [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
+      .Because("seven days is the default of both SignalRetention and LifecycleCompletionRetentionDays");
   }
 }

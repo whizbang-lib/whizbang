@@ -307,6 +307,104 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
     await Assert.That(freshRemains).IsEqualTo(1L);
   }
 
+  // Issue #1646: once wh_lifecycle_completions is partitioned and the manager keeps it, expired partitions are dropped
+  // whole, so the sweep deletes only from the default partition, where an id no partition covers waits.
+  private static readonly Guid _version4EventId = Guid.Parse("f47ac10b-58cc-4372-a567-0e02b2c3d479");
+
+  private static async Task<Guid> _recentEventIdAsync(NpgsqlConnection connection) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT NOW() - INTERVAL '1 hour'";
+    return Guid.CreateVersion7(new DateTimeOffset((DateTime)(await cmd.ExecuteScalarAsync())!));
+  }
+
+  private static async Task _partitionCompletionsAsync(NpgsqlConnection connection, string? maintenanceEnabled) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT wh_partition_convert('wh_lifecycle_completions', 'event_id', '1 day')";
+    await cmd.ExecuteScalarAsync();
+    if (maintenanceEnabled is not null) {
+      cmd.CommandText =
+        "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('partition_maintenance_enabled', @value, 'boolean') " +
+        "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value";
+      cmd.Parameters.AddWithValue("value", maintenanceEnabled);
+      await cmd.ExecuteNonQueryAsync();
+    }
+  }
+
+  [Test]
+  public async Task CleanupLifecycleCompletionsAsync_OncePartitionedAndManaged_SweepsOnlyTheDefaultPartitionAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    var inAPartition = await _recentEventIdAsync(connection);
+    await _insertLifecycleCompletionAsync(connection, inAPartition, DateTimeOffset.UtcNow.AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, _version4EventId, DateTimeOffset.UtcNow.AddDays(-10));
+    await _partitionCompletionsAsync(connection, "true");
+
+    var deleted = await _createCoordinator(dbContext).CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7));
+
+    await Assert.That(deleted).IsEqualTo(1);
+    await Assert.That(await _countAsync(connection,
+      "SELECT COUNT(*) FROM wh_lifecycle_completions WHERE event_id = @id", ("id", inAPartition))).IsEqualTo(1L)
+      .Because("a row in a partition goes with its partition, never by a row delete that leaves dead tuples behind");
+    await Assert.That(await _countAsync(connection,
+      "SELECT COUNT(*) FROM wh_lifecycle_completions WHERE event_id = @id", ("id", _version4EventId))).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task CleanupLifecycleCompletionsAsync_PartitionedWithMaintenanceSwitchedOff_SweepsByRowAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), DateTimeOffset.UtcNow.AddDays(-10));
+    await _insertLifecycleCompletionAsync(connection, _version4EventId, DateTimeOffset.UtcNow.AddDays(-10));
+    await _partitionCompletionsAsync(connection, "false");
+
+    var deleted = await _createCoordinator(dbContext).CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7));
+
+    await Assert.That(deleted).IsEqualTo(2);
+    await Assert.That(await _countAsync(connection, "SELECT COUNT(*) FROM wh_lifecycle_completions")).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task CleanupLifecycleCompletionsAsync_ManagedWithoutADefaultPartition_DeletesNothingAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    await _insertLifecycleCompletionAsync(connection, await _recentEventIdAsync(connection), DateTimeOffset.UtcNow.AddDays(-10));
+    await _partitionCompletionsAsync(connection, "true");
+    await using (var drop = connection.CreateCommand()) {
+      drop.CommandText = "DROP TABLE wh_lifecycle_completions_default";
+      await drop.ExecuteNonQueryAsync();
+    }
+
+    var deleted = await _createCoordinator(dbContext).CleanupLifecycleCompletionsAsync(TimeSpan.FromDays(7));
+
+    await Assert.That(deleted).IsEqualTo(0);
+    await Assert.That(await _countAsync(connection, "SELECT COUNT(*) FROM wh_lifecycle_completions")).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task LifecycleCompletions_AfterPartitioning_AreStillRecordedOnce_AndFoundByEventIdAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = await _recentEventIdAsync(connection);
+    await _insertEventStoreRowAsync(connection, eventId, streamId, "Whizbang.Tests.OrphanEvent");
+    await _insertCursorAsync(connection, streamId, "P.One", eventId, status: 1);
+    await _partitionCompletionsAsync(connection, "true");
+    var coordinator = _createCoordinator(dbContext);
+    var perspectives = new Dictionary<string, IReadOnlyList<string>> { ["Whizbang.Tests.OrphanEvent"] = _onePerspective };
+    var before = await coordinator.GetOrphanedLifecycleEventsAsync(perspectives, TimeSpan.FromHours(2));
+
+    await coordinator.RecordLifecycleCompletionAsync(eventId);
+    await coordinator.RecordLifecycleCompletionAsync(eventId);
+    var after = await coordinator.GetOrphanedLifecycleEventsAsync(perspectives, TimeSpan.FromHours(2));
+
+    await Assert.That(before.Count).IsEqualTo(1);
+    await Assert.That(after).IsEmpty()
+      .Because("the reconcile finds the completion by event id through the partitioned parent");
+    await Assert.That(await _countAsync(connection,
+      "SELECT COUNT(*) FROM wh_lifecycle_completions WHERE event_id = @id", ("id", eventId))).IsEqualTo(1L)
+      .Because("the key is still the event id, so the second record is a no-op");
+  }
+
   [Test]
   public async Task CleanupLifecycleCompletionsAsync_AllMarkersWithinRetention_ReturnsZeroAsync() {
     await using var dbContext = CreateDbContext();

@@ -80,6 +80,14 @@ internal sealed record PartitionedTable {
     ArgumentOutOfRangeException.ThrowIfNegative(defaultDays);
     return new PartitionedTable(table, partitionColumn, interval, null, settingKey, defaultDays);
   }
+
+  /// <summary>A table whose partitions are never dropped.</summary>
+  /// <param name="table">The table's name.</param>
+  /// <param name="partitionColumn">The column it is partitioned by.</param>
+  /// <param name="interval">The span of one partition.</param>
+  /// <returns>The declaration.</returns>
+  public static PartitionedTable RetainedIndefinitely(string table, string partitionColumn, TimeSpan interval) =>
+    throw new NotImplementedException();
 }
 
 /// <summary>The framework's partitioned tables, and the way a table registers.</summary>
@@ -92,6 +100,29 @@ internal static class PartitionedTables {
   /// </summary>
   public static PartitionedTable Log { get; } =
     PartitionedTable.RetainedBySetting("wh_log", "logged_at", TimeSpan.FromDays(7), "log_retention_days", 14);
+
+  /// <summary><c>wh_signals</c>: daily by <c>created_at</c>, kept for the durable-signal window.</summary>
+  /// <param name="retention">The durable-signal window.</param>
+  /// <returns>The declaration.</returns>
+  public static PartitionedTable Signals(TimeSpan retention) => throw new NotImplementedException();
+
+  /// <summary><c>wh_lifecycle_completions</c>: daily by <c>event_id</c>, kept for the completion window.</summary>
+  /// <param name="retentionDays">The completion window in days; zero or less keeps every partition.</param>
+  /// <returns>The declaration.</returns>
+  public static PartitionedTable LifecycleCompletions(int retentionDays) => throw new NotImplementedException();
+
+  /// <summary>Registers the framework's partitioned tables.</summary>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The service collection.</returns>
+  public static IServiceCollection AddFrameworkPartitionedTables(this IServiceCollection services) =>
+    throw new NotImplementedException();
+
+  /// <summary>Registers a table whose declaration is built from the container.</summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="table">Builds the table's declaration.</param>
+  /// <returns>The service collection.</returns>
+  public static IServiceCollection AddPartitionedTable(this IServiceCollection services, Func<IServiceProvider, PartitionedTable> table) =>
+    throw new NotImplementedException();
 
   /// <summary>
   /// Registers <paramref name="table"/> with the partition manager. Registering the same declaration twice is harmless:

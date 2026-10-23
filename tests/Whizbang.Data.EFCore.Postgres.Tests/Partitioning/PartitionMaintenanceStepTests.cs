@@ -160,7 +160,7 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
   [Test]
   [Arguments(true)]
   [Arguments(false)]
-  public async Task TheDriver_RegistersTheStepAndTheLog_WithOrWithoutHostLoggingAsync(bool hostLogging) {
+  public async Task TheDriver_RegistersTheStepAndTheFrameworkTables_WithOrWithoutHostLoggingAsync(bool hostLogging) {
     var services = new ServiceCollection();
     services.AddDbContext<PostgresTestDbContext>(o => o.UseInMemoryDatabase("PartitionRegistration"));
     if (hostLogging) {
@@ -175,8 +175,9 @@ public class PartitionMaintenanceStepTests : EFCoreTestBase {
     var steps = scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<PartitionMaintenanceStep>().ToList();
 
     await Assert.That(steps).Count().IsGreaterThanOrEqualTo(1);
-    await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo([PartitionedTables.Log])
-      .Because("wh_log is registered by the driver, and read once however often the driver is added");
+    await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo(
+        [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)])
+      .Because("the driver registers wh_log, wh_signals and wh_lifecycle_completions, each read once however often the driver is added");
   }
 
   // A context that maps nothing, so it names no schema for the framework's tables.
