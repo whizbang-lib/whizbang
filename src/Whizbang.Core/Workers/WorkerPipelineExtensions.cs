@@ -253,7 +253,8 @@ public static class WorkerPipelineExtensions {
     // this pod not ready" is answerable from the health surface without reading logs.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
-      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>(),
+      sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),

@@ -97,4 +97,38 @@ public class WhizbangManagedHealthCheckTests {
     await Assert.That(result.Data.ContainsKey("schema")).IsTrue();
     await Assert.That(result.Data.ContainsKey("schema[2]")).IsTrue();
   }
+
+  // --- the startup stage (#1636) ---------------------------------------------------------------
+
+  [Test]
+  public async Task Result_CarriesTheStartupStagesNumberNameAndMessageAsync() {
+    var stages = new StageReporter(new Whizbang.Core.Startup.StartupStageSnapshot(
+      Whizbang.Core.Startup.StartupStage.AcceptingCommands, "commands are accepted", false, DateTimeOffset.UnixEpoch));
+    var check = new WhizbangManagedHealthCheck(
+      new WhizbangHealthAggregator([new FakeSource("schema", ComponentState.Operational)], new WhizbangHealthOptions(), stages),
+      HealthProbe.Readiness);
+
+    var result = await check.CheckHealthAsync(new HealthCheckContext());
+
+    await Assert.That(result.Data["startup_stage"]).IsEqualTo(60);
+    await Assert.That(result.Data["startup_stage_name"]).IsEqualTo("Accept commands");
+    await Assert.That(result.Data["startup_stage_message"]).IsEqualTo("commands are accepted");
+    await Assert.That(result.Data.ContainsKey("schema")).IsTrue();
+  }
+
+  [Test]
+  public async Task Result_WithNoStage_CarriesNoStageKeysAsync() {
+    var result = await _check(HealthProbe.Readiness, new FakeSource("schema", ComponentState.Operational))
+      .CheckHealthAsync(new HealthCheckContext());
+
+    await Assert.That(result.Data.Keys).DoesNotContain(k => k.StartsWith("startup_stage", StringComparison.Ordinal));
+  }
+
+  private sealed class StageReporter(Whizbang.Core.Startup.StartupStageSnapshot current)
+      : Whizbang.Core.Startup.IStartupStageReporter {
+    public Whizbang.Core.Startup.StartupStageSnapshot? Current { get; } = current;
+    public ValueTask EnterAsync(Whizbang.Core.Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public ValueTask SkipAsync(Whizbang.Core.Startup.StartupStage stage, string reason, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
 }

@@ -15,7 +15,14 @@ public readonly record struct ComponentReport(
 /// the overall answer) plus each <see cref="Components"/> contribution for diagnostics.
 /// </summary>
 /// <docs>resilience/managed-resource-health</docs>
-public readonly record struct AggregatedHealth(HealthStatus Status, IReadOnlyList<ComponentReport> Components);
+public readonly record struct AggregatedHealth(HealthStatus Status, IReadOnlyList<ComponentReport> Components) {
+  /// <summary>
+  /// The startup stage the instance is in when the evaluation ran, or <see langword="null"/> when no stage reporter is
+  /// registered or no stage has been entered yet (#1636).
+  /// </summary>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  public Startup.StartupStageSnapshot? Stage { get; init; }
+}
 
 /// <summary>
 /// Aggregates every <see cref="IWhizbangHealthSource"/> into a single liveness/readiness answer.
@@ -30,7 +37,12 @@ public sealed class WhizbangHealthAggregator {
   private readonly WhizbangHealthOptions _options;
 
   /// <summary>Creates an aggregator over the given health sources and policy options.</summary>
-  public WhizbangHealthAggregator(IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options) {
+  /// <param name="sources">The health sources.</param>
+  /// <param name="options">The per-component policies.</param>
+  /// <param name="stages">The startup stage reporter, whose current stage every evaluation carries; optional.</param>
+  public WhizbangHealthAggregator(
+      IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
+      Startup.IStartupStageReporter? stages = null) {
     ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(options);
     // Materialised once: the sources are asked concurrently and then indexed to pair each

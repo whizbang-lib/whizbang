@@ -37,7 +37,14 @@ public sealed class StartupPipelineHealthSource : IWhizbangHealthSource {
   private readonly IStartupReadySignal _readySignal;
 
   /// <summary>Creates the source over the pipeline state and, when registered, the composite signal.</summary>
-  public StartupPipelineHealthSource(IStartupPipelineState state, IStartupReadySignal readySignal) {
+  /// <param name="state">The startup pipeline's state.</param>
+  /// <param name="readySignal">The composite ready signal.</param>
+  /// <param name="stages">
+  /// The startup stage reporter. When it has entered a stage, the detail leads with the stage's line
+  /// (<c>Stage X of 7: &lt;name&gt; - &lt;message&gt;</c>, #1636); optional.
+  /// </param>
+  public StartupPipelineHealthSource(
+      IStartupPipelineState state, IStartupReadySignal readySignal, IStartupStageReporter? stages = null) {
     ArgumentNullException.ThrowIfNull(state);
     _state = state;
     _readySignal = readySignal;

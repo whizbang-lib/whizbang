@@ -92,6 +92,51 @@ public class SchemaInitializationRunnersTests {
       .Because("the gate the initializer opens is the registered one the workers wait on");
   }
 
+  [Test]
+  public async Task Start_EntersCoordinate_AfterTheLastRunner_BeforeTheGateOpensAsync() {
+    var gate = new SchemaReadyGate();
+    var order = new List<string>();
+    var stages = new StageRecorder(order, gate);
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(stages);
+    var service = new WhizbangDatabaseInitializerService(
+      services.BuildServiceProvider(),
+      [new RecordingRunner("runner", order, gate)],
+      gate,
+      Options.Create(new ClaimWorkerOptions()),
+      Options.Create(new SchemaInitializationOptions { NonBlockingSchemaInit = false }),
+      TimeProvider.System,
+      NullLogger<WhizbangDatabaseInitializerService>.Instance,
+      []);
+
+    await service.StartAsync(CancellationToken.None);
+
+    await Assert.That(order).IsEquivalentTo(
+      ["runner", "Coordinate: recomputing partitions before the schema-ready gate opens"],
+      TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Coordinate (#1636) follows every driver's schema work and precedes the gate the data plane waits on");
+    await Assert.That(stages.GateWasOpen).IsFalse();
+    await Assert.That(gate.IsReady).IsTrue();
+  }
+
+  /// <summary>Records each stage entered, and whether the schema-ready gate was already open then.</summary>
+  private sealed class StageRecorder(List<string> order, ISchemaReadyGate gate) : Whizbang.Core.Startup.IStartupStageReporter {
+    public bool GateWasOpen { get; private set; }
+    public Whizbang.Core.Startup.StartupStageSnapshot? Current => null;
+
+    public ValueTask EnterAsync(Whizbang.Core.Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      order.Add($"{stage}: {message}");
+      GateWasOpen |= gate.IsReady;
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask SkipAsync(Whizbang.Core.Startup.StartupStage stage, string reason, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException();
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+  }
+
   private static WhizbangDatabaseInitializerService _create(ISchemaReadyGate gate, params ISchemaInitializationRunner[] runners) {
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();

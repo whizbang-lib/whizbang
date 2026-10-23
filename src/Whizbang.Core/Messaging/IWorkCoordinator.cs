@@ -1617,6 +1617,24 @@ public interface IWorkCoordinator {
     Task.FromResult(false);
 
   /// <summary>
+  /// Records the startup stage this instance is in on its own row (<c>startup_stage</c>,
+  /// <c>startup_stage_message</c>, and <c>startup_stage_entered_at</c> when the stage changed), with the lifecycle
+  /// phase the stage maps to (#1636). Returns false when the instance has no row yet, which is expected before it
+  /// registers. Like <see cref="RecordInstanceStateAsync"/>, it is not a heartbeat and does not refresh liveness.
+  /// Default: nothing is recorded.
+  /// </summary>
+  /// <param name="instanceId">This instance.</param>
+  /// <param name="stage">The stage.</param>
+  /// <param name="message">What the stage is doing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether the instance's row now records the stage.</returns>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs</tests>
+  Task<bool> RecordStartupStageAsync(
+      Guid instanceId, Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Records the single fleet-wide standby request: this instance asking live older peers to
   /// drain and stand by before a breaking migration. True when this instance now holds the
   /// active request (first claim or idempotent re-request); false when another instance's

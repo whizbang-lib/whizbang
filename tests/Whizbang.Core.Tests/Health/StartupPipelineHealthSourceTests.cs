@@ -129,4 +129,49 @@ public class StartupPipelineHealthSourceTests {
       .Because("Ready is the COMPOSITE — the pipeline drained but a readiness contributor has "
              + "not answered, and health must not report fully-up before it has");
   }
+
+  // --- the startup stage (#1636) ---------------------------------------------------------------
+
+  [Test]
+  public async Task WithAStageEntered_TheDetailLeadsWithTheStagesLineAsync() {
+    var state = await _drivenAsync(
+      new StartupRunPlan([_step("Assess"), _step(FrameworkStartupSteps.MIGRATE), _step("Reconcile")]),
+      _completed("Assess"));
+    await state.OnStepStartingAsync(
+      new StartupStepContext(_step(FrameworkStartupSteps.MIGRATE)), CancellationToken.None);
+    var stages = new Whizbang.Core.Tests.Startup.RecordingStageReporter {
+      Current = new StartupStageSnapshot(StartupStage.Migrate, "migration 42 of 231", false, DateTimeOffset.UnixEpoch),
+    };
+    var source = new StartupPipelineHealthSource(state, new StartupReadySignal(), stages);
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Migrating)
+      .Because("the stage adds to the detail; what the state means for a probe is unchanged");
+    await Assert.That(health.Detail).IsEqualTo("Stage 3 of 7: Migrate - migration 42 of 231; Migrate (1/3 steps complete)")
+      .Because("the startup component reports the same line the instance logs");
+  }
+
+  [Test]
+  public async Task WithAStageEntered_BeforeThePipelineStarts_TheDetailStillLeadsWithItAsync() {
+    var stages = new Whizbang.Core.Tests.Startup.RecordingStageReporter {
+      Current = new StartupStageSnapshot(StartupStage.Preflight, "host starting", false, DateTimeOffset.UnixEpoch),
+    };
+    var source = new StartupPipelineHealthSource(new StartupPipelineState(), new StartupReadySignal(), stages);
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Starting);
+    await Assert.That(health.Detail).IsEqualTo("Stage 1 of 7: Preflight - host starting; pipeline not started");
+  }
+
+  [Test]
+  public async Task WithAReporterButNoStageYet_TheDetailIsThePipelinesAloneAsync() {
+    var source = new StartupPipelineHealthSource(
+      new StartupPipelineState(), new StartupReadySignal(), new Whizbang.Core.Tests.Startup.RecordingStageReporter());
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.Detail).IsEqualTo("pipeline not started");
+  }
 }
