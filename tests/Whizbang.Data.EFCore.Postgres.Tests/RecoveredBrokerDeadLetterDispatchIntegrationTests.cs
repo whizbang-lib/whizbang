@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// as RegistryChanged. Every recovered message was lost at the first step after recovery.
 /// </para>
 /// <para>
-/// Real PostgreSQL for the import and the recovery; the real <see cref="InboxDispatchWorker"/> with the
+/// Real PostgreSQL for the import and the recovery (the recovery worker re-entering the row, #1664); the real <see cref="InboxDispatchWorker"/> with the
 /// production discard policy over the production registry query. Only the inbox channel is fed by hand:
 /// the recovered row is read back and turned into a work item the way the inbox drain turns every row
 /// into one, so the name the gate judges is the name recovery wrote.
@@ -89,7 +89,7 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
     RecoveredStaticReceptor.Reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var (provider, jsonOptions) = await _createServicesAsync();
     await using (provider) {
-      var work = await _quarantineAndRecoverAsync(new RecoveredStaticEvent((Guid)TrackedGuid.New()), jsonOptions);
+      var work = await _quarantineAndRecoverAsync(provider, new RecoveredStaticEvent((Guid)TrackedGuid.New()), jsonOptions);
 
       await _dispatchAsync(provider, work);
 
@@ -104,7 +104,7 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
     await using (provider) {
       var consumer = new RuntimeConsumer<RecoveredRuntimeEvent>();
       provider.GetRequiredService<IReceptorRegistry>().Register(consumer, LifecycleStage.PreInboxInline);
-      var work = await _quarantineAndRecoverAsync(new RecoveredRuntimeEvent((Guid)TrackedGuid.New()), jsonOptions);
+      var work = await _quarantineAndRecoverAsync(provider, new RecoveredRuntimeEvent((Guid)TrackedGuid.New()), jsonOptions);
 
       await _dispatchAsync(provider, work);
 
@@ -118,7 +118,7 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
   /// verbatim, the wire's envelope type name), recovers it, and reads the recovered inbox row back as
   /// the inbox drain would hand it to dispatch.
   /// </summary>
-  private async Task<InboxWork> _quarantineAndRecoverAsync<TEvent>(TEvent message, JsonSerializerOptions jsonOptions)
+  private async Task<InboxWork> _quarantineAndRecoverAsync<TEvent>(ServiceProvider provider, TEvent message, JsonSerializerOptions jsonOptions)
       where TEvent : IEvent {
     var messageId = (Guid)TrackedGuid.New();
     var envelopeTypeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -153,11 +153,8 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
-    await using (var recover = conn.CreateCommand()) {
-      recover.CommandText = "SELECT recover_dead_letter(dead_letter_id) FROM wh_dead_letters WHERE source_id = @id AND source_table = 'broker'";
-      recover.Parameters.AddWithValue("id", messageId);
-      await Assert.That((bool?)await recover.ExecuteScalarAsync()).IsTrue();
-    }
+    // Recovered as the recovery worker recovers it: re-entered through the inbox's arrival path (#1664).
+    await _scanForRecoveryAsync(provider);
     await using var read = conn.CreateCommand();
     read.CommandText = "SELECT message_type, event_data::text FROM wh_inbox WHERE message_id = @id";
     read.Parameters.AddWithValue("id", messageId);
@@ -176,6 +173,31 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
       Status = MessageProcessingStatus.Stored,
       Flags = WorkBatchOptions.None,
     };
+  }
+
+  /// <summary>Runs one scan of the real recovery worker, which re-enters every due dead letter.</summary>
+  private static async Task _scanForRecoveryAsync(ServiceProvider provider) {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new DeadLetterRecoveryWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50, EnableGenerationReplay = false }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new DefaultGenerationProvider(),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new Whizbang.Core.Notifications.NoOpWorkNotificationListener());
+    var scanned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnScanCompleted += () => scanned.TrySetResult();
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await scanned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+    await Assert.That(worker.TotalRecovered).IsEqualTo(1L);
   }
 
   /// <summary>Runs one work item through the real inbox dispatch worker and waits for its commit.</summary>
@@ -241,6 +263,10 @@ public class RecoveredBrokerDeadLetterDispatchIntegrationTests : EFCoreTestBase 
     services.AddLogging(builder => builder.SetMinimumLevel(LogLevel.Warning));
     services.AddScoped<IWorkCoordinator>(sp =>
       new EFCoreWorkCoordinator<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
+    services.AddScoped<IDeadLetterRecoveryService>(sp =>
+      new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>()));
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

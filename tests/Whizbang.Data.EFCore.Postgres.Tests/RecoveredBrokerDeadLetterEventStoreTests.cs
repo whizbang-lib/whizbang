@@ -4,6 +4,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -17,6 +19,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -32,19 +35,22 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// seen, and the dead-letter row read Recovered while nothing had been appended.
 /// </para>
 /// <para>
-/// Real PostgreSQL throughout: the import is the coordinator's, the recovery is the recovery service the Postgres
-/// driver registers, and the copy is the claim's own.
+/// Real PostgreSQL throughout: the import is the coordinator's, the recovery is the recovery worker over the
+/// recovery service the Postgres driver registers, and the copy is the claim's own.
 /// </para>
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreDeadLetterRecoveryService.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Workers/DeadLetterRecoveryWorker.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
 public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
   private const string PERSPECTIVE = "RecoveredOrderPerspective";
   private const int EPHEMERAL_FLAG = 8;
+  private const int RECOVERING = 1;
   private const int RECOVERED = 3;
+  private const int EVENT_STORED = 2;
   private const int HOLD_FOR_REVIEW = 2;
 
   /// <summary>A domain event a perspective of the receiving service applies.</summary>
@@ -70,6 +76,15 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
         + $"the recovered inbox row read {await _inboxStateAsync(connection, messageId)}");
     await Assert.That(await _perspectiveWorkAsync(connection, messageId)).IsEquivalentTo([PERSPECTIVE])
       .Because($"the perspective that applies {eventType} is scheduled for the recovered event, as for one delivered normally");
+    await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo(RECOVERING)
+      .Because("the dead letter reads Recovered only once the message has been processed, not when it re-enters");
+
+    await _completeAsync(connection, messageId, EVENT_STORED);
+
+    var (status, recoveredAt, _) = await _deadLetterAsync(connection, deadLetterId);
+    await Assert.That(status).IsEqualTo(RECOVERED)
+      .Because("the dispatch completed the recovered event as processed");
+    await Assert.That(recoveredAt).IsNotNull();
   }
 
   [Test]
@@ -115,6 +130,12 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
       .WithDriver.Postgres;
     // The receiving service's event catalog: the perspective it runs applies this event.
     services.AddSingleton<IEventTypeProvider>(new FixedEventTypeProvider(typeof(RecoveredOrderPlaced)));
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    services.AddSingleton(jsonOptions);
+    services.AddScoped<IWorkCoordinator>(sp =>
+      new EFCoreWorkCoordinator<WorkCoordinationDbContext>(sp.GetRequiredService<WorkCoordinationDbContext>(), jsonOptions));
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     return services.BuildServiceProvider();
   }
 
@@ -161,11 +182,42 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
     return (Guid)(await command.ExecuteScalarAsync())!;
   }
 
-  /// <summary>Recovers the row through the recovery service the Postgres driver registers, as the recovery worker does.</summary>
+  /// <summary>Runs one scan of the recovery worker, which re-drives every due dead letter.</summary>
   private static async Task _recoverAsync(ServiceProvider provider, Guid deadLetterId) {
-    using var scope = provider.CreateScope();
-    var recovery = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryService>();
-    await Assert.That(await recovery.RecoverAsync(deadLetterId)).IsTrue();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new DeadLetterRecoveryWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      schemaReadyGate: gate,
+      options: Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50, EnableGenerationReplay = false }),
+      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      generationProvider: new DefaultGenerationProvider(),
+      logger: NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: new Whizbang.Core.Notifications.NoOpWorkNotificationListener());
+    var scanned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnScanCompleted += () => scanned.TrySetResult();
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await scanned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+    await Assert.That(worker.TotalRecovered).IsEqualTo(1L)
+      .Because($"the scan re-drives dead letter {deadLetterId}");
+  }
+
+  /// <summary>Completes the inbox row as the inbox handler commit does.</summary>
+  private static async Task _completeAsync(NpgsqlConnection connection, Guid messageId, int status) {
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT * FROM process_inbox_completions(jsonb_build_array(jsonb_build_object('MessageId', @id, 'Status', @status)), NOW())";
+    command.Parameters.AddWithValue("id", messageId);
+    command.Parameters.AddWithValue(nameof(status), status);
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      // drain
+    }
   }
 
   private static async Task<string> _associatePerspectiveAsync(NpgsqlConnection connection) {

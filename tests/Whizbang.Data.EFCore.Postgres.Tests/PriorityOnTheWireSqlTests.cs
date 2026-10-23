@@ -11,7 +11,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Priority;
 using Whizbang.Core.Serialization;
-using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -136,6 +135,11 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
       .Because("a recovered row is repair work nobody waits on; the number it once had is not the number it re-enters with");
   }
 
+  /// <summary>
+  /// Since 231 (#1664) <c>recover_dead_letter</c> re-emits no inbox row, at background priority or any other: the
+  /// recovery worker re-enters an inbox dead letter through <c>store_inbox_messages</c>, with the priority a delivery
+  /// of its envelope is classified with. What this function still owes the inbox case is to leave the row alone.
+  /// </summary>
   [Test]
   public async Task RecoverDeadLetter_InboxRow_ReentersAsBackgroundAsync() {
     await using var ctx = CreateDbContext();
@@ -152,9 +156,12 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
       ("msg", messageId), ("stream", (Guid)TrackedGuid.New()));
     var dlqId = await _moveToDlqAsync(conn, "wh_inbox", messageId);
 
-    await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
-
-    await Assert.That(await _priorityAsync(conn, "wh_inbox", "message_id", messageId)).IsEqualTo(WorkPriority.BACKGROUND);
+    await Assert.That(await _recoverAsync(conn, dlqId)).IsFalse()
+      .Because("an inbox dead letter re-enters through the inbox's arrival path, which classifies its priority");
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT EXISTS (SELECT 1 FROM wh_inbox WHERE message_id = @id)";
+    cmd.Parameters.AddWithValue("id", messageId);
+    await Assert.That((bool)(await cmd.ExecuteScalarAsync())!).IsFalse();
   }
 
   [Test]
@@ -172,34 +179,5 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
 
     await Assert.That(await _priorityAsync(conn, "wh_perspective_events", "event_work_id", workId)).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a recovered projection catches up behind live projections, the same as a replayed one");
-  }
-
-  [Test]
-  public async Task RecoverDeadLetter_BrokerRow_ReentersAsBackgroundAsync() {
-    await using var ctx = CreateDbContext();
-    var coordinator = _build(ctx);
-    var messageId = (Guid)TrackedGuid.New();
-    _ = await coordinator.ImportBrokerDeadLetterAsync(new BrokerDeadLetterImport(
-      MessageId: messageId,
-      StreamId: (Guid)TrackedGuid.New(),
-      MessageType: "Whizbang.Core.Observability.MessageEnvelope`1[[Test.X, Test]], Whizbang.Core",
-      Destination: "inbox/test-service-inbox",
-      EnvelopeJson: """{"v":1,"p":{"Name":"restored"}}""",
-      BrokerReason: "MaxDeliveryAttemptsExceeded",
-      BrokerDescription: "test",
-      EnqueuedAt: DateTimeOffset.UtcNow.AddDays(-2),
-      DeliveryCount: 10));
-    var conn = await _openAsync(ctx);
-    Guid dlqId;
-    await using (var idCmd = conn.CreateCommand()) {
-      idCmd.CommandText = "SELECT dead_letter_id FROM wh_dead_letters WHERE source_id = @id AND source_table = 'broker'";
-      idCmd.Parameters.AddWithValue("id", messageId);
-      dlqId = (Guid)(await idCmd.ExecuteScalarAsync())!;
-    }
-
-    await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
-
-    await Assert.That(await _priorityAsync(conn, "wh_inbox", "message_id", messageId)).IsEqualTo(WorkPriority.BACKGROUND)
-      .Because("a message pulled back from the broker's dead-letter queue is catch-up work, whatever number it carried when it failed");
   }
 }

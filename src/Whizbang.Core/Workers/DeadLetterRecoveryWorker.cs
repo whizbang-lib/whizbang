@@ -646,7 +646,9 @@ public partial class DeadLetterRecoveryWorker(
         _metrics?.RecoveryAttempts.Add(1,
           new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
         try {
-          var recovered = await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+          var recovered = _reentersThroughTheInbox(entry)
+            ? await _reenterAsync(svc, entry, scope.ServiceProvider, ct).ConfigureAwait(false)
+            : await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
           if (recovered) {
             Interlocked.Increment(ref _totalRecovered);
             scanRecovered++;
@@ -694,6 +696,49 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  /// <summary>Whether the entry is an inbox or broker dead letter, which re-enters through the inbox's arrival path.</summary>
+  private static bool _reentersThroughTheInbox(DeadLetterEntry entry) =>
+    entry.SourceTable is DeadLetterSourceTable.INBOX or DeadLetterSourceTable.BROKER;
+
+  /// <summary>
+  /// Re-enters an inbox or broker dead letter through the inbox's own arrival path (#1664): the row is built
+  /// exactly as a delivery of the same envelope is built and stored with the inbox store, naming the dead letter,
+  /// which the store claims and the completion settles. Recovery has no inbox writes of its own to drift from a
+  /// delivery. A stored envelope that cannot be read, or that names another message, cannot re-enter on this
+  /// build, so the row is held for review instead of being retried until its budget runs out.
+  /// </summary>
+  /// <returns><see langword="true"/> when the message was handed to the inbox store.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredBrokerDeadLetterEventStoreTests.cs:AnEventImportedFromTheBrokerDeadLetterQueue_AndRecovered_IsAppended_AndScheduledForItsPerspectiveAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/DeadLetterRecoveryWorkerReentryTests.cs</tests>
+  private async Task<bool> _reenterAsync(
+      IDeadLetterRecoveryService svc, DeadLetterEntry entry, IServiceProvider scope, CancellationToken ct) {
+    var redelivery = await svc.ReadRedeliveryAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+    if (redelivery is null) {
+      // A recovery service that cannot read the stored envelope re-drives the row itself.
+      return await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+    }
+    var coordinator = scope.GetService<IWorkCoordinator>()
+      ?? throw new InvalidOperationException(
+        $"Dead letter {entry.DeadLetterId} re-enters through the inbox store, and no IWorkCoordinator is registered.");
+    InboxMessage message;
+    try {
+      message = ReceivedInboxMessageBuilder.BuildRedelivery(scope, redelivery);
+    } catch (Exception ex) when (ex is System.Text.Json.JsonException or NotSupportedException or InvalidOperationException) {
+      LogReentryRefused(_logger, entry.DeadLetterId, ex);
+      await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+      Interlocked.Increment(ref _totalHeld);
+      return false;
+    }
+    // The partition count every arrival is stored with: ClaimWorkerOptions is its one source (see the consumers).
+    var partitionCount = (scope.GetService<IOptions<ClaimWorkerOptions>>()?.Value ?? new ClaimWorkerOptions()).PartitionCount;
+    await coordinator.StoreInboxMessagesAsync([message], partitionCount, ct).ConfigureAwait(false);
+    return true;
+  }
+
+  [LoggerMessage(EventId = 31, Level = LogLevel.Warning,
+    Message = "Dead letter {DeadLetterId} cannot re-enter the inbox on this build (its stored envelope cannot be read as the message it records); held for review")]
+  static partial void LogReentryRefused(ILogger logger, Guid deadLetterId, Exception exception);
 
   [LoggerMessage(EventId = 27, Level = LogLevel.Information,
     Message = "Pruned {Pruned} rolling stack-history row(s) older than {RetentionDays} day(s)")]

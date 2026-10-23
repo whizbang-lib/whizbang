@@ -30,6 +30,21 @@ public interface IDeadLetterRecoveryService {
   /// </summary>
   Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default);
 
+  /// <summary>
+  /// Reads what an inbox or broker dead letter re-enters the inbox with: its stored envelope and payload type.
+  /// Recovery builds the inbox row from it the way a delivery of the same envelope is built, and stores it through
+  /// the inbox's own arrival path naming this dead letter, which the completion then settles (#1664). Returns
+  /// <see langword="null"/> for any other row, for a row that does not exist, and from a service that cannot read
+  /// one, in which case recovery falls back to <see cref="RecoverAsync"/>.
+  /// </summary>
+  /// <param name="deadLetterId">The dead letter to read.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <returns>The stored body to re-enter, or <see langword="null"/>.</returns>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ReadRedeliveryAsync_ReadsAnInboxOrBrokerRow_AndNothingElseAsync</tests>
+  Task<DeadLetterRedelivery?> ReadRedeliveryAsync(Guid deadLetterId, CancellationToken ct = default)
+    => Task.FromResult<DeadLetterRedelivery?>(null);
+
   /// <summary>Terminal state — moves the row to HoldForReview.</summary>
   Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default);
 

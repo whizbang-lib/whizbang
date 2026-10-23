@@ -489,6 +489,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A recovered broker or inbox dead letter reaches the event store, and reads Recovered only once processed
+  (#1664).** Recovery re-emitted an inbox or broker dead letter with inbox writes of its own that had drifted from a
+  delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into
+  the event store never took it, so the row was dispatched, completed and deleted with nothing appended, its id
+  recorded as seen, and its dead letter already marked Recovered. Recovery now builds the row with the transport
+  receive path's own builder and classification and stores it with `store_inbox_messages` (migration 231), so
+  `is_event`, the stream, flags, scope, priority and the producer's identity are a delivery's. A recovered row differs
+  only in that it claims its dead letter, is not dropped as a duplicate (its observation is still counted), and names
+  the dead letter on its work-state row (`InboxMessage.RecoveredFromDeadLetterId`). The dead letter stays Recovering
+  until the message completes: Recovered when processed, HoldForReview with the outcome in `operator_notes` when an
+  inbox gate completes it unprocessed, and HoldForReview under an operator hold, naming the new dead letter, when the
+  inbox dead-letters it again. `recover_dead_letter` now declines inbox and broker rows, and
+  `IDeadLetterRecoveryService` gains `ReadRedeliveryAsync` (a default implementation returns `null`, which falls back to
+  `RecoverAsync`). Recovered inbox and broker messages now take the priority a delivery takes rather than background.
+  Events already lost this way are not restored by this change; see the issue for the repair.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a
