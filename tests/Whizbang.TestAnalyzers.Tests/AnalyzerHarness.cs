@@ -20,7 +20,7 @@ namespace Whizbang.TestAnalyzers.Tests;
 internal static class AnalyzerHarness {
   private static readonly ImmutableArray<MetadataReference> _references = _loadReferences();
   private static readonly ImmutableArray<MetadataReference> _referencesWithoutTUnit = [.. _references
-    .Where(reference => !Path.GetFileName(reference.Display!).StartsWith("TUnit", StringComparison.Ordinal))];
+    .Where(reference => Path.GetFileName(reference.Display)?.StartsWith("TUnit", StringComparison.Ordinal) != true)];
 
   /// <summary>The compilation of <paramref name="source"/>, failing the test on any compiler error.</summary>
   public static CSharpCompilation Compile(string source, bool referenceTUnit = true) {

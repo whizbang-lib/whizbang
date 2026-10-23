@@ -72,7 +72,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
       await coordinator.WaitForRenewalsAsync(1);
 
       // Pass 2, inside half a lease: nothing is due. Pass 3 entering proves pass 2 finished.
-      clock.Advance(_lease / 2 - TimeSpan.FromSeconds(1));
+      clock.Advance((_lease / 2) - TimeSpan.FromSeconds(1));
       await strategy.PassAsync(ready: false);
       await strategy.WaitForCheckAsync();
       await Assert.That(coordinator.Renewals).Count().IsEqualTo(1)
@@ -83,7 +83,7 @@ public class OutboxPublishWorkerHoldRenewalTests {
       clock.Advance(TimeSpan.FromSeconds(2));
       strategy.Answer(ready: false);
       await coordinator.WaitForRenewalsAsync(2);
-      clock.Advance(_lease / 2 + TimeSpan.FromSeconds(1));
+      clock.Advance((_lease / 2) + TimeSpan.FromSeconds(1));
       await strategy.PassAsync(ready: false);
       await coordinator.WaitForRenewalsAsync(3);
 
@@ -141,10 +141,10 @@ public class OutboxPublishWorkerHoldRenewalTests {
 
       await strategy.PassAsync(ready: false);
       await coordinator.WaitForRenewalsAsync(1);
-      clock.Advance(_lease / 2 + TimeSpan.FromSeconds(1));
+      clock.Advance((_lease / 2) + TimeSpan.FromSeconds(1));
       await strategy.PassAsync(ready: false);
       await coordinator.WaitForRenewalsAsync(2);
-      clock.Advance(_lease / 2 + TimeSpan.FromSeconds(1));
+      clock.Advance((_lease / 2) + TimeSpan.FromSeconds(1));
       await strategy.PassAsync(ready: false);
       await coordinator.WaitForRenewalsAsync(3);
 

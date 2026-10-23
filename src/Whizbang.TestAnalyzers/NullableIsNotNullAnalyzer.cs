@@ -23,8 +23,9 @@ namespace Whizbang.TestAnalyzers;
 /// assertion on the value itself.
 /// </para>
 /// <para>
-/// The rule binds to the one TUnit overload, <c>AssertionExtensions.IsNotNull&lt;TValue&gt;(IAssertionSource&lt;TValue?&gt;)
-/// where TValue : struct</c>, by symbol, so a call is reported however the subject is spelled and an
+/// The rule binds to the one TUnit overload,
+/// <c>AssertionExtensions.IsNotNull&lt;TValue&gt;(IAssertionSource&lt;TValue?&gt;) where TValue : struct</c>,
+/// by symbol, so a call is reported however the subject is spelled and an
 /// unrelated method named <c>IsNotNull</c> is not. Repository-internal: loaded only by this repository's
 /// test projects.
 /// </para>

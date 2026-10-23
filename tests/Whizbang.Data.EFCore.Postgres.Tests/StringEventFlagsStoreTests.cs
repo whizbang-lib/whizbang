@@ -311,7 +311,7 @@ public class StringEventFlagsStoreTests : EFCoreTestBase {
   private static async Task<int?> _intAsync(NpgsqlConnection conn, string sql, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     var value = await cmd.ExecuteScalarAsync();
     return value is null or DBNull ? null : Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
   }
@@ -319,7 +319,7 @@ public class StringEventFlagsStoreTests : EFCoreTestBase {
   private static async Task<long> _countAsync(NpgsqlConnection conn, string sql, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = sql;
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (long)(await cmd.ExecuteScalarAsync())!;
   }
 }
