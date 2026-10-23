@@ -85,6 +85,6 @@ public class NarrowedCandidatePredicateTests {
     await Assert.That(EFCoreServiceRegistrationGenerator.IsMultiLensQueryParameterCandidate(node)).IsEqualTo(expected);
   }
 
-  private static SyntaxNode _type(string source) =>
+  private static TypeDeclarationSyntax _type(string source) =>
       CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>().First();
 }

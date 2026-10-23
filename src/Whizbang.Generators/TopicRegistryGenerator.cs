@@ -19,12 +19,14 @@ namespace Whizbang.Generators;
 [Generator]
 public class TopicRegistryGenerator : IIncrementalGenerator {
   /// <summary>
-  /// Syntax predicate: admits a class or record declaration.
+  /// Syntax predicate: admits a class or record that can implement an interface (a base list, or partial).
+  /// The transform takes only events and commands.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
   /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsTopicMessageCandidate(SyntaxNode node) =>
-      node is ClassDeclarationSyntax or RecordDeclarationSyntax;
+      node is (ClassDeclarationSyntax or RecordDeclarationSyntax) and TypeDeclarationSyntax type &&
+      SyntaxCandidates.MayHaveBaseTypes(type);
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {

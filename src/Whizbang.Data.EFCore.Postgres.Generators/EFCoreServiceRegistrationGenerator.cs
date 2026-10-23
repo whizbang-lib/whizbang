@@ -72,12 +72,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
 
   /// <summary>
-  /// Syntax predicate: admits a parameter whose type is a generic name with two or more type arguments.
+  /// Syntax predicate: admits a parameter typed by the generic name ILensQuery with two or more type
+  /// arguments. The transform takes only that interface, and C# has no generic alias that could name it otherwise.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
   /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsMultiLensQueryParameterCandidate(SyntaxNode node) =>
-      node is ParameterSyntax { Type: GenericNameSyntax { TypeArgumentList.Arguments.Count: >= 2 } };
+      node is ParameterSyntax { Type: GenericNameSyntax { Identifier.ValueText: "ILensQuery", TypeArgumentList.Arguments.Count: >= 2 } };
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Generate marker file to confirm generator is running

@@ -27,12 +27,14 @@ namespace Whizbang.Generators;
 [Generator]
 public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   /// <summary>
-  /// Syntax predicate: admits a class, record or struct declaration.
+  /// Syntax predicate: admits a class, record or struct that can implement an interface (a base list, or
+  /// partial). The transform takes only messages and perspectives, which a type implements no other way.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
   /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsCatalogTypeCandidate(SyntaxNode node) =>
-      node is ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax;
+      node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
+      SyntaxCandidates.MayHaveBaseTypes(type);
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {

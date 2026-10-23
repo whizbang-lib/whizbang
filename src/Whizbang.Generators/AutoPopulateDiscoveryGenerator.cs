@@ -43,12 +43,14 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_KIND_HEADER = "Header";
 
   /// <summary>
-  /// Syntax predicate: admits a type declaration.
+  /// Syntax predicate: admits a type that can inherit an attributed property (a base list, or partial) or
+  /// declares one. A type with neither has no property the transform could populate.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
   /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsPopulatedTypeCandidate(SyntaxNode node) =>
-      node is TypeDeclarationSyntax;
+      node is TypeDeclarationSyntax type &&
+      (SyntaxCandidates.MayHaveBaseTypes(type) || SyntaxCandidates.DeclaresAttributedProperty(type));
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
