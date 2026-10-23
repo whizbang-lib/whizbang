@@ -648,17 +648,9 @@ public partial class ServiceBusConsumerWorker(
       // because the transport's metadata is authoritative
     }
 
-    // Determine if message is an event using IEventTypeProvider
-    // This is more reliable than "payload is IEvent" when payload is JsonElement
-    var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
-    if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
-    } else {
-      // Fallback to runtime check if provider not available
-      isEvent = payload is IEvent;
-    }
+    // The event catalog decides by name (reliable for a JsonElement payload); the payload's marker is the
+    // fallback for a host with no catalog. Shared with dead-letter recovery (#1664).
+    var isEvent = ReceivedInboxMessageBuilder.ClassifiesAsEvent(scopeServiceProvider, messageTypeName, payload);
 
     var streamId = _extractStreamId(envelope);
     var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);

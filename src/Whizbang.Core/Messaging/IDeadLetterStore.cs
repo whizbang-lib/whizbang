@@ -62,5 +62,7 @@ public static class DeadLetterSourceTable {
   public const string INBOX = "wh_inbox";
   /// <summary>Perspective-event failure (projection apply failed beyond retry).</summary>
   public const string PERSPECTIVE_EVENTS = "wh_perspective_events";
+  /// <summary>A message the broker dead-lettered, given custody by the transport dead-letter drain.</summary>
+  public const string BROKER = "broker";
 #pragma warning restore CA1707
 }

@@ -99,6 +99,24 @@ public sealed record DeadLetterEntry(
   string? ErrorFingerprint = null);
 
 /// <summary>
+/// What an inbox or broker dead letter re-enters the inbox with: the envelope it was stored with (the inbox row's
+/// body, or the raw wire body a broker import keeps verbatim) and the payload type its row records. Recovery builds
+/// the inbox row from these exactly as a delivery of the same envelope is built (#1664).
+/// </summary>
+/// <param name="DeadLetterId">The dead letter the message re-enters from.</param>
+/// <param name="SourceTable">Where the message was dead-lettered from: the inbox, or the broker.</param>
+/// <param name="SourceId">The message id, which the envelope must carry.</param>
+/// <param name="MessageType">The payload type name the row records (an envelope type name on a broker import made before #934).</param>
+/// <param name="EnvelopeJson">The stored envelope, as JSON.</param>
+/// <docs>operations/dead-letter-queue/transport-recovery</docs>
+public sealed record DeadLetterRedelivery(
+  Guid DeadLetterId,
+  string SourceTable,
+  Guid SourceId,
+  string MessageType,
+  string EnvelopeJson);
+
+/// <summary>
 /// Decides whether and how to recover a dead-lettered row. Default implementation reads
 /// <see cref="DeadLetterRecoveryOptions.PolicyByReason"/> + <c>[StreamRecovery]</c> /
 /// <c>[FifoStreamRecovery]</c> attributes; operators can register a custom implementation

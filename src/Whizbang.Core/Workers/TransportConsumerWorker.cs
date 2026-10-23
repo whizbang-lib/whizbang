@@ -1190,17 +1190,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       jsonEnvelope = serialized.JsonEnvelope;
     }
 
-    // Determine if message is an event using IEventTypeProvider
-    // This is more reliable than "payload is IEvent" when payload is JsonElement
-    var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
-    if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
-    } else {
-      // Fallback to runtime check if provider not available
-      isEvent = payload is IEvent;
-    }
+    // The event catalog decides by name (reliable for a JsonElement payload); the payload's marker is the
+    // fallback for a host with no catalog. Shared with dead-letter recovery (#1664).
+    var isEvent = ReceivedInboxMessageBuilder.ClassifiesAsEvent(scopeServiceProvider, messageTypeName, payload);
 
     // Diagnostic: an EVENT whose wire type name is absent from the catalog union means its flags
     // (and TTL) cannot be derived on this service — warn once per type so the exact name that
