@@ -243,6 +243,152 @@ diff --git a/x.yml b/x.yml
     $again.Id | Should -Be $Found.Id
     ($Found.Id | Select-Object -Unique).Count | Should -Be $Found.Count
   }
+
+  It 'does not flag a migration edit whose normalized SQL is unchanged' {
+    # REUSE-IgnoreStart: a header written into a fixture, not this file's license
+    $read = { param($OldPath, $NewPath) [pscustomobject]@{ Old = "SELECT 1;`n"; New = "-- SPDX-License-Identifier: MIT`r`nSELECT 1;   -- note`r`n" } }
+    # REUSE-IgnoreEnd
+    @(Find-DiffFindings -DiffText $Diff -ReadMigrationVersions $read | Where-Object Rule -EQ 'migrations.edited').Count | Should -Be 0
+  }
+
+  It 'flags a migration edit that changes executable SQL' {
+    $read = { param($OldPath, $NewPath) [pscustomobject]@{ Old = 'SELECT 1;'; New = 'SELECT 2; -- a note' } }
+    @(Find-DiffFindings -DiffText $Diff -ReadMigrationVersions $read | Where-Object Rule -EQ 'migrations.edited').Count | Should -Be 1
+  }
+
+  It 'flags a migration edit whose versions cannot be read' {
+    $read = { param($OldPath, $NewPath) $null }
+    @(Find-DiffFindings -DiffText $Diff -ReadMigrationVersions $read | Where-Object Rule -EQ 'migrations.edited').Count | Should -Be 1
+  }
+
+  It 'reads a renamed migration from its old path' {
+    $renamed = @'
+diff --git a/src/Whizbang.Data.Postgres/Migrations/150_Old.sql b/src/Whizbang.Data.Postgres/Migrations/150_New.sql
+similarity index 90%
+rename from src/Whizbang.Data.Postgres/Migrations/150_Old.sql
+rename to src/Whizbang.Data.Postgres/Migrations/150_New.sql
+--- a/src/Whizbang.Data.Postgres/Migrations/150_Old.sql
++++ b/src/Whizbang.Data.Postgres/Migrations/150_New.sql
+@@ -1,1 +1,2 @@
++-- a note
+ SELECT 1;
+'@
+    $script:seen = @()
+    $read = { param($OldPath, $NewPath) $script:seen = @($OldPath, $NewPath); [pscustomobject]@{ Old = 'SELECT 1;'; New = "-- a note`nSELECT 1;" } }
+    @(Find-DiffFindings -DiffText $renamed -ReadMigrationVersions $read | Where-Object Rule -EQ 'migrations.edited').Count | Should -Be 0
+    $script:seen | Should -Be @('src/Whizbang.Data.Postgres/Migrations/150_Old.sql', 'src/Whizbang.Data.Postgres/Migrations/150_New.sql')
+  }
+}
+
+Describe 'ConvertTo-NormalizedSql' {
+  # The same cases as tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationSqlNormalizerTests.cs, which
+  # holds the C# normalizer every driver hashes with; the two must agree.
+  BeforeAll { $script:Base = "CREATE TABLE wh_a (id uuid);`nSELECT 1;" }
+
+  It 'removes line comments in every position' {
+    ConvertTo-NormalizedSql "-- header`nCREATE TABLE wh_a (id uuid); -- trailing`n  -- indented`nSELECT 1;`n-- last" | Should -BeExactly $Base
+  }
+
+  It 'removes block comments in every position' {
+    ConvertTo-NormalizedSql "/* license`n   header */`nCREATE TABLE /* inline */ wh_a (id uuid);`n/* between`n*/`nSELECT 1; /* after */" | Should -BeExactly $Base
+  }
+
+  It 'reads nested block comments as PostgreSQL does' {
+    ConvertTo-NormalizedSql "/* outer /* inner */ still a comment */`nCREATE TABLE wh_a (id uuid);`nSELECT 1;" | Should -BeExactly $Base
+  }
+
+  It 'runs an unterminated block comment to the end' {
+    ConvertTo-NormalizedSql "SELECT 1; /* never closed`nSELECT 2;" | Should -BeExactly 'SELECT 1;'
+  }
+
+  It 'reads a block comment between tokens as one space' {
+    ConvertTo-NormalizedSql 'SELECT/*x*/1;' | Should -BeExactly 'SELECT 1;'
+    ConvertTo-NormalizedSql 'SELECT  /* x */  1;' | Should -BeExactly 'SELECT 1;'
+  }
+
+  It 'removes whitespace at line edges and blank lines' {
+    ConvertTo-NormalizedSql "`n`n   `t CREATE TABLE wh_a (id uuid);   `n`n`t`n  SELECT 1;`t `n`n" | Should -BeExactly $Base
+  }
+
+  It 'collapses runs of whitespace between tokens' {
+    ConvertTo-NormalizedSql "CREATE  TABLE`twh_a  (id `t uuid);`nSELECT    1;" | Should -BeExactly $Base
+    ConvertTo-NormalizedSql "CREATE`fTABLE`vwh_a (id uuid);`nSELECT 1;" | Should -BeExactly $Base
+  }
+
+  It 'reads CRLF and a lone CR as LF' {
+    ConvertTo-NormalizedSql "CREATE TABLE wh_a (id uuid);`r`nSELECT 1;" | Should -BeExactly $Base
+    ConvertTo-NormalizedSql "CREATE TABLE wh_a (id uuid);`rSELECT 1;" | Should -BeExactly $Base
+  }
+
+  It 'keeps <Sql> verbatim' -TestCases @(
+    @{ Sql = "SELECT 'a -- b  /* c */ ';" }
+    @{ Sql = "SELECT 'it''s -- not a comment';" }
+    @{ Sql = "SELECT E'a\' -- still inside';" }
+    @{ Sql = "SELECT e'tab\t  /* inside */';" }
+    @{ Sql = "SELECT E'doubled '' -- inside';" }
+    @{ Sql = 'SELECT "col -- name" FROM "t /* x */";' }
+    @{ Sql = 'SELECT "a""b -- c";' }
+    @{ Sql = 'SELECT $$ -- body /* x */  $$;' }
+    @{ Sql = 'SELECT $fn$ body $$ -- still inside $fn$;' }
+    @{ Sql = 'SELECT $a_1$ x $b$ y $a_1$;' }
+    @{ Sql = 'SELECT $_t$ -- x $_t$;' }
+    @{ Sql = "SELECT 'never closed -- x  " }
+    @{ Sql = "SELECT E'never closed \' -- x  " }
+    @{ Sql = "SELECT E'ends on a backslash \" }
+    @{ Sql = 'SELECT "never closed -- x  ' }
+    @{ Sql = 'SELECT $q$ never closed -- x  ' }
+    @{ Sql = '$$ -- x $$' }
+    @{ Sql = "E'a\' -- inside'" }
+  ) {
+    ConvertTo-NormalizedSql $Sql | Should -BeExactly $Sql
+  }
+
+  It 'keeps a literal that spans lines as it is' {
+    $body = "CREATE FUNCTION f() RETURNS int AS `$`$`n  BEGIN`n`n    -- inside the body`n    RETURN 1;   `n  END;`n`$`$ LANGUAGE plpgsql;"
+    ConvertTo-NormalizedSql $body | Should -BeExactly $body
+  }
+
+  It 'resumes after a literal' {
+    ConvertTo-NormalizedSql "SELECT 'x'   -- note`n`n  , `$`$y`$`$  /* z */ ;" | Should -BeExactly "SELECT 'x'`n, `$`$y`$`$ ;"
+  }
+
+  It 'reads <Sql> as ordinary text' -TestCases @(
+    @{ Sql = 'SELECT $1; -- note'; Expected = 'SELECT $1;' }
+    @{ Sql = 'SELECT a$b$ FROM t; -- note'; Expected = 'SELECT a$b$ FROM t;' }
+    @{ Sql = 'SELECT $1x$ -- note'; Expected = 'SELECT $1x$' }
+    @{ Sql = 'SELECT $a b$ -- note'; Expected = 'SELECT $a b$' }
+    @{ Sql = 'SELECT 1 $'; Expected = 'SELECT 1 $' }
+    @{ Sql = 'SELECT 1 $ab'; Expected = 'SELECT 1 $ab' }
+    @{ Sql = 'SELECT $1$$ -- note'; Expected = 'SELECT $1$$' }
+    @{ Sql = 'SELECT a_$$ -- note'; Expected = 'SELECT a_$$' }
+    @{ Sql = "SELECT xE'a\' -- gone"; Expected = "SELECT xE'a\'" }
+    @{ Sql = "'a\' -- gone"; Expected = "'a\'" }
+    @{ Sql = 'SELECT 4 - 2 / 1;'; Expected = 'SELECT 4 - 2 / 1;' }
+    @{ Sql = 'SELECT 1 -'; Expected = 'SELECT 1 -' }
+    @{ Sql = 'SELECT 1 /'; Expected = 'SELECT 1 /' }
+  ) {
+    ConvertTo-NormalizedSql $Sql | Should -BeExactly $Expected
+  }
+
+  It 'normalizes only comments and whitespace to nothing' {
+    ConvertTo-NormalizedSql " -- a`n/* b */`n`r`n`t" | Should -BeExactly ''
+  }
+
+  It 'tells a change inside a literal from a comment edit' {
+    ConvertTo-NormalizedSql "SELECT 'a -- b';" | Should -Not -BeExactly (ConvertTo-NormalizedSql "SELECT 'a -- c';")
+  }
+
+  It 'normalizes every shipped migration to what the C# normalizer would hash' {
+    # Spot-checks the port against the real files: none normalizes to nothing, and a comment-only edit of each is
+    # invisible.
+    $dir = Join-Path $PSScriptRoot '..' '..' '..' 'src' 'Whizbang.Data.Postgres' 'Migrations'
+    foreach ($file in Get-ChildItem -LiteralPath $dir -Filter '*.sql') {
+      $sql = [System.IO.File]::ReadAllText($file.FullName)
+      $normalized = ConvertTo-NormalizedSql $sql
+      $normalized | Should -Not -BeNullOrEmpty -Because $file.Name
+      ConvertTo-NormalizedSql ("-- header`r`n" + $sql + "`n-- trailer`n") | Should -BeExactly $normalized -Because $file.Name
+    }
+  }
 }
 
 Describe 'Find-PullRequestFindings' {
