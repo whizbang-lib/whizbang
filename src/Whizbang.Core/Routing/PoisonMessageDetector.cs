@@ -38,6 +38,15 @@ public enum PoisonQuarantineReason {
   /// no trustworthy first-enqueue timestamp exists.
   /// </summary>
   ObservationCountExceeded,
+
+  /// <summary>
+  /// Accompanies a PROCEED verdict at the receive gate: the message is older than the age threshold
+  /// (issue #1663). The receive gate never quarantines on age, because age measures queueing, not
+  /// failure, and a backlog ages every message in it. The message is accepted and stored; the
+  /// verdict names the case so the caller can make the backlog visible with
+  /// <see cref="IPoisonMessageDetector.RecordAgedOnReceive"/>.
+  /// </summary>
+  AgedOnReceive,
 }
 
 /// <summary>
@@ -104,6 +113,16 @@ public readonly record struct PoisonVerdict(
   /// <returns>A quarantining verdict.</returns>
   public static PoisonVerdict Quarantine(PoisonQuarantineReason reason, string detail) =>
     new(ShouldQuarantine: true, reason, detail);
+
+  /// <summary>
+  /// The message proceeds although it is past the age threshold (issue #1663). Carries
+  /// <see cref="PoisonQuarantineReason.AgedOnReceive"/> so the caller can report the backlog with
+  /// <see cref="IPoisonMessageDetector.RecordAgedOnReceive"/>.
+  /// </summary>
+  /// <param name="detail">Human-readable diagnosis for the log line.</param>
+  /// <returns>A non-quarantining verdict naming the aged case.</returns>
+  public static PoisonVerdict ProceedAgedOnReceive(string detail) =>
+    new(ShouldQuarantine: false, PoisonQuarantineReason.AgedOnReceive, detail);
 }
 
 /// <summary>
@@ -154,6 +173,23 @@ public interface IPoisonMessageDetector {
   /// <param name="entity">The broker entity the surface consumes.</param>
   /// <param name="canSupplyTrustworthyAge">Whether a usable first-enqueue timestamp is present.</param>
   void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge);
+
+  /// <summary>
+  /// Records an aged message that the receive gate accepted (issue #1663): structured warning plus
+  /// the <c>whizbang.message.aged_on_receive</c> OTel counter, so a backlog stays visible. No-op for
+  /// every other verdict, so callers can invoke it unconditionally. The default implementation does
+  /// nothing, which keeps a custom detector's behavior as it was.
+  /// </summary>
+  /// <param name="gate">Which gate evaluated the message.</param>
+  /// <param name="verdict">The verdict acted on.</param>
+  /// <param name="context">The facts the verdict was made from.</param>
+  /// <param name="additionalTags">Extra OTel tags (entity, subscription, …).</param>
+  void RecordAgedOnReceive(
+      PoisonQuarantineGate gate,
+      PoisonVerdict verdict,
+      PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+  }
 }
 
 /// <summary>
@@ -176,6 +212,12 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 
   /// <summary>OTel counter name. Keep stable — dashboards depend on it.</summary>
   public const string COUNTER_NAME = "whizbang.message.quarantined";
+
+  /// <summary>
+  /// OTel counter for aged messages the receive gate accepted (issue #1663). Tagged by <c>gate</c>.
+  /// Keep stable — dashboards depend on it.
+  /// </summary>
+  public const string AGED_ON_RECEIVE_COUNTER_NAME = "whizbang.message.aged_on_receive";
 #pragma warning restore CA1707
 
   /// <summary>Constructs the default detector.</summary>

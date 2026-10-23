@@ -120,20 +120,38 @@ public class AsbPoisonQuarantineTests {
     await Assert.That(decision.PoisonVerdict).IsNull();
   }
 
+  [Test]
+  public async Task Decide_AgedOnReceiveVerdict_ProceedsAndCarriesTheVerdictAsync() {
+    // Issue #1663: an aged message goes through every other branch unchanged, and the decision
+    // carries the verdict so the transport can report the backlog.
+    var decider = new AsbReceiveDecisionMaker();
+    var aged = PoisonVerdict.ProceedAgedOnReceive("waited in a backlog");
+    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown.Event, X]]");
+
+    var decision = decider.Decide(
+      props, "{}", _resolveAlwaysNull, _jsonOptions,
+      poisonDetector: new StubPoisonDetector(aged),
+      poisonContext: _context(_now - TimeSpan.FromDays(1)));
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
+    await Assert.That(decision.PoisonVerdict).IsEqualTo(aged);
+  }
+
   #endregion
 
   #region Transport execution — session pipeline (the hostage case)
 
   [Test]
-  public async Task ProcessSessionMessage_AgedMessage_DeadLettersToThePerNamespaceDlqAsync() {
-    // The arc's motivating failure, end to end on the session pipeline: DeliveryCount is 1 (a
-    // session lock loss never moves it) so EVERY count-based valve is inert; the message is
-    // quarantined on AGE alone and lands in the entity's DLQ, which the existing dead-letter
-    // drainer replays.
-    var detector = _detector(ageThreshold: TimeSpan.FromMinutes(30));
+  public async Task ProcessSessionMessage_AgedMessage_IsAcceptedAndReportedAsync() {
+    // Issue #1663: the session pipeline accepts an aged message (DeliveryCount 1, a backlog that
+    // waited) instead of dead-lettering it. It reaches the handler, which stores it, and the gate
+    // reports it on the aged-on-receive signal so the backlog stays visible. A redelivery loop of
+    // a stored message is bounded after storage by durable observations (layer 2).
+    var detector = new RecordingPoisonDetector(_detector(ageThreshold: TimeSpan.FromMinutes(30)));
     var (transport, client) = _createTransport(enableSessions: true, poisonDetector: detector);
-    var handlerInvoked = false;
-    await transport.SubscribeAsync((_, _, _) => { handlerInvoked = true; return Task.CompletedTask; }, _destination());
+    var handled = new List<IMessageEnvelope>();
+    await transport.SubscribeAsync((e, _, _) => { handled.Add(e); return Task.CompletedTask; }, _destination());
     var receiver = new RecordingTransportSessionReceiver();
 
     await client.LastSessionProcessor!.RaiseSessionMessageAsync(
@@ -144,11 +162,14 @@ public class AsbPoisonQuarantineTests {
           enqueuedTime: _now - TimeSpan.FromHours(4)),
         receiver));
 
-    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
-      .Because("age is the only signal that survives a session lock-loss storm");
-    await Assert.That(receiver.DeadLettered[0].Reason).IsEqualTo("PoisonQuarantine");
-    await Assert.That(receiver.Completed).IsEmpty();
-    await Assert.That(handlerInvoked).IsFalse();
+    await Assert.That(receiver.DeadLettered).IsEmpty()
+      .Because("the receive gate never quarantines on age; a backlog ages every message in it");
+    await Assert.That(handled).Count().IsEqualTo(1);
+    await Assert.That(detector.AgedOnReceive).Count().IsEqualTo(1);
+    await Assert.That(detector.AgedOnReceive[0].Gate).IsEqualTo(PoisonQuarantineGate.Receive);
+    await Assert.That(detector.AgedOnReceive[0].Tags!["transport"]).IsEqualTo("azure-service-bus");
+    await Assert.That(detector.AgedOnReceive[0].Tags!["topic"]).IsEqualTo("transport-topic");
+    await Assert.That(detector.AgedOnReceive[0].Tags!["subscription"]).IsEqualTo("test-subscription");
   }
 
   [Test]
@@ -230,21 +251,24 @@ public class AsbPoisonQuarantineTests {
   #region Transport execution — non-session pipeline
 
   [Test]
-  public async Task ProcessMessage_AgedMessage_DeadLettersAsync() {
-    var detector = _detector(ageThreshold: TimeSpan.FromMinutes(30));
+  public async Task ProcessMessage_AgedRedelivery_IsAcceptedAndReportedAsync() {
+    // Even a broker redelivery is accepted when aged: the loop is bounded after storage, where the
+    // message's own history is durable, not at the receive gate.
+    var detector = new RecordingPoisonDetector(_detector(ageThreshold: TimeSpan.FromMinutes(30)));
     var (transport, client) = _createTransport(enableSessions: false, poisonDetector: detector);
-    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
+    var handled = new List<IMessageEnvelope>();
+    await transport.SubscribeAsync((e, _, _) => { handled.Add(e); return Task.CompletedTask; }, _destination());
     var receiver = new RecordingTransportReceiver();
 
     await client.LastProcessor!.RaiseMessageAsync(
       AsbTransportTestData.MessageArgs(
         AsbTransportTestData.EnvelopeMessage(
-          AsbTransportTestData.CreateEnvelope(), enqueuedTime: _now - TimeSpan.FromHours(4)),
+          AsbTransportTestData.CreateEnvelope(), deliveryCount: 3, enqueuedTime: _now - TimeSpan.FromHours(4)),
         receiver));
 
-    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1);
-    await Assert.That(receiver.DeadLettered[0].Reason).IsEqualTo("PoisonQuarantine");
-    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(receiver.DeadLettered).IsEmpty();
+    await Assert.That(handled).Count().IsEqualTo(1);
+    await Assert.That(detector.AgedOnReceive).Count().IsEqualTo(1);
   }
 
   #endregion
@@ -409,4 +433,31 @@ internal sealed class StubPoisonDetector(PoisonVerdict verdict) : IPoisonMessage
 
   public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) =>
     CapabilityReports.Add((transport, entity, canSupplyTrustworthyAge));
+}
+
+/// <summary>
+/// Delegates every decision to a real detector and records the aged-on-receive calls, so a
+/// transport test can assert the backlog was reported with the right gate and tags (issue #1663).
+/// </summary>
+internal sealed class RecordingPoisonDetector(IPoisonMessageDetector inner) : IPoisonMessageDetector {
+  public List<(PoisonQuarantineGate Gate, PoisonVerdict Verdict, IReadOnlyDictionary<string, object?>? Tags)> AgedOnReceive { get; } = [];
+
+  public PoisonVerdict Evaluate(PoisonEvaluationContext context) => inner.Evaluate(context);
+
+  public void RecordQuarantine(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) =>
+    inner.RecordQuarantine(gate, verdict, context, additionalTags);
+
+  public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) =>
+    inner.ReportAgeCapability(transport, entity, canSupplyTrustworthyAge);
+
+  public void RecordAgedOnReceive(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+    if (verdict.Reason == PoisonQuarantineReason.AgedOnReceive) {
+      AgedOnReceive.Add((gate, verdict, additionalTags));
+    }
+    inner.RecordAgedOnReceive(gate, verdict, context, additionalTags);
+  }
 }
