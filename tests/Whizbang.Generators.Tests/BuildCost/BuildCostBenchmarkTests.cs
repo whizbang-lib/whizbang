@@ -7,7 +7,7 @@ namespace Whizbang.Generators.Tests.BuildCost;
 
 /// <summary>
 /// The deterministic half of the generator and analyzer timing benchmark (#1651): the median, each measurement
-/// against its threshold, the report, the command line, the thresholds file, and the corpus's shape. The timing
+/// against its threshold, the report, the command line, the thresholds format, and the corpus's shape. The timing
 /// itself is not tested here (a timing test is not deterministic); the advisory CI job runs it.
 /// </summary>
 /// <docs>operations/performance/build-cost</docs>
@@ -101,22 +101,6 @@ public class BuildCostBenchmarkTests {
     await Assert.That(thresholds.AnalyzersTotal).IsEqualTo(400.5);
     await Assert.That(thresholds.Generators["ReceptorDiscoveryGenerator"]).IsEqualTo(120);
     await Assert.That(thresholds.AnalyzerAssemblies).IsEmpty();
-  }
-
-  [Test]
-  public async Task Thresholds_CheckedInFile_CoversEveryGeneratorAndAnalyzerPackageAsync() {
-    var path = Path.Combine(AppContext.BaseDirectory, "build-cost-thresholds.json");
-    var thresholds = BuildCostThresholds.Parse(await File.ReadAllTextAsync(path));
-    var generators = typeof(ReceptorDiscoveryGenerator).Assembly.GetTypes()
-        .Where(t => t.GetCustomAttributes(typeof(Microsoft.CodeAnalysis.GeneratorAttribute), false).Length > 0)
-        .Select(t => t.Name)
-        .ToList();
-
-    await Assert.That(generators.Where(g => !thresholds.Generators.ContainsKey(g))).IsEmpty()
-        .Because("every core generator needs a threshold of its own, so a regression in one is named, not hidden in the total");
-    await Assert.That(thresholds.AnalyzerAssemblies.Keys).Contains("Whizbang.Generators");
-    await Assert.That(thresholds.GeneratorsTotal).IsGreaterThan(0);
-    await Assert.That(thresholds.AnalyzersTotal).IsGreaterThan(0);
   }
 
   [Test]

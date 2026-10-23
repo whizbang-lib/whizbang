@@ -9,6 +9,9 @@ using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
 
 namespace Whizbang.Generators.Tests.BuildCost;
 
@@ -137,7 +140,7 @@ public class BuildTargetsEmbeddedJsonTests {
       [PinnedId("11111111-1111-1111-1111-111111111111")]
       public record OrderPlacedEvent : IEvent { public string Note { get; init; } = "a {brace} and a \"quote\""; }
       """;
-    var compilation = CSharpCompilation.Create("Consumer", [CSharpSyntaxTree.ParseText(source)], BuildCostReferences.All(),
+    var compilation = CSharpCompilation.Create("Consumer", [CSharpSyntaxTree.ParseText(source)], _consumerReferences(),
         new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
     _ = CSharpGeneratorDriver.Create(generator).RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
     var field = (IFieldSymbol)output.GetTypeByMetadataName(holder)!.GetMembers("Json").Single();
@@ -186,6 +189,10 @@ public class BuildTargetsEmbeddedJsonTests {
     }
     return stream.ToArray();
   }
+
+  [RequiresAssemblyFiles]
+  private static ImmutableArray<MetadataReference> _consumerReferences() =>
+      [.. _platform(), MetadataReference.CreateFromFile(typeof(Whizbang.Core.IEvent).Assembly.Location)];
 
   private static ImmutableArray<MetadataReference> _platform() => [
     .. ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)

@@ -54,7 +54,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   /// Syntax predicate: admits a struct declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedStructCandidate(SyntaxNode node) =>
       node is StructDeclarationSyntax { AttributeLists.Count: > 0 };
 
@@ -62,7 +62,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
   /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
       (node is ClassDeclarationSyntax cls && cls.BaseList is not null) || (node is RecordDeclarationSyntax rec && rec.BaseList is not null);
 

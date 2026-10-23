@@ -23,7 +23,7 @@ public class PinnedIdRegistryGenerator : IIncrementalGenerator {
   /// attribute (each from its own syntax, or partial). The transform takes only a message or perspective with [PinnedId].
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsPinnedTypeCandidate(SyntaxNode node) =>
       node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
       SyntaxCandidates.MayHaveBaseTypes(type) && SyntaxCandidates.MayHaveAttributes(type);

@@ -176,7 +176,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a class or record with a base list or an attribute, or nested in another type (a possible perspective model).
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsMessageTypeCandidate(SyntaxNode node) =>
       (node is RecordDeclarationSyntax rec &&
           (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
@@ -187,7 +187,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
 

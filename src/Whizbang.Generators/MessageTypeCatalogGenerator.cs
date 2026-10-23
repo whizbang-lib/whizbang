@@ -31,7 +31,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   /// partial). The transform takes only messages and perspectives, which a type implements no other way.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsCatalogTypeCandidate(SyntaxNode node) =>
       node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
       SyntaxCandidates.MayHaveBaseTypes(type);

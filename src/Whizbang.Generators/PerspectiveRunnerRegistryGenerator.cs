@@ -27,7 +27,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
 
@@ -35,7 +35,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a method declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
       node is MethodDeclarationSyntax { AttributeLists.Count: > 0 };
 

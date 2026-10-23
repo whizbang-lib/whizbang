@@ -6,6 +6,9 @@ using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
 using Whizbang.BuildCost.Benchmarks;
 
 namespace Whizbang.Generators.Tests.BuildCost;

@@ -40,7 +40,7 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
   /// Syntactic predicate: quickly filter to types that might have [CommandEndpoint].
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsCommandEndpointCandidate(SyntaxNode node) {
     // Look for classes with at least one attribute
     return node is ClassDeclarationSyntax { AttributeLists.Count: > 0 };

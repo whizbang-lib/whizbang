@@ -53,7 +53,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// Syntactic predicate: quickly filter to types that might have [GraphQLLens].
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsGraphQLLensCandidate(SyntaxNode node) {
     // Look for interfaces or classes with at least one attribute
     return node switch {

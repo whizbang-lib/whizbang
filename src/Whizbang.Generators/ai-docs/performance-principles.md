@@ -162,7 +162,7 @@ exempt.
 
 ### Why: the guard
 
-`tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs`:
+`tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs`:
 
 1. parses every generator source file and fails when a `CreateSyntaxProvider` predicate is not a named candidate
    method, so a new pipeline cannot escape the guard;
@@ -523,7 +523,7 @@ dotnet build -c Release benchmarks/Whizbang.BuildCost.Benchmarks
 dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --runs 5
 ```
 
-A new generator needs a threshold in the file (`BuildCostBenchmarkTests` fails without one). Thresholds start
+A new generator needs a threshold in the file (`BuildCostThresholdsFileTests` fails without one). Thresholds start
 generous and are tightened from CI data.
 
 ---

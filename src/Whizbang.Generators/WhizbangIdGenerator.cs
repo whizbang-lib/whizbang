@@ -42,7 +42,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a struct declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedStructCandidate(SyntaxNode node) =>
       node is StructDeclarationSyntax { AttributeLists.Count: > 0 };
 
@@ -50,7 +50,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a property declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedPropertyCandidate(SyntaxNode node) =>
       node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 };
 
@@ -58,7 +58,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a parameter with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedParameterCandidate(SyntaxNode node) =>
       node is ParameterSyntax { AttributeLists.Count: > 0 };
 

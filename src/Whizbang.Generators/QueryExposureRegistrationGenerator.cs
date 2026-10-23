@@ -57,7 +57,7 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   /// cannot be without.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsExposureSurfaceCandidate(SyntaxNode node) => node switch {
     InterfaceDeclarationSyntax { AttributeLists.Count: > 0 } => true,
     ClassDeclarationSyntax { AttributeLists.Count: > 0 } => true,

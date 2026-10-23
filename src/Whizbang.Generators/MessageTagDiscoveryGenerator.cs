@@ -43,7 +43,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   /// Syntax predicate: admits a type declaration with at least one attribute.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsAttributedTypeCandidate(SyntaxNode node) =>
       node is TypeDeclarationSyntax { AttributeLists.Count: > 0 };
 

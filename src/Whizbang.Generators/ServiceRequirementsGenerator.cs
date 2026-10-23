@@ -88,7 +88,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// Cheap syntactic filter: a generic invocation whose name is a registration method.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsRegistrationCallCandidate(SyntaxNode node) {
     if (node is not InvocationExpressionSyntax invocation) {
       return false;
@@ -223,7 +223,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// Cheap syntactic filter: a registration invocation whose argument is a lambda.
   /// </summary>
   /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
-  /// <tests>tests/Whizbang.Generators.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
   public static bool IsFactoryRegistrationCandidate(SyntaxNode node) {
     if (node is not InvocationExpressionSyntax invocation) {
       return false;
