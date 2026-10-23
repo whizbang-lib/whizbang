@@ -67,7 +67,7 @@ public class PerspectiveLateEventApplyTests : EFCoreTestBase {
     await Task.WhenAll(streams.Select(s => _applyInterleavedAsync(store, s.StreamId, s.Started, s.Completed)));
 
     await using var verify = CreateDbContext();
-    var ids = streams.Select(s => s.StreamId).ToList();
+    var ids = streams.ConvertAll(s => s.StreamId);
     var rows = await verify.Set<PerspectiveRow<ItemProgress>>().AsNoTracking()
       .Where(r => ids.Contains(r.Id))
       .ToListAsync();
