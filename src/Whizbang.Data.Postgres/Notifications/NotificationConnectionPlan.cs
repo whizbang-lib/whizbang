@@ -47,6 +47,12 @@ public sealed class NotificationConnectionPlan {
   /// <summary>True when connections will open through <see cref="DataSource"/>.</summary>
   public bool UsesDataSource => DataSource is not null;
 
+  /// <summary>
+  /// True when connections open through the pooled connection-string key because no <c>-direct</c> key resolved: a
+  /// transaction-pooling pooler does not keep a session-level advisory lock on one backend.
+  /// </summary>
+  internal bool ResolvesThroughPooledKey => DataSource is null && StringSource == NotificationConnectionStringResolver.ResolutionSource.None;
+
   /// <summary>True when either path can open a connection.</summary>
   public bool IsAvailable => DataSource is not null || !string.IsNullOrEmpty(ConnectionString);
 

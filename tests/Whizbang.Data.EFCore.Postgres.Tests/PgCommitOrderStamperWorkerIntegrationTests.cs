@@ -534,6 +534,45 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
   /// Completes on one of the worker's warnings (the timeout by default), so a test can act on it without subscribing
   /// to the event.
   /// </summary>
+  /// <summary>
+  /// The leader lock is a session-level advisory lock on a direct connection, held for the tenure; stopping the
+  /// leader releases it on the session that took it, with the key it was taken with, so the release finds the lock and
+  /// the next instance can lead at once.
+  /// </summary>
+  [Test]
+  public async Task Worker_StoppingTheLeader_ReleasesItsLockOnTheSessionThatTookItAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var logger = new WarningCapturingLogger();
+    var first = _newWorker(ConnectionString, logger: logger);
+    var firstLeads = await _whenBecomesLeaderAsync(first);
+    await first.StartAsync(cts.Token);
+    await firstLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await first.StopAsync(CancellationToken.None);
+
+    await Assert.That(logger.Warnings).IsEmpty()
+      .Because("a release that finds the lock gone is logged, and this one ran where the lock was taken");
+    var second = _newWorker(ConnectionString);
+    var secondLeads = await _whenBecomesLeaderAsync(second);
+    await second.StartAsync(cts.Token);
+    await secondLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await second.StopAsync(CancellationToken.None);
+  }
+
+  private sealed class WarningCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _warnings = [];
+    public List<string> Warnings { get { lock (_lock) { return [.. _warnings]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        lock (_lock) { _warnings.Add(formatter(state, exception)); }
+      }
+    }
+  }
+
   private sealed class TimeoutSignalingLogger(int eventIdToSignal = 18) : ILogger<PgCommitOrderStamperWorker> {
     public TaskCompletionSource<string> TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;

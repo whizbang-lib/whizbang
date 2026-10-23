@@ -50,6 +50,20 @@ public static class ManagedSchemaReconciler {
       NpgsqlConnection connection, string schema, ManagedSchemaObjectSet declared,
       ManagedSchemaSettings settings, Guid? instanceId, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(connection);
+    return await RunAsync(new ConnectionReconcileBackend(connection), schema, declared, settings, instanceId, logger, cancellationToken);
+  }
+
+  /// <summary>Reconciles the perspective tables of one schema through <paramref name="backend"/>.</summary>
+  /// <param name="backend">Where the statements run.</param>
+  /// <param name="schema">The schema whose perspective tables are reconciled (bare name, e.g. <c>public</c>).</param>
+  /// <param name="declared">Everything declared by Whizbang's contributors.</param>
+  /// <param name="settings">The mode, kinds to keep, configured pins and the fleet gate.</param>
+  /// <param name="instanceId">This instance, whose declarations are recorded for the fleet gate; null when unknown.</param>
+  /// <param name="logger">Where to report what was done.</param>
+  /// <param name="cancellationToken">Cancels the reconcile.</param>
+  internal static async Task<ManagedSchemaReport> RunAsync(
+      IReconcileBackend backend, string schema, ManagedSchemaObjectSet declared,
+      ManagedSchemaSettings settings, Guid? instanceId, ILogger? logger, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrWhiteSpace(schema);
     ArgumentNullException.ThrowIfNull(declared);
     ArgumentNullException.ThrowIfNull(settings);
@@ -58,29 +72,34 @@ public static class ManagedSchemaReconciler {
     }
 
     var lockId = SchemaInitializationLockKey.Compute(schema);
-    if (!await _scalarAsync<bool>(connection, "SELECT pg_try_advisory_lock(@id)", cancellationToken, ("id", lockId))) {
+    if (!await backend.StatementAsync((c, t) => _scalarAsync<bool>(c, "SELECT pg_try_advisory_lock(@id)", t, ("id", lockId)), cancellationToken)) {
       return ManagedSchemaReport.SkippedReport;
     }
 
     try {
-      var ledgerTable = PgIdentifier.Quote(schema) + ".wh_managed_objects";
-      if (await _scalarAsync<string?>(connection, "SELECT to_regclass(@t)::text", cancellationToken, ("t", ledgerTable)) is null) {
-        return ManagedSchemaReport.SkippedReport;
-      }
+      return await backend.StatementAsync(async (connection, token) => {
+        var ledgerTable = PgIdentifier.Quote(schema) + ".wh_managed_objects";
+        if (await _scalarAsync<string?>(connection, "SELECT to_regclass(@t)::text", token, ("t", ledgerTable)) is null) {
+          return ManagedSchemaReport.SkippedReport;
+        }
 
-      var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, cancellationToken);
-      var effective = await _withEquivalentsAsync(connection, schema, declared, live, cancellationToken);
-      var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, ledgerTable, cancellationToken);
-      var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
-        connection, schema, instanceId, effective, ManagedSchemaFleet.LiveWindow, cancellationToken);
-      var plan = ManagedSchemaPlanner.Plan(effective, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
+        var live = await ManagedSchemaCatalog.ReadLiveAsync(connection, schema, token);
+        var effective = await _withEquivalentsAsync(connection, schema, declared, live, token);
+        var ledger = await ManagedSchemaCatalog.ReadLedgerAsync(connection, ledgerTable, token);
+        var fleet = await ManagedSchemaFleet.ReportAndReadAsync(
+          connection, schema, instanceId, effective, ManagedSchemaFleet.LiveWindow, token);
+        var plan = ManagedSchemaPlanner.Plan(effective, live, ledger, settings.ForPass(fleet), DateTimeOffset.UtcNow);
 
-      await ManagedSchemaCatalog.WriteLedgerAsync(connection, ledgerTable, plan.Records, cancellationToken);
-      var (dropped, failed) = await _dropAsync(connection, schema, ledgerTable, plan.Drops, logger, cancellationToken);
-      _logPlan(logger, schema, plan);
-      return new ManagedSchemaReport(false, plan.Records.Count, dropped, plan.Kept, plan.Missing, failed);
+        await ManagedSchemaCatalog.WriteLedgerAsync(connection, ledgerTable, plan.Records, token);
+        var (dropped, failed) = await _dropAsync(connection, schema, ledgerTable, plan.Drops, logger, token);
+        _logPlan(logger, schema, plan);
+        return new ManagedSchemaReport(false, plan.Records.Count, dropped, plan.Kept, plan.Missing, failed);
+      }, cancellationToken);
     } finally {
-      await _executeAsync(connection, "SELECT pg_advisory_unlock(@id)", CancellationToken.None, ("id", lockId));
+      await backend.StatementAsync(async (c, _) => {
+        await _executeAsync(c, "SELECT pg_advisory_unlock(@id)", CancellationToken.None, ("id", lockId));
+        return true;
+      }, CancellationToken.None);
     }
   }
 
