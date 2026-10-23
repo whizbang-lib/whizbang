@@ -171,6 +171,7 @@ public sealed class RedeliveryPump(
     var innerPayloads = new List<System.Text.Json.JsonElement>(chunk.Count);
     foreach (var evt in chunk) {
       using var doc = System.Text.Json.JsonDocument.Parse(evt.EventData);
+      MessageParseDiagnostics.Record(evt.EventId, MessageParseSource.Redelivery, MessageParseKind.Payload);
       innerPayloads.Add(doc.RootElement.Clone());
     }
     return new RedeliveryComposite {

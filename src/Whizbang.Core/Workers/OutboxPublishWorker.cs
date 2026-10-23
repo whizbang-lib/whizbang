@@ -473,6 +473,7 @@ public sealed partial class OutboxPublishWorker(
     }
 
     var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+    MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
     var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
     var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 

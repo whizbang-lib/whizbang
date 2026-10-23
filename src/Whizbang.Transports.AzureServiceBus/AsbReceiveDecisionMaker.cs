@@ -163,6 +163,7 @@ internal class AsbReceiveDecisionMaker {
         Description = $"Could not deserialize envelope as '{envelopeTypeName}' — broker ack + drop",
       };
     }
+    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
 
     // Slice 2 — receptor-registry filter at receive. If this service has no consumer
     // for the payload type, drop the message instead of storing it in the inbox.
