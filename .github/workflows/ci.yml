@@ -747,6 +747,45 @@ jobs:
           path: noop-rebuild/
           retention-days: 7
 
+  # How long each generator and analyzer takes over a large generated consumer (1,000 features and 3,000 files of
+  # ordinary code), median of 5 runs, against benchmarks/Whizbang.BuildCost.Benchmarks/build-cost-thresholds.json
+  # (#1651). Timing is not a test, so this is a tool and an advisory job: not in ci-result's needs until its numbers
+  # are stable. The table is the job summary and an artifact. Runs beside the build, off its critical path.
+  build-cost-timing:
+    name: Build · Generator and analyzer timing
+    needs: [ff-validated, release-pr]
+    if: >-
+      ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
+      needs.release-pr.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build the benchmark and the generator packages
+        run: dotnet build benchmarks/Whizbang.BuildCost.Benchmarks -c Release -nologo -v:q
+
+      - name: Time every generator and analyzer against its threshold
+        run: |
+          mkdir -p build-cost
+          dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --output build-cost/timing.md
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-cost-timing-${{ github.run_id }}
+          path: build-cost/
+          retention-days: 14
+
   build:
     name: Build · Compile
     needs: [version, changes, release-pr, ff-validated]
