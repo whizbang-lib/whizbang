@@ -59,7 +59,33 @@ public class TableRewriteStartupStepTests {
     var provider = services.BuildServiceProvider();
     return new TableRewriteStartupStep(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow }),
+      rewriters: [new VacuumFullTableRewriter(Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow }))],
+      strategy: TableRewriteStrategies.VACUUM_FULL,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
+  }
+
+  /// <summary>A rewriter that records what it was offered, under any strategy name.</summary>
+  private sealed class RecordingRewriter(string strategy, double? ratioAfter = 1.0, bool canRun = true) : ITableRewriter {
+    public List<string> Rewritten { get; } = [];
+    public string Strategy { get; } = strategy;
+    public bool CanRun { get; } = canRun;
+    public string CannotRunReason => $"{Strategy} is not usable here";
+    public Task<double?> RewriteAsync(IWorkCoordinator coordinator, string tableName, CancellationToken cancellationToken) {
+      Rewritten.Add(tableName);
+      return Task.FromResult(ratioAfter);
+    }
+  }
+
+  private static TableRewriteStartupStep _stepWith(RewriteCoordinator? coordinator, string strategy, params ITableRewriter[] rewriters) {
+    var services = new ServiceCollection();
+    if (coordinator is not null) {
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+    }
+    var provider = services.BuildServiceProvider();
+    return new TableRewriteStartupStep(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      rewriters: rewriters,
+      strategy: strategy,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
   }
 
@@ -85,6 +111,8 @@ public class TableRewriteStartupStepTests {
     var report = await _stepOver(coordinator, allow: false).ExecuteAsync(CancellationToken.None);
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo("table rewrites not permitted (MaintenanceWorkerOptions.AllowTableRewrite)")
+      .Because("the operator reads this reason to learn which switch holds the rewrite back");
     await Assert.That(coordinator.Rewritten).IsEmpty()
       .Because("the framework cannot know how large a consumer's table is; taking an ACCESS "
              + "EXCLUSIVE lock unattended must be opted into — same permission, new window");
@@ -133,5 +161,77 @@ public class TableRewriteStartupStepTests {
              + "table still owes one");
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
     await Assert.That(report.Reason).Contains("left queued");
+  }
+  [Test]
+  public async Task RewriteThatReclaimsNothingMeasurable_LeavesTheRequestQueuedAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: true) },
+      RatioAfterRewrite = null,   // not rewritten, for example a table the role does not own
+    };
+    var report = await _stepOver(coordinator).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Rewritten).Contains("wh_event_store");
+    await Assert.That(coordinator.Cleared).IsEmpty()
+      .Because("no measurement after the rewrite is no evidence it worked");
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+    await Assert.That(report.Reason).IsEqualTo("rewrote 0 table(s); 1 ineffective, left queued for the next boot");
+  }
+
+  [Test]
+  public async Task ResolvesTheRewriterByStrategyNameAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var other = new RecordingRewriter("Other");
+    var chosen = new RecordingRewriter("Chosen");
+
+    var report = await _stepWith(coordinator, "Chosen", other, chosen).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(chosen.Rewritten).IsEquivalentTo(["wh_outbox"])
+      .Because("the step hands each owed table to the rewriter of the selected strategy");
+    await Assert.That(other.Rewritten).IsEmpty()
+      .Because("a registered rewriter of another strategy is never called, wherever it is registered");
+    await Assert.That(coordinator.Rewritten).IsEmpty()
+      .Because("the rewrite goes through the rewriter, not straight to the coordinator");
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(report.Reason).IsEqualTo("rewrote 1 table(s)");
+  }
+
+  [Test]
+  public async Task NoRewriterForTheStrategy_SkipsNamingTheStrategyAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var other = new RecordingRewriter("Other");
+
+    var report = await _stepWith(coordinator, "Missing", other).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo("no table rewriter registered for strategy 'Missing'");
+    await Assert.That(other.Rewritten).IsEmpty();
+    await Assert.That(coordinator.Rewritten).IsEmpty();
+  }
+
+  [Test]
+  public async Task SelectedRewriterThatCannotRun_SkipsWithItsReasonBeforeTouchingTheDatabaseAsync() {
+    var cannot = new RecordingRewriter("Chosen", canRun: false);
+
+    // No coordinator registered: a skip that resolved one first would report the wrong reason.
+    var report = await _stepWith(coordinator: null, "Chosen", cannot).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo("Chosen is not usable here");
+    await Assert.That(cannot.Rewritten).IsEmpty();
+  }
+
+  [Test]
+  public async Task Constructor_RejectsMissingRewritersAndStrategyAsync() {
+    var scopeFactory = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var logger = NullLogger<TableRewriteStartupStep>.Instance;
+
+    await Assert.That(() => new TableRewriteStartupStep(scopeFactory, null!, TableRewriteStrategies.VACUUM_FULL, logger))
+      .Throws<ArgumentNullException>();
+    await Assert.That(() => new TableRewriteStartupStep(scopeFactory, [], " ", logger))
+      .Throws<ArgumentException>();
   }
 }

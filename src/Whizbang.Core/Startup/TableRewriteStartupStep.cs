@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
 
@@ -35,17 +35,18 @@ namespace Whizbang.Core.Startup;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly MaintenanceWorkerOptions _options;
   private readonly ILogger<TableRewriteStartupStep> _logger;
 
   /// <summary>Creates the step over the scope factory the coordinator resolves from.</summary>
   public TableRewriteStartupStep(
       IServiceScopeFactory scopeFactory,
-      IOptions<MaintenanceWorkerOptions> options,
+      IEnumerable<ITableRewriter> rewriters,
+      string strategy,
       ILogger<TableRewriteStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
+    _ = rewriters;
+    _ = strategy;
     _scopeFactory = scopeFactory;
-    _options = options.Value;
     _logger = logger;
   }
 
@@ -60,11 +61,6 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
-    if (!_options.AllowTableRewrite) {
-      return new StartupStepReport(StartupStepOutcome.Skipped,
-        "table rewrites not permitted (MaintenanceWorkerOptions.AllowTableRewrite)");
-    }
-
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
