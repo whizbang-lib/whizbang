@@ -6,6 +6,13 @@ name: InMemory Integration Tests (Reusable)
 on:
   workflow_call:
     inputs:
+      runs-on:
+        description: >-
+          Where the job runs, as JSON: a label ("ubuntu-latest") or a label set (["self-hosted","whizbang","Linux","X64"]).
+          CI passes the runner picker's choice (.github/scripts/Select-CiRunner.ps1); every other caller gets ubuntu-latest.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       artifact-name:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
@@ -19,7 +26,7 @@ permissions:
 jobs:
   inmemory-tests:
     name: Run suite
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 20
 
     steps:

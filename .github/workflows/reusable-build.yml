@@ -6,6 +6,13 @@ name: Build (Reusable)
 on:
   workflow_call:
     inputs:
+      runs-on:
+        description: >-
+          Where the job runs, as JSON: a label ("ubuntu-latest") or a label set (["self-hosted","whizbang","Linux","X64"]).
+          CI passes the runner picker's choice (.github/scripts/Select-CiRunner.ps1); every other caller gets ubuntu-latest.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       version:
         description: 'Version to stamp into assemblies (from GitVersion). If empty, uses Directory.Build.props default.'
         required: false
@@ -25,7 +32,7 @@ permissions:
 jobs:
   build:
     name: Compile and hash
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     # The analyzers run in every project now, which roughly doubles the solution build on a
     # hosted runner (16 minutes observed); the artifact upload follows it.
     timeout-minutes: 35
@@ -129,7 +136,9 @@ jobs:
           # file that maps the deterministic /_/ source paths in its pdbs back to the checkout.
           # Without it the coverage collector finds none of an assembly's sources, skips the
           # assembly, and writes an empty report while every test still passes; upload-artifact
-          # drops hidden files unless told otherwise. The only other hidden files under these
+          # drops hidden files unless told otherwise. The mapping names THIS job's checkout, so a test
+          # job that checks out elsewhere (a team machine, Windows, macOS) rewrites it first with
+          # .github/scripts/Update-CoverageSourceRoots.ps1. The only other hidden files under these
           # paths are obj/'s generated AssemblyAttributes sources.
           include-hidden-files: true
 

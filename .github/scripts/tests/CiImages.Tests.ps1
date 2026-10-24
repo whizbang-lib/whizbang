@@ -59,6 +59,30 @@ Describe 'Test-CiImageHasRegistry' {
   }
 }
 
+Describe 'Test-DockerAvailable' {
+  # Run-Tests.ps1 cleans up test containers after every run; on a runner with no Docker (a Windows machine
+  # in the self-hosted pool runs the unit and component suites) that cleanup must be skipped, not fail a
+  # run whose tests all passed.
+  It 'is <Expected> when docker is <Case> on PATH' -ForEach @(
+    @{ Case = 'absent'; Fake = $false; Expected = $false }
+    @{ Case = 'present'; Fake = $true; Expected = $true }
+  ) {
+    $bin = Join-Path $TestDrive "path-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $bin | Out-Null
+    if ($Fake) {
+      if ($IsWindows) { Set-Content -LiteralPath (Join-Path $bin 'docker.cmd') -Value '@exit /b 0' }
+      else { Set-Content -LiteralPath (Join-Path $bin 'docker') -Value "#!/bin/sh`nexit 0"; chmod +x (Join-Path $bin 'docker') }
+    }
+    $saved = $env:PATH
+    try {
+      $env:PATH = $bin
+      Test-DockerAvailable | Should -Be $Expected
+    } finally {
+      $env:PATH = $saved
+    }
+  }
+}
+
 Describe 'Resolve-CiImage' {
   It 'leaves a Docker Hub image alone without a prefix' {
     Resolve-CiImage -Image 'pgvector/pgvector:pg17' -Prefix '' | Should -Be 'pgvector/pgvector:pg17'

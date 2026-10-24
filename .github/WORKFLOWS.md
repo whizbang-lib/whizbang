@@ -53,6 +53,8 @@ Shared data: `.github/nuget-packages.txt` (the packages every full publish ships
 `.github/inert-paths.txt` (paths that cannot affect the build or tests, read through
 `.github/scripts/Test-InertDiff.ps1`). The rules of the one required check, `Gate · CI result`, are
 `.github/scripts/Test-CiResult.ps1`, with tests in `.github/scripts/tests/` run by `Test · Pipeline scripts`.
+The build, test and analysis reusables take a `runs-on` input (JSON, default `"ubuntu-latest"`) that CI fills
+from `Plan · Pick runners` (below); every other caller leaves it unset.
 
 ## Dependabot lock files
 
@@ -98,3 +100,106 @@ If a ruleset restricts who may push to `dependabot/**` branches, add the app to 
 Dependabot no longer rebases or recreates that pull request on its own (for example when `develop`
 moves or a newer version comes out). Comment `@dependabot rebase` (or `@dependabot recreate`) to have it
 rebuild the branch; it drops the lock-file commit, and this workflow then regenerates it.
+
+## Runner selection
+
+`Plan · Pick runners` (`ci.yml`, job `pick-runner`) decides where CI's build, test and analysis jobs run.
+It runs `.github/scripts/Select-CiRunner.ps1` once per run, on a GitHub-hosted runner, and outputs one
+`runs-on` value per job class. The rules are tested by `Test · Pipeline scripts`.
+
+**Fallback is the default.** With none of the setup below, every job runs on `ubuntu-latest`, exactly as
+before the picker. The picker job and each of its steps continue on error, it is not one of the gate's
+needs, and every output and every consumer defaults to `ubuntu-latest`, so a picker that fails, times
+out or never runs leaves CI unchanged and never turns `Gate · CI result` red. Each run's job summary has
+a table saying which tier each class got and why every higher tier was skipped.
+
+**Tiers, per job class; the first whose every check passes wins.**
+
+1. **Self-hosted pool.** The run is trusted: a push, a merge-queue run, a dispatch, a schedule, or a pull
+   request from a branch of this repository that Dependabot did not open. Fork and Dependabot pull
+   requests never reach the pool. The runner-pool app can read the runner group; the group lets this
+   repository in (visibility "all", or "selected" with this repository selected), allows public
+   repositories, and is not restricted to selected workflows; an online, idle runner carries every label
+   of the class; and this repository's jobs already queued for those runners leave one spare.
+2. **Blacksmith.** `CI_BLACKSMITH_RUNNER` (or the class's own variable) names a label that fits the class,
+   and the run is trusted, or it is a fork or Dependabot pull request and `CI_BLACKSMITH_FORKS` is `true`.
+   When `CI_BLACKSMITH_MAX_QUEUED` is above 0, fewer than that many jobs are already queued for the label.
+3. **`ubuntu-latest`.** Anything else: a missing token, an unset or malformed variable, an API error, a
+   timeout (10 seconds a request, 60 for the whole picker), or an unexpected response.
+
+**Job classes.**
+
+| Class | Pool labels | Jobs | Notes |
+|---|---|---|---|
+| `any-os` | `self-hosted`, `whizbang` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Any OS and architecture. The suites run the build with `dotnet test --test-modules` on the framework-dependent `.dll` (no RID, nothing native beyond what NuGet ships per RID), so the Linux build runs on Windows X64 and ARM64 and on macOS. Every step is pwsh or an action |
+| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is compared byte for byte with the GitHub-hosted verify-rebuild, and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
+| `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
+| `analyze` | none: never the pool | Analyze · Quality | Waits up to hours for the suites' coverage; on a pool machine it would hold the machine the suites need |
+| `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |
+
+**Coverage from another checkout.** The build's coverage source-root mappings name the build machine's
+checkout. A suite that checks out anywhere else (a team machine, Windows, macOS) rewrites them first
+with `.github/scripts/Update-CoverageSourceRoots.ps1`, or the collector writes empty reports while every
+test passes; `.github/scripts/Test-CoverageCollected.ps1` fails such a suite. Reports from Windows carry
+Windows paths; the quality gate's merge normalizes them to repository-relative paths.
+
+Not routed, always `ubuntu-latest`: the planning and gate jobs (small, and the gate must not depend on a
+machine), `Build · Generator and analyzer timing` (its thresholds were measured on GitHub-hosted runners),
+`Build · Verify rebuild matches the tested build`, `Build · Pack` and every publish, release, signing and
+attestation job (what reaches nuget.org is built and attested on GitHub-hosted runners), and the report
+and notification jobs.
+
+**Labels, never machine names.** A machine joins the pool when it gets the `whizbang` label; remove the
+label to take it out. `docker` means Linux with Docker, able to run the integration suites' containers.
+OS and architecture are the runner's automatic labels (`Linux`, `Windows`, `macOS`, `X64`, `ARM64`). The
+runner group is `Default` unless the `RUNNER_POOL_GROUP` variable names another.
+
+**Variables (Settings > Secrets and variables > Actions > Variables).** All optional.
+
+| Variable | Effect |
+|---|---|
+| `RUNNER_POOL_DISABLED` | `true` turns the self-hosted tier off without touching the secrets |
+| `RUNNER_POOL_GROUP` | The runner group holding the pool. Default `Default` |
+| `CI_BLACKSMITH_RUNNER` | The Blacksmith label every class uses, for example `blacksmith-4vcpu-ubuntu-2404`. Unset: no Blacksmith tier |
+| `CI_BLACKSMITH_RUNNER_COMPILE`, `_LINUX`, `_ANALYZE`, `_LINUX_DOCKER`, `_ANY_OS` | A label for one class, over `CI_BLACKSMITH_RUNNER` |
+| `CI_BLACKSMITH_FORKS` | `true` lets fork and Dependabot pull requests use Blacksmith (it is billed). Default: they run GitHub-hosted |
+| `CI_BLACKSMITH_MAX_QUEUED` | Above 0: skip Blacksmith when that many of this repository's jobs are already queued for the label. Default 0, not checked |
+
+A Blacksmith label must be a plain label; for a Linux class it must be an `ubuntu` label, and for an
+X64 class not an `-arm` one. A label that does not fit skips the tier for that class only.
+
+**One-time setup for the self-hosted tier (owner).** All three are needed; until then the tier is skipped.
+
+1. Settings > Actions > General > "Approval for running fork pull request workflows from contributors":
+   **Require approval for all external contributors**. A fork pull request runs its own `ci.yml`, which
+   can name the pool's labels in `runs-on` and skip the picker; approval puts a person in front of that.
+2. The runner group lets this public repository in: Organization settings > Actions > Runner groups >
+   the group > "Allow public repositories", and repository access "All" or this repository selected.
+   Leave "Restricted to selected workflows" off.
+3. A GitHub App under the organization with **Organization permissions > Self-hosted runners: Read**
+   (nothing else; no webhook), installed on the organization, and two Actions secrets in this repository:
+   `RUNNER_POOL_APP_ID` (the App ID or Client ID) and `RUNNER_POOL_APP_PRIVATE_KEY` (the `.pem`).
+
+**Adding a machine.**
+
+- Run the runner as a dedicated, non-admin account that holds no credentials of its own: a trusted
+  pull request still runs code a contributor wrote.
+- Prefer ephemeral runners (`--ephemeral`, re-registered by a service after each job). A persistent runner
+  must be cleaned between jobs: `actions/checkout` cleans the workspace, but containers, volumes, tool
+  caches and anything written outside the workspace stay.
+- Several runner instances on one machine each get their own work directory, and the container ports
+  the suites publish must not collide between them.
+- Install PowerShell 7 and Git and, for `docker`, Docker with the runner account allowed to use it. The
+  `linux-docker` and `compile` jobs also use bash and GNU coreutils. Pester 5 is installed by the job
+  when the machine lacks it. On Windows, enable long paths (`LongPathsEnabled` in the registry, and
+  `git config --system core.longpaths true`): the test output paths are deep.
+- A machine that is not wiped between jobs is fine for the `any-os` jobs: the checkout's clean removes
+  the previous job's build and test results, and `dotnet-coverage` is installed with `update`.
+- Register it in the runner group, then add `whizbang` (and `docker` where it applies). Watch one run's
+  Pick runners summary to confirm the class it serves.
+
+**Limits.** The picker decides once, at the start of the run, so a machine that is idle then may be busy
+when a later job of the run starts, and that job waits for it rather than falling back. Every job of a
+class in the run goes to the same label set, so one pool machine serves a run's jobs of that class one
+at a time; the pool pays off when it has a machine per concurrent job. Only this repository's queue is
+visible; other repositories' load shows up only as busy runners.

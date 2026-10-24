@@ -164,5 +164,15 @@ function Find-UnlistedCiImage {
   return @($unlisted | Sort-Object -Unique)
 }
 
+<#
+.SYNOPSIS
+    Whether a docker command is on PATH. Run-Tests.ps1 skips its container cleanup without one: a runner
+    with no Docker (a Windows machine running the unit and component suites) has no containers to clean,
+    and calling docker there would fail a run whose tests all passed.
+#>
+function Test-DockerAvailable {
+  return [bool](Get-Command -Name 'docker' -CommandType Application -ErrorAction SilentlyContinue)
+}
+
 Export-ModuleMember -Function Get-CiImagePrefixVariable, Test-CiImageHasRegistry, Resolve-CiImage,
-  Read-CiImageManifest, ConvertTo-CiImageName, Find-UnlistedCiImage
+  Read-CiImageManifest, ConvertTo-CiImageName, Find-UnlistedCiImage, Test-DockerAvailable
