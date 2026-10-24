@@ -106,20 +106,23 @@ $ErrorActionPreference = 'Stop'
 $script:HostedRunner = 'ubuntu-latest'
 $script:SetupHint = 'See .github/WORKFLOWS.md, "Runner selection".'
 $script:BlacksmithVariables = @('CI_BLACKSMITH_RUNNER', 'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_LINUX',
-  'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER', 'CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED')
+  'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_ANALYZE', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER', 'CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED')
 
 <#
     The job classes, in output order. Labels pick pool machines; a machine is never named. Linux classes
     carry X64 because their jobs run, or produce, the Linux x64 build (its test hosts are x64 executables).
-    Os is what a Blacksmith label must fit; HostedOn lists the events whose jobs of the class skip tiers 1
-    and 2.
+    Os and X64 are what a Blacksmith label must fit. HostedOn lists the events whose jobs of the class skip
+    tiers 1 and 2. Pool is false for a class whose job waits on other jobs of the run (the analysis waits
+    up to hours for the suites' coverage): on a pool machine it would hold the machine those jobs need.
 #>
 function Get-CiRunnerClass {
+  $linux = @('self-hosted', 'whizbang', 'Linux', 'X64')
   $classes = [ordered]@{}
-  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); Os = ''; X64 = $false; HostedOn = @() }
-  $classes['linux'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang', 'Linux', 'X64'); Os = 'Linux'; X64 = $true; HostedOn = @() }
-  $classes['compile'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang', 'Linux', 'X64'); Os = 'Linux'; X64 = $true; HostedOn = @('push') }
-  $classes['linux-docker'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang', 'Linux', 'X64', 'docker'); Os = 'Linux'; X64 = $true; HostedOn = @() }
+  $classes['any-os'] = [pscustomobject]@{ Labels = @('self-hosted', 'whizbang'); Os = ''; X64 = $false; HostedOn = @(); Pool = $true }
+  $classes['linux'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $true }
+  $classes['compile'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @('push'); Pool = $true }
+  $classes['analyze'] = [pscustomobject]@{ Labels = $linux; Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $false }
+  $classes['linux-docker'] = [pscustomobject]@{ Labels = @($linux + 'docker'); Os = 'Linux'; X64 = $true; HostedOn = @(); Pool = $true }
   return $classes
 }
 
@@ -297,6 +300,7 @@ function Select-CiRunner {
 
     # Tier 1: the self-hosted pool.
     $why = $poolSkip
+    if (-not $why -and -not $class.Pool) { $why = 'this job waits on other jobs of the run, and would hold a pool machine they need' }
     if (-not $why) {
       $idle = @(Get-IdleRunner -Runners @($PoolState.Runners) -Labels $class.Labels)
       $competing = Get-CompetingJobCount -QueuedJobs @($QueuedJobs) -IdleRunners $idle
