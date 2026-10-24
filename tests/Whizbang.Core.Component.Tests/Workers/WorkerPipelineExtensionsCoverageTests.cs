@@ -47,10 +47,10 @@ public class WorkerPipelineExtensionsCoverageTests {
   }
 
   [Test]
-  public async Task StreamCloserAndStreamCompactor_ResolveAsSingletonsAndCompactorRunsEndToEndAsync() {
-    // Both IStreamCloser and IStreamCompactor are TryAddSingleton factories chaining several
+  public async Task StreamPrefixTruncatorAndStreamCompactor_ResolveAsSingletonsAndCompactorRunsEndToEndAsync() {
+    // Both IStreamPrefixTruncator and IStreamCompactor are TryAddSingleton factories chaining several
     // dependencies (IWorkCoordinator, IEventStore, IPerspectiveSnapshotStore, and — for the
-    // compactor — IStreamCloser itself). Registering the factory proves nothing about whether
+    // compactor — IStreamPrefixTruncator itself). Registering the factory proves nothing about whether
     // the chain actually builds; on-demand callers (E3 tier-2 compaction, an admin operation)
     // are the first ones who would discover a broken binding otherwise.
     var services = _composeWorkerPipeline();
@@ -60,13 +60,13 @@ public class WorkerPipelineExtensionsCoverageTests {
 
     await using var provider = services.BuildServiceProvider();
 
-    var closerFirst = provider.GetRequiredService<IStreamCloser>();
-    var closerSecond = provider.GetRequiredService<IStreamCloser>();
+    var closerFirst = provider.GetRequiredService<IStreamPrefixTruncator>();
+    var closerSecond = provider.GetRequiredService<IStreamPrefixTruncator>();
     var compactorFirst = provider.GetRequiredService<IStreamCompactor>();
     var compactorSecond = provider.GetRequiredService<IStreamCompactor>();
 
-    await Assert.That(closerFirst).IsTypeOf<StreamCloser>()
-      .Because("the registration promises a real StreamCloser wired to the container's dependencies, not a stand-in");
+    await Assert.That(closerFirst).IsTypeOf<StreamPrefixTruncator>()
+      .Because("the registration promises a real StreamPrefixTruncator wired to the container's dependencies, not a stand-in");
     await Assert.That(ReferenceEquals(closerFirst, closerSecond)).IsTrue()
       .Because("TryAddSingleton claims one instance for the process; a second instance racing the A1 close-truncate path would be a correctness bug");
     await Assert.That(compactorFirst).IsTypeOf<StreamCompactor>()

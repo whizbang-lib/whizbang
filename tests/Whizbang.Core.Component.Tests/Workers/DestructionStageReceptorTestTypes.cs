@@ -4,7 +4,7 @@
 using System.Collections.Concurrent;
 using Whizbang.Core.Messaging;
 
-// Types for DestructionStageReceptorComponentTests (#1381) and StreamCloserDestructionStageComponentTests (#1504). An event with a receptor at each destruction stage, each
+// Types for DestructionStageReceptorComponentTests (#1381) and StreamPrefixTruncatorDestructionStageComponentTests (#1504). An event with a receptor at each destruction stage, each
 // recording the stage per event id. The counters are [ReceptorIdempotent] so the double-fire guard lets every call through.
 
 namespace Whizbang.Core.Component.Tests.DestructionStages;

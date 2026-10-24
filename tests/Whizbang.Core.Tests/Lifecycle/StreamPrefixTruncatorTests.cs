@@ -17,7 +17,7 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Lifecycle;
 
 /// <summary>
-/// Locks the A1 increment-4 wiring: <see cref="StreamCloser"/> fires the E2 <see cref="IDestructionHook"/>
+/// Locks the A1 increment-4 wiring: <see cref="StreamPrefixTruncator"/> fires the E2 <see cref="IDestructionHook"/>
 /// around a "close the books" truncate — <c>OnBeforeDestructionAsync</c> awaited BEFORE the close (so a
 /// receptor commits the carry-forward / archive on the critical path), then the gated truncate, then
 /// <c>OnAfterDestructionAsync</c> after. Cancel / Defer veto the close; a throwing pre-hook ABORTS it (durable
@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// pass-through with no hook.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
-public class StreamCloserTests {
+public class StreamPrefixTruncatorTests {
   // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
   private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -66,15 +66,15 @@ public class StreamCloserTests {
     }
   }
 
-  private sealed class FakeCloseCoordinator(List<string> log, StreamCloseResult? result = null) : IWorkCoordinator {
+  private sealed class FakeCloseCoordinator(List<string> log, StreamTruncateResult? result = null) : IWorkCoordinator {
     private readonly List<string> _log = log;
-    private readonly StreamCloseResult _result = result ?? new StreamCloseResult("closed", 3);
+    private readonly StreamTruncateResult _result = result ?? new StreamTruncateResult("truncated", 3);
     public int CloseCalls { get; private set; }
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
 
     public IReadOnlyList<string> ConsumingNames { get; init; } = [];
 
-    public Task<StreamCloseResult> CloseStreamAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateStreamPrefixAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       CloseCalls++;
       LastCall = (streamId, throughVersion, archive);
       _log.Add("close");
@@ -96,18 +96,18 @@ public class StreamCloserTests {
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<MaintenanceResult>>([]);
   }
 
-  private static StreamCloser _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>
-    new(coord, NullLogger<StreamCloser>.Instance, hook ?? NoOpDestructionHook.Instance, _noServices);
+  private static StreamPrefixTruncator _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>
+    new(coord, NullLogger<StreamPrefixTruncator>.Instance, hook ?? NoOpDestructionHook.Instance, _noServices);
 
   [Test]
-  public async Task Close_NoHook_PassesThroughToCoordinatorAsync() {
+  public async Task Truncate_NoHook_PassesThroughToCoordinatorAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var streamId = Guid.NewGuid();
 
-    var result = await _closer(coord, hook: null).CloseAsync(streamId, throughVersion: 42, archive: true);
+    var result = await _closer(coord, hook: null).TruncateAsync(streamId, throughVersion: 42, archive: true);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1);
     await Assert.That(coord.LastCall!.Value.StreamId).IsEqualTo(streamId);
     await Assert.That(coord.LastCall!.Value.Through).IsEqualTo(42L);
@@ -116,14 +116,14 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_HookProceeds_FiresBeforeThenCloseThenAfterAsync() {
+  public async Task Truncate_HookProceeds_FiresBeforeThenCloseThenAfterAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var hook = new RecordingHook(log);
 
-    var result = await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10);
+    var result = await _closer(coord, hook).TruncateAsync(Guid.NewGuid(), throughVersion: 10);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(string.Join(",", log)).IsEqualTo("before,close,after")
       .Because("The pre-hook is awaited BEFORE the truncate (carry-forward on the critical path); the post-hook runs after.");
     await Assert.That(hook.LastReason).IsEqualTo(DestructionReason.PeriodClose);
@@ -132,12 +132,12 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_HookCancels_DoesNotTruncateAsync() {
+  public async Task Truncate_HookCancels_DoesNotTruncateAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var hook = new RecordingHook(log, DestructionResult.Canceled);
 
-    var result = await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10);
+    var result = await _closer(coord, hook).TruncateAsync(Guid.NewGuid(), throughVersion: 10);
 
     await Assert.That(result.Status).IsEqualTo("canceled");
     await Assert.That(coord.CloseCalls).IsEqualTo(0)
@@ -147,12 +147,12 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_HookDefers_DoesNotTruncateAsync() {
+  public async Task Truncate_HookDefers_DoesNotTruncateAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var hook = new RecordingHook(log, DestructionResult.Defer(DateTimeOffset.UtcNow.AddHours(1)));
 
-    var result = await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10);
+    var result = await _closer(coord, hook).TruncateAsync(Guid.NewGuid(), throughVersion: 10);
 
     await Assert.That(result.Status).IsEqualTo("deferred");
     await Assert.That(coord.CloseCalls).IsEqualTo(0)
@@ -160,20 +160,20 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_PreHookThrows_AbortsWithoutTruncatingAsync() {
+  public async Task Truncate_PreHookThrows_AbortsWithoutTruncatingAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var hook = new RecordingHook(log, throwOnBefore: true);
     var closer = _closer(coord, hook);
 
-    await Assert.That(async () => await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10))
+    await Assert.That(async () => await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10))
       .Throws<InvalidOperationException>()
       .Because("A throwing pre-hook aborts the close — durable Sourced detail must NEVER be truncated when the preserve-work failed (no fail-open).");
     await Assert.That(coord.CloseCalls).IsEqualTo(0);
   }
 
   [Test]
-  public async Task Close_DiscardWithFullHistoryConsumer_IsRefusedAsync() {
+  public async Task Truncate_DiscardWithFullHistoryConsumer_IsRefusedAsync() {
     // A [FullHistory] projection consumes the stream and a discard-close would truncate detail it can never
     // rebuild from — refuse it (require an archiving close instead).
     var fullHistoryName = "FullHistoryPerspective_" + Guid.NewGuid().ToString("N");
@@ -181,7 +181,7 @@ public class StreamCloserTests {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
 
-    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
 
     await Assert.That(result.Status).IsEqualTo("full_history_blocked");
     await Assert.That(coord.CloseCalls).IsEqualTo(0)
@@ -189,7 +189,7 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_ArchiveWithFullHistoryConsumer_IsAllowedAsync() {
+  public async Task Truncate_ArchiveWithFullHistoryConsumer_IsAllowedAsync() {
     // The same full-history projection, but an ARCHIVING close — always safe (the detail is retrievable), so
     // the guard is skipped and the close proceeds.
     var fullHistoryName = "FullHistoryPerspective_" + Guid.NewGuid().ToString("N");
@@ -197,41 +197,41 @@ public class StreamCloserTests {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = [fullHistoryName] };
 
-    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1)
       .Because("An archiving close preserves the detail, so a full-history projection can still rehydrate — allowed.");
   }
 
   [Test]
-  public async Task Close_DiscardWithResumableConsumerOnly_ProceedsAsync() {
+  public async Task Truncate_DiscardWithResumableConsumerOnly_ProceedsAsync() {
     // The only consumer is a resumable (unmarked) projection — a discard-close is safe (it resumes from the
     // closing event forward).
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log) { ConsumingNames = ["BalancePerspective_" + Guid.NewGuid().ToString("N")] };
 
-    var result = await _closer(coord, hook: null).CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
+    var result = await _closer(coord, hook: null).TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: false);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coord.CloseCalls).IsEqualTo(1)
       .Because("An unmarked projection resumes from the carry-forward, so discard-closing its stream is safe.");
   }
 
   [Test]
-  public async Task Close_PostHookThrows_CloseStillSucceedsAsync() {
+  public async Task Truncate_PostHookThrows_CloseStillSucceedsAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
     var hook = new RecordingHook(log, throwOnAfter: true);
 
-    var result = await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10);
+    var result = await _closer(coord, hook).TruncateAsync(Guid.NewGuid(), throughVersion: 10);
 
-    await Assert.That(result.Status).IsEqualTo("closed")
+    await Assert.That(result.Status).IsEqualTo("truncated")
       .Because("The truncate already committed; a throwing post-hook (notify/metrics) is non-fatal.");
     await Assert.That(coord.CloseCalls).IsEqualTo(1);
   }
 
-  private sealed class CapturingCloserLogger : ILogger<StreamCloser> {
+  private sealed class CapturingTruncatorLogger : ILogger<StreamPrefixTruncator> {
     private readonly List<LogLevel> _levels = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
@@ -244,18 +244,18 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_PreHookCanceled_AbortsWithoutRecordingAHookFailureAsync() {
+  public async Task Truncate_PreHookCanceled_AbortsWithoutRecordingAHookFailureAsync() {
     // Both catches around the pre-hook rethrow, so the close aborts either way and nothing is
     // truncated. The narrow one exists purely so a shutdown is not RECORDED as a hook failure:
     // this log is how an operator finds a carry-forward that is genuinely broken, and every
     // deploy adding an entry to it is how that signal gets lost.
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
-    var logger = new CapturingCloserLogger();
-    var closer = new StreamCloser(
+    var logger = new CapturingTruncatorLogger();
+    var closer = new StreamPrefixTruncator(
       coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()), _noServices);
 
-    await Assert.That(async () => await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10))
+    await Assert.That(async () => await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10))
       .Throws<OperationCanceledException>()
       .Because("cancellation aborts the close like any pre-hook throw — durable detail is never "
              + "truncated when the preserve-work did not finish");
@@ -266,7 +266,7 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_PostHookCanceled_SurfacesEvenThoughTheCloseCommittedAsync() {
+  public async Task Truncate_PostHookCanceled_SurfacesEvenThoughTheCloseCommittedAsync() {
     // The companion to PostHookThrows_CloseStillSucceeds. The truncate has already committed by
     // the time this hook runs, so a throwing notify or metrics call is non-fatal and the close is
     // reported as it happened. A cancellation cannot undo the truncate either — what it does is
@@ -276,7 +276,7 @@ public class StreamCloserTests {
     var hook = new RecordingHook(log, afterThrows: new OperationCanceledException());
 
     await Assert.That(async () =>
-        await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10))
+        await _closer(coord, hook).TruncateAsync(Guid.NewGuid(), throughVersion: 10))
       .Throws<OperationCanceledException>()
       .Because("the close is done and cannot be taken back, but the caller still has to learn "
              + "the host is stopping before it starts the next one");

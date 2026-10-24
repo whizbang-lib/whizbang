@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// would fold a path the close already destroyed. The stream dies; its shape survives.
 /// </summary>
 /// <docs>operations/observability/apply-stacks#folding</docs>
-public class StreamCloserFoldOrderTests {
+public class StreamPrefixTruncatorFoldOrderTests {
   // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
   private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -32,21 +32,21 @@ public class StreamCloserFoldOrderTests {
       return Task.FromResult(1);
     }
 
-    public Task<StreamCloseResult> CloseStreamAsync(
+    public Task<StreamTruncateResult> TruncateStreamPrefixAsync(
         Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       Calls.Add("close");
-      return Task.FromResult(new StreamCloseResult("closed", 3));
+      return Task.FromResult(new StreamTruncateResult("truncated", 3));
     }
   }
 
   [Test]
-  public async Task Close_FoldsTheApplyPath_BeforeTheTruncateAsync() {
+  public async Task Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync() {
     var coordinator = new OrderRecordingCoordinator();
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, NoOpDestructionHook.Instance, _noServices);
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, NoOpDestructionHook.Instance, _noServices);
 
-    var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 3);
+    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 3);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(coordinator.Calls).IsEquivalentTo(["fold", "close"])
       .Because("fold-before-discard: folding after the truncate would fold a path the close already "
              + "destroyed — the order IS the guarantee");

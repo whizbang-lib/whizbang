@@ -22,19 +22,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Unit tests (no Postgres) for the A1 increment-5 scheduled-close bridge: the built-in
 /// <see cref="ScheduledStreamCloseReceptor"/> turns a fired <see cref="ScheduledStreamClose"/> occurrence into
-/// an <see cref="IStreamCloser.CloseAsync"/> call, and <see cref="ScheduledStreamCloseReceptorRegistrar"/>
+/// an <see cref="IStreamPrefixTruncator.CloseAsync"/> call, and <see cref="ScheduledStreamCloseReceptorRegistrar"/>
 /// runtime-registers it at the three default lifecycle stages.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
 [Category("Shard2")]
 public class ScheduledStreamCloseReceptorTests {
-  private sealed class RecordingCloser : IStreamCloser {
+  private sealed class RecordingTruncator : IStreamPrefixTruncator {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
     public int Calls { get; private set; }
-    public Task<StreamCloseResult> CloseAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       Calls++;
       LastCall = (streamId, throughVersion, archive);
-      return Task.FromResult(new StreamCloseResult("closed", 5));
+      return Task.FromResult(new StreamTruncateResult("truncated", 5));
     }
   }
 
@@ -62,10 +62,10 @@ public class ScheduledStreamCloseReceptorTests {
   }
 
   [Test]
-  public async Task Receptor_FiredOccurrence_CallsStreamCloserWithPayloadAsync() {
-    var closer = new RecordingCloser();
+  public async Task Receptor_FiredOccurrence_CallsStreamPrefixTruncatorWithPayloadAsync() {
+    var closer = new RecordingTruncator();
     var services = new ServiceCollection();
-    services.AddSingleton<IStreamCloser>(closer);
+    services.AddSingleton<IStreamPrefixTruncator>(closer);
     await using var sp = services.BuildServiceProvider();
     var receptor = new ScheduledStreamCloseReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
@@ -77,19 +77,19 @@ public class ScheduledStreamCloseReceptorTests {
     await Assert.That(closer.LastCall!.Value.StreamId).IsEqualTo(target);
     await Assert.That(closer.LastCall!.Value.Through).IsEqualTo(900L);
     await Assert.That(closer.LastCall!.Value.Archive).IsTrue()
-      .Because("The receptor forwards the occurrence's {streamId, throughVersion, archive} straight to IStreamCloser.CloseAsync.");
+      .Because("The receptor forwards the occurrence's {streamId, throughVersion, archive} straight to IStreamPrefixTruncator.CloseAsync.");
   }
 
   [Test]
-  public async Task Receptor_NoStreamCloserRegistered_IsInertAsync() {
-    var services = new ServiceCollection();   // no IStreamCloser
+  public async Task Receptor_NoStreamPrefixTruncatorRegistered_IsInertAsync() {
+    var services = new ServiceCollection();   // no IStreamPrefixTruncator
     await using var sp = services.BuildServiceProvider();
     var logger = new RecordingLogger();
     var receptor = new ScheduledStreamCloseReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), logger);
     var streamId = Guid.NewGuid();
 
-    // Must not throw — a host without an IStreamCloser simply ignores the occurrence.
+    // Must not throw — a host without an IStreamPrefixTruncator simply ignores the occurrence.
     await receptor.HandleAsync(new ScheduledStreamClose(streamId, 1, false));
 
     // Inert is not the same as silent: a scheduled close that fired and closed nothing is a
@@ -98,7 +98,7 @@ public class ScheduledStreamCloseReceptorTests {
       e.Level == LogLevel.Warning
       && e.Message.Contains(streamId.ToString(), StringComparison.Ordinal));
     await Assert.That(warnings).IsEqualTo(1)
-      .Because("A fired ScheduledStreamClose with no IStreamCloser must warn once, naming the stream.");
+      .Because("A fired ScheduledStreamClose with no IStreamPrefixTruncator must warn once, naming the stream.");
   }
 
   [Test]

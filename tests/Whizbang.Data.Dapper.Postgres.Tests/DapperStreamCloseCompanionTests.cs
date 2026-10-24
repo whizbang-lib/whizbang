@@ -14,7 +14,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <c>fk_perspective_cursors_event</c>, so a close never failed here: it left the cursor on an event that no
 /// longer exists and kept snapshots a rewind cannot replay from. The re-anchor and the snapshot cleanup live in
 /// the shared SQL, so both engines reach the same outcome. The EF Core twin, which also covers the refusals, is
-/// <c>StreamCloseSqlTests</c>.
+/// <c>StreamCloseSqlTests</c>. The prefix truncate is <c>wh_truncate_stream_prefix</c> since migration 240 (#1731); the
+/// class and the <c>CloseStream_</c> method keep their names because migration 212 links to them by name.
 /// </summary>
 /// <docs>fundamentals/events/event-streams</docs>
 public class DapperStreamCloseCompanionTests : PostgresTestBase {
@@ -48,9 +49,9 @@ public class DapperStreamCloseCompanionTests : PostgresTestBase {
     }
 
     var status = await conn.ExecuteScalarAsync<string>(
-      "SELECT close_status FROM close_stream(@stream, 3, FALSE)", new { stream });
+      "SELECT truncate_status FROM wh_truncate_stream_prefix(@stream, 3, FALSE)", new { stream });
 
-    await Assert.That(status).IsEqualTo("closed");
+    await Assert.That(status).IsEqualTo("truncated");
     await Assert.That(await conn.ExecuteScalarAsync<Guid?>(
         "SELECT last_event_id FROM wh_perspective_cursors WHERE stream_id = @stream AND perspective_name = @name",
         new { stream, name = PARKED }))
@@ -61,6 +62,24 @@ public class DapperStreamCloseCompanionTests : PostgresTestBase {
     await Assert.That(await _versionsAsync(conn, stream, CURRENT)).IsEqualTo("3")
       .Because("below the close point only the snapshot at the close point itself can still be replayed from");
   }
+
+  [Test]
+  public async Task TruncateStreamPrefix_OnADapperMigratedDatabase_ReplacesCloseStreamAsync() {
+    // #1731: the Dapper runner applies the same migration 240, so the old name is gone here too.
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    await Assert.That(await _functionCountAsync(conn, "close_stream")).IsEqualTo(0L)
+      .Because("migration 240 drops every overload of close_stream");
+    await Assert.That(await _functionCountAsync(conn, "wh_truncate_stream_prefix")).IsEqualTo(1L)
+      .Because("the truncate exists under its new name, at exactly one arity");
+  }
+
+  private static Task<long> _functionCountAsync(NpgsqlConnection conn, string name) =>
+    conn.ExecuteScalarAsync<long>(
+      "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
+      "WHERE n.nspname = 'public' AND p.proname = @name",
+      new { name });
 
   private static Task<string?> _versionsAsync(NpgsqlConnection conn, Guid stream, string name) =>
     conn.ExecuteScalarAsync<string?>(

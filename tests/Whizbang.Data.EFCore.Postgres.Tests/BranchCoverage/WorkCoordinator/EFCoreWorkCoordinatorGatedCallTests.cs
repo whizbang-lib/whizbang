@@ -175,14 +175,14 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("CleanupCompletedStreams", "CleanupCompletedStreamsAsync", (c, _) => c.CleanupCompletedStreamsAsync([_newId()]));
 
     // ── Streams and event bodies ───────────────────────────────────────────
-    register("CloseStream", "CloseStreamAsync", async (c, conn) => {
+    register("TruncateStreamPrefix", "TruncateStreamPrefixAsync", async (c, conn) => {
       var (streamId, _) = await _seedEventAsync(conn);
-      var result = await c.CloseStreamAsync(streamId, throughVersion: 1);
+      var result = await c.TruncateStreamPrefixAsync(streamId, throughVersion: 1);
       await Assert.That(result.Status).IsNotNull();
     });
-    register("GetStreamCloseTargets", "GetStreamCloseTargetsAsync", async (c, conn) => {
+    register("GetStreamTruncateTargets", "GetStreamTruncateTargetsAsync", async (c, conn) => {
       var (streamId, eventId) = await _seedEventAsync(conn);
-      await Assert.That((await ((IWorkCoordinator)c).GetStreamCloseTargetsAsync(streamId, throughVersion: 1)).Select(t => t.EventId)).IsEquivalentTo([eventId]);
+      await Assert.That((await ((IWorkCoordinator)c).GetStreamTruncateTargetsAsync(streamId, throughVersion: 1)).Select(t => t.EventId)).IsEquivalentTo([eventId]);
     });
     register("GetArchivedEvents", "GetArchivedEventsAsync", async (c, _) =>
       await Assert.That(await c.GetArchivedEventsAsync(_newId())).IsEmpty());
