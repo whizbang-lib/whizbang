@@ -305,17 +305,24 @@ Describe 'ConvertTo-RunsOnJson' {
 Describe 'Get-CiRunnerClass' {
   It 'defines the job classes by labels, never machine names' {
     $classes = Get-CiRunnerClass
-    @($classes.Keys) | Should -Be @('any-os', 'linux', 'compile', 'linux-docker')
+    @($classes.Keys) | Should -Be @('any-os', 'linux', 'compile', 'analyze', 'linux-docker')
     $classes['any-os'].Labels | Should -Be @('self-hosted', 'whizbang')
     $classes['linux'].Labels | Should -Be @('self-hosted', 'whizbang', 'Linux', 'X64')
     $classes['compile'].Labels | Should -Be @('self-hosted', 'whizbang', 'Linux', 'X64')
+    $classes['analyze'].Labels | Should -Be @('self-hosted', 'whizbang', 'Linux', 'X64')
     $classes['linux-docker'].Labels | Should -Be @('self-hosted', 'whizbang', 'Linux', 'X64', 'docker')
   }
 
   It 'keeps only the compile of a push run, the one that publishes, on GitHub-hosted runners' {
     $classes = Get-CiRunnerClass
     $classes['compile'].HostedOn | Should -Be @('push')
-    foreach ($name in 'any-os', 'linux', 'linux-docker') { $classes[$name].HostedOn | Should -BeNullOrEmpty }
+    foreach ($name in 'any-os', 'linux', 'analyze', 'linux-docker') { $classes[$name].HostedOn | Should -BeNullOrEmpty }
+  }
+
+  It 'keeps the pool from only the analysis, which waits hours on other jobs that may need the same machine' {
+    $classes = Get-CiRunnerClass
+    $classes['analyze'].Pool | Should -BeFalse
+    foreach ($name in 'any-os', 'linux', 'compile', 'linux-docker') { $classes[$name].Pool | Should -BeTrue }
   }
 }
 
@@ -339,6 +346,7 @@ Describe 'Get-BlacksmithConfig' {
     @{ Class = 'any-os'; Name = 'CI_BLACKSMITH_RUNNER_ANY_OS' }
     @{ Class = 'linux'; Name = 'CI_BLACKSMITH_RUNNER_LINUX' }
     @{ Class = 'compile'; Name = 'CI_BLACKSMITH_RUNNER_COMPILE' }
+    @{ Class = 'analyze'; Name = 'CI_BLACKSMITH_RUNNER_ANALYZE' }
     @{ Class = 'linux-docker'; Name = 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER' }
   ) {
     $c = Get-BlacksmithConfig -Variables @{ $Name = 'blacksmith-2vcpu-ubuntu-2404' }
@@ -397,6 +405,7 @@ Describe 'Select-CiRunner' {
       $d['linux'].RunsOn | Should -Be $Linux
       $d['compile'].RunsOn | Should -Be $Linux
       $d['linux-docker'].RunsOn | Should -Be $LinuxDocker
+      $d['analyze'].RunsOn | Should -Be $Hosted
       $d['linux'].Tier | Should -Be 'self-hosted'
       $d['linux'].Reason | Should -BeLike 'self-hosted pool: 1 idle*0 queued*'
     }
@@ -493,6 +502,13 @@ Describe 'Select-CiRunner' {
       $d['compile'].Tier | Should -Be 'github-hosted'
       $d['compile'].Reason | Should -BeLike '*push*publish*'
       $d['linux'].RunsOn | Should -Be $Linux
+    }
+
+    It 'never sends the analysis to the pool, taking Blacksmith or GitHub-hosted instead' {
+      $d = Invoke-Select
+      $d['analyze'].RunsOn | Should -Be $Hosted
+      $d['analyze'].Reason | Should -BeLike '*self-hosted pool skipped: this job waits on other jobs*'
+      (Invoke-Select -Variables @{ CI_BLACKSMITH_RUNNER = $Bs })['analyze'].RunsOn | Should -Be $BsJson
     }
 
     It 'routes the compile of a pull request like any other class' {
@@ -653,6 +669,7 @@ Describe 'Invoke-SelectCiRunner' {
     $out['compile'] | Should -Be $Linux
     $out['any-os'] | Should -Be $AnyOs
     $out['linux-docker'] | Should -Be $LinuxDocker
+    $out['analyze'] | Should -Be $Hosted
     $decisions['linux'].Tier | Should -Be 'self-hosted'
     Get-Content -Raw -LiteralPath $SummaryPath | Should -BeLike '*linux*self-hosted pool*'
   }
@@ -784,7 +801,7 @@ Describe 'Get-EnvironmentVariables' {
       [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', 'blacksmith-2vcpu-ubuntu-2404')
       $vars = Get-EnvironmentVariables
       @($vars.Keys | Sort-Object) | Should -Be @('CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED', 'CI_BLACKSMITH_RUNNER',
-        'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_LINUX', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER')
+        'CI_BLACKSMITH_RUNNER_ANALYZE', 'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_LINUX', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER')
       $vars['CI_BLACKSMITH_RUNNER_LINUX'] | Should -Be 'blacksmith-2vcpu-ubuntu-2404'
     } finally {
       [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', $saved)
@@ -861,7 +878,7 @@ Describe 'The script run as CI runs it' {
       foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
     }
     $lines = Get-Content -LiteralPath $out
-    foreach ($class in 'any-os', 'linux', 'compile', 'linux-docker') { $lines | Should -Contain "$class=$Hosted" }
+    foreach ($class in 'any-os', 'linux', 'compile', 'analyze', 'linux-docker') { $lines | Should -Contain "$class=$Hosted" }
   }
 
   It 'takes Blacksmith from the environment variables CI passes' {
