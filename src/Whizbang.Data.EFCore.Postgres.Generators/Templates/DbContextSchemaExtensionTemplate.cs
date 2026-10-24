@@ -483,7 +483,14 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           migrationsApplied = await ExecuteMigrationsAsync(dbContext, steps, pass, logger, cancellationToken);
           phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, pass.Infra ? "completed" : "skipped (hash match)"));
 
-          // Step 3: each perspective table, hash-tracked one by one.
+          // Step 3: a model whose table name changed has its table renamed in place, before the next step creates
+          // the new name as an empty table (#1719).
+          phaseSw.Restart();
+          var renamesRan = await _runRecordedStepAsync(steps, connection, pass, _perspectiveRenamesStep,
+            ct => FollowPerspectiveTableRenamesAsync(connection, logger, ct), cancellationToken);
+          phases.Add(("PerspectiveRenames", phaseSw.ElapsedMilliseconds, renamesRan ? "completed" : "skipped (hash match)"));
+
+          // Step 3b: each perspective table, hash-tracked one by one.
           phaseSw.Restart();
           await ExecutePerspectiveTablesAsync(dbContext, steps, pass, segmentConnectionFactory, logger, cancellationToken);
           phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, pass.RunPerspectives ? "completed" : "skipped (hash match)"));
@@ -1552,6 +1559,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   private const string _coreStep = "core-infrastructure";
   private const string _perspectiveTablesStep = "perspective-tables";
+  private const string _perspectiveRenamesStep = "perspective-renames";
   private const string _constraintsStep = "constraints";
   private const string _associationsStep = "associations";
   private const string _registriesStep = "registries";
@@ -1578,7 +1586,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     public System.Collections.Generic.HashSet<string> PerspectivesToRun { get; } = new(StringComparer.Ordinal);
     public bool RunPerspectives { get; init; }
     /// <summary>Every step of the pass, so each can be logged as one of them.</summary>
-    public int TotalSteps => GetMigrationScripts().Length + Math.Max(GetPerspectiveEntries().Length, 1) + 4;
+    public int TotalSteps => GetMigrationScripts().Length + Math.Max(GetPerspectiveEntries().Length, 1) + 5;
   }
 
   /// <summary>
@@ -1610,7 +1618,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       // No ledger: every step runs, as every step always did without one.
       var untracked = new SchemaPass { Tracked = false, Infra = true, Persp = true, RunPerspectives = true };
       untracked.StepsToRun = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
-        _coreStep, _perspectiveTablesStep, _constraintsStep, _associationsStep, _registriesStep,
+        _coreStep, _perspectiveRenamesStep, _perspectiveTablesStep, _constraintsStep, _associationsStep, _registriesStep,
       };
       foreach (var (name, _) in GetMigrationScripts()) {
         untracked.MigrationsToRun[name] = null;
@@ -1647,6 +1655,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     if (infra) {
       pass.NeededSteps.Add(_coreStep);
       pass.NeededSteps.Add(_constraintsStep);
+    }
+    if (pass.RunPerspectives) {
+      pass.NeededSteps.Add(_perspectiveRenamesStep);
     }
     if (pass.RunPerspectives && GetPerspectiveEntries().Length == 0) {
       pass.NeededSteps.Add(_perspectiveTablesStep);
@@ -2173,6 +2184,40 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
     // Bare framework names are qualified in the library, which is shared with its tests.
     return Whizbang.Data.Postgres.MigrationSchemaQualifier.Qualify(transformedSql, quotedSchema);
+  }
+
+  /// <summary>
+  /// Renames each perspective table whose model the registry maps to a different name, through
+  /// wh_follow_perspective_table_renames, before the perspective tables are created (#1719): the reconcile that runs
+  /// after them can no longer rename into a name the pass has just created. A model with a table under both names
+  /// keeps both, with a warning naming the model and the two tables.
+  /// </summary>
+  private static async Task FollowPerspectiveTableRenamesAsync(
+    Npgsql.NpgsqlConnection connection,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
+    if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {
+      return;
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = @"
+      SELECT o_action, o_clr_type_name, o_old_table_name, o_new_table_name
+      FROM __QUOTED_SCHEMA__.wh_follow_perspective_table_renames(@p_perspectives::JSONB, @p_service_name)";
+    command.Parameters.AddWithValue("p_perspectives", PerspectiveRegistryJson);
+    command.Parameters.AddWithValue("p_service_name", "__SERVICE_NAME__");
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      if (reader.GetString(0) == "renamed") {
+        logger?.LogInformation("Renamed the perspective table of {ClrType} from {OldTable} to {NewTable}, keeping its rows",
+          reader.GetString(1), reader.GetString(2), reader.GetString(3));
+      } else {
+        logger?.LogWarning(
+          "The perspective table of {ClrType} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it",
+          reader.GetString(1), reader.GetString(2), reader.GetString(3));
+      }
+    }
   }
 
   /// <summary>
