@@ -145,6 +145,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **Required capabilities are provisioned before the verdict** (#1750): between the probe and the verdict, the
+  `Capabilities` step creates every capability a requirement in force names that is Provisionable, and upgrades
+  every one that is Ready with a newer version available, so an explicit requirement on a capability the library
+  may create passes. The verdict line says `created`, `already present` or `upgraded` before the version. A
+  capability nothing requires is only detected. `Whizbang:Capabilities:AutoProvision` (default `true`), overridden
+  per provider (`Whizbang:Capabilities:<provider>:AutoProvision`) and per capability
+  (`Whizbang:Capabilities:<provider>:<name>:AutoProvision`), turns it off; detection is unchanged, so an
+  operator-created extension is still used. A refusal is reported by the verdict line, never thrown, and a refused
+  upgrade leaves the installed version working. The Postgres provider runs `CREATE EXTENSION` and
+  `ALTER EXTENSION ... UPDATE` each in one transaction holding the schema lock. `ICapabilityProvisioner` is the
+  extension point for any provider.
 - **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
   so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
   the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the

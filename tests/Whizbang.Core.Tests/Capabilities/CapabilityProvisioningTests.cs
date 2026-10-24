@@ -294,6 +294,18 @@ public class CapabilityProvisioningTests {
   }
 
   [Test]
+  public async Task ACancellationTheCallerDidNotAskFor_IsReportedLikeAnyFailureAsync() {
+    var provider = _broker("x");
+    provider.States["x"] = CapabilityState.Provisionable;
+    var provisioner = new FakeCapabilityProvisioner("broker") { Failure = new OperationCanceledException("command timed out") };
+
+    var (registry, report) = await _runAsync(provider, [provisioner], configuration: null, new FixedRequirements(_requiresByDefault("x")));
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+    await Assert.That(_entry(registry, "x").Status.Reason).IsEqualTo("provisioning failed (OperationCanceledException: command timed out)");
+  }
+
+  [Test]
   public async Task Cancellation_DuringProvisioning_PropagatesAsync() {
     var provider = _broker("x");
     provider.States["x"] = CapabilityState.Provisionable;

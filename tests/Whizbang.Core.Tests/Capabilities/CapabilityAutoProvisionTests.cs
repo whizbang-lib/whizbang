@@ -28,7 +28,9 @@ public class CapabilityAutoProvisionTests {
 
   [Test]
   public async Task Keys_NameEachLevelAsync() {
-    await Assert.That(CapabilityAutoProvision.GLOBAL_KEY).IsEqualTo("Whizbang:Capabilities:AutoProvision");
+    var global = CapabilityAutoProvision.Resolve(_squeeze, new CapabilityOptions(), configuration: null).Key;
+
+    await Assert.That(global).IsEqualTo("Whizbang:Capabilities:AutoProvision");
     await Assert.That(CapabilityAutoProvision.ProviderKey("postgres")).IsEqualTo("Whizbang:Capabilities:postgres:AutoProvision");
     await Assert.That(CapabilityAutoProvision.CapabilityKey(_squeeze))
       .IsEqualTo("Whizbang:Capabilities:postgres:pg_squeeze:AutoProvision");

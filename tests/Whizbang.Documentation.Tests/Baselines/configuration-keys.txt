@@ -38,6 +38,9 @@ Whizbang:BodyOffload:PassiveSweepMaxBatchesPerCycle
 Whizbang:BodyOffload:ProviderName
 Whizbang:BodyOffload:RequireSealedBodies
 Whizbang:BodyOffload:SizeThresholdBytes
+Whizbang:Capabilities:*:*:AutoProvision
+Whizbang:Capabilities:*:AutoProvision
+Whizbang:Capabilities:AutoProvision
 Whizbang:Capabilities:ProbeOnStartup
 Whizbang:CircuitBreakers:*:CooldownBackoffMultiplier
 Whizbang:CircuitBreakers:*:FailureThreshold

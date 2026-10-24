@@ -190,7 +190,19 @@ Each slice is one red-then-green increment and its own commit.
    features the plan names (slices 7 to 9) do not exist. Original scope: Explicit vs implicit from configuration; the verdict line per
    required capability naming each feature and its key; the `required` gauge tag; the health entry.
    RED: one test per row of the validation table, including the exact line text.
-4. **Provisioning runner and `AutoProvision`.** Generic runner with the three-level switch; the
+4. **Provisioning runner and `AutoProvision`.** DONE on branch `feat/1742-1750-rewrite-provisioning` (issue #1750):
+   `CapabilityProvisioningRunner` runs in the `Capabilities` step between the probe and the verdict, for every
+   capability a requirement in force names (nothing else is provisioned): Provisionable is created, Ready with a newer
+   `AvailableVersion` (`CapabilityVersion.IsNewer`) is upgraded, Ready otherwise reads already present; the outcome is
+   `CapabilityStatus.Provisioning` and the verdict line says `created`, `already present` or `upgraded` before the
+   version. `CapabilityAutoProvision` resolves the switch (per capability, then per provider, then the bound global
+   `CapabilityOptions.AutoProvision`; a value that is not a boolean counts as unset). Providers plug in an
+   `ICapabilityProvisioner`; `PostgresCapabilityProvisioner` runs each action in one transaction that takes the schema
+   lock of `current_schema()` with `pg_advisory_xact_lock`, re-reads the extension under it, creates through
+   `PostgresRequiredExtension`'s create path and upgrades to `pg_available_extensions.default_version`. Refusals come
+   back as the state they reveal; a refused or failed upgrade stays Ready and already present. Results are recorded on
+   the registry (`ICapabilityRegistry.Record`) for the gauge and health. Not covered: a value set only in code for the
+   per-provider and per-capability levels. Original scope: Generic runner with the three-level switch; the
    Postgres actions (`CREATE EXTENSION`, `ALTER EXTENSION UPDATE`) under the schema lock, outcome
    created / present / upgraded. RED: provisioning off still detects an operator-created extension;
    per-capability `false` overrides global `true`; an upgrade is recorded; NoPrivilege is reported,

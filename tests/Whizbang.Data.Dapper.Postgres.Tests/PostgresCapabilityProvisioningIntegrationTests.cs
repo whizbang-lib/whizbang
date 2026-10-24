@@ -212,6 +212,24 @@ public class PostgresCapabilityProvisioningIntegrationTests {
   }
 
   [Test]
+  public async Task Create_OfAnExtensionTheProbeCannotDecide_IsTried_AndTheRefusalReturnedAsync() {
+    // Without pg_read_all_settings this role cannot read shared_preload_libraries, so an extension that needs
+    // preloading reads Unknown; Unknown is tried, as the vector site tries it, and the server's answer decides.
+    var role = await _createRoleAsync($"GRANT CREATE ON DATABASE \"{_database.Name}\" TO @role;");
+    try {
+      var before = await _probeAsync("pg_stat_statements") with { State = CapabilityState.Provisionable };
+
+      var after = await _provisioner(_as(role)).ProvisionAsync(before, CapabilityProvisionAction.Create, CancellationToken.None);
+
+      await Assert.That((await _probeAsync("pg_stat_statements", _as(role))).State).IsEqualTo(CapabilityState.Unknown);
+      await Assert.That(after.State).IsEqualTo(CapabilityState.NoPrivilege);
+      await Assert.That(after.Detail).IsEqualTo("42501");
+    } finally {
+      await _dropRoleAsync(role);
+    }
+  }
+
+  [Test]
   public async Task Create_WaitsForTheSchemaLock_ThenCreatesAsync() {
     var before = await _probeAsync(TRGM);
     await using var holder = new NpgsqlConnection(_database.ConnectionString);

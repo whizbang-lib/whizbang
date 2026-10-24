@@ -23,7 +23,8 @@ public static class CapabilityServiceCollectionExtensions {
   /// <summary>
   /// Registers, once per container, the <see cref="ICapabilityRegistry"/> over every registered
   /// <see cref="ICapabilityProvider"/> (with its gauge), the configuration manifests as an
-  /// <see cref="ICapabilityRequirementSource"/>, the <c>Capabilities</c> startup step that publishes the verdict,
+  /// <see cref="ICapabilityRequirementSource"/>, the <c>Capabilities</c> startup step that provisions through every
+  /// registered <see cref="ICapabilityProvisioner"/> and publishes the verdict,
   /// the hosted service that stops the host on a failing verdict, the <c>whizbang_capabilities</c> health entry
   /// and the <c>Whizbang:Capabilities</c> binding. Safe to call more than once.
   /// </summary>
@@ -49,6 +50,7 @@ public static class CapabilityServiceCollectionExtensions {
         sp.GetRequiredService<ICapabilityRegistry>(),
         sp.GetRequiredService<IOptions<CapabilityOptions>>(),
         sp.GetServices<ICapabilityRequirementSource>(),
+        sp.GetServices<ICapabilityProvisioner>(),
         sp.GetService<IConfiguration>(),
         sp.GetRequiredService<ILogger<CapabilitiesStartupStep>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>

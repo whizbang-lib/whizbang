@@ -34,6 +34,14 @@ public interface ICapabilityRegistry {
   /// <returns>A task that completes when every scope has its new answer.</returns>
   Task RefreshAsync(CancellationToken cancellationToken);
 
+  /// <summary>
+  /// Replaces the status of each capability and scope in <paramref name="statuses"/> with the one given: what the
+  /// <c>Capabilities</c> step's provisioning left, so the gauge and the health entry report it. A status for a
+  /// capability or scope the registry does not hold is ignored.
+  /// </summary>
+  /// <param name="statuses">The statuses to record.</param>
+  void Record(IReadOnlyList<CapabilityStatus> statuses);
+
   /// <summary>The latest verdict over the required capabilities; <see cref="CapabilityVerdict.Empty"/> until one is published.</summary>
   CapabilityVerdict Verdict { get; }
 
@@ -110,6 +118,17 @@ public sealed partial class CapabilityRegistry : ICapabilityRegistry {
   /// <inheritdoc />
   public Task<CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken) =>
     _firstVerdict.Task.WaitAsync(cancellationToken);
+
+  /// <inheritdoc />
+  public void Record(IReadOnlyList<CapabilityStatus> statuses) {
+    ArgumentNullException.ThrowIfNull(statuses);
+    _statuses = [.. _statuses.Select(current => statuses.FirstOrDefault(given => _same(given, current)) ?? current)];
+  }
+
+  private static bool _same(CapabilityStatus a, CapabilityStatus b) =>
+    string.Equals(a.Descriptor.Id.Provider, b.Descriptor.Id.Provider, StringComparison.OrdinalIgnoreCase)
+    && string.Equals(a.Descriptor.Id.Name, b.Descriptor.Id.Name, StringComparison.OrdinalIgnoreCase)
+    && string.Equals(a.Scope, b.Scope, StringComparison.Ordinal);
 
   /// <inheritdoc />
   public async Task RefreshAsync(CancellationToken cancellationToken) {

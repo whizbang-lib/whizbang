@@ -63,16 +63,30 @@ public static class PostgresRequiredExtension {
       if (state is not (PostgresExtensionState.Available or PostgresExtensionState.Unknown)) {
         throw _refused(info, scope, state, state.ToString(), reason: null, requiredBy, inner: null);
       }
-      try {
-        await using var create = new NpgsqlCommand($"CREATE EXTENSION IF NOT EXISTS {_quote(extension)}", connection);
-        await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-      } catch (PostgresException ex) when (OptionalExtensionBlocks.IsUnavailable(ex.SqlState)) {
-        throw _refused(info, scope, StateOfRefusal(ex.SqlState), ex.SqlState, ex.MessageText, requiredBy, ex);
+      var refusal = await TryCreateAsync(connection, extension, cancellationToken).ConfigureAwait(false);
+      if (refusal is not null) {
+        throw _refused(info, scope, StateOfRefusal(refusal.SqlState), refusal.SqlState, refusal.MessageText, requiredBy, refusal);
       }
     } finally {
       if (opened) {
         await connection.CloseAsync().ConfigureAwait(false);
       }
+    }
+  }
+
+  /// <summary>
+  /// Runs <c>CREATE EXTENSION IF NOT EXISTS</c> on <paramref name="connection"/>, in its transaction when one is open:
+  /// the one create path, shared by the generated pgvector site and the capability provisioner.
+  /// </summary>
+  /// <returns>Null once created (or already there); the server's refusal when it is one the refusal states classify.</returns>
+  internal static async Task<PostgresException?> TryCreateAsync(
+      NpgsqlConnection connection, string extension, CancellationToken cancellationToken) {
+    try {
+      await using var create = new NpgsqlCommand($"CREATE EXTENSION IF NOT EXISTS {Quote(extension)}", connection);
+      await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      return null;
+    } catch (PostgresException ex) when (OptionalExtensionBlocks.IsUnavailable(ex.SqlState)) {
+      return ex;
     }
   }
 
@@ -110,6 +124,7 @@ public static class PostgresRequiredExtension {
     return new InvalidOperationException(line, inner);
   }
 
-  private static string _quote(string identifier) =>
+  /// <summary>An extension name as a quoted identifier.</summary>
+  internal static string Quote(string identifier) =>
     "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 }
