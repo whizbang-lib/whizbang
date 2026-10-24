@@ -980,3 +980,107 @@ Describe 'Which class each ci.yml job takes' {
     }
   }
 }
+
+Describe 'Every step an any-os job reaches runs on Windows' {
+  # The first run on the pool's Windows machines failed in .github/actions/setup-dotnet-retry: its bash step
+  # found no bash (or the WSL stub) and nothing after it ran. Every step an any-os job reaches, through a
+  # reusable workflow or a local composite action, must name its shell, and a bash or sh step must be
+  # guarded off Windows. A run step without a shell is refused too: on Windows it runs under pwsh, and
+  # bash syntax there fails the same way.
+  BeforeAll {
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
+
+    function Get-JobBlocks([string]$Path) {
+      $jobs = [ordered]@{}
+      $inJobs = $false; $current = $null
+      foreach ($line in (Get-Content -LiteralPath $Path)) {
+        if ($line -match '^jobs:\s*$') { $inJobs = $true; continue }
+        if (-not $inJobs) { continue }
+        if ($line -match '^\S') { break }
+        if ($line -match '^  ([A-Za-z0-9_-]+):\s*$') { $current = $Matches[1]; $jobs[$current] = [System.Collections.Generic.List[string]]::new(); continue }
+        if ($current) { $jobs[$current].Add($line) }
+      }
+      $jobs
+    }
+
+    # The steps of a job or a composite action: each a list of lines, split at the list items under steps:.
+    function Get-StepBlocks([string[]]$Lines) {
+      $steps = [System.Collections.Generic.List[object]]::new()
+      $indent = -1; $inSteps = $false; $current = $null
+      foreach ($line in $Lines) {
+        if (-not $inSteps) { if ($line -match '^(\s*)steps:\s*$') { $inSteps = $true; $stepsIndent = $Matches[1].Length }; continue }
+        if ($line -match '^(\s*)\S' -and $Matches[1].Length -le $stepsIndent -and $line -notmatch '^\s*-') { break }
+        if ($line -match '^(\s*)- ' -and ($indent -lt 0 -or $Matches[1].Length -eq $indent)) {
+          $indent = $Matches[1].Length
+          $current = [System.Collections.Generic.List[string]]::new(); $steps.Add($current)
+        }
+        if ($null -ne $current) { $current.Add($line) }
+      }
+      $steps
+    }
+
+    # Problems with one step; follows a local composite action into its own steps.
+    function Get-StepProblem([System.Collections.Generic.List[string]]$Step, [string]$Where) {
+      $text = $Step -join "`n"
+      $name = if ($text -match '(?m)^[ \t]*-?[ \t]*name:\s*(.+)$') { $Matches[1].Trim() } else { "$($Step[0])".Trim() }
+      $guarded = $text -match "(?m)^[ \t]*-?[ \t]*if:.*runner\.os\s*!=\s*'Windows'"
+      $shell = if ($text -match '(?m)^[ \t]*-?[ \t]*shell:\s*(\S+)') { $Matches[1] } else { '' }
+      $isRun = $text -match '(?m)^[ \t]*-?[ \t]*run:'
+      if ($isRun -and -not $shell) { "$Where / ${name}: a run step with no shell" }
+      if ($shell -in @('bash', 'sh') -and -not $guarded) { "$Where / ${name}: shell $shell without an if: runner.os != 'Windows' guard" }
+      # A guarded step is unreachable on Windows, so neither is the composite action it uses.
+      if (-not $guarded -and $text -match '(?m)^[ \t]*-?[ \t]*uses:\s*\./(\.github/actions/[^\s#]+)') {
+        $relative = $Matches[1]
+        $action = Join-Path $script:Root $relative 'action.yml'
+        foreach ($inner in (Get-StepBlocks (Get-Content -LiteralPath $action))) {
+          Get-StepProblem -Step $inner -Where "$Where -> $relative"
+        }
+      }
+    }
+
+    $script:CiPath = Join-Path $Root '.github' 'workflows' 'ci.yml'
+    $script:CiJobBlocks = Get-JobBlocks $CiPath
+    $script:AnyOsJobs = @($CiJobBlocks.Keys | Where-Object { ($CiJobBlocks[$_] -join "`n") -match 'pick-runner\.outputs\.any-os' })
+  }
+
+  It 'finds the any-os jobs' {
+    $AnyOsJobs.Count | Should -BeGreaterOrEqual 5
+  }
+
+  It 'has no bash step without a Windows guard and no run step without a shell, in <_>' -ForEach @('format', 'noop-rebuild', 'script-tests', 'unit-tests', 'component-tests') {
+    $job = $_
+    $lines = $CiJobBlocks[$job]
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $reusable = ($lines -join "`n") -match '(?m)^\s*uses:\s*\./(\.github/workflows/[^\s#]+)'
+    if ($reusable) {
+      $path = Join-Path $Root $Matches[1]
+      $inner = Get-JobBlocks $path
+      foreach ($name in $inner.Keys) {
+        foreach ($step in (Get-StepBlocks $inner[$name])) { foreach ($p in (Get-StepProblem -Step $step -Where "$job ($name)")) { $problems.Add($p) } }
+      }
+    } else {
+      foreach ($step in (Get-StepBlocks $lines)) { foreach ($p in (Get-StepProblem -Step $step -Where $job)) { $problems.Add($p) } }
+    }
+    $problems | Should -BeNullOrEmpty
+  }
+
+  It 'covers every any-os job' {
+    @($AnyOsJobs | Sort-Object) | Should -Be @('component-tests', 'format', 'noop-rebuild', 'script-tests', 'unit-tests')
+  }
+
+  It 'catches the regression it was written for' {
+    $step = [System.Collections.Generic.List[string]]@('      - name: Setup', "        uses: ./.github/actions/setup-dotnet-retry")
+    $bad = [System.Collections.Generic.List[string]]@('    - name: x', '      uses: nick-fields/retry@abc', '      with:', '        shell: bash')
+    @(Get-StepProblem -Step $bad -Where 'probe') | Should -BeLike "*shell bash without*"
+    $plain = [System.Collections.Generic.List[string]]@('      - name: y', '        run: echo hi')
+    @(Get-StepProblem -Step $plain -Where 'probe') | Should -BeLike '*no shell*'
+    $ok = [System.Collections.Generic.List[string]]@('    - name: z', "      if: runner.os != 'Windows'", '      shell: bash', '      run: echo hi')
+    @(Get-StepProblem -Step $ok -Where 'probe') | Should -BeNullOrEmpty
+  }
+
+  It 'never sets a bash default shell in ci.yml or a reusable workflow an any-os job calls' {
+    foreach ($file in @($CiPath) + @(Get-ChildItem (Join-Path $Root '.github' 'workflows') -Filter 'reusable-test-*.yml' | ForEach-Object FullName)) {
+      (Get-Content -Raw -LiteralPath $file) | Should -Not -Match '(?ms)^\s*defaults:\s*\n\s*run:\s*\n\s*shell:\s*(bash|sh)'
+    }
+  }
+}
