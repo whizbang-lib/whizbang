@@ -35,7 +35,12 @@ public readonly record struct SchemaScriptPiece(string? Extension, string Sql);
 /// index scans, which is what it does wherever the index is absent.
 /// </para>
 /// <para>
-/// A refusal is one of three answers: <c>0A000</c> from a managed server that does not allow-list
+/// The extension's capability is consulted first, with the probe's own query: an installed extension is used as it
+/// is, and one the server is known not to offer (not allowlisted, needs preloading, no privilege, missing) is
+/// skipped without a <c>CREATE EXTENSION</c>, with a warning naming its state and the fix.
+/// </para>
+/// <para>
+/// What the probe cannot rule out is created, and a refusal then is one of three answers: <c>0A000</c> from a managed server that does not allow-list
 /// the extension, <c>42501</c> from a role without the privilege, <c>58P01</c> from a build without
 /// the extension's files. Anything else is a defect and propagates. Applied as one batch, any of
 /// the three failed the whole perspective pass, and a service with one substring index paid a
@@ -194,6 +199,20 @@ public static class OptionalExtensionBlocks {
   private static async Task<bool> _tryCreateExtensionAsync(
       NpgsqlConnection connection, NpgsqlTransaction? transaction, string extension, int commandTimeoutSeconds,
       ILogger log, string dependentSql, CancellationToken cancellationToken) {
+    // The capability first: an installed extension needs no CREATE, and one the server is known not to offer is
+    // skipped without asking, so the transaction never carries a refusal and the warning names the fix.
+    var info = PostgresRequiredExtension.Describe(extension);
+    var state = await PostgresRequiredExtension.ProbeAsync(connection, info, cancellationToken).ConfigureAwait(false);
+    if (state == PostgresExtensionState.Installed) {
+      return true;
+    }
+    if (state is not (PostgresExtensionState.Available or PostgresExtensionState.Unknown)) {
+      OptionalExtensionLog.ExtensionNotOffered(log, extension, state.ToString(),
+        string.Join(", ", IndexNames(dependentSql)), PostgresExtensionCatalog.Remedy(info, state));
+      return false;
+    }
+
+    // What the probe cannot rule out is tried, with the refusal classification as the fallback.
     if (transaction is not null) {
       await _executeAsync(connection, transaction, $"SAVEPOINT {SAVEPOINT}", commandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
@@ -233,6 +252,12 @@ public static class OptionalExtensionBlocks {
 
 /// <summary>Source-generated logging for the optional-extension reader.</summary>
 internal static partial class OptionalExtensionLog {
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Extension {Extension} is {State} on this server, so it was not created; the indexes that need it "
+              + "were skipped and queries they would answer will scan instead: {Indexes}. Fix: {Fix}")]
+  public static partial void ExtensionNotOffered(ILogger logger, string extension, string state, string indexes, string fix);
+
   [LoggerMessage(
       Level = LogLevel.Warning,
       Message = "Extension {Extension} is unavailable on this server ({SqlState}: {Detail}); the indexes that need it "

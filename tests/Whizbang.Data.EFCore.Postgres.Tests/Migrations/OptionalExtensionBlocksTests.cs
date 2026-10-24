@@ -260,7 +260,7 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
 
   private string? _role;
 
-  /// <summary>A role that owns <c>optional_thing</c>, may connect, and may create in the database only when asked.</summary>
+  /// <summary>A role that owns <c>optional_thing</c>, may connect and create in schema public, and may create in the database only when asked.</summary>
   private async Task<string> _roleAsync(bool canCreate) {
     _role = $"wh_optext_{Guid.NewGuid():N}";
     await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
@@ -271,7 +271,10 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
         $"GRANT CONNECT{(canCreate ? ", CREATE" : "")} ON DATABASE {_databaseName} TO {_role}", admin);
       await grant.ExecuteNonQueryAsync();
     }
-    await _scalarAsync($"CREATE TABLE optional_thing (a text, b text); ALTER TABLE optional_thing OWNER TO {_role}; SELECT 1");
+    // CREATE on schema public lets the role build an index on its own table; it does not let it create an
+    // extension, which needs CREATE on the database.
+    await _scalarAsync($"CREATE TABLE optional_thing (a text, b text); ALTER TABLE optional_thing OWNER TO {_role}; "
+      + $"GRANT USAGE, CREATE ON SCHEMA public TO {_role}; SELECT 1");
     return new NpgsqlConnectionStringBuilder(_connectionString) { Username = _role, Password = "limited", Pooling = false }.ConnectionString;
   }
 

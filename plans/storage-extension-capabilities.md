@@ -195,10 +195,19 @@ Each slice is one red-then-green increment and its own commit.
    created / present / upgraded. RED: provisioning off still detects an operator-created extension;
    per-capability `false` overrides global `true`; an upgrade is recorded; NoPrivilege is reported,
    never thrown, on an implicit requirement. Docs: configuration reference (`Whizbang:Capabilities`).
-5. **pg_trgm onto the pattern.** `OptionalExtensionBlocks.ApplyAsync` consults the capability before
+5. **pg_trgm onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1705): `OptionalExtensionBlocks`
+   reads the extension's state with the probe's query first (installed: used without CREATE; known refusal:
+   skipped without trying, warning names state and fix; otherwise created, with the refusal classification as the
+   fallback), and each perspective with an optional-extension block is an implicit requirement read from its
+   schema SQL (`PostgresSchemaRequirements`). Original scope: `OptionalExtensionBlocks.ApplyAsync` consults the capability before
    `CREATE EXTENSION`; the refusal classification stays as the fallback. RED: extend
    `OptionalExtensionBlocksTests.cs`. Docs: `fundamentals/perspectives/perspective-indexes.md`.
-6. **pgvector onto the pattern.** The three generated sites in
+6. **pgvector onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1706): `PostgresRequiredExtension.EnsureAsync`
+   at all three sites; a refusal fails start with the verdict line naming each vector column and the fix; every
+   context registers its schema requirements as a `FixedCapabilityRequirementSource` (explicit pgvector per vector
+   column). The data source creates pgvector before it is built and the probe connects through it, so an
+   available-but-not-installed server is Ready. Requirements from the schema apply to every Postgres scope (no
+   per-database scoping yet). Original scope: The three generated sites in
    `EFCoreServiceRegistrationGenerator.cs` call one runtime helper instead of inline SQL; vector
    columns become a runtime requirement source (always explicit: the column cannot exist without
    the extension). RED: generator snapshot tests for the emitted call; integration test for the
