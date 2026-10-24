@@ -894,3 +894,89 @@ Describe 'The script run as CI runs it' {
     (Get-Content -LiteralPath $out) | Should -Contain "linux=$BsJson"
   }
 }
+
+Describe 'Which class each ci.yml job takes' {
+  BeforeAll {
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
+
+    # Each job of a workflow: its name and its text, split at the two-space job keys under jobs:.
+    function Get-WorkflowJobText([string]$Path) {
+      $jobs = [ordered]@{}
+      $inJobs = $false; $current = $null
+      foreach ($line in (Get-Content -LiteralPath $Path)) {
+        if ($line -match '^jobs:\s*$') { $inJobs = $true; continue }
+        if (-not $inJobs) { continue }
+        if ($line -match '^\S') { break }
+        if ($line -match '^  ([A-Za-z0-9_-]+):\s*$') { $current = $Matches[1]; $jobs[$current] = [System.Text.StringBuilder]::new(); continue }
+        if ($current) { $null = $jobs[$current].AppendLine($line) }
+      }
+      $table = [ordered]@{}
+      foreach ($k in $jobs.Keys) { $table[$k] = $jobs[$k].ToString() }
+      $table
+    }
+
+    $script:CiJobs = Get-WorkflowJobText (Join-Path $Root '.github' 'workflows' 'ci.yml')
+    $script:Expected = [ordered]@{
+      'build'                  = 'compile'
+      'format'                 = 'any-os'
+      'noop-rebuild'           = 'any-os'
+      'unit-tests'             = 'any-os'
+      'component-tests'        = 'any-os'
+      'script-tests'           = 'any-os'
+      'quality'                = 'analyze'
+      'postgres-integration'   = 'linux-docker'
+      'inmemory-integration'   = 'linux-docker'
+      'rabbitmq-integration'   = 'linux-docker'
+      'servicebus-integration' = 'linux-docker'
+      'azureblob-integration'  = 'linux-docker'
+      'general-integration'    = 'linux-docker'
+    }
+  }
+
+  It 'routes <Job> through the <Class> class' -ForEach @(
+    @{ Job = 'build'; Class = 'compile' }
+    @{ Job = 'format'; Class = 'any-os' }
+    @{ Job = 'noop-rebuild'; Class = 'any-os' }
+    @{ Job = 'unit-tests'; Class = 'any-os' }
+    @{ Job = 'component-tests'; Class = 'any-os' }
+    @{ Job = 'script-tests'; Class = 'any-os' }
+    @{ Job = 'quality'; Class = 'analyze' }
+    @{ Job = 'postgres-integration'; Class = 'linux-docker' }
+    @{ Job = 'inmemory-integration'; Class = 'linux-docker' }
+    @{ Job = 'rabbitmq-integration'; Class = 'linux-docker' }
+    @{ Job = 'servicebus-integration'; Class = 'linux-docker' }
+    @{ Job = 'azureblob-integration'; Class = 'linux-docker' }
+    @{ Job = 'general-integration'; Class = 'linux-docker' }
+  ) {
+    $text = $CiJobs[$Job]
+    $text | Should -Not -BeNullOrEmpty
+    $used = @([regex]::Matches($text, 'needs\.pick-runner\.outputs\.([a-z-]+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+    $used | Should -Be @($Class)
+    $text | Should -Match '(?m)^    needs: \[[^\]]*\bpick-runner\b'
+  }
+
+  It 'uses a class the picker writes, for every routed job' {
+    $classes = @((Get-CiRunnerClass).Keys)
+    foreach ($class in $Expected.Values) { $classes | Should -Contain $class }
+  }
+
+  It 'routes no other job, so pack, publish, release, gate and planning jobs stay on GitHub-hosted runners' {
+    $routed = @($CiJobs.Keys | Where-Object { $CiJobs[$_] -match 'pick-runner\.outputs' })
+    @($routed | Sort-Object) | Should -Be @($Expected.Keys | Sort-Object)
+  }
+
+  It 'never makes the gate wait on the picker' {
+    $CiJobs['ci-result'] | Should -Not -Match 'pick-runner'
+  }
+
+  It 'defaults every picker output to ubuntu-latest' {
+    $outputs = @([regex]::Matches($CiJobs['pick-runner'], "(?m)^      ([a-z-]+): \$\{\{ steps\.pick\.outputs\.\1 \|\| '`"ubuntu-latest`"' \}\}$") | ForEach-Object { $_.Groups[1].Value })
+    @($outputs | Sort-Object) | Should -Be @((Get-CiRunnerClass).Keys | Sort-Object)
+  }
+
+  It 'never runs a service-container suite on the any-os class (GitHub runs service containers only on Linux)' {
+    foreach ($job in $Expected.Keys | Where-Object { $_ -like '*-integration' }) {
+      $CiJobs[$job] | Should -Not -Match 'outputs\.any-os'
+    }
+  }
+}
