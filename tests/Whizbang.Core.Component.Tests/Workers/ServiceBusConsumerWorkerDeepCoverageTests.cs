@@ -809,6 +809,78 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// Issue #1676: a collective event is applied by the collective sink, which fires PostAllPerspectives and
+  /// PostLifecycle once its apply completes. In a service running that sink the receive path leaves those stages to
+  /// it; firing PostLifecycle here as well ran every PostLifecycle hook on the event twice.
+  /// </summary>
+  [Test]
+  public async Task HandleMessage_CollectiveEvent_WithACollectiveSink_LeavesPostLifecycleToTheSinkAsync() {
+    var handlerCapturingTransport = new HandlerCapturingTransport();
+    var messageId = MessageId.New();
+    var streamId = Guid.NewGuid();
+
+    var inboxWork = new InboxWork {
+      MessageId = messageId.Value,
+      Envelope = _createJsonEnvelope(messageId, streamId),
+      MessageType = TypeNameFormatter.Format(typeof(DeepCoverageCollectiveEvent)),
+      Status = MessageProcessingStatus.None,
+      Attempts = 0
+    };
+    var strategy = new DeepCoverageWorkCoordinatorStrategy(
+      () => new WorkBatch { InboxWork = [inboxWork], OutboxWork = [], PerspectiveWork = [] });
+
+    var invokedStages = new System.Collections.Concurrent.ConcurrentBag<LifecycleStage>();
+    var registry = new DeepCoverageReceptorRegistry();
+    foreach (var stage in new[] {
+      LifecycleStage.PostInboxInline,
+      LifecycleStage.PostLifecycleDetached, LifecycleStage.PostLifecycleInline
+    }) {
+      var capturedStage = stage;
+      registry.AddReceptor(stage, typeof(DeepCoverageCollectiveEvent), new ReceptorInfo(
+        MessageType: typeof(DeepCoverageCollectiveEvent),
+        ReceptorId: $"collective_receptor_{stage}",
+        InvokeAsync: (_, _, _, _, _) => {
+          invokedStages.Add(capturedStage);
+          return ValueTask.FromResult<object?>(null);
+        }
+      ));
+    }
+
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
+    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    services.AddSingleton<IReceptorRegistry>(registry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    // The collective sink runs in this service. No ILifecycleCoordinator: the direct path, whose detached stage
+    // DrainDetachedAsync awaits, so a stage that fired is counted before the assertions read.
+    services.AddSingleton<ICollectiveDispatcher>(new DeepCoverageCollectiveDispatcher());
+
+    var worker = _createWorker(
+      handlerCapturingTransport,
+      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      services,
+      lifecycleMessageDeserializer: new DeepCoverageCollectiveDeserializer());
+
+    await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+    var envelope = _createJsonEnvelope(messageId, streamId);
+    var envelopeType = $"MessageEnvelope`1[[{TypeNameFormatter.Format(typeof(DeepCoverageCollectiveEvent))}]], Whizbang.Core";
+
+    await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
+    await worker.DrainDetachedAsync();
+
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxInline)
+      .Because("the message was received and handled; only the stages after the perspectives move to the sink");
+    await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleInline)
+      .Because("the collective sink fires PostLifecycle once its apply completes; firing it on receipt too runs it twice");
+    await Assert.That(invokedStages).DoesNotContain(LifecycleStage.PostLifecycleDetached);
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   [Test]
   public async Task HandleMessage_EventWithPerspectives_SkipsPostLifecycleDetachedAsync() {
     // Arrange - perspective registry has a matching perspective
@@ -1560,6 +1632,25 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
       return new DeepCoverageTestEvent { Data = "deserialized" };
     }
+  }
+
+  /// <summary>A collective event: applied by the collective sink, never by a per-stream perspective.</summary>
+  private sealed record DeepCoverageCollectiveEvent : ICollectiveEvent {
+    public required CollectiveScope Scope { get; init; }
+  }
+
+  private sealed class DeepCoverageCollectiveDeserializer : ILifecycleMessageDeserializer {
+    private static readonly DeepCoverageCollectiveEvent _event = new() { Scope = new TenantCollectiveScope("t-1") };
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => _event;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => _event;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => _event;
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => _event;
+  }
+
+  private sealed class DeepCoverageCollectiveDispatcher : ICollectiveDispatcher {
+    public Task<CollectiveDispatchResult> DispatchAsync(ICollectiveEvent evt, Guid collectiveEventId, object dbContextOrSession,
+        Func<CancellationToken, ValueTask>? onBatchApplied = null, CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("the receive path never applies a collective event; the sink does");
   }
 
   /// <summary>
