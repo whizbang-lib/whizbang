@@ -84,7 +84,7 @@ public class StartupReadyServiceBranchCoverageTests {
     var state = new DescribeCountingPipelineState(readyOnDescribe: 4);
     var signal = new StartupReadySignal();
     var logger = new NarrationLogger();
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: logger) {
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: logger, timeProvider: new ProbeClock()) {
       // Zero keeps the probe loop free of wall-clock time; the backoff counts probes, not time.
       WaitProbeInterval = TimeSpan.Zero,
     };

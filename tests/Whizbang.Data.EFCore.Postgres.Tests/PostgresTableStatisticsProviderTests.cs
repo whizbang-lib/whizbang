@@ -134,6 +134,16 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetDatabaseNameAsync_IsTheDatabaseTheConnectionReadsAsync() {
+    var expected = new NpgsqlConnectionStringBuilder(ConnectionString).Database;
+
+    var database = await _provider.GetDatabaseNameAsync();
+
+    await Assert.That(database).IsEqualTo(expected)
+      .Because("the database tag is the database the readings came from, so two databases report two series");
+  }
+
+  [Test]
   public async Task Constructor_RefusesACapBelowOneAsync() {
     await Assert.That(() => new PostgresTableStatisticsProvider(_dataSource, "public", maxTrackedTables: 0))
       .Throws<ArgumentOutOfRangeException>()

@@ -47,7 +47,7 @@ namespace Whizbang.Core.Startup;
 /// it over at once. The migrator is never held here: it is held for one migration at a time.
 /// </para>
 /// </remarks>
-/// <docs>proposals/duty-role-assignment</docs>
+/// <docs>operations/startup/capabilities-and-duties#the-holder-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs</tests>
 public sealed partial class DutyHolderWorker : BackgroundService {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
@@ -128,8 +128,31 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <returns>True when held.</returns>
   public bool Holds(string role) => _held.ContainsKey(role);
 
+  /// <summary>
+  /// Raised when this instance wins a role, with the role, once it is recorded as held: from then on
+  /// <see cref="Holds"/> returns true for it. Raised on the pass that won it, before the role's
+  /// acquisition and owed work run. Must not block.
+  /// </summary>
+  /// <docs>operations/startup/capabilities-and-duties#watching-the-holder-loop</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
+  public event Action<string>? OnBecameHolder;
+
+  /// <summary>
+  /// Raised, on the caller's thread, each time the next pass is asked to run at once instead of at
+  /// the next interval: a release of a role this worker holds or votes for was announced (one held
+  /// only for its acquisition work included), or <see cref="Wake"/> was called. A release of any
+  /// other role does not raise it. Must not block.
+  /// </summary>
+  /// <docs>operations/startup/capabilities-and-duties#watching-the-holder-loop</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_ARelease_OfARoleHeldOnlyForItsAcquisitionWork_WakesAPassAsync</tests>
+  public event Action? OnWakeRequested;
+
   /// <summary>Runs the next pass at once instead of at the next interval.</summary>
-  public void Wake() => Volatile.Read(ref _wake).TrySetResult();
+  public void Wake() {
+    Volatile.Read(ref _wake).TrySetResult();
+    OnWakeRequested?.Invoke();
+  }
 
   /// <summary>
   /// One pass over every role: keep or win it, then run its owed work. Public as the deterministic
@@ -246,6 +269,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
         _held[roles[i]] = grant;
         _ = won.Add(roles[i]);
         LogBecameHolder(_logger, roles[i], grant.Epoch);
+        OnBecameHolder?.Invoke(roles[i]);
       }
     }
     return won;
@@ -374,7 +398,9 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     public string ChannelName => RELEASE_CHANNEL;
 
     public void OnNotification(string payload) {
-      if (worker._handlers.Keys.Any(k => string.Equals(k.Role, payload, StringComparison.Ordinal))) {
+      // Every role this worker holds or votes for, including one held only for its acquisition
+      // work (#1711): a hand-off of such a role must not wait for the next interval either.
+      if (worker._roles.Contains(payload, StringComparer.Ordinal)) {
         worker.Wake();
       }
     }

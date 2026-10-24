@@ -66,8 +66,13 @@ public sealed class TableStatisticsOptions {
   /// </summary>
   /// <remarks>
   /// Configuration key <c>Whizbang:TableStatistics:MaxTrackedTables</c>, environment variable
-  /// <c>Whizbang__TableStatistics__MaxTrackedTables</c>. Default 500.
+  /// <c>Whizbang__TableStatistics__MaxTrackedTables</c>. Default 500. The cap is per database: each database's
+  /// readings are folded at it, and each is reported under its own <c>database</c> tag.
   /// </remarks>
+  /// <docs>operations/configuration/configuration-reference#tablestatisticsoptions</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:MaxTrackedTables_BindsFromTheTableStatisticsSectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:AValueNoReadingCouldHonor_IsRefusedNamingItsKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsDatabaseTests.cs:TheConfiguredCap_FoldsTheSmallestTablesUnderOtherAsync</tests>
   public int MaxTrackedTables { get; set; } = DEFAULT_MAX_TRACKED_TABLES;
 
   /// <summary>

@@ -426,6 +426,8 @@ public static class PostgresDriverExtensions {
         // same name. The data source is resolved when the probe runs, after the schema is ready, not here.
         selector.Services.AddWhizbangPostgresCapabilities(connectionStringName,
           (sp, ct) => sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(ct));
+        // What this context's schema requires (pgvector for a vector column), judged on this database only.
+        selector.Services.AddWhizbangPostgresSchemaRequirements(selector.DbContextType, connectionStringName);
         selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
           if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
             options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(

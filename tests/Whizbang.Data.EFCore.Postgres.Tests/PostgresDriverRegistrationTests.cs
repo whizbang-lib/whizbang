@@ -55,6 +55,26 @@ public class PostgresDriverRegistrationTests {
   }
 
   [Test]
+  public async Task Postgres_ScopesTheContextsSchemaRequirementsToItsDatabaseAsync() {
+    // A context's schema requires its extensions on the database it uses: the scope its capabilities are probed
+    // under, the connection string name.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>("orders-db")
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    var scoped = provider.GetServices<Whizbang.Core.Capabilities.ICapabilityRequirementSource>()
+      .OfType<Whizbang.Core.Capabilities.ScopedCapabilityRequirementSource>()
+      .ToList();
+
+    await Assert.That(scoped.Select(s => s.Scope)).Contains("orders-db");
+  }
+
+  [Test]
   public async Task Postgres_RegistersAnInstanceIdentity_WhenTheHostHasNoneAsync() {
     // The schema initializer registers this instance and the managed-object reconcile records what it declares
     // under its id; neither can when the driver is composed without the core registration.

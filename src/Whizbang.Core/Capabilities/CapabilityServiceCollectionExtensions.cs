@@ -4,6 +4,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
@@ -20,13 +22,16 @@ namespace Whizbang.Core.Capabilities;
 public static class CapabilityServiceCollectionExtensions {
   /// <summary>
   /// Registers, once per container, the <see cref="ICapabilityRegistry"/> over every registered
-  /// <see cref="ICapabilityProvider"/> (with its gauge), the <c>Capabilities</c> startup step and the
-  /// <c>Whizbang:Capabilities</c> binding. Safe to call more than once.
+  /// <see cref="ICapabilityProvider"/> (with its gauge), the configuration manifests as an
+  /// <see cref="ICapabilityRequirementSource"/>, the <c>Capabilities</c> startup step that publishes the verdict,
+  /// the hosted service that stops the host on a failing verdict, the <c>whizbang_capabilities</c> health entry
+  /// and the <c>Whizbang:Capabilities</c> binding. Safe to call more than once.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <returns>The same collection.</returns>
   public static IServiceCollection AddWhizbangCapabilities(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+    var firstCall = !services.Any(descriptor => descriptor.ServiceType == typeof(ICapabilityRegistry));
 
     services.AddOptions<CapabilityOptions>();
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<CapabilityOptions>, ConfigureCapabilityOptions>(
@@ -38,11 +43,29 @@ public static class CapabilityServiceCollectionExtensions {
       sp.GetServices<ICapabilityProvider>(),
       sp.GetRequiredService<ILogger<CapabilityRegistry>>(),
       sp.GetRequiredService<WhizbangMetrics>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ICapabilityRequirementSource, ConfigurationManifestRequirementSource>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IStartupStep, CapabilitiesStartupStep>(sp =>
       new CapabilitiesStartupStep(
         sp.GetRequiredService<ICapabilityRegistry>(),
         sp.GetRequiredService<IOptions<CapabilityOptions>>(),
+        sp.GetServices<ICapabilityRequirementSource>(),
+        sp.GetService<IConfiguration>(),
         sp.GetRequiredService<ILogger<CapabilitiesStartupStep>>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>
+      new CapabilityVerdictEnforcer(
+        sp.GetRequiredService<ICapabilityRegistry>(),
+        CapabilityVerdictEnforcer.StopApplicationOf(sp),
+        sp.GetRequiredService<ILogger<CapabilityVerdictEnforcer>>(),
+        CapabilityVerdictEnforcer.SetProcessExitCode)));
+    // A health entry is registered by name and a second one by the same name fails at run time, so it is added
+    // only on the first call: the one that registered the registry.
+    if (firstCall) {
+      services.AddHealthChecks().Add(new HealthCheckRegistration(
+        CapabilityHealthCheck.NAME,
+        sp => new CapabilityHealthCheck(sp.GetRequiredService<ICapabilityRegistry>()),
+        failureStatus: null,
+        tags: ["whizbang", "capabilities"]));
+    }
     return services;
   }
 }

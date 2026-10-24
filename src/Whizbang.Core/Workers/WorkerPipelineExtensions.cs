@@ -228,10 +228,14 @@ public static class WorkerPipelineExtensions {
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
+    // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
+      new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
       new Whizbang.Core.Startup.TableRewriteStartupStep(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetServices<ITableRewriter>(),
+        TableRewriteStrategies.VACUUM_FULL,
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
     // The work tables are vacuumed when an instance acquires the maintainer duty, never merely because
     // it started (#1351). The holder loop runs it; without role assignment nothing acquires the duty.
@@ -272,7 +276,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
-      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>()));
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>(),
+      sp.GetRequiredService<TimeProvider>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
     // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
@@ -292,6 +297,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
+      sp.GetRequiredService<TimeProvider>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
 

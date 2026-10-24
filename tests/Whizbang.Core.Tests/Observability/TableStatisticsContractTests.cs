@@ -66,4 +66,12 @@ public class TableStatisticsContractTests {
       .Because("null is what an instance that did not take the window answers, so a provider that cannot "
              + "sample is never mistaken for a store holding no events");
   }
+
+  [Test]
+  public async Task AProviderThatCannotNameItsDatabase_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetDatabaseNameAsync()).IsNull()
+      .Because("a provider written before the database tag reports its gauges without one, as it always did");
+  }
 }

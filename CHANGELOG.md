@@ -282,6 +282,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The table-statistics collection interval is a setting (#1668).** `Whizbang:TableStatistics:CollectionInterval`
   (default `00:00:30`, the interval the collector always used) sets how often each instance reads the tables into the
   `Whizbang.TableStatistics` gauges. Zero or negative fails host start naming the key.
+- **Table gauges carry a `database` tag (#1717).** Every `Whizbang.TableStatistics` gauge (table sizes, components,
+  live rows, bloat, unused indexes, queue depths and the event-type bytes) is tagged with the database it was read
+  from (`current_database()`), so services on different databases report the same table as separate series. The
+  collector asks once and keeps the name. `ITableStatisticsProvider.GetDatabaseNameAsync` defaults to null, which
+  reports the gauges without the tag. `Whizbang:TableStatistics:MaxTrackedTables` (default 500) is the cap per
+  database.
 - **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
   rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
   `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is

@@ -62,7 +62,8 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task Outbox_SqlNotify_ReachesBusSubscriberAsWorkOutboxAvailableSignalAsync() {
+  [Timeout(120_000)]
+  public async Task Outbox_SqlNotify_ReachesBusSubscriberAsWorkOutboxAvailableSignalAsync(CancellationToken cancellationToken) {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -75,12 +76,9 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       connectionStringFallback: null,
       timeProvider: null);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await ((IHostedService)shared).StartAsync(cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(50, cts.Token);
-    }
+    var available = _availabilityOf(shared);
+    await ((IHostedService)shared).StartAsync(cancellationToken);
+    await available.WaitAsync(cancellationToken);
     await Assert.That(shared.IsAvailable).IsTrue();
 
     var transport = new PostgresSignalTransport(
@@ -90,13 +88,13 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     var received = new TaskCompletionSource<WorkOutboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkOutboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
-    await bus.StartAsync(cts.Token);
+    await bus.StartAsync(cancellationToken);
 
     // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
     // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
     // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
     // listened removes the race outright, rather than re-emitting until one attempt happens to win.
-    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cancellationToken);
 
     // Pin a stream to this pod's instance and invoke notify_instance_owners — the exact call the
     // existing SQL emitters make today. If the wire-name / registry / transport chain is intact,
@@ -106,13 +104,14 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     await _invokeNotifyInstanceOwnersAsync("outbox", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await received.Task.WaitAsync(cancellationToken);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task Inbox_SqlNotify_ReachesBusSubscriberAsWorkInboxAvailableSignalAsync() {
+  [Timeout(120_000)]
+  public async Task Inbox_SqlNotify_ReachesBusSubscriberAsWorkInboxAvailableSignalAsync(CancellationToken cancellationToken) {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -125,12 +124,9 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       connectionStringFallback: null,
       timeProvider: null);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await ((IHostedService)shared).StartAsync(cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(50, cts.Token);
-    }
+    var available = _availabilityOf(shared);
+    await ((IHostedService)shared).StartAsync(cancellationToken);
+    await available.WaitAsync(cancellationToken);
     await Assert.That(shared.IsAvailable).IsTrue();
 
     var transport = new PostgresSignalTransport(
@@ -140,26 +136,27 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     var received = new TaskCompletionSource<WorkInboxAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkInboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
-    await bus.StartAsync(cts.Token);
+    await bus.StartAsync(cancellationToken);
 
     // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
     // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
     // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
     // listened removes the race outright, rather than re-emitting until one attempt happens to win.
-    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cancellationToken);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
 
     await _invokeNotifyInstanceOwnersAsync("inbox", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await received.Task.WaitAsync(cancellationToken);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task Perspective_SqlNotify_ReachesBusSubscriberAsWorkPerspectiveAvailableSignalAsync() {
+  [Timeout(120_000)]
+  public async Task Perspective_SqlNotify_ReachesBusSubscriberAsWorkPerspectiveAvailableSignalAsync(CancellationToken cancellationToken) {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -172,12 +169,9 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       connectionStringFallback: null,
       timeProvider: null);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await ((IHostedService)shared).StartAsync(cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(50, cts.Token);
-    }
+    var available = _availabilityOf(shared);
+    await ((IHostedService)shared).StartAsync(cancellationToken);
+    await available.WaitAsync(cancellationToken);
     await Assert.That(shared.IsAvailable).IsTrue();
 
     var transport = new PostgresSignalTransport(
@@ -187,20 +181,20 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
-    await bus.StartAsync(cts.Token);
+    await bus.StartAsync(cancellationToken);
 
     // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
     // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
     // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
     // listened removes the race outright, rather than re-emitting until one attempt happens to win.
-    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cancellationToken);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
 
     await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await received.Task.WaitAsync(cancellationToken);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
@@ -214,7 +208,8 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
   /// ran at poll cadence. This test would have failed for as long as that gap existed.
   /// </summary>
   [Test]
-  public async Task Perspective_SqlNotify_DiHostedBus_NoManualStart_ReachesSubscriberAsync() {
+  [Timeout(120_000)]
+  public async Task Perspective_SqlNotify_DiHostedBus_NoManualStart_ReachesSubscriberAsync(CancellationToken cancellationToken) {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = ConnectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -227,12 +222,9 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       connectionStringFallback: null,
       timeProvider: null);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-    await ((IHostedService)shared).StartAsync(cts.Token);
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
-    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(50, cts.Token);
-    }
+    var available = _availabilityOf(shared);
+    await ((IHostedService)shared).StartAsync(cancellationToken);
+    await available.WaitAsync(cancellationToken);
     await Assert.That(shared.IsAvailable).IsTrue();
 
     var services = new ServiceCollection();
@@ -246,23 +238,28 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     // production window is 5 s, which a loaded test machine can miss while the signal itself still
     // arrives. The test asserts the probe's verdict, not its speed, so give it a wide window.
     services.Configure<Whizbang.Core.Signals.SignalBusOptions>(o => o.ProbeTimeoutMilliseconds = 30_000);
-    services.AddSingleton<ISignalTransport, PostgresSignalTransport>();
+    // A slow probe, forced without a clock: the bus's first liveness probe reaches the wire only once the doorbell
+    // has arrived. The probe's own window starts when it is published, and the test waits for the probe's verdict
+    // itself, however late it comes, so ordering and machine load cannot fail it.
+    var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
+    services.AddSingleton<PostgresSignalTransport>();
+    services.AddSingleton<ISignalTransport>(sp => new DelayedProbeTransport(
+      sp.GetRequiredService<PostgresSignalTransport>(), received.Task));
     await using var provider = services.BuildServiceProvider();
 
     var bus = provider.GetRequiredService<ISignalBus>();
-    var received = new TaskCompletionSource<WorkPerspectiveAvailableSignal>(TaskCreationOptions.RunContinuationsAsynchronously);
     using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     // The HOST starts the bus — the seam under test. No SignalBus.StartAsync call anywhere here.
     foreach (var hosted in provider.GetServices<IHostedService>()) {
-      await hosted.StartAsync(cts.Token);
+      await hosted.StartAsync(cancellationToken);
     }
 
     // Deterministic completion signal: Subscribe only registers intent — the dispatch loop issues
     // the LISTEN asynchronously — so a NOTIFY emitted before then fires into a connection that is
     // not yet listening and is lost, pg_notify having no queue. Waiting for the channel to be
     // listened removes the race outright, rather than re-emitting until one attempt happens to win.
-    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cts.Token);
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId}", cancellationToken);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
@@ -271,15 +268,15 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
 
     _diag.Enqueue($"{DateTime.UtcNow:HH:mm:ss.fff} TEST rang doorbell");
     try {
-      await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
-    } catch (TimeoutException) {
+      await received.Task.WaitAsync(cancellationToken);
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
       throw new TimeoutException("signal not received; diagnostics:\n" + string.Join("\n", _diag));
     }
 
     // Bonus lock on the wire-route self-test: the hosted probe must have verified the REAL
     // Postgres transport end to end (pg_notify to own channel, back through typed dispatch).
     var liveness = provider.GetRequiredService<SignalBusLivenessState>();
-    var probeVerdict = await liveness.FirstProbe.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    var probeVerdict = await liveness.FirstProbe.WaitAsync(cancellationToken);
     await Assert.That(probeVerdict).IsTrue();
 
     foreach (var hosted in provider.GetServices<IHostedService>()) {
@@ -288,6 +285,34 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
+
+  /// <summary>
+  /// The shared connection's first transition to available, observed from before it starts so the transition
+  /// cannot be missed. The test waits for this transition rather than polling the flag against a clock.
+  /// </summary>
+  private static Task _availabilityOf(PgSharedNotifyConnection shared) {
+    var available = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    shared.OnAvailabilityChanged += isAvailable => {
+      if (isAvailable) {
+        available.TrySetResult();
+      }
+    };
+    return available.Task;
+  }
+
+  /// <summary>Holds the bus's liveness probe back from the wire until <paramref name="release"/> completes.</summary>
+  private sealed class DelayedProbeTransport(ISignalTransport inner, Task release) : ISignalTransport {
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) =>
+      inner.StartAsync(sink, cancellationToken);
+
+    public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+        where TSignal : ISignal {
+      if (signal is SignalBusProbeSignal) {
+        await release.WaitAsync(cancellationToken);
+      }
+      await inner.PublishAsync(signal, target, cancellationToken);
+    }
+  }
 
   private readonly System.Collections.Concurrent.ConcurrentQueue<string> _diag = new();
 

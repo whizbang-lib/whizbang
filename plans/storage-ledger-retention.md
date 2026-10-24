@@ -155,8 +155,11 @@ signal sweep ship in #1574; the four SQL ledgers ship in #1572.
 `PartitionedTable` registration, `Partitioning:Enabled` / `:CreateAhead`, and `wh_log` converted weekly. S4b ships in
 #1646 (migration 233): `wh_signals` daily by `created_at` (key `(id, created_at)`) and `wh_lifecycle_completions` daily
 by `event_id` range (the manager takes a time-ordered `uuid` key), each converted once and dropped past its option's
-window, with their row sweeps narrowed to the default partition while managed. Remaining: the pg_partman strategy
-(`Partitioning:Strategy`, WS-8 slice 8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
+window, with their row sweeps narrowed to the default partition while managed. Follow-ups (2026-10-24): every
+partition the manager creates carries its ledger's autovacuum settings, and partitions made without them are tuned on
+the next cycle (#1693, migration 237); the `wh_log` row sweep clears `wh_log`'s default partition once managed instead
+of skipping the table (#1694, migration 238). Remaining: the pg_partman strategy (`Partitioning:Strategy`, WS-8 slice
+8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
 
 **Also needed by WS-2 S9/S9b** (`plans/storage-event-slimming.md`): the staged full-metadata table and the trace
 table are daily partitions created ahead and dropped behind by this partition manager, so S4 lands first.

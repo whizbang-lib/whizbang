@@ -83,6 +83,13 @@ Each slice is one red-then-green increment and its own commit.
    `tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs` stay green), plus a
    new test that the step resolves the rewriter by strategy. Docs:
    `operations/infrastructure/migrations.md` ("Table rewrites run post-ready").
+   **Status (2026-10-23):** done in #1702. `ITableRewriter` (`Strategy`, `CanRun` with
+   `CannotRunReason`, `RewriteAsync(coordinator, table)`) and `VacuumFullTableRewriter` live in
+   `Whizbang.Core.Workers`; the rewrite itself stays `IWorkCoordinator.RewriteTableAsync`. The step takes
+   the registered rewriters and a strategy name, fixed to `TableRewriteStrategies.VACUUM_FULL` in
+   `AddWhizbangWorkers` until slice 2 resolves it from `TableRewriteStrategy`. A strategy with no
+   registered rewriter skips and names it. The constructor change is recorded in
+   `CompatibilitySuppressions.xml`.
 2. **`TableRewriteStrategy` with `Auto`.** RED: the resolution matrix (four values by pg_squeeze
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
    NotAllowlisted fails startup" (WS-8 slice 3). Docs:

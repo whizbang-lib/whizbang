@@ -47,14 +47,26 @@ public class DutyHolderWorkerTests {
     public Queue<Func<DutyAttempt>> Answers { get; } = new();
     public int Attempts { get; private set; }
     public TaskCompletionSource<int> Attempted { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// The vote's answer reaches the worker only once this completes, so a test can hold the worker
+    /// between "an attempt was made" and "the grant was processed" for as long as it likes.
+    /// </summary>
+    public Task Proceed { get; set; } = Task.CompletedTask;
+
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       Attempts++;
       var answer = Answers.Count > 0 ? Answers.Dequeue() : () => DutyAttempt.Lost(DutyRefusal.Contended, "held elsewhere");
       try {
-        return Task.FromResult(answer());
+        return _afterAsync(Proceed, answer());
       } finally {
         Attempted.TrySetResult(Attempts);
       }
+    }
+
+    private static async Task<DutyAttempt> _afterAsync(Task proceed, DutyAttempt attempt) {
+      await proceed;
+      return attempt;
     }
   }
 
@@ -484,18 +496,55 @@ public class DutyHolderWorkerTests {
     time.Advance(new RoleAssignmentOptions().RenewInterval);
     await Assert.That(await elector.Attempted.Task).IsEqualTo(2);
 
-    // A release of some other role is not ours to act on; a release of ours re-votes at once.
+    // A release of some other role is not ours to act on; a release of ours re-votes at once. The
+    // wake request is raised on the notifying thread, so whether a release woke the loop is known
+    // the moment OnNotification returns: no wait, and a wrong wake fails here every time.
     elector.Attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    var wakes = 0;
+    worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
     notify.Subscription!.OnNotification("some-other-role");
-    await Assert.That(elector.Attempts).IsEqualTo(2);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(0)
+      .Because("a release of a role this worker holds no work for must not wake a pass");
     await Assert.That(notify.Subscription.ChannelName).IsEqualTo(DutyHolderWorker.RELEASE_CHANNEL);
+    // The grant is held back between the attempt and its processing, which is the window #1707 raced:
+    // "an attempt was made" is not "the role is held". Only the held-role signal proves the latter.
+    var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var becameHolder = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBecameHolder += role => becameHolder.TrySetResult(role);
+    elector.Proceed = proceed.Task;
     notify.Subscription.OnNotification(ROLE);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1).Because("a release of our role wakes the next pass");
     await Assert.That(await elector.Attempted.Task).IsEqualTo(3);
+    await Assert.That(becameHolder.Task.IsCompleted).IsFalse()
+      .Because("the vote's answer has not reached the worker yet, so nothing is held");
+    proceed.SetResult();
+    await Assert.That(await becameHolder.Task).IsEqualTo(ROLE);
     await Assert.That(worker.Holds(ROLE)).IsTrue();
 
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(grant.Disposed).IsTrue().Because("a graceful stop releases the role, so the next holder takes it at once");
     await Assert.That(notify.Unsubscribed).IsTrue();
+    worker.Dispose();
+  }
+
+  [Test]
+  public async Task TheHostedLoop_ARelease_OfARoleHeldOnlyForItsAcquisitionWork_WakesAPassAsync() {
+    // #1711: a role can be held only because something runs on acquiring it (#1351: the maintainer's
+    // vacuum). Its hand-off is as urgent as any other: the release must wake the next pass rather than
+    // leave the role unheld until the next interval.
+    var notify = new Notify();
+    var elector = new Elector();
+    var worker = _worker(elector, new Store(), [], notify, time: new FakeTimeProvider(), acquisitionHandlers: [new OnAcquired()]);
+    var wakes = 0;
+    worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
+
+    await worker.StartAsync(CancellationToken.None);
+    await elector.Attempted.Task;   // the loop subscribes before its first pass
+    notify.Subscription!.OnNotification(ROLE);
+
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
+      .Because("the role is one this worker votes for, so its release wakes a pass at once");
+    await worker.StopAsync(CancellationToken.None);
     worker.Dispose();
   }
 

@@ -1,9 +1,11 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -38,6 +40,28 @@ public class StandbyWatcherTests {
 
   private static readonly Guid _us = Guid.Parse("0199aaaa-0000-0000-0000-000000000001");
   private static readonly Guid _peer = Guid.Parse("0199aaaa-0000-0000-0000-000000000002");
+
+  /// <summary>Where every test's fake clock starts; requests and heartbeats are stamped against it.</summary>
+  private static readonly DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+  /// <summary>A fake clock that reports each timer the watcher arms, with its due time.</summary>
+  private sealed class ArmedTimerClock() : FakeTimeProvider(_now) {
+    private readonly Channel<TimeSpan> _armed = Channel.CreateUnbounded<TimeSpan>();
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      var timer = base.CreateTimer(callback, state, dueTime, period);
+      _armed.Writer.TryWrite(dueTime);
+      return timer;
+    }
+
+    /// <summary>Completes once a timer due after <paramref name="due"/> has been armed.</summary>
+    public async Task WaitForArmedAsync(TimeSpan due, CancellationToken cancellationToken) {
+      TimeSpan armed;
+      do {
+        armed = await _armed.Reader.ReadAsync(cancellationToken);
+      } while (armed != due);
+    }
+  }
 
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId => _us;
@@ -173,6 +197,7 @@ public class StandbyWatcherTests {
       versionProvider: new StubVersionProvider(ourVersion),
       assessor: assessor ?? NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
+      timeProvider: new FakeTimeProvider(_now),
       pipelineRunner: null,
       options: options ?? new StandbyWatcherOptions());
 
@@ -181,8 +206,7 @@ public class StandbyWatcherTests {
 
   private static StandbyRequest _request(
       Guid? by = null, string version = "2.0.0", int heartbeatSecondsAgo = 1) =>
-    new(by ?? _peer, version, DateTimeOffset.UtcNow,
-        DateTimeOffset.UtcNow.AddSeconds(-heartbeatSecondsAgo));
+    new(by ?? _peer, version, _now, _now.AddSeconds(-heartbeatSecondsAgo));
 
   // ============================================================
   // Standing by
@@ -250,7 +274,7 @@ public class StandbyWatcherTests {
   [Test]
   public async Task ARequestWithNoHeartbeatAtAll_IsVoidAsync() {
     using var h = _harness(
-      new StandbyRequest(_peer, "2.0.0", DateTimeOffset.UtcNow, RequesterLastHeartbeatAt: null),
+      new StandbyRequest(_peer, "2.0.0", _now, RequesterLastHeartbeatAt: null),
       ourVersion: "1.0.0");
 
     await h.Watcher.TickForTestsAsync(CancellationToken.None);
@@ -497,7 +521,8 @@ public class StandbyWatcherTests {
       schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance);
+      logger: NullLogger<StandbyWatcher>.Instance,
+      timeProvider: new FakeTimeProvider(_now));
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -530,6 +555,8 @@ public class StandbyWatcherTests {
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();
+    var options = new StandbyWatcherOptions();
+    var clock = new ArmedTimerClock();
     var watcher = new StandbyWatcher(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       lifecycle: new RecordingLifecycle(),
@@ -539,12 +566,18 @@ public class StandbyWatcherTests {
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+      timeProvider: clock,
+      options: options);
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
 
-    // The second read can only happen if the loop survived the first one throwing.
+    // The loop survived the failed tick and is waiting out its poll on the injected clock; only
+    // advancing that clock lets the next tick run. The second read can only happen if the loop
+    // survived the first one throwing.
+    await clock.WaitForArmedAsync(options.PollInterval, testToken);
+    await Assert.That(coordinator.Reads).IsEqualTo(1).Because("the next tick waits for the poll interval");
+    clock.Advance(options.PollInterval);
     await coordinator.SecondRead.WaitAsync(testToken);
 
     await cts.CancelAsync();
@@ -577,7 +610,8 @@ public class StandbyWatcherTests {
       schemaReadyGate: gate,
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
-      logger: NullLogger<StandbyWatcher>.Instance);
+      logger: NullLogger<StandbyWatcher>.Instance,
+      timeProvider: new FakeTimeProvider(_now));
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
@@ -616,7 +650,7 @@ public class StandbyWatcherTests {
       versionProvider: new StubVersionProvider("1.0.0"),
       assessor: NullStartupAssessor.Instance,
       logger: NullLogger<StandbyWatcher>.Instance,
-      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+      timeProvider: new FakeTimeProvider(_now));
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
