@@ -528,6 +528,27 @@ public class DutyHolderWorkerTests {
   }
 
   [Test]
+  public async Task TheHostedLoop_ARelease_OfARoleHeldOnlyForItsAcquisitionWork_WakesAPassAsync() {
+    // #1711: a role can be held only because something runs on acquiring it (#1351: the maintainer's
+    // vacuum). Its hand-off is as urgent as any other: the release must wake the next pass rather than
+    // leave the role unheld until the next interval.
+    var notify = new Notify();
+    var elector = new Elector();
+    var worker = _worker(elector, new Store(), [], notify, time: new FakeTimeProvider(), acquisitionHandlers: [new OnAcquired()]);
+    var wakes = 0;
+    worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
+
+    await worker.StartAsync(CancellationToken.None);
+    await elector.Attempted.Task;   // the loop subscribes before its first pass
+    notify.Subscription!.OnNotification(ROLE);
+
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1)
+      .Because("the role is one this worker votes for, so its release wakes a pass at once");
+    await worker.StopAsync(CancellationToken.None);
+    worker.Dispose();
+  }
+
+  [Test]
   public async Task TheHostedLoop_StoppingMidPass_EndsTheLoop_WithoutANotifyConnectionAsync() {
     var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var elector = new Elector();
