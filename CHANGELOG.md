@@ -337,6 +337,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Transport test warmup waits on the subscriber's signal only (#1657).** `SubscriptionWarmup.WarmupAsync` in the
+  testing library publishes one warmup message and completes when the subscriber signals that it arrived. The 5-second
+  initial delay and the 2-second resend loop are gone, and so are the `retryInterval` and `initialDelay` parameters
+  and `DefaultRetryInterval` / `DefaultInitialDelay`: a transport's subscription is durable once its subscribe call
+  returns, so the one warmup message waits on the broker until the subscriber takes it.
+
 - **The generators package writes no generated source to disk and embeds no message registry by default (#1609).
   Behavior change.** The package's props no longer turn `EmitCompilerGeneratedFiles` on, and
   `WhizbangEmitMessageRegistry` now defaults to `false`: the generator embeds no registry JSON in the assembly and the

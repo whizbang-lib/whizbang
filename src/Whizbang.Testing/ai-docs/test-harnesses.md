@@ -114,7 +114,7 @@ Assert.That(awaiter.IsSignaled).IsTrue();
 
 ### Key Features
 
-- **Warmup Pattern**: TransportTestHarness sends messages until one is received
+- **Warmup Pattern**: TransportTestHarness publishes one warmup message and waits for the subscriber to signal it arrived (no initial delay, no resend: the subscription is durable once subscribe returns)
 - **Discriminating Awaiters**: Distinguishes warmup messages from test messages
 - **Auto-cleanup**: Disposes subscriptions on disposal
 - **Thread-safe**: All awaiters use `RunContinuationsAsynchronously`

@@ -9,7 +9,7 @@ namespace Whizbang.Testing.Tests.Transport;
 
 /// <summary>
 /// Tests for <see cref="SubscriptionWarmup"/> and <see cref="SignalAwaiter"/>.
-/// Warmup runs use zero initial delay and signal-driven fake transports; no wall-clock waits.
+/// Warmup runs use signal-driven fake transports; no wall-clock waits.
 /// </summary>
 public class SubscriptionWarmupTests {
   private static readonly TransportDestination _destination = new("warmup-topic");
@@ -103,10 +103,7 @@ public class SubscriptionWarmupTests {
       transport,
       _destination,
       () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
-      warmupAwaiter,
-      timeout: _longTimeout,
-      retryInterval: _longTimeout,
-      initialDelay: TimeSpan.Zero);
+      warmupAwaiter);
 
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     await Assert.That(warmupAwaiter.IsSignaled).IsTrue();
@@ -123,77 +120,34 @@ public class SubscriptionWarmupTests {
       _destination,
       () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
       warmupAwaiter,
-      timeout: _longTimeout,
-      retryInterval: _longTimeout,
-      initialDelay: TimeSpan.Zero);
+      timeout: _longTimeout);
 
     await Assert.That(transport.Published.Count).IsEqualTo(0);
   }
 
   [Test]
-  public async Task WarmupAsync_SignalArrivesOnSecondPublish_RetriesAndCompletesAsync() {
+  public async Task WarmupAsync_EchoAlreadyArrived_CompletesWithoutWaitingOnTheClockAsync() {
+    // A zero budget leaves no time to spend: warmup publishes, and the echo the transport delivered
+    // during that publish is already the signal, so it completes rather than timing out.
     var warmupAwaiter = new SignalAwaiter();
-    var publishCount = 0;
-    var transport = new FakeTransport {
-      OnPublish = _ => {
-        publishCount++;
-        if (publishCount >= 2) {
-          warmupAwaiter.Signal();
-        }
-      }
-    };
+    var transport = new FakeTransport { OnPublish = _ => warmupAwaiter.Signal() };
 
-    // Zero retry interval: the first wait times out via the awaiter's own timer,
-    // triggering the retry loop; the second publish signals completion.
     await SubscriptionWarmup.WarmupAsync(
       transport,
       _destination,
       () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
       warmupAwaiter,
-      timeout: _longTimeout,
-      retryInterval: TimeSpan.Zero,
-      initialDelay: TimeSpan.Zero);
+      timeout: TimeSpan.Zero);
 
-    await Assert.That(publishCount).IsEqualTo(2);
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
     await Assert.That(warmupAwaiter.IsSignaled).IsTrue();
   }
 
   [Test]
-  public async Task WarmupAsync_PreCanceledToken_ThrowsBeforePublishingAsync() {
-    var warmupAwaiter = new SignalAwaiter();
-    var transport = new FakeTransport();
-    using var cts = new CancellationTokenSource();
-    await cts.CancelAsync();
-
-    await Assert.ThrowsAsync<TaskCanceledException>(async () =>
-      await SubscriptionWarmup.WarmupAsync(
-        transport,
-        _destination,
-        () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
-        warmupAwaiter,
-        timeout: _longTimeout,
-        retryInterval: _longTimeout,
-        initialDelay: TimeSpan.Zero,
-        cancellationToken: cts.Token));
-
-    await Assert.That(transport.Published.Count).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task WarmupAsync_DefaultTimings_AreDocumentedValuesAsync() {
-    await Assert.That(SubscriptionWarmup.DefaultWarmupTimeout).IsEqualTo(TimeSpan.FromSeconds(30));
-    await Assert.That(SubscriptionWarmup.DefaultRetryInterval).IsEqualTo(TimeSpan.FromSeconds(2));
-    await Assert.That(SubscriptionWarmup.DefaultInitialDelay).IsEqualTo(TimeSpan.FromSeconds(5));
-  }
-
-  [Test]
-  public async Task WarmupAsync_WhenTheBudgetExpiresMidWait_ReportsATimeoutAsync(
-      CancellationToken cancellationToken) {
-    // Nothing ever echoes the warmup message back, and the retry interval is far longer than the
-    // overall budget, so the budget is what ends the wait. The caller asked for a timeout and
-    // never canceled anything, so it must get the documented TimeoutException -- surfacing the
-    // internal deadline as an OperationCanceledException would tell the caller its own token was
-    // canceled and send whoever reads the failure looking for a cancellation that never happened.
+  public async Task WarmupAsync_EchoNeverArrives_PublishesOnceAndReportsATimeoutAsync() {
+    // The subscription is durable once SubscribeAsync returns, so one warmup message is enough:
+    // it waits on the broker until the subscriber takes it. Nothing echoes it back here, so the
+    // budget ends the wait, after exactly one publish.
     var warmupAwaiter = new SignalAwaiter();
     var transport = new FakeTransport();
 
@@ -203,13 +157,63 @@ public class SubscriptionWarmupTests {
         _destination,
         () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
         warmupAwaiter,
-        timeout: TimeSpan.FromMilliseconds(50),
-        retryInterval: TimeSpan.FromMinutes(5),
-        initialDelay: TimeSpan.Zero,
-        cancellationToken: cancellationToken));
+        timeout: TimeSpan.Zero));
 
     await Assert.That(ex!.Message).Contains("Subscription warmup timed out");
     await Assert.That(transport.Published.Count).IsEqualTo(1);
     await Assert.That(warmupAwaiter.IsSignaled).IsFalse();
   }
+
+  [Test]
+  public async Task WarmupAsync_PublishesBeforeAnyWait_AndCompletesOnTheEchoSignalAsync(CancellationToken cancellationToken) {
+    // The fake transport publishes synchronously, so a warmup that does not wait on the clock has
+    // already published by the time the call hands back its task. A warmup that sleeps first (the
+    // old 5-second initial delay) has published nothing yet. After the publish the warmup is still
+    // waiting, and it finishes once the subscriber signals.
+    var warmupAwaiter = new SignalAwaiter();
+    var transport = new FakeTransport();
+
+    var warmup = SubscriptionWarmup.WarmupAsync(
+      transport,
+      _destination,
+      () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
+      warmupAwaiter,
+      timeout: _longTimeout,
+      cancellationToken: cancellationToken);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the warmup message is published straight away, with no wait on the clock first");
+    await Assert.That(warmup.IsCompleted).IsFalse()
+      .Because("the warmup message has been published but not echoed back yet");
+
+    warmupAwaiter.Signal();
+    await warmup.WaitAsync(_longTimeout, cancellationToken);
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WarmupAsync_PreCanceledToken_ThrowsBeforePublishingAsync() {
+    var warmupAwaiter = new SignalAwaiter();
+    var transport = new FakeTransport();
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+      await SubscriptionWarmup.WarmupAsync(
+        transport,
+        _destination,
+        () => EnvelopeFactory.Create(SubscriptionWarmup.GenerateWarmupId()),
+        warmupAwaiter,
+        timeout: _longTimeout,
+        cancellationToken: cts.Token));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task WarmupAsync_DefaultTimeout_IsTheDocumentedValueAsync() {
+    await Assert.That(SubscriptionWarmup.DefaultWarmupTimeout).IsEqualTo(TimeSpan.FromSeconds(30));
+  }
+
 }
