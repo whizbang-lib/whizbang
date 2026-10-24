@@ -24,7 +24,7 @@ public class TransportConsumerSourceIdentityTests {
   [Test]
   public async Task InboxMessage_HasSourceIdentityFieldsAsync() {
     var sourceServiceId = (Guid)TrackedGuid.New();
-    var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
+    var envelope = _newEnvelope(payload: JsonElement.Parse("{}"));
 
     var msg = new InboxMessage {
       MessageId = (Guid)TrackedGuid.New(),
@@ -42,7 +42,7 @@ public class TransportConsumerSourceIdentityTests {
 
   [Test]
   public async Task InboxMessage_DefaultsSourceIdentityWhenOmittedAsync() {
-    var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
+    var envelope = _newEnvelope(payload: JsonElement.Parse("{}"));
 
     var msg = new InboxMessage {
       MessageId = (Guid)TrackedGuid.New(),
@@ -66,7 +66,7 @@ public class TransportConsumerSourceIdentityTests {
     // the C# layer we only need to confirm the JSON payload CONTAINS the new fields
     // with the right values so the SQL function can pick them up.
     var sourceServiceId = (Guid)TrackedGuid.New();
-    var envelope = _newEnvelope(payload: JsonDocument.Parse("{}").RootElement);
+    var envelope = _newEnvelope(payload: JsonElement.Parse("{}"));
     var original = new InboxMessage {
       MessageId = (Guid)TrackedGuid.New(),
       HandlerName = "Test",

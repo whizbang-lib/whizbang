@@ -52,7 +52,7 @@ public class BatchStrategyFlushCallbackWiringTests {
       HandlerName = "TestHandler",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -86,7 +86,7 @@ public class BatchStrategyFlushCallbackWiringTests {
     var strategy = sp.GetRequiredService<IOutboxBatchStrategy>();
 
     var msgId = (Guid)TrackedGuid.New();
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(msgId), JsonDocument.Parse("{}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(msgId), JsonElement.Parse("{}"), []);
     var message = new OutboxMessage {
       MessageId = msgId,
       Envelope = envelope,

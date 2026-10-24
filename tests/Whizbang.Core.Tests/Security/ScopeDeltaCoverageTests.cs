@@ -492,7 +492,7 @@ public class ScopeDeltaCoverageTests {
     // Assert - Should use Add operation, not Set (partial change)
     await Assert.That(delta).IsNotNull();
     var rolesChanges = delta!.Collections![ScopeProp.Roles];
-    await Assert.That(rolesChanges.Add).IsNotNull();
+    await Assert.That(rolesChanges.Add.HasValue).IsTrue();
     await Assert.That(rolesChanges.Set).IsNull();
     await Assert.That(rolesChanges.Remove).IsNull();
 
@@ -527,7 +527,7 @@ public class ScopeDeltaCoverageTests {
     // Assert - Should use Remove operation
     await Assert.That(delta).IsNotNull();
     var rolesChanges = delta!.Collections![ScopeProp.Roles];
-    await Assert.That(rolesChanges.Remove).IsNotNull();
+    await Assert.That(rolesChanges.Remove.HasValue).IsTrue();
     await Assert.That(rolesChanges.Set).IsNull();
 
     // Verify round-trip
@@ -561,7 +561,7 @@ public class ScopeDeltaCoverageTests {
     // Assert
     await Assert.That(delta).IsNotNull();
     var permsChanges = delta!.Collections![ScopeProp.Perms];
-    await Assert.That(permsChanges.Add).IsNotNull();
+    await Assert.That(permsChanges.Add.HasValue).IsTrue();
     await Assert.That(permsChanges.Set).IsNull();
 
     // Verify round-trip
@@ -598,7 +598,7 @@ public class ScopeDeltaCoverageTests {
     // Assert
     await Assert.That(delta).IsNotNull();
     var principalsChanges = delta!.Collections![ScopeProp.Principals];
-    await Assert.That(principalsChanges.Add).IsNotNull();
+    await Assert.That(principalsChanges.Add.HasValue).IsTrue();
     await Assert.That(principalsChanges.Set).IsNull();
 
     // Verify round-trip
@@ -713,8 +713,8 @@ public class ScopeDeltaCoverageTests {
     await Assert.That(delta).IsNotNull();
     await Assert.That(delta!.Collections).IsNotNull();
     var claimsChanges = delta.Collections![ScopeProp.Claims];
-    await Assert.That(claimsChanges.Add).IsNotNull();   // modified + added
-    await Assert.That(claimsChanges.Remove).IsNotNull(); // removed
+    await Assert.That(claimsChanges.Add.HasValue).IsTrue();   // modified + added
+    await Assert.That(claimsChanges.Remove.HasValue).IsTrue(); // removed
 
     // Verify round-trip
     var applied = delta.ApplyTo(previous);

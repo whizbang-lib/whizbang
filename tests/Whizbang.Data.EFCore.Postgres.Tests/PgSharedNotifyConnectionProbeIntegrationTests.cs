@@ -53,7 +53,7 @@ public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
 
     await Assert.That(ok).IsTrue();
     await Assert.That(gate.IsAvailable).IsTrue();
-    await Assert.That(gate.LastVerifiedAt).IsNotNull();
+    await Assert.That(gate.LastVerifiedAt.HasValue).IsTrue();
     await Assert.That(transitions).IsEquivalentTo(_expectedSingleTrueTransition);
   }
 
@@ -77,7 +77,7 @@ public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
     }
 
     await Assert.That(gate.IsAvailable).IsTrue();
-    await Assert.That(gate.LastVerifiedAt).IsNotNull();
+    await Assert.That(gate.LastVerifiedAt.HasValue).IsTrue();
 
     await gate.StopAsync(CancellationToken.None);
   }

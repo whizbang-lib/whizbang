@@ -248,7 +248,7 @@ public class BodyClaimRehydratorTests {
     var originalEnvelope = new MessageEnvelope<JsonElement> {
       DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
     var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -319,7 +319,7 @@ public class BodyClaimRehydratorTests {
     return new MessageEnvelope<JsonElement> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
   }

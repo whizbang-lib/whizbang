@@ -66,4 +66,30 @@ public class NotificationConnectionPlanTests {
     await Assert.That(plan.IsAvailable).IsFalse();
     await Assert.That(async () => await plan.OpenAsync()).Throws<InvalidOperationException>();
   }
+
+  [Test]
+  public async Task SessionLocks_ThroughThePooledKeyWithNoDataSource_GoThroughAPoolerAsync() {
+    var plan = NotificationConnectionPlan.Create(null, _stringResolution("Host=localhost;Username=tenant-user;Password=secret"));
+
+    await Assert.That(plan.ResolvesThroughPooledKey).IsTrue()
+      .Because("the pooled key without its '-direct' sibling addresses the pooler, which does not keep a session lock on one backend");
+  }
+
+  [Test]
+  public async Task SessionLocks_WithARegisteredDataSource_AreNotJudgedByTheStringAsync() {
+    await using var dataSource = NpgsqlDataSource.Create("Host=localhost;Username=tenant-user;Password=secret");
+    var plan = NotificationConnectionPlan.Create(
+      new NotificationDataSource(dataSource, ownsDataSource: false), _stringResolution("Host=localhost;Username=tenant-user"));
+
+    await Assert.That(plan.ResolvesThroughPooledKey).IsFalse()
+      .Because("connections open through the data source, so the pooled string is never used");
+  }
+
+  [Test]
+  public async Task SessionLocks_ThroughADirectString_AreHeldOnOneBackendAsync() {
+    var plan = NotificationConnectionPlan.Create(null, new NotificationConnectionStringResolver.Resolution(
+      "Host=localhost;Username=tenant-user;Password=secret", NotificationConnectionStringResolver.ResolutionSource.DirectKey));
+
+    await Assert.That(plan.ResolvesThroughPooledKey).IsFalse();
+  }
 }

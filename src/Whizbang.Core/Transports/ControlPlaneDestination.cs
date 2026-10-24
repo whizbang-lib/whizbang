@@ -37,7 +37,7 @@ public static class ControlPlaneDestination {
     ArgumentNullException.ThrowIfNull(destination);
     return destination with {
       Metadata = new Dictionary<string, JsonElement> {
-        ["StreamId"] = JsonDocument.Parse($"\"{sessionStreamId}\"").RootElement,
+        ["StreamId"] = JsonElement.Parse($"\"{sessionStreamId}\""),
       },
     };
   }

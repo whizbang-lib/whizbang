@@ -82,10 +82,6 @@ public class DeadLetterMetricsEmissionTests {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 
-  private sealed class NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-  }
-
   private sealed class FailingPublishStrategy : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> AttemptedPublish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
@@ -172,7 +168,7 @@ public class DeadLetterMetricsEmissionTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       },
@@ -199,7 +195,6 @@ public class DeadLetterMetricsEmissionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new NoOpFailureChannel();
-    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var strategy = new FailingPublishStrategy();
@@ -211,7 +206,6 @@ public class DeadLetterMetricsEmissionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -271,7 +265,6 @@ public class DeadLetterMetricsEmissionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new NoOpFailureChannel();
-    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var strategy = new FailingPublishStrategy();
@@ -283,7 +276,6 @@ public class DeadLetterMetricsEmissionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       // MaxOutboxAttempts deliberately UNSET (default null in this test scenario)
       // — promotion gate disabled; failure-channel routing only.

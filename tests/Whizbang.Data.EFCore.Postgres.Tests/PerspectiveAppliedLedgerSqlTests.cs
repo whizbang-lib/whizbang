@@ -48,7 +48,7 @@ public class PerspectiveAppliedLedgerSqlTests : EFCoreTestBase {
 
   /// <summary>An event as service A published it, arriving in this service's inbox.</summary>
   private static InboxMessage _fromAnotherService(Guid eventId, Guid streamId, EventFlags flags = EventFlags.None) {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(eventId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(eventId), JsonElement.Parse("{\"p\":1}"), []);
     return new InboxMessage {
       MessageId = eventId,
       HandlerName = "LedgerHandler",

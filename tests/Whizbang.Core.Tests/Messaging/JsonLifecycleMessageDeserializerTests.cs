@@ -102,7 +102,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -119,7 +119,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -136,7 +136,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -156,7 +156,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -175,7 +175,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -196,7 +196,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -255,7 +255,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     // Arrange
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
-    var jsonElement = JsonDocument.Parse("{}").RootElement;
+    var jsonElement = JsonElement.Parse("{}");
 
     // Act & Assert
     await Assert.That(() => deserializer.DeserializeFromJsonElement(jsonElement, null!))
@@ -267,7 +267,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     // Arrange
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
-    var jsonElement = JsonDocument.Parse("{}").RootElement;
+    var jsonElement = JsonElement.Parse("{}");
 
     // Act & Assert
     await Assert.That(() => deserializer.DeserializeFromJsonElement(jsonElement, "   "))
@@ -279,7 +279,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     // Arrange
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
-    var jsonElement = JsonDocument.Parse("{\"value\":\"test\"}").RootElement;
+    var jsonElement = JsonElement.Parse("{\"value\":\"test\"}");
 
     // Act & Assert
     await Assert.That(() => deserializer.DeserializeFromJsonElement(jsonElement, "Unknown.NonExistent.Type, UnknownAssembly"))
@@ -292,7 +292,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(JsonContextRegistry.CreateCombinedOptions());
     var typeName = TypeNameFormatter.Format(typeof(Whizbang.Core.Minting.RedeliveryComposite));
 
-    await Assert.That(() => deserializer.DeserializeFromJsonElement(JsonDocument.Parse("null").RootElement, typeName))
+    await Assert.That(() => deserializer.DeserializeFromJsonElement(JsonElement.Parse("null"), typeName))
       .Throws<InvalidOperationException>()
       .WithMessageMatching("*returned null*");
   }
@@ -346,7 +346,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     // Arrange
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
-    var jsonElement = JsonDocument.Parse("{\"value\":\"world\"}").RootElement.Clone();
+    var jsonElement = JsonElement.Parse("{\"value\":\"world\"}");
     var typeName = typeof(LifecycleTestMsg).AssemblyQualifiedName!;
 
     // Act
@@ -367,7 +367,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     // Arrange
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
-    var jsonElement = JsonDocument.Parse("{\"value\":\"test-envelope\"}").RootElement.Clone();
+    var jsonElement = JsonElement.Parse("{\"value\":\"test-envelope\"}");
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = jsonElement,
@@ -398,7 +398,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var options = _createTestJsonOptions();
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     // This will produce a JsonElement of string type, not object
-    var jsonElement = JsonDocument.Parse("\"just a string\"").RootElement.Clone();
+    var jsonElement = JsonElement.Parse("\"just a string\"");
     var typeName = typeof(LifecycleTestMsg).AssemblyQualifiedName!;
 
     // Act & Assert - Should throw because JsonElement is a string, not an object
@@ -434,7 +434,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -452,7 +452,7 @@ public partial class JsonLifecycleMessageDeserializerTests {
     var deserializer = new JsonLifecycleMessageDeserializer(options);
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };

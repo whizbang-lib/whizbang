@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.AutoPopulate;
 public class JsonAutoPopulateHelperTests {
 
   private static JsonElement _parseObject(string json) =>
-    JsonDocument.Parse(json).RootElement.Clone();
+    JsonElement.Parse(json);
 
   [Test]
   public async Task PopulateTimestamp_NoRegistrations_ReturnsOriginalPayloadAsync() {
@@ -126,7 +126,7 @@ public class JsonAutoPopulateHelperTests {
       TimestampKind = TimestampKind.QueuedAt,
     });
 
-    var payload = JsonDocument.Parse("[1,2,3]").RootElement.Clone();
+    var payload = JsonElement.Parse("[1,2,3]");
     var ts = new DateTimeOffset(2026, 5, 28, 15, 0, 0, TimeSpan.Zero);
 
     var result = JsonAutoPopulateHelper.PopulateTimestamp(

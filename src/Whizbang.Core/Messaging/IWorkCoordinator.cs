@@ -3049,6 +3049,8 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:OutboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>
@@ -3201,6 +3203,8 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:InboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>

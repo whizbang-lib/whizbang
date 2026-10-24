@@ -119,7 +119,7 @@ public class UnboundAttributeArgumentTests {
     var unbound = model.GetMembers("Unbound").OfType<IPropertySymbol>().Single();
     var bare = model.GetMembers("Bare").OfType<IPropertySymbol>().Single();
 
-    await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound)).IsNotNull()
+    await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound).HasValue).IsTrue()
       .Because("the declaration is still an [Indexed], so it is read rather than skipped");
     await Assert.That(JsonIndexDiscovery.DeclaredKind(unbound)).IsEqualTo(JsonIndexDiscovery.DeclaredKind(bare))
       .Because("an argument list no constructor accepts falls back to the default kind");

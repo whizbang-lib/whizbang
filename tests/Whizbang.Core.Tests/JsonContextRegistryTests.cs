@@ -1359,11 +1359,11 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.Count).IsEqualTo(3);
     await Assert.That(deserialized[0].Name).IsEqualTo("First");
-    await Assert.That(deserialized[0].OptionalId).IsNotNull();
+    await Assert.That(deserialized[0].OptionalId.HasValue).IsTrue();
     await Assert.That(deserialized[1].Name).IsEqualTo("Second");
     await Assert.That(deserialized[1].OptionalId).IsNull();
     await Assert.That(deserialized[2].Name).IsEqualTo("Third");
-    await Assert.That(deserialized[2].OptionalId).IsNotNull();
+    await Assert.That(deserialized[2].OptionalId.HasValue).IsTrue();
   }
 
   [Test]
@@ -1384,7 +1384,7 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.Length).IsEqualTo(2);
     await Assert.That(deserialized[0].Name).IsEqualTo("ArrayFirst");
-    await Assert.That(deserialized[0].OptionalId).IsNotNull();
+    await Assert.That(deserialized[0].OptionalId.HasValue).IsTrue();
     await Assert.That(deserialized[1].Name).IsEqualTo("ArraySecond");
     await Assert.That(deserialized[1].OptionalId).IsNull();
   }

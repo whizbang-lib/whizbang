@@ -96,7 +96,7 @@ public class AuditCommandTests {
 
     await Assert.That(run.ExitCode).IsEqualTo(AuditCommand.EXIT_CLEAN);
     await Assert.That(run.Output).Contains("(6 packages checked)");
-    var versions = JsonDocument.Parse(run.Osv.Requests[0].Body!).RootElement.GetProperty("queries").EnumerateArray()
+    var versions = JsonElement.Parse(run.Osv.Requests[0].Body!).GetProperty("queries").EnumerateArray()
       .Where(q => q.GetProperty("package").GetProperty("name").GetString() == CORE)
       .Select(q => q.GetProperty("version").GetString());
     await Assert.That(versions).IsEquivalentTo(new List<string?> { "0.2610.0", "0.2615.0" });
@@ -199,7 +199,7 @@ public class AuditCommandTests {
     var run = await _runAsync(["--project", _sampleProject(workspace), "--json"], _osvReporting("HIGH"));
 
     await Assert.That(run.ExitCode).IsEqualTo(AuditCommand.EXIT_ADVISORIES);
-    var json = JsonDocument.Parse(run.Output).RootElement;
+    var json = JsonElement.Parse(run.Output);
     await Assert.That(json.GetProperty("packagesChecked").GetInt32()).IsEqualTo(5);
     await Assert.That(json.GetProperty("fails").GetBoolean()).IsTrue();
     await Assert.That(json.GetProperty("findings")[0].GetProperty("advisoryId").GetString()).IsEqualTo("GHSA-cmd-0001");

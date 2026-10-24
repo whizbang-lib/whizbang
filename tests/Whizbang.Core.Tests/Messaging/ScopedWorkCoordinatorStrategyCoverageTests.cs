@@ -108,7 +108,7 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
     var messageId = (Guid)MessageId.New();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []);
     return new InboxMessage {
       MessageId = messageId,
@@ -157,7 +157,7 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
     MessageId = messageId,
     Envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []),
     MessageType = "System.Text.Json.JsonElement, System.Text.Json",
     StreamId = Guid.NewGuid(),

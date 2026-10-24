@@ -622,7 +622,7 @@ public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
     var row = await verify.Set<PerspectiveRow<ActionTestModel>>().AsNoTracking().FirstAsync(r => r.Id == streamId);
     await Assert.That(row.Data.Value).IsEqualTo(999)
       .Because("the event committed at 150 was never folded; dropping it as already applied leaves the row wrong for good");
-    await Assert.That(row.Data.DeletedAt).IsNotNull()
+    await Assert.That(row.Data.DeletedAt.HasValue).IsTrue()
       .Because("the re-fold keeps what the row already had from the event at 200");
   }
 

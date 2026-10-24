@@ -71,7 +71,7 @@ public class ScopeDeltaTests {
 
     // Assert
     await Assert.That(changes.HasChanges).IsTrue();
-    await Assert.That(changes.Set).IsNotNull();
+    await Assert.That(changes.Set.HasValue).IsTrue();
   }
 
   [Test]
@@ -82,7 +82,7 @@ public class ScopeDeltaTests {
 
     // Assert
     await Assert.That(changes.HasChanges).IsTrue();
-    await Assert.That(changes.Add).IsNotNull();
+    await Assert.That(changes.Add.HasValue).IsTrue();
   }
 
   [Test]
@@ -93,7 +93,7 @@ public class ScopeDeltaTests {
 
     // Assert
     await Assert.That(changes.HasChanges).IsTrue();
-    await Assert.That(changes.Remove).IsNotNull();
+    await Assert.That(changes.Remove.HasValue).IsTrue();
   }
 
   [Test]
@@ -105,8 +105,8 @@ public class ScopeDeltaTests {
 
     // Assert
     await Assert.That(changes.HasChanges).IsTrue();
-    await Assert.That(changes.Add).IsNotNull();
-    await Assert.That(changes.Remove).IsNotNull();
+    await Assert.That(changes.Add.HasValue).IsTrue();
+    await Assert.That(changes.Remove.HasValue).IsTrue();
     await Assert.That(changes.Set).IsNull();
   }
 
@@ -152,8 +152,8 @@ public class ScopeDeltaTests {
 
     // Assert
     await Assert.That(deserialized.HasChanges).IsTrue();
-    await Assert.That(deserialized.Add).IsNotNull();
-    await Assert.That(deserialized.Remove).IsNotNull();
+    await Assert.That(deserialized.Add.HasValue).IsTrue();
+    await Assert.That(deserialized.Remove.HasValue).IsTrue();
     await Assert.That(deserialized.Set).IsNull();
   }
 
@@ -263,7 +263,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta!.Collections).IsNotNull();
     await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Roles)).IsTrue();
     var rolesChanges = delta.Collections[ScopeProp.Roles];
-    await Assert.That(rolesChanges.Add).IsNotNull();
+    await Assert.That(rolesChanges.Add.HasValue).IsTrue();
     await Assert.That(rolesChanges.Set).IsNull();
   }
 
@@ -282,7 +282,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta!.Collections).IsNotNull();
     await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Roles)).IsTrue();
     var rolesChanges = delta.Collections[ScopeProp.Roles];
-    await Assert.That(rolesChanges.Remove).IsNotNull();
+    await Assert.That(rolesChanges.Remove.HasValue).IsTrue();
   }
 
   [Test]
@@ -299,8 +299,8 @@ public class ScopeDeltaTests {
     await Assert.That(delta).IsNotNull();
     await Assert.That(delta!.Collections).IsNotNull();
     var rolesChanges = delta.Collections![ScopeProp.Roles];
-    await Assert.That(rolesChanges.Add).IsNotNull();
-    await Assert.That(rolesChanges.Remove).IsNotNull();
+    await Assert.That(rolesChanges.Add.HasValue).IsTrue();
+    await Assert.That(rolesChanges.Remove.HasValue).IsTrue();
     await Assert.That(rolesChanges.Set).IsNull();
   }
 
@@ -713,8 +713,8 @@ public class ScopeDeltaTests {
     await Assert.That(deserialized.Values!.ContainsKey(ScopeProp.Scope)).IsTrue();
     await Assert.That(deserialized.Collections).IsNotNull();
     await Assert.That(deserialized.Collections!.ContainsKey(ScopeProp.Roles)).IsTrue();
-    await Assert.That(deserialized.Collections[ScopeProp.Roles].Add).IsNotNull();
-    await Assert.That(deserialized.Collections[ScopeProp.Roles].Remove).IsNotNull();
+    await Assert.That(deserialized.Collections[ScopeProp.Roles].Add.HasValue).IsTrue();
+    await Assert.That(deserialized.Collections[ScopeProp.Roles].Remove.HasValue).IsTrue();
   }
 
   [Test]
@@ -1122,7 +1122,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta!.Collections).IsNotNull();
     await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Claims)).IsTrue();
     var claimsChanges = delta.Collections[ScopeProp.Claims];
-    await Assert.That(claimsChanges.Remove).IsNotNull();
+    await Assert.That(claimsChanges.Remove.HasValue).IsTrue();
   }
 
   [Test]
@@ -1142,7 +1142,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta!.Collections).IsNotNull();
     await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Claims)).IsTrue();
     var claimsChanges = delta.Collections[ScopeProp.Claims];
-    await Assert.That(claimsChanges.Add).IsNotNull();
+    await Assert.That(claimsChanges.Add.HasValue).IsTrue();
   }
 
   [Test]
@@ -1297,7 +1297,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta).IsNotNull();
     await Assert.That(delta!.Collections).IsNotNull();
     var rolesChanges = delta.Collections![ScopeProp.Roles];
-    await Assert.That(rolesChanges.Set).IsNotNull();
+    await Assert.That(rolesChanges.Set.HasValue).IsTrue();
   }
 
   [Test]
@@ -1314,7 +1314,7 @@ public class ScopeDeltaTests {
     await Assert.That(delta).IsNotNull();
     await Assert.That(delta!.Collections).IsNotNull();
     var rolesChanges = delta.Collections![ScopeProp.Roles];
-    await Assert.That(rolesChanges.Set).IsNotNull();
+    await Assert.That(rolesChanges.Set.HasValue).IsTrue();
   }
 
   #endregion

@@ -173,7 +173,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
       => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
     public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName)
-      => JsonDocument.Parse(jsonBytes).RootElement;
+      => JsonElement.Parse(jsonBytes);
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName)
       => jsonElement;
   }
@@ -197,7 +197,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },

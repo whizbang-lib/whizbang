@@ -66,7 +66,7 @@ public class BodyOffloadPostSerializeHookCoverageTests {
 
     var result = await hook.RunAsync(ctx, CancellationToken.None);
 
-    await Assert.That(result.NewSerializedBytes).IsNotNull()
+    await Assert.That(result.NewSerializedBytes.HasValue).IsTrue()
       .Because("the offload itself must still succeed even though bookkeeping failed");
     await Assert.That(logger.Warnings.Count).IsEqualTo(1)
       .Because("exactly one warning per failed insert — not silent, not a retry storm");

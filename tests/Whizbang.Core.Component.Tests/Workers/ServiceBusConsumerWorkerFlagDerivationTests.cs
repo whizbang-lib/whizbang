@@ -148,7 +148,7 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,

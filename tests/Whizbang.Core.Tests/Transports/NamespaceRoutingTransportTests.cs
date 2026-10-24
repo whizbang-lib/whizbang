@@ -265,7 +265,7 @@ public class NamespaceRoutingTransportTests {
   private static MessageEnvelope<JsonElement> _envelope() {
     var id = Guid.CreateVersion7();
     return new MessageEnvelope<JsonElement>(
-      messageId: MessageId.From(id), payload: JsonDocument.Parse("{}").RootElement, hops: []);
+      messageId: MessageId.From(id), payload: JsonElement.Parse("{}"), hops: []);
   }
 
   private sealed class RecordingTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {

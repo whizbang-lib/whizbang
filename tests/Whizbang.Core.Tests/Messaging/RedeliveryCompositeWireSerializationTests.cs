@@ -51,7 +51,7 @@ public class RedeliveryCompositeWireSerializationTests {
     var e2 = TrackedGuid.New().Value;
     var composite = new Whizbang.Core.Minting.RedeliveryComposite {
       StreamId = streamId,
-      InnerPayloads = [JsonDocument.Parse("{\"x\":2}").RootElement.Clone(), JsonDocument.Parse("{\"x\":3}").RootElement.Clone()],
+      InnerPayloads = [JsonElement.Parse("{\"x\":2}"), JsonElement.Parse("{\"x\":3}")],
       InnerTypeNames = ["Contracts.WireProbe, Contracts", "Contracts.WireProbe, Contracts"],
       InnerEventIds = [e1, e2],
     };
@@ -76,7 +76,7 @@ public class RedeliveryCompositeWireSerializationTests {
     var exotic = "{\"tags\":[\"a\",\"b\"],\"nested\":{\"set\":[1,2,3]},\"unregistered\":true}";
     var composite = new Whizbang.Core.Minting.RedeliveryComposite {
       StreamId = TrackedGuid.New().Value,
-      InnerPayloads = [JsonDocument.Parse(exotic).RootElement.Clone()],
+      InnerPayloads = [JsonElement.Parse(exotic)],
       InnerTypeNames = ["Totally.Unregistered.Type, Nowhere"],
       InnerEventIds = [TrackedGuid.New().Value],
     };

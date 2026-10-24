@@ -223,7 +223,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
       };
       await Assert.That(envelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
         .Because("An event PUBLISHED by a receptor reacting to a cascaded event must inherit the triggering event's correlation (== the inbound command correlation) — the saga-trigger seam that was minting a fresh correlation and orphaning the completion notification.");
-      await Assert.That(envelope.GetCausationId()).IsNotNull()
+      await Assert.That(envelope.GetCausationId().HasValue).IsTrue()
         .Because("The published event must carry a causation link back to its trigger, not ca=None (the production signature).");
     } finally {
       await serviceProvider.DisposeAsync();
@@ -290,7 +290,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
       var hopWithIdentity = ourMessage.MessageData.Hops.FirstOrDefault(h => h.CorrelationId is not null);
       await Assert.That(hopWithIdentity).IsNotNull()
         .Because("At least one persisted hop must carry the cascade identity after the JSONB round-trip.");
-      await Assert.That(hopWithIdentity!.CausationId).IsNotNull()
+      await Assert.That(hopWithIdentity!.CausationId.HasValue).IsTrue()
         .Because("CausationId is stripped alongside CorrelationId at the same seam — both must survive.");
     } finally {
       ScopeContextAccessor.CurrentContext = null;

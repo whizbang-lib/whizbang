@@ -58,7 +58,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
     await Assert.That(ticks[0].RescheduleCount).IsEqualTo(1);
     await Assert.That(ticks[0].ConsecutiveStallCount).IsEqualTo(0)
       .Because("no snapshot existed, so no delta could be computed — stall counter stays at 0.");
-    await Assert.That(ticks[0].LastObservedAt).IsNotNull()
+    await Assert.That(ticks[0].LastObservedAt.HasValue).IsTrue()
       .Because("the re-armed tick MUST carry the snapshot forward so the NEXT re-arm can compute delta.");
     await Assert.That(ticks[0].LastObservedCompleted).IsEqualTo(1);
 
@@ -551,7 +551,7 @@ public class TryRecoverViaWatchdogTickAsyncTests {
     var reArmed = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
     await Assert.That(reArmed.RescheduleCount).IsEqualTo(1)
       .Because("a saga still in progress re-arms rather than being left without a next wake-up");
-    await Assert.That(emitter.LastScheduledFor).IsNotNull()
+    await Assert.That(emitter.LastScheduledFor.HasValue).IsTrue()
       .Because("the re-arm is scheduled for a future time, not fired at once");
   }
 

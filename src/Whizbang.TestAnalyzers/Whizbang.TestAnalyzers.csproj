@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Repository-internal: loaded as an analyzer by this repository's test projects (tests/Directory.Build.props
+         and samples/Directory.Build.props), never shipped. It lives under src/ so the diagnostic-ID guard and the
+         new-code coverage gate, which both read src/, hold it to the same standard as the library. -->
+    <IsPackable>false</IsPackable>
+    <Description>Repository-internal Roslyn analyzers for this repository's test code: assertions that cannot fail.</Description>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Whizbang.TestAnalyzers</RootNamespace>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <LangVersion>latest</LangVersion>
+    <!-- Release tracking files are for shipped analyzer packages; this one never ships. -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- The root props turn the AOT analyzers on for every project whose name does not mark it as Roslyn
+         tooling; an analyzer runs inside the compiler, on netstandard2.0, where they do not apply (NETSDK1210). -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="PolySharp" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

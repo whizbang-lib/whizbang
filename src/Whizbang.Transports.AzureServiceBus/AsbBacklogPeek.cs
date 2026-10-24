@@ -31,7 +31,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// it came from, because a per-namespace quota is the thing an operator acts on.
 /// </para>
 /// </remarks>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbBacklogPeekTests.cs</tests>
 /// <remarks>Creates the peek over the host's transport (routing peer or single instance).</remarks>
 /// <param name="transport">The registered transport.</param>

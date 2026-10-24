@@ -1411,7 +1411,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");
     object IMessageEnvelope.Payload => Payload;
 
     public void AddHop(MessageHop hop) {

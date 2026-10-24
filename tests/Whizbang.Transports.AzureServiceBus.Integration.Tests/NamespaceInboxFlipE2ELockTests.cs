@@ -266,7 +266,7 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
       unroutedEntity,
       "wbtopo.unrouted.commands.lostcommand",
       new Dictionary<string, JsonElement> {
-        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement.Clone()
+        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
       });
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

@@ -124,7 +124,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
       var jsonEnv = new MessageEnvelope<JsonElement> {
         DispatchContext = envelope.DispatchContext,
         MessageId = envelope.MessageId,
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = envelope.Hops?.ToList() ?? [],
       };
       return new SerializedEnvelope(jsonEnv, $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core", aqn);
@@ -204,7 +204,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -439,7 +439,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
     var integrityMetrics = new StreamIntegrityMetrics(new WhizbangMetrics(factory));
     var bundle = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.New() };
     for (var i = 0; i < 2; i++) {
-      bundle.InnerPayloads.Add(JsonDocument.Parse("{}").RootElement);
+      bundle.InnerPayloads.Add(JsonElement.Parse("{}"));
       bundle.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
       bundle.InnerEventIds.Add((Guid)TrackedGuid.New());
     }

@@ -532,7 +532,7 @@ public partial class TransportPublishStrategy(
           Address: flippedAddress,
           RoutingKey: routingKey,
           Metadata: new Dictionary<string, JsonElement> {
-            [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement
+            [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
           }
         );
       }
@@ -661,7 +661,7 @@ public partial class TransportPublishStrategy(
       }
     }
 
-    metadata["StreamId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement;
+    metadata["StreamId"] = JsonElement.Parse($"\"{streamId}\"");
 
     return destination with { Metadata = metadata };
   }
@@ -708,7 +708,7 @@ public partial class TransportPublishStrategy(
       }
     }
     var sizeJson = outcome.FinalSerializedBytes.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    finalDestinationMetadata[BODY_SIZE_METADATA_KEY] = JsonDocument.Parse(sizeJson).RootElement;
+    finalDestinationMetadata[BODY_SIZE_METADATA_KEY] = JsonElement.Parse(sizeJson);
 
     var finalDestination = destination with { Metadata = finalDestinationMetadata };
 

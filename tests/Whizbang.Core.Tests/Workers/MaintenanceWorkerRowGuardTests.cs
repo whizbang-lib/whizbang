@@ -124,7 +124,7 @@ public class MaintenanceWorkerRowGuardTests {
     "wh_per_guarded",
     id ?? Guid.CreateVersion7(),
     null,
-    JsonDocument.Parse("{}").RootElement,
+    JsonElement.Parse("{}"),
     "ttl");
 
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(

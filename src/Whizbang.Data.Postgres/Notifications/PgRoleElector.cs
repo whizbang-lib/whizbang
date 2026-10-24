@@ -345,7 +345,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     await ((Task)voting).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     if (slot.Connection is not null) {
       // Anything but a grant gives the session lock back, including a vote that threw.
-      await _releaseBridgeAsync(slot.Connection, legacyKey).ConfigureAwait(false);
+      await _releaseBridgeAsync(slot.Connection, legacyKey, role, _logger).ConfigureAwait(false);
     }
     return await voting.ConfigureAwait(false);
   }
@@ -364,6 +364,10 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
     if (!_roleOptions.HoldLegacySessionLock) {
       // No bridge: the vote itself refuses while another backend holds the legacy lock.
       return await _decideAsync(plan, role, legacyKey, null, legacyKey, cancellationToken).ConfigureAwait(false);
+    }
+    if (plan.ResolvesThroughPooledKey) {
+      // The bridge is a session lock held for the tenure; a transaction pooler does not keep it on one backend.
+      LogBridgePooledWarning(_logger, role);
     }
     var bridge = await plan.OpenAsync(cancellationToken).ConfigureAwait(false);
     slot.Connection = bridge;
@@ -574,15 +578,12 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   /// Unlocks and closes a bridge connection. The unlock is explicit because disposing a pooled
   /// connection returns its session to the pool with the lock still held, and the pool resets the
   /// session only when it is next handed out. A session that has already died released the lock
-  /// with it, so a failed unlock is not an error.
+  /// with it, so a failed unlock is not an error; an unlock that finds the lock not held is logged.
   /// </summary>
-  private static async Task _releaseBridgeAsync(NpgsqlConnection bridge, long key) {
+  private static async Task _releaseBridgeAsync(NpgsqlConnection bridge, long key, string role, ILogger logger) {
 #pragma warning disable CA1031, RCS1075 // best-effort: a dead session already released the lock server-side
     try {
-      await using var unlock = bridge.CreateCommand();
-      unlock.CommandText = "SELECT pg_advisory_unlock(@key)";
-      unlock.Parameters.AddWithValue(nameof(key), key);
-      _ = await unlock.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
+      _ = await AdvisoryLockRelease.ReleaseAsync(bridge, key, $"role '{role}' bridge lock", logger, CancellationToken.None).ConfigureAwait(false);
     } catch (Exception) {
       // intentionally swallowed — see pragma justification
     }
@@ -733,7 +734,7 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
       _ = elector._tenures.TryRemove(new KeyValuePair<string, Tenure>(role, this));
       elector._metrics?.Held.Add(-1, RoleAssignmentMetrics.RoleTag(role));
       if (bridge is not null) {
-        await _releaseBridgeAsync(bridge, legacyKey).ConfigureAwait(false);
+        await _releaseBridgeAsync(bridge, legacyKey, role, elector._logger).ConfigureAwait(false);
       }
     }
 
@@ -830,4 +831,9 @@ public sealed partial class PgRoleElector : IDutyElector, IReleasesDutiesOnShutd
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
     Message = "PgRoleElector: instance {InstanceId} ended backend {BackendPid}, the legacy-lock session of a lapsed bridged holder of role '{Role}', so the role can be voted again")]
   static partial void LogBridgeSessionEnded(ILogger logger, string role, int backendPid, Guid instanceId);
+
+  [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
+    Message = "PgRoleElector: role '{Role}' holds its legacy session lock (the bridge) on a connection that resolves through a pooled key; "
+      + "a transaction-pooling pooler does not keep a session lock on one backend. Configure the '-direct' connection")]
+  static partial void LogBridgePooledWarning(ILogger logger, string role);
 }

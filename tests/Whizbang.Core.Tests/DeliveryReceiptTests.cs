@@ -198,7 +198,7 @@ public class DeliveryReceiptTests {
     var receipt = DeliveryReceipt.Accepted(messageId, destination, streamId: streamId);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
   }
@@ -214,7 +214,7 @@ public class DeliveryReceiptTests {
     var receipt = DeliveryReceipt.Queued(messageId, destination, streamId: streamId);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Queued);
   }
@@ -230,7 +230,7 @@ public class DeliveryReceiptTests {
     var receipt = DeliveryReceipt.Delivered(messageId, destination, streamId: streamId);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
@@ -247,7 +247,7 @@ public class DeliveryReceiptTests {
     var receipt = DeliveryReceipt.Failed(messageId, destination, exception: exception, streamId: streamId);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Failed);
   }
@@ -287,7 +287,7 @@ public class DeliveryReceiptTests {
     );
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
   }
 
@@ -302,7 +302,7 @@ public class DeliveryReceiptTests {
     var receipt = DeliveryReceipt.Delivered(messageId, destination, streamId: streamId);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
   }
 }

@@ -387,7 +387,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _buildJsonEnvelope(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse("{\"Data\":\"coverage-test\"}").RootElement;
+    var payload = JsonElement.Parse("{\"Data\":\"coverage-test\"}");
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -402,7 +402,7 @@ public class ServiceBusConsumerWorkerCoverageTests {
             ProcessId = 4242
           },
           Metadata = new Dictionary<string, JsonElement> {
-            ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
+            ["AggregateId"] = JsonElement.Parse($"\"{streamId}\"")
           }
         }
       ],

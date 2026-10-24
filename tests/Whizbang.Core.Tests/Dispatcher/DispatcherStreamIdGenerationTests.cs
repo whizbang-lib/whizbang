@@ -191,7 +191,7 @@ public class DispatcherStreamIdGenerationTests {
     var receipt = await dispatcher.SendAsync(command);
 
     // Assert - The hop metadata should contain the generated StreamId
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsNotEqualTo(Guid.Empty);
     // The StreamId in the receipt should match the one that was generated on the command
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(command.StreamId);
@@ -294,7 +294,7 @@ public class DispatcherStreamIdGenerationTests {
 
     // Assert - StreamId should be auto-generated
     await Assert.That(@event.StreamId).IsNotEqualTo(Guid.Empty);
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(@event.StreamId);
   }
 
@@ -312,7 +312,7 @@ public class DispatcherStreamIdGenerationTests {
     var receipt = await dispatcher.SendAsync(command);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsNotEqualTo(Guid.Empty);
     await Assert.That(command.StreamId).IsNotEqualTo(Guid.Empty);
   }
@@ -387,7 +387,7 @@ public class DispatcherStreamIdGenerationTests {
     var receipt = await dispatcher.SendAsync(command);
 
     // Assert - Receipt should contain the generated StreamId
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsNotEqualTo(Guid.Empty);
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(command.StreamId);
   }

@@ -328,7 +328,7 @@ public class BodyOffloadCipherTests {
   private static MessageEnvelope<JsonElement> _originalEnvelope() => new() {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+    Payload = JsonElement.Parse("{\"x\":1}"),
     Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
   };
 

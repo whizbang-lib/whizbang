@@ -76,7 +76,7 @@ public class MultiStreamCommandEndToEndTests : EFCoreTestBase {
       new MultiStreamRunCompletion(run, Whizbang.Core.TypeNameFormatter.Format(typeof(EndToEndCommand)), 40, 40, 0));
     var status = await _store().ReadRunAsync(run, CancellationToken.None);
     await Assert.That(status!.Pending).IsEqualTo(0);
-    await Assert.That(status.CompletedAt).IsNotNull();
+    await Assert.That(status.CompletedAt.HasValue).IsTrue();
   }
 
   public sealed record EndToEndCommand(Guid RunId, IReadOnlyList<Guid> StreamIds, string Purpose) : IMultiStreamCommand;

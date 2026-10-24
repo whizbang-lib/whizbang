@@ -114,7 +114,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
@@ -129,7 +129,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
@@ -149,7 +149,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert - Should fall back to [StreamId]
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
@@ -190,7 +190,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(command, command.GetType());
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
@@ -242,7 +242,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(message, message.GetType());
 
     // Assert - Should use [StreamId] since not an IEvent with [StreamId]
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
@@ -259,7 +259,7 @@ public class StreamIdExtractorTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert - Should still work via [StreamId]
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 

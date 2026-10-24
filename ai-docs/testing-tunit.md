@@ -287,6 +287,35 @@ await Assert.That(value).IsLessThan(100);
 await Assert.That(value).IsBetween(10, 100);
 ```
 
+### IsNotNull on a nullable value type (WHZ0004)
+
+In the TUnit this repository pins (1.12.125), `IsNotNull()` on a `Nullable<T>` subject (`int?`,
+`TimeSpan?`, `DateTimeOffset?`, `Guid?`) **passes when the value is null**. The overload maps the
+subject through `.Value`; on null that throws, the mapping records the exception with a default `T`,
+and the null check reads only the default, which is never null. Every such assertion verified nothing.
+
+The build rejects it: `Whizbang.TestAnalyzers` (loaded by every test project through
+`tests/Directory.Build.props` and `samples/Directory.Build.props`) reports **WHZ0004** as an error on
+the call. Assert something a null subject fails instead:
+
+```csharp
+// ❌ Passes on null: verifies nothing (WHZ0004)
+await Assert.That(sample.OldestAge).IsNotNull();
+
+// ✅ Fails on null
+await Assert.That(sample.OldestAge.HasValue).IsTrue();
+// ✅ Better, when the value is known: fails on null and on a wrong value
+await Assert.That(sample.OldestAge).IsEqualTo(TimeSpan.FromMinutes(5));
+```
+
+When the test goes on to use the value, assert `HasValue` and then read `.Value`. A chained form such as
+`IsNotNull().And.IsEqualTo(x)` is rejected too: drop the `IsNotNull()` and assert the value on the
+nullable directly.
+
+TUnit 1.13.8 fixed the check upstream. `PinnedTUnitNullableLimitationTests` in
+`Whizbang.TestAnalyzers.Tests` pins the limitation (see "Pinning a limitation that justified a
+decision" above) and fails the day TUnit is moved past it, at which point the rule can be retired or kept.
+
 ### ❌ WRONG - Other framework assertions
 
 ```csharp

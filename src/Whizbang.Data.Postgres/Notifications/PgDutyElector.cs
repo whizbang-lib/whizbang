@@ -114,7 +114,7 @@ public sealed partial class PgDutyElector(
         $"no notification connection is available to contend for duty '{duty}'; "
         + "configure Whizbang:Database (ConnectionStringKey / DirectConnectionString)");
     }
-    if (!plan.UsesDataSource && resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
+    if (plan.ResolvesThroughPooledKey) {
       // Session locks do not survive transaction pooling; the duty would silently un-hold itself.
       LogPooledFallbackWarning(_logger, duty);
     }
@@ -143,11 +143,7 @@ public sealed partial class PgDutyElector(
         record.Parameters.AddWithValue(nameof(duty), duty);
         var recorded = await record.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (recorded is not true) {
-          await using (var unlock = connection.CreateCommand()) {
-            unlock.CommandText = "SELECT pg_advisory_unlock(@key)";
-            unlock.Parameters.AddWithValue("key", key);
-            await unlock.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-          }
+          _ = await AdvisoryLockRelease.ReleaseAsync(connection, key, $"duty '{duty}' lock", _logger, cancellationToken).ConfigureAwait(false);
           await connection.DisposeAsync().ConfigureAwait(false);
           LogRefused(_logger, duty, _instanceProvider.InstanceId);
           return DutyAttempt.Lost(DutyRefusal.Refused,
@@ -206,10 +202,7 @@ public sealed partial class PgDutyElector(
             release.Parameters.AddWithValue("duty", Duty);
             await release.ExecuteNonQueryAsync().ConfigureAwait(false);
           }
-          await using var unlock = connection.CreateCommand();
-          unlock.CommandText = "SELECT pg_advisory_unlock(@key)";
-          unlock.Parameters.AddWithValue("key", key);
-          await unlock.ExecuteNonQueryAsync().ConfigureAwait(false);
+          _ = await AdvisoryLockRelease.ReleaseAsync(connection, key, $"duty '{Duty}' lock", logger, CancellationToken.None).ConfigureAwait(false);
         }
 #pragma warning disable CA1031, RCS1075 // best-effort clean release: a dead session already
         // released the lock server-side, and the recorded holding reaps with the instance row —

@@ -4444,7 +4444,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Deserializes an orphaned event row from the event store into a MessageEnvelope with JsonElement payload.
-  /// Falls back to JsonDocument.Parse when the type resolver returns incompatible type info.
+  /// Falls back to JsonElement.Parse when the type resolver returns incompatible type info.
   /// </summary>
   /// <docs>fundamentals/events/event-store-serialization</docs>
   private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
@@ -4459,11 +4459,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (NotSupportedException) {
       // Fallback: deserializing an interface/abstract type is not supported.
       // The chained type resolver may return polymorphic IEvent type info.
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
       // Fallback: the type resolver returned a JsonTypeInfo for a different type
       // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     }
 
     // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.

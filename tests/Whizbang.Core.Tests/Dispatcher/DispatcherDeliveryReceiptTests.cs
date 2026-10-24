@@ -96,7 +96,7 @@ public class DispatcherDeliveryReceiptTests {
 
     // Assert - After Dispatcher is updated to use IStreamIdExtractor,
     // this should return the StreamId from [StreamId]
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
@@ -128,7 +128,7 @@ public class DispatcherDeliveryReceiptTests {
 
     // Assert - StreamId should be extracted by the generated extractor
     // Note: AddWhizbangDispatcher() automatically registers the generated IStreamIdExtractor
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
   }
 
@@ -149,7 +149,7 @@ public class DispatcherDeliveryReceiptTests {
     var receipt = await dispatcher.PublishAsync(@event);
 
     // Assert - StreamId should be extracted from [StreamId] attribute
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
@@ -166,7 +166,7 @@ public class DispatcherDeliveryReceiptTests {
     var receipt = await dispatcher.PublishAsync(@event);
 
     // Assert
-    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId.HasValue).IsTrue();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(expectedId);
   }
 
@@ -200,7 +200,7 @@ public class DispatcherDeliveryReceiptTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(orderId);
   }
 
@@ -215,7 +215,7 @@ public class DispatcherDeliveryReceiptTests {
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
