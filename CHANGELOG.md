@@ -590,6 +590,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IDeadLetterRecoveryService` gains `ReadRedeliveryAsync` (a default implementation returns `null`, which falls back to
   `RecoverAsync`). Recovered inbox and broker messages now take the priority a delivery takes rather than background.
   Events already lost this way are not restored by this change; see the issue for the repair.
+- **A received collective event no longer fires its post-perspective lifecycle stages twice (#1676).** In a service
+  that runs the collective sink, a collective event received from another service ran through `PostAllPerspectives`
+  and `PostLifecycle` as soon as it was received, because no per-stream perspective lists a collective event type,
+  and again when the sink's set-based apply completed, so a hook at either stage (for example a
+  `PostAllPerspectivesDetached` notification hook) ran twice for every such event. The inbox and Service Bus
+  receive paths now leave those stages to the sink, which fires each of them once per event however many
+  collective handlers apply it and however many batches the run spans. A service without the collective sink
+  registered still fires them on receipt, as before.
 - **A schema pass continued part way through no longer records the files it already applied as skipped (#1687).**
   When a retry, or a second instance that took the schema lock between two of the first one's steps, continued a pass
   of the same build, its plan recorded `status 3`, `Skipped (hash unchanged)`, over every migration file and

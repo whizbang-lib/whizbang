@@ -535,9 +535,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         LogDiagPostInboxReturned(_logger, work.MessageId);
       }
 
-      // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
-      // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
-      if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+      // For events nothing in this service applies later, fire PostAllPerspectives + PostLifecycle here
+      // (PerspectiveWorker fires them for events WITH perspectives after processing completes, and the
+      // collective sink for a collective event once its apply commits, #1676).
+      if (!stateOnly && ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, typedEnvelope?.Payload, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
@@ -1176,16 +1177,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
-  }
-
-  private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      return true;
-    }
-    var normalized = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-    return !registry.GetRegisteredPerspectives().Any(perspective => perspective.EventTypes
-      .Any(eventType => string.Equals(normalized, EventTypeMatchingHelper.NormalizeTypeName(eventType), StringComparison.Ordinal)));
   }
 
   // ============================================================
