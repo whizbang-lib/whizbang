@@ -228,6 +228,9 @@ public static class WorkerPipelineExtensions {
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
+    // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
+      new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
       new Whizbang.Core.Startup.TableRewriteStartupStep(
         sp.GetRequiredService<IServiceScopeFactory>(),

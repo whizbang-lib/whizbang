@@ -1569,6 +1569,7 @@ public interface IWorkCoordinator {
   /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
   /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
   /// </summary>
+  /// <remarks>The <see cref="Whizbang.Core.Workers.VacuumFullTableRewriter"/> strategy's rewrite.</remarks>
   Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 

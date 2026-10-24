@@ -14,8 +14,9 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>
 /// The <c>Rewrite</c> step: performs the table rewrites migrations and the runtime bloat detector
-/// have recorded — the blocking, space-reclaiming <c>VACUUM FULL</c> that cannot run inside a
-/// migration transaction. Post-ready and fleet-exclusive by declaration: it requires the
+/// have recorded, through the <see cref="ITableRewriter"/> of the selected strategy. The framework's
+/// strategy is <see cref="VacuumFullTableRewriter"/>: the blocking, space-reclaiming <c>VACUUM FULL</c>
+/// that cannot run inside a migration transaction. Post-ready and fleet-exclusive by declaration: it requires the
 /// <see cref="StartupDuties.MAINTAINER"/> duty (one instance rewrites), non-holders
 /// <see cref="NonHolderBehavior.Skip"/> (nobody blocks on a <c>VACUUM FULL</c> — the entire
 /// reason it is non-blocking and deliberately unbounded, because a half-finished rewrite is
@@ -24,29 +25,40 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// Previously this work ran on the <em>runtime</em> maintenance cadence, taking an ACCESS
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
-/// The maintenance cycle now only detects and records. Execution stays behind the same operator
-/// permission (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>) — the framework cannot
-/// know how large a consumer's table is, and taking that lock unattended must be opted into.
+/// The maintenance cycle now only detects and records. A rewriter that cannot run is not called, and
+/// its reason is the step's: <c>VACUUM FULL</c> stays behind the operator permission
+/// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
+/// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
 /// ineffective rewrite stays queued for the next boot instead of being silently forgotten.
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
+/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepCoverageTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ITableRewriter[] _rewriters;
+  private readonly string _strategy;
   private readonly ILogger<TableRewriteStartupStep> _logger;
 
   /// <summary>Creates the step over the scope factory the coordinator resolves from.</summary>
+  /// <param name="scopeFactory">The scope factory the work coordinator is resolved from.</param>
+  /// <param name="rewriters">The registered rewriters; the one whose <see cref="ITableRewriter.Strategy"/> is <paramref name="strategy"/> runs.</param>
+  /// <param name="strategy">The selected strategy name, for example <see cref="TableRewriteStrategies.VACUUM_FULL"/>.</param>
+  /// <param name="logger">The step's logger.</param>
   public TableRewriteStartupStep(
       IServiceScopeFactory scopeFactory,
       IEnumerable<ITableRewriter> rewriters,
       string strategy,
       ILogger<TableRewriteStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
-    _ = rewriters;
-    _ = strategy;
+    ArgumentNullException.ThrowIfNull(rewriters);
+    ArgumentException.ThrowIfNullOrWhiteSpace(strategy);
     _scopeFactory = scopeFactory;
+    _rewriters = [.. rewriters];
+    _strategy = strategy;
     _logger = logger;
   }
 
@@ -61,6 +73,15 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+    var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, _strategy, StringComparison.Ordinal));
+    if (rewriter is null) {
+      return new StartupStepReport(StartupStepOutcome.Skipped,
+        $"no table rewriter registered for strategy '{_strategy}'");
+    }
+    if (!rewriter.CanRun) {
+      return new StartupStepReport(StartupStepOutcome.Skipped, rewriter.CannotRunReason);
+    }
+
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
@@ -78,7 +99,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     var leftQueued = 0;
     foreach (var candidate in candidates) {
       cancellationToken.ThrowIfCancellationRequested();
-      var after = await coordinator.RewriteTableAsync(candidate.TableName, cancellationToken).ConfigureAwait(false);
+      var after = await rewriter.RewriteAsync(coordinator, candidate.TableName, cancellationToken).ConfigureAwait(false);
       if (after is null || after >= candidate.BloatRatio) {
         // No improvement — leave the request in place so the next boot retries, and say so,
         // rather than clearing it and reporting success we did not achieve.
