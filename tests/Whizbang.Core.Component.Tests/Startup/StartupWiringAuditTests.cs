@@ -40,6 +40,15 @@ public class StartupWiringAuditTests {
     }
   }
 
+  private sealed class HostLifetime : IHostApplicationLifetime {
+    public CancellationToken ApplicationStarted => CancellationToken.None;
+    public CancellationToken ApplicationStopping => CancellationToken.None;
+    public CancellationToken ApplicationStopped => CancellationToken.None;
+    public void StopApplication() {
+      // never asked to stop here: nothing in this test reaches a stand-down
+    }
+  }
+
   private sealed class ServeAssessor : IStartupAssessor {
     public Task<StartupAssessment> AssessAsync(CancellationToken cancellationToken)
       => Task.FromResult(new StartupAssessment(StartupVerdict.Serve, "audit: assessor was consulted"));
@@ -206,6 +215,40 @@ public class StartupWiringAuditTests {
 
     await Assert.That(participants.Any(p => p is InstanceStateRunControl)).IsTrue()
       .Because("the standby handshake turns on lifecycle states a peer can actually see");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task TheReadyServiceAndTheStandbyWatcher_RunOnTheHostsRegisteredClockAsync(CancellationToken cancellationToken) {
+    // Both are built by factories in the worker pipeline. A factory that dropped the clock, or took
+    // the system clock instead of the registered one, would put the service on real time with
+    // nothing to show for it: each arms its first timer on the host's clock, or the test hangs.
+    var clock = new ProbeClock();
+    var services = _collection(s => {
+      s.AddSingleton<TimeProvider>(clock);
+      s.AddSingleton<IHostApplicationLifetime, HostLifetime>();   // the host's own; a bare collection has none
+    });
+    await using var sp = services.BuildServiceProvider();
+    sp.GetRequiredService<ISchemaReadyGate>().MarkReady();
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var ready = sp.GetRequiredService<StartupReadyService>();
+    var started = ready.StartedAsync(cts.Token);   // no run has started, so it waits and probes
+    var readyProbe = await clock.NextArmedAsync(cancellationToken);
+    await Assert.That(readyProbe).IsGreaterThan(ProbeClock.Origin)
+      .Because("the ready service's narration probe is armed on the registered clock");
+    await cts.CancelAsync();
+    await started;
+
+    var watcher = (StandbyWatcher)services
+      .Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(StandbyWatcher))
+      .ImplementationFactory!(sp);
+    await watcher.StartAsync(cancellationToken);
+    var poll = await clock.NextArmedAsync(cancellationToken);
+    await Assert.That(poll).IsEqualTo(ProbeClock.Origin + sp.GetRequiredService<StandbyWatcherOptions>().PollInterval)
+      .Because("the watcher's poll is armed on the registered clock, at its configured interval");
+    await watcher.StopAsync(CancellationToken.None);
+    watcher.Dispose();
   }
 
   [Test]

@@ -193,21 +193,24 @@ public class StartupReadyCompositeTests {
   }
 
   [Test]
-  public async Task ReadyService_SignalsOnlyAfterTheStateAndEveryContributorAsync() {
+  [Timeout(30000)]
+  public async Task ReadyService_SignalsOnlyAfterTheStateAndEveryContributorAsync(CancellationToken cancellationToken) {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var subscriptions = new TcsContributor("subscriptions");
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [subscriptions], logger: NullLogger<StartupReadyService>.Instance);
+    var clock = new ProbeClock();
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [subscriptions], logger: NullLogger<StartupReadyService>.Instance, timeProvider: clock);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    var started = service.StartedAsync(cts.Token);
+    var started = service.StartedAsync(cancellationToken);
 
-    await Task.Delay(100);
+    // Each wait arms its first narration probe as it begins, and the clock never moves, so an armed
+    // probe says exactly which wait the service is parked in.
+    _ = await clock.NextArmedAsync(cancellationToken);   // parked on the pipeline
     await Assert.That(signal.IsReady).IsFalse()
       .Because("neither the blocking steps nor the contributor have answered yet");
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
-    await Task.Delay(100);
+    _ = await clock.NextArmedAsync(cancellationToken);   // past the pipeline, parked on the contributor
     await Assert.That(signal.IsReady).IsFalse()
       .Because("the pipeline drained but the transport has not subscribed — Ready is a composite, "
              + "not the pipeline alone");
@@ -224,14 +227,13 @@ public class StartupReadyCompositeTests {
     // composite of the drained pipeline and the contributors, and neither is known before then.
     // The other five phases are deliberately no-ops, and they must stay that way: doing work in
     // StartingAsync would signal ready before the pipeline had run at all.
-    var service = new StartupReadyService(pipelineState: new StartupPipelineState(), signal: new StartupReadySignal(), contributors: [], logger: NullLogger<StartupReadyService>.Instance);
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var service = new StartupReadyService(pipelineState: new StartupPipelineState(), signal: new StartupReadySignal(), contributors: [], logger: NullLogger<StartupReadyService>.Instance, timeProvider: new ProbeClock());
 
-    await service.StartingAsync(cts.Token);
-    await service.StartAsync(cts.Token);
-    await service.StoppingAsync(cts.Token);
-    await service.StopAsync(cts.Token);
-    await service.StoppedAsync(cts.Token);
+    await service.StartingAsync(CancellationToken.None);
+    await service.StartAsync(CancellationToken.None);
+    await service.StoppingAsync(CancellationToken.None);
+    await service.StopAsync(CancellationToken.None);
+    await service.StoppedAsync(CancellationToken.None);
 
     await Assert.That(new StartupReadySignal().IsReady).IsFalse()
       .Because("none of these phases may mark readiness — signalling before the pipeline has run "
@@ -239,23 +241,28 @@ public class StartupReadyCompositeTests {
   }
 
   [Test]
-  public async Task ReadyService_NarratesWhichBlockingStepIsHoldingItUpAsync() {
+  [Timeout(30000)]
+  public async Task ReadyService_NarratesWhichBlockingStepIsHoldingItUpAsync(CancellationToken cancellationToken) {
     // While waiting, the service logs what it is waiting ON. A wait that says only "still waiting"
     // leaves an operator to guess which step stalled a deploy, which is the question they have.
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
+    var logger = new ReadyServiceLog();
+    var clock = new ProbeClock();
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: logger, timeProvider: clock);
 
     // A plan whose blocking step never completes: the description must name it rather than
     // reporting the generic "the startup pipeline".
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-    try {
-      await service.StartedAsync(cts.Token);
-    } catch (OperationCanceledException) {
-      // Expected: the blocking step never completes, so readiness never arrives.
-    }
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var started = service.StartedAsync(cts.Token);
+    await clock.DriveUntilAsync(logger.Logged("Migrate (Pending)"), cancellationToken);
+    // The first narration is at the third probe, and the clock moved only as far as this test moved it.
+    await Assert.That(logger.First("Migrate (Pending)")).Contains($"after {(service.WaitProbeInterval * 3).TotalSeconds:F0}s")
+      .Because("the probes and the elapsed time both run on the injected clock, never on real time");
+    await cts.CancelAsync();
+    await started;   // a canceled wait returns quietly; it never signals
 
     await Assert.That(signal.IsReady).IsFalse()
       .Because("an incomplete blocking step must hold readiness — signalling anyway is how a host "
@@ -266,11 +273,10 @@ public class StartupReadyCompositeTests {
   public async Task ReadyService_WithNoContributors_SignalsOnBlockingDrainAloneAsync() {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance, timeProvider: new ProbeClock());
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    await service.StartedAsync(cts.Token);
+    await service.StartedAsync(CancellationToken.None);
 
     await Assert.That(signal.IsReady).IsTrue();
   }
@@ -368,27 +374,6 @@ public class StartupReadyCompositeTests {
     }
   }
 
-  private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {
-    private readonly List<string> _entries = [];
-    private readonly Lock _lock = new();
-    public IReadOnlyList<string> Entries {
-      get {
-        lock (_lock) {
-          return [.. _entries];
-        }
-      }
-    }
-    IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
-    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
-    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
-        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      lock (_lock) {
-        _entries.Add(formatter(state, exception));
-      }
-    }
-  }
-
   /// <summary>
   /// Issue #493: a fail-closed wait must never be a SILENT wait. While the composite is blocked
   /// on a contributor, it says so — naming the contributor — on a backoff.
@@ -399,16 +384,15 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     await new StartupPipelineRunner(steps: [], observers: [state], dutyElector: NullDutyElector.Instance).RunAsync(cancellationToken);   // pipeline drained
     var slow = new TcsContributor("slow-transport");
-    var logger = new CapturingLogger();
-    var service = new StartupReadyService(state, new StartupReadySignal(), [slow], logger) {
-      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
-    };
+    var logger = new ReadyServiceLog();
+    var clock = new ProbeClock();
+    var service = new StartupReadyService(state, new StartupReadySignal(), [slow], logger, clock);
 
     var started = service.StartedAsync(cancellationToken);
-    while (!logger.Entries.Any(e => e.Contains("slow-transport"))) {
-      cancellationToken.ThrowIfCancellationRequested();
-      await Task.Delay(15, cancellationToken);
-    }
+    await clock.DriveUntilAsync(logger.Logged("slow-transport"), cancellationToken);
+    // The first narration is at the third probe, and the clock moved only as far as this test moved it.
+    await Assert.That(logger.First("slow-transport")).Contains($"after {(service.WaitProbeInterval * 3).TotalSeconds:F0}s")
+      .Because("the probes and the elapsed time both run on the injected clock, never on real time");
 
     await Assert.That(logger.Entries.Any(e =>
         e.Contains("not ready") && e.Contains("slow-transport"))).IsTrue()
@@ -416,7 +400,7 @@ public class StartupReadyCompositeTests {
              + "the wait must name what it is waiting on");
 
     slow.MarkReady();
-    await started.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+    await started.WaitAsync(cancellationToken);
   }
 
   /// <summary>The other silent shape: the pipeline never even started (a host without the
@@ -424,17 +408,16 @@ public class StartupReadyCompositeTests {
   [Test]
   [Timeout(30000)]
   public async Task StartedAsync_WhenThePipelineNeverStarted_SaysSoAsync(CancellationToken cancellationToken) {
-    var logger = new CapturingLogger();
-    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal(), [], logger) {
-      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
-    };
+    var logger = new ReadyServiceLog();
+    var clock = new ProbeClock();
+    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal(), [], logger, clock);
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
     var started = service.StartedAsync(cts.Token);
-    while (!logger.Entries.Any(e => e.Contains("no run has started"))) {
-      cancellationToken.ThrowIfCancellationRequested();
-      await Task.Delay(15, cancellationToken);
-    }
+    await clock.DriveUntilAsync(logger.Logged("no run has started"), cancellationToken);
+    // The first narration is at the third probe, and the clock moved only as far as this test moved it.
+    await Assert.That(logger.First("no run has started")).Contains($"after {(service.WaitProbeInterval * 3).TotalSeconds:F0}s")
+      .Because("the probes and the elapsed time both run on the injected clock, never on real time");
     await cts.CancelAsync();
     try { await started; } catch (OperationCanceledException) { /* fail-closed, as designed */ }
 
@@ -459,13 +442,13 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     // Never drained: the wait is still pending when cancellation arrives.
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [], logger: NullLogger<StartupReadyService>.Instance, timeProvider: new ProbeClock());
 
     using var cts = new CancellationTokenSource();
     var started = service.StartedAsync(cts.Token);
     await cts.CancelAsync();
 
-    await started.WaitAsync(TimeSpan.FromSeconds(10));
+    await started;
 
     await Assert.That(started.IsCompletedSuccessfully).IsTrue()
       .Because("cancellation during startup is a graceful stop — rethrowing it crashes the host "
@@ -480,7 +463,7 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var stuck = new TcsContributor("subscriptions");
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [stuck], logger: NullLogger<StartupReadyService>.Instance);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [stuck], logger: NullLogger<StartupReadyService>.Instance, timeProvider: new ProbeClock());
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
 
@@ -488,7 +471,7 @@ public class StartupReadyCompositeTests {
     var started = service.StartedAsync(cts.Token);
     await cts.CancelAsync();
 
-    await started.WaitAsync(TimeSpan.FromSeconds(10));
+    await started;
 
     await Assert.That(started.IsCompletedSuccessfully).IsTrue()
       .Because("the contributor leg must fail closed and quiet, exactly like the pipeline leg");
@@ -501,12 +484,11 @@ public class StartupReadyCompositeTests {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var faulting = new FaultingContributor("broken");
-    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [faulting], logger: NullLogger<StartupReadyService>.Instance);
+    var service = new StartupReadyService(pipelineState: state, signal: signal, contributors: [faulting], logger: NullLogger<StartupReadyService>.Instance, timeProvider: new ProbeClock());
 
     await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    await Assert.ThrowsAsync<InvalidOperationException>(async () => await service.StartedAsync(cts.Token))
+    await Assert.ThrowsAsync<InvalidOperationException>(async () => await service.StartedAsync(CancellationToken.None))
       .Because("a broken contributor is a real failure — swallowing it would hide a fail-closed host");
     await Assert.That(signal.IsReady).IsFalse();
   }
