@@ -265,6 +265,8 @@ Each step lowers one pinned count and changes the pin in the same pull request.
 | 7 | Redelivery and offload paths insert on parse | redelivery and offload pins | 1 per event, then inbound | unchanged at origin; consumer hits |
 | 8 | Facts consumers: processed-event caches read facts from the record | existing dedup tests | | |
 
+Step 2 decided 2026-10-24 (#1712, option 2): a second drain session skips rows already in the cooldown cache before parsing them, and claim and lease behavior is unchanged. Tracked in #1759.
+
 `EnvelopeRegistry` stays as is: it maps live objects to envelopes during a local dispatch and never
 parses.
 
