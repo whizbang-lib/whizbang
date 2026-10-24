@@ -1020,6 +1020,8 @@ public static class WorkerPipelineExtensions {
     // Both batchers flush while the host stops, after every hosted service and before the container is disposed:
     // flushed only at disposal, their last batch ran against a service provider that was already gone (#1333).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
+    // The detached lifecycle stages the outbox flush starts; the shutdown flush waits for them before the container goes.
+    services.TryAddSingleton<DetachedLifecycleWork>();
 
     return services;
   }
@@ -1088,6 +1090,7 @@ public static class WorkerPipelineExtensions {
     var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
+    var detachedWork = sp.GetService<DetachedLifecycleWork>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1110,7 +1113,8 @@ public static class WorkerPipelineExtensions {
         LifecycleMessageDeserializer: lifecycleDeserializer,
         Logger: lifecycleLogger,
         EnableLifecycleTracing: enableLifecycleTracing,
-        Metrics: lifecycleMetrics);
+        Metrics: lifecycleMetrics,
+        DetachedWork: detachedWork);
 
       try {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

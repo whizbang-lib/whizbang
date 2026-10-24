@@ -51,10 +51,11 @@ public class PoisonMessageDetectorTests {
   #region Layer 1 — age at the receive boundary
 
   [Test]
-  public async Task Evaluate_AgedMessage_QuarantinesOnAgeAsync() {
-    // The hostage case: the broker's delivery count is stuck at 1 (session lock loss never
-    // increments it) and no durable observation has been recorded, so EVERY count-based layer
-    // is inert. Age is the only signal that survives redelivery — it must fire alone.
+  public async Task Evaluate_AgedMessage_IsAcceptedNotQuarantinedAsync() {
+    // Issue #1663: the receive gate accepts every message until it is stored. Age measures
+    // queueing, not failure, so an aged message (here a first delivery, count 1, nothing durable
+    // observed) proceeds to storage and is reported, not dead-lettered. A redelivery loop of a
+    // stored message is bounded after storage by layer 2's durable observations.
     var options = new PoisonMessageOptions { AgeThreshold = TimeSpan.FromMinutes(30) };
     var detector = _detector(options);
 
@@ -63,9 +64,9 @@ public class PoisonMessageDetectorTests {
       brokerDeliveryCount: 1,
       durableObservationCount: null));
 
-    await Assert.That(verdict.ShouldQuarantine).IsTrue()
-      .Because("age is the only bound that survives a session lock-loss storm");
-    await Assert.That(verdict.Reason).IsEqualTo(PoisonQuarantineReason.MessageAgeExceeded);
+    await Assert.That(verdict.ShouldQuarantine).IsFalse()
+      .Because("the receive gate never quarantines on age; a backlog ages every message in it");
+    await Assert.That(verdict.Reason).IsEqualTo(PoisonQuarantineReason.AgedOnReceive);
     await Assert.That(verdict.Detail).IsNotNull();
   }
 

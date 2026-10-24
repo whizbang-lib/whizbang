@@ -311,8 +311,21 @@ public class CollectivePredicateIndexAnalyzerTests {
   [RequiresAssemblyFiles]
   [Arguments("true")]
   [Arguments("")]
+  [Arguments("   ")]
   public async Task AnyOtherValueOfTheBuildProperty_LeavesTheWarningOnAsync(string value) {
     var reported = await _whiz309Async(_source("r.Data.OverlayId == id"), new Dictionary<string, string> { [SWITCH] = value });
+
+    await Assert.That(reported).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// The package declares the property, so a project that never sets it hands the analyzer an empty value (#1660).
+  /// That is the default: the warning stays on.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task TheDeclaredButUnsetProperty_LeavesTheWarningOnAsync() {
+    var reported = await _whiz309Async(_source("r.Data.OverlayId == id"), MSBuildGlobalOptions.For());
 
     await Assert.That(reported).Count().IsEqualTo(1);
   }

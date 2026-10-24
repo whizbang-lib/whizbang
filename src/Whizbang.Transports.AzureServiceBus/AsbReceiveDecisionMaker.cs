@@ -54,7 +54,6 @@ internal class AsbReceiveDecisionMaker {
   /// adapted from the broker message by the caller.</param>
   [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
     Justification = "Each parameter is an independent optional receive-side policy seam; bundling them would obscure which are wired at each call site.")]
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision answers a received message with one of six actions, and reaching each means ruling out the ones before it: quarantine, a missing envelope-type property, a type name no context knows, a raw receptor that can take it anyway, a body that will not deserialize, and a payload no receptor here handles. The order is the policy, and the three deserialization catches are three different reasons the same message is undeliverable.")]
   public virtual AsbReceiveDecision Decide(
       IReadOnlyDictionary<string, object> applicationProperties,
       string bodyJson,
@@ -76,6 +75,7 @@ internal class AsbReceiveDecisionMaker {
     // Attributing it to POISON rather than to a downstream branch is what makes the DLQ reason
     // point at the real defect. Routed through the existing DeadLetter action — the transport
     // already maps that onto DeadLetterMessageAsync — never a parallel settlement path.
+    Whizbang.Core.Routing.PoisonVerdict? agedVerdict = null;
     if (poisonDetector is not null) {
       var verdict = poisonDetector.Evaluate(poisonContext);
       if (verdict.ShouldQuarantine) {
@@ -86,8 +86,35 @@ internal class AsbReceiveDecisionMaker {
           PoisonVerdict = verdict,
         };
       }
+      // Issue #1663: an aged message is ACCEPTED. It takes whatever action its payload earns, and the
+      // decision carries the verdict so the transport can report the backlog.
+      if (verdict.Reason == Whizbang.Core.Routing.PoisonQuarantineReason.AgedOnReceive) {
+        agedVerdict = verdict;
+      }
     }
 
+    var decision = _decidePayload(
+      applicationProperties, bodyJson, getTypeInfoByName, jsonOptions, isHandledLocally,
+      rawReceptorRegistry, typeBinder, absorbedNamespaces);
+    return agedVerdict is null ? decision : decision with { PoisonVerdict = agedVerdict };
+  }
+
+  /// <summary>
+  /// Everything <see cref="Decide"/> does after the poison gate: envelope-type resolution,
+  /// deserialization, the raw-receptor fallback and the no-local-consumer filter.
+  /// </summary>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "The same independent receive-side policy seams Decide takes, passed through unchanged.")]
+  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision answers a received message with one of five actions, and reaching each means ruling out the ones before it: a missing envelope-type property, a type name no context knows, a raw receptor that can take it anyway, a body that will not deserialize, and a payload no receptor here handles. The order is the policy, and the three deserialization catches are three different reasons the same message is undeliverable.")]
+  private static AsbReceiveDecision _decidePayload(
+      IReadOnlyDictionary<string, object> applicationProperties,
+      string bodyJson,
+      Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
+      JsonSerializerOptions jsonOptions,
+      Func<Type, bool>? isHandledLocally,
+      IRawReceptorRegistry? rawReceptorRegistry,
+      IMessageTypeBinder? typeBinder,
+      IReadOnlySet<string>? absorbedNamespaces) {
     if (!applicationProperties.TryGetValue(AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY, out var envelopeTypeObj)
         || envelopeTypeObj is not string envelopeTypeName
         || string.IsNullOrEmpty(envelopeTypeName)) {

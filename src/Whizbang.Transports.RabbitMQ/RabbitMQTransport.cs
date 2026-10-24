@@ -1015,6 +1015,12 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// durable observation counting. It never treats an absent stamp as an infinitely old message,
   /// and it never goes quietly inert — silence is precisely how the delivery-count valve failed.
   /// </para>
+  /// <para>
+  /// Since issue #1663 the default detector never quarantines on age: an aged message is accepted
+  /// and reported with <see cref="IPoisonMessageDetector.RecordAgedOnReceive"/>, and a redelivery
+  /// loop is bounded after storage by durable observations. A custom detector's quarantine verdict
+  /// is still executed here.
+  /// </para>
   /// </summary>
   /// <returns><c>true</c> when the message was quarantined and the caller must stop.</returns>
   internal async Task<bool> TryQuarantinePoisonAsync(
@@ -1048,6 +1054,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     var verdict = _poisonDetector.Evaluate(context);
     if (!verdict.ShouldQuarantine) {
+      // Issue #1663: an aged message is accepted, never quarantined on age; report it so a backlog
+      // stays visible. No-op for every other proceed verdict.
+      _poisonDetector.RecordAgedOnReceive(
+        PoisonQuarantineGate.Receive, verdict, context,
+        new Dictionary<string, object?> {
+          ["transport"] = RABBITMQ_TRANSPORT_TAG,
+          ["queue"] = queueName,
+        });
       return false;
     }
 

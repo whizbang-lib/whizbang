@@ -66,6 +66,12 @@
   <ItemGroup>
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
     <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/MSBuildGlobalOptions.cs" Link="Shared/MSBuildGlobalOptions.cs" />
+    <!-- MSBuildGlobalOptions reads the generator packages' build files from this assembly's resources. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Generators\build\*.props;..\..\src\Whizbang.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.props;..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Data.EFCore.Postgres.Generators/%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- #1378: the suppressor guard runs the real third-party rules a consumer's build runs. Directory.Build.props
        references both packages for every project; their analyzer assemblies are copied into the output so the

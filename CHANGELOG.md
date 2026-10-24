@@ -532,6 +532,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A stopping host no longer logs "Error invoking PostDistributeDetached lifecycle receptors ... Cannot access a
+  disposed object".** The outbox batcher's flush runs its detached lifecycle stages (`PreDistributeDetached`,
+  `DistributeDetached`, `PostDistributeDetached`) in the background, and nothing waited for them: one still running
+  when the host disposed its service provider failed for every message it had not reached yet, so those receptors
+  did not run and an error was logged at every shutdown that caught a flush in progress. The shutdown flush now
+  waits for them after flushing the batchers and before the provider is disposed, logging at Information how many
+  it is waiting for, within the host's shutdown timeout. `DistributeLifecycleContext` gains an optional
+  `DetachedWork` (`DetachedLifecycleWork`) that records the background invocations.
+- **A recovered broker or inbox dead letter reaches the event store, and reads Recovered only once processed
+  (#1664).** Recovery re-emitted an inbox or broker dead letter with inbox writes of its own that had drifted from a
+  delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into
+  the event store never took it, so the row was dispatched, completed and deleted with nothing appended, its id
+  recorded as seen, and its dead letter already marked Recovered. Recovery now builds the row with the transport
+  receive path's own builder and classification and stores it with `store_inbox_messages` (migration 236), so
+  `is_event`, the stream, flags, scope, priority and the producer's identity are a delivery's. A recovered row differs
+  only in that it claims its dead letter, is not dropped as a duplicate (its observation is still counted), and names
+  the dead letter on its work-state row (`InboxMessage.RecoveredFromDeadLetterId`). The dead letter stays Recovering
+  until the message completes: Recovered when processed, HoldForReview with the outcome in `operator_notes` when an
+  inbox gate completes it unprocessed, and HoldForReview under an operator hold, naming the new dead letter, when the
+  inbox dead-letters it again. `recover_dead_letter` now declines inbox and broker rows, and
+  `IDeadLetterRecoveryService` gains `ReadRedeliveryAsync` (a default implementation returns `null`, which falls back to
+  `RecoverAsync`). Recovered inbox and broker messages now take the priority a delivery takes rather than background.
+  Events already lost this way are not restored by this change; see the issue for the repair.
 - **A schema pass continued part way through no longer records the files it already applied as skipped (#1687).**
   When a retry, or a second instance that took the schema lock between two of the first one's steps, continued a pass
   of the same build, its plan recorded `status 3`, `Skipped (hash unchanged)`, over every migration file and
@@ -626,6 +649,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are stripped by default and tables keep the names they had on 0.2623 again. A project that sets the property to
   `false` still keeps the suffix, and a set value is trimmed before it is read. The suffix list and identifier
   length properties already ignored a blank value and behave as before.
+- **A backlog of aged messages is no longer dead-lettered on arrival (#1663).** The receive gate quarantined any
+  message first enqueued longer ago than the poison age threshold (by default 50 minutes, derived from lock renewal
+  times delivery attempts), even on its first delivery. A backlog that took longer than that to drain, such as
+  ordinary events queued behind a large backfill, was dead-lettered by every subscriber without ever being
+  attempted. Age measures queueing, not failure, so the receive gate now accepts every message until it is stored
+  and never quarantines on age: an aged message is reported on the `whizbang.message.aged_on_receive` counter
+  (tagged by gate, with the transport and entity) and a warning, and proceeds. A redelivery loop, including a
+  session lock-loss storm whose broker delivery count never moves, is bounded after storage: every redelivery of a
+  stored message raises its durable observation count before any handler runs, and the inbox gate quarantines it
+  once the count reaches `MaxDurableObservations` and processing has started. `PoisonQuarantineReason.AgedOnReceive`
+  and `IPoisonMessageDetector.RecordAgedOnReceive` are new (the latter has a no-op default, so custom detectors
+  are unaffected); `MessageAgeExceeded` is no longer produced by the default detector. The age threshold option is
+  unchanged and now only decides what is reported.
+- **A blank configuration value no longer changes runtime behavior (#1660 sweep).** A key that is present with an
+  empty or whitespace value (an appsettings placeholder, or an environment variable set to nothing) now behaves as
+  if it were absent in four places that used to act on it. A blank `Whizbang:ServiceName` no longer becomes the
+  service name. A blank `ConnectionStrings:db` (or its `-direct` and `-init` variants) no longer counts as
+  configured, so a service still on its legacy connection string name keeps using it. A blank `-init` connection
+  string no longer stops startup: schema initialization runs on the main connection, as it does when the key is
+  absent, and a blank main connection string is reported as not found. A blank `Whizbang:Scope` key no longer
+  replaces a GraphQL scope claim-type list with a name that never matches, which silently dropped the tenant, user,
+  roles or permissions from every request. It now leaves the default, or the value set in code.
 - **A received stream is stored in the producer's order when two claims carry it (#1607).** Two concurrent claims
   of a receiving service could lease one source stream's events at once: the later claim skipped the head the
   earlier one had locked, stored the rest first, and the head was then appended after them, so perspectives saw a

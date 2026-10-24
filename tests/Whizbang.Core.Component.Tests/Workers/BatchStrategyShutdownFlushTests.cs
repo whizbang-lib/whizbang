@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -9,8 +10,11 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
+using MessageId = Whizbang.Core.ValueObjects.MessageId;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -65,6 +69,110 @@ public class BatchStrategyShutdownFlushTests {
                                          && d.ImplementationType == typeof(BatchStrategyShutdownFlush));
     var provider = services.BuildServiceProvider();
     return (provider, (IHostedLifecycleService)ActivatorUtilities.CreateInstance(provider, registration.ImplementationType!));
+  }
+
+  /// <summary>Hands the payload back as it is: the receptors in these tests never look at it.</summary>
+  private sealed class PassThroughDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonElement.Parse(jsonBytes);
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
+  }
+
+  /// <summary>
+  /// A receptor at <see cref="LifecycleStage.PostDistributeDetached"/> that holds until released, so the detached work a
+  /// flush starts is still running when the host stops.
+  /// </summary>
+  private sealed class HeldDetachedReceptor : IReceptorInvoker {
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public void Release() => _release.TrySetResult();
+
+    public async ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      if (stage == LifecycleStage.PostDistributeDetached) {
+        Entered.TrySetResult();
+        await _release.Task.ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>Every log entry at Information or above, with a signal for the shutdown waiting on detached work.</summary>
+  private sealed class ShutdownLog : ILoggerProvider {
+    public ConcurrentQueue<string> Errors { get; } = new();
+    public TaskCompletionSource WaitingForDetachedWork { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ILogger CreateLogger(string categoryName) => new Logger(this);
+    public void Dispose() { }
+
+    private sealed class Logger(ShutdownLog log) : ILogger {
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+      public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+        var message = formatter(state, exception);
+        if (logLevel >= LogLevel.Error) {
+          log.Errors.Enqueue($"{message} {exception?.Message}");
+        } else if (message.Contains("detached lifecycle", StringComparison.OrdinalIgnoreCase)) {
+          log.WaitingForDetachedWork.TrySetResult();
+        }
+      }
+    }
+  }
+
+  private static OutboxMessage _outboxMessage() {
+    var messageId = MessageId.New();
+    return new OutboxMessage {
+      MessageId = messageId.Value,
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = messageId,
+        Payload = JsonElement.Parse("{}"),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      },
+      Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [] },
+      EnvelopeType = "MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+    };
+  }
+
+  /// <summary>
+  /// The outbox flush starts its <see cref="LifecycleStage.PostDistributeDetached"/> receptors in the background. A host
+  /// that disposed its container while they still ran logged them failing against a disposed service provider, so the
+  /// stop waits for them first.
+  /// </summary>
+  [Test]
+  public async Task DetachedLifecycleWorkStillRunning_IsWaitedFor_BeforeTheHostFinishesStoppingAsync() {
+    var log = new ShutdownLog();
+    var receptor = new HeldDetachedReceptor();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddLogging(logging => logging.AddProvider(log));
+    services.AddWhizbangWorkers();
+    services.AddWhizbangOutboxStrategy<ImmediateOutboxBatchStrategy>();
+    services.AddSingleton<IWorkCoordinator>(new NoOpWorkCoordinator());
+    services.AddSingleton<ISchemaReadyGate>(SchemaReadyGate.AlreadyReady());
+    services.AddSingleton<ILifecycleMessageDeserializer>(new PassThroughDeserializer());
+    services.AddSingleton<IReceptorInvoker>(receptor);
+    var registration = services.Single(d => d.ServiceType == typeof(IHostedService)
+                                         && d.ImplementationType == typeof(BatchStrategyShutdownFlush));
+    var provider = services.BuildServiceProvider();
+    var flush = (IHostedLifecycleService)ActivatorUtilities.CreateInstance(provider, registration.ImplementationType!);
+
+    // The immediate batcher flushes on append: the store is done and the detached stage is running when this returns.
+    await provider.GetRequiredService<IOutboxBatchStrategy>().AppendAsync(_outboxMessage());
+    await receptor.Entered.Task;
+
+    var stopped = flush.StoppedAsync(CancellationToken.None);
+    await Task.WhenAny(stopped, log.WaitingForDetachedWork.Task);
+
+    await Assert.That(stopped.IsCompleted).IsFalse()
+      .Because("the host disposes its container once the stop returns, and the detached receptors still need it");
+
+    receptor.Release();
+    await stopped;
+    await provider.DisposeAsync();
+
+    await Assert.That(log.Errors).IsEmpty()
+      .Because("detached lifecycle work finishes before the service provider it runs against is disposed");
   }
 
   [Test]

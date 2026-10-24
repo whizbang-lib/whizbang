@@ -66,6 +66,45 @@ public class HotChocolateOptionsConfigurationBindingTests {
     await Assert.That(options.ExtensionHeaderMappings["region"]).IsEqualTo("X-Region");
   }
 
+  /// <summary>
+  /// A key present with an empty value (an appsettings placeholder, or an environment variable set to nothing) is no
+  /// setting. It used to replace a claim-type list with one empty name that never matches, so a request lost its
+  /// tenant, user, roles or permissions with nothing logged; now every blank key leaves the default, or the code value,
+  /// in place.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task Scope_BlankKeys_LeaveTheDefaultsAndTheCodeValuesAsync(string blank) {
+    string[] keys = [
+      "TenantIdClaimType", "TenantIdHeaderName", "UserIdClaimType", "UserIdHeaderName", "OrganizationIdClaimType",
+      "CustomerIdClaimType", "CorrelationIdHeaderName", "RolesClaimType", "PermissionsClaimType",
+      "PermissionsAggregation", "GroupsClaimType", "GroupsAggregation", "PermissionsClaimTypes:0",
+      "ExtensionClaimMappings:region", "ExtensionHeaderMappings:region",
+    ];
+    var services = _services(keys.ToDictionary(key => "Whizbang:Scope:" + key, _ => (string?)blank));
+    services.AddWhizbangScope(code => code.TenantIdHeaderName = "X-Tenant");
+    await using var provider = services.BuildServiceProvider();
+    var defaults = new WhizbangScopeOptions();
+
+    var options = provider.GetRequiredService<WhizbangScopeOptions>();
+
+    await Assert.That(options.TenantIdClaimTypes).IsEquivalentTo(defaults.TenantIdClaimTypes);
+    await Assert.That(options.TenantIdHeaderName).IsEqualTo("X-Tenant");
+    await Assert.That(options.UserIdClaimTypes).IsEquivalentTo(defaults.UserIdClaimTypes);
+    await Assert.That(options.UserIdHeaderName).IsNull();
+    await Assert.That(options.OrganizationIdClaimTypes).IsEquivalentTo(defaults.OrganizationIdClaimTypes);
+    await Assert.That(options.CustomerIdClaimTypes).IsEquivalentTo(defaults.CustomerIdClaimTypes);
+    await Assert.That(options.CorrelationIdHeaderName).IsEqualTo(defaults.CorrelationIdHeaderName);
+    await Assert.That(options.RolesClaimType).IsEqualTo(defaults.RolesClaimType);
+    await Assert.That(options.PermissionsClaimTypes).IsEquivalentTo(defaults.PermissionsClaimTypes);
+    await Assert.That(options.PermissionsAggregation).IsEqualTo(defaults.PermissionsAggregation);
+    await Assert.That(options.GroupsClaimTypes).IsEquivalentTo(defaults.GroupsClaimTypes);
+    await Assert.That(options.GroupsAggregation).IsEqualTo(defaults.GroupsAggregation);
+    await Assert.That(options.ExtensionClaimMappings).IsEmpty();
+    await Assert.That(options.ExtensionHeaderMappings).IsEmpty();
+  }
+
   [Test]
   public async Task Scope_ClaimTypeLists_IndexedKeysAddToTheDefaultsAsync() {
     // The plural lists carry a default entry, and the binder adds indexed keys to it rather than

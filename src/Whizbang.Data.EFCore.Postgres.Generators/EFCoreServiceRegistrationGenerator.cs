@@ -2224,8 +2224,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("      var resolvedConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
       sb.AppendLine("          config, connectionStringKey, legacyConnectionStringKey,");
       sb.AppendLine("          sp.GetService<global::Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(\"Whizbang.ConnectionStrings\"));");
-      sb.AppendLine("      var connectionString = config.GetConnectionString(resolvedConnectionStringKey)");
-      sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
+      sb.AppendLine("      // A key present with a blank value is no connection string (#1660).");
+      sb.AppendLine("      var connectionString = config.GetConnectionString(resolvedConnectionStringKey) is { } configured && !string.IsNullOrWhiteSpace(configured)");
+      sb.AppendLine("          ? configured");
+      sb.AppendLine("          : throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
       sb.AppendLine();
       sb.AppendLine("      // Apply connection pool settings from configuration (ConnectionPool section)");
       sb.AppendLine("      var connStringBuilder = new NpgsqlConnectionStringBuilder(connectionString);");
@@ -2375,8 +2377,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("        var resolvedConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(");
     sb.AppendLine("            config, connectionStringKey, legacyConnectionStringKey,");
     sb.AppendLine("            sp.GetService<global::Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(\"Whizbang.ConnectionStrings\"));");
-    sb.AppendLine("        var connectionString = config.GetConnectionString(resolvedConnectionStringKey)");
-    sb.AppendLine("            ?? throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
+    sb.AppendLine("        // A key present with a blank value is no connection string (#1660).");
+    sb.AppendLine("        var connectionString = config.GetConnectionString(resolvedConnectionStringKey) is { } configured && !string.IsNullOrWhiteSpace(configured)");
+    sb.AppendLine("            ? configured");
+    sb.AppendLine("            : throw new InvalidOperationException($\"Connection string '{resolvedConnectionStringKey}' not found in configuration.\");");
     sb.AppendLine();
     sb.AppendLine("        // Apply connection pool settings from configuration (ConnectionPool section)");
     sb.AppendLine("        var connStringBuilder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);");
@@ -2459,7 +2463,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      // Convention: try \"{Name}-init\" connection string first (direct Postgres, bypasses PgBouncer)");
     sb.AppendLine("      var config = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();");
     sb.AppendLine($"      var initConnectionStringKey = global::Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(config, \"{defaultConnectionStringKey}\", {_legacyLiteral(dbContext)}, logger);");
-    sb.AppendLine("      var initConnStr = config?.GetConnectionString(initConnectionStringKey + \"-init\");");
+    sb.AppendLine("      // A blank -init key is no -init connection: SchemaInitConnection reads it as none (#1660).");
+    sb.AppendLine("      var initConnStr = new global::Whizbang.Data.EFCore.Postgres.SchemaInitConnection(config?.GetConnectionString(initConnectionStringKey + \"-init\")).ConnectionString;");
     sb.AppendLine("      // Schema initialization's own timeout key (Whizbang:Postgres:<name>-init:CommandTimeoutSeconds), with or without an -init string.");
     sb.AppendLine("      var initCommandTimeoutSeconds = global::Whizbang.Data.Postgres.PostgresCommandTimeouts.Configured(config, initConnectionStringKey + \"-init\");");
     sb.AppendLine();

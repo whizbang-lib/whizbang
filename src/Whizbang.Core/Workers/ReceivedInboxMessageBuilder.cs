@@ -55,6 +55,58 @@ internal static class ReceivedInboxMessageBuilder {
   }
 
   /// <summary>
+  /// Whether a received message is an event the inbox copies into the event store: the service's event catalog
+  /// decides by the message type name, and only a host with no catalog falls back to the payload's own marker. The
+  /// one classification both consumer workers and dead-letter recovery use, so a recovered message is classified
+  /// exactly as its delivery was (#1664).
+  /// </summary>
+  /// <param name="scope">The scope the catalog is resolved from.</param>
+  /// <param name="messageTypeName">The payload type name.</param>
+  /// <param name="payload">The payload; only consulted when no catalog is registered.</param>
+  /// <returns><see langword="true"/> for an event.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  internal static bool ClassifiesAsEvent(IServiceProvider scope, string messageTypeName, object? payload) {
+    var eventTypeProvider = scope.GetRequiredService<IEventTypeProvider>();
+    return eventTypeProvider.IsAvailable
+      ? EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes())
+      : payload is IEvent;
+  }
+
+  /// <summary>
+  /// Builds the inbox row a dead-lettered message re-enters with: the row a delivery of the same envelope is built
+  /// as (the same classification, stream, flags, scope, producer identity, priority and handler name), naming the
+  /// dead letter it came from. Recovery stores it through the inbox's own arrival path, so nothing about the row can
+  /// drift from a delivery (#1664).
+  /// </summary>
+  /// <param name="scope">The scope the catalog, resolvers, priority hooks and serializer options are resolved from.</param>
+  /// <param name="redelivery">The dead letter's stored envelope and payload type.</param>
+  /// <returns>The inbox row to store.</returns>
+  /// <exception cref="InvalidOperationException">The stored envelope is empty or names another message.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  internal static InboxMessage BuildRedelivery(IServiceProvider scope, DeadLetterRedelivery redelivery) {
+    var jsonOptions = scope.GetService<JsonSerializerOptions>() ?? Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var envelope = JsonSerializer.Deserialize(redelivery.EnvelopeJson, typeInfo) as MessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException(
+        $"Dead letter {redelivery.DeadLetterId} stores no envelope, so it cannot re-enter the inbox.");
+    if (envelope.MessageId.Value != redelivery.SourceId) {
+      throw new InvalidOperationException(
+        $"Dead letter {redelivery.DeadLetterId} is for message {redelivery.SourceId}, but its stored envelope is "
+        + $"message {envelope.MessageId.Value}; it is not re-entered under either id.");
+    }
+    // The payload type, whichever form the row recorded it in: a broker import made before #934 recorded the envelope.
+    var messageTypeName = EventTypeMatchingHelper.ExtractInnerPayloadTypeName(redelivery.MessageType);
+    var row = Build(
+      new ReceivedEnvelope(envelope, envelope, EnvelopeTypeNameHelper.Format(messageTypeName), messageTypeName,
+        ClassifiesAsEvent(scope, messageTypeName, envelope.Payload)),
+      Classify(scope, envelope, messageTypeName),
+      "DeadLetterRecovery.Inbox",
+      scope.GetService<IEventMarkerResolver>(),
+      scope.GetService<IEphemeralModeResolver>());
+    return row with { RecoveredFromDeadLetterId = redelivery.DeadLetterId };
+  }
+
+  /// <summary>
   /// What a consumer worker hands the builder: the envelope typed and in storage form, the envelope type name the
   /// transport carried (authoritative), the message type name the shared helper extracted from it, and whether the
   /// message is an event (catalog first, marker as the fallback).

@@ -70,7 +70,9 @@ public static class ScopeMiddlewareExtensions {
   private static WhizbangScopeOptions _bindFromConfiguration(IConfiguration? configuration, WhizbangScopeOptions options) {
     if (configuration is not null) {
 #pragma warning disable IL2026, IL3050 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
-      configuration.GetSection("Whizbang:Scope").Bind(options);
+      // Blank values read as absent: no scope setting means anything when blank (#1660).
+      IConfiguration section = new BlankAsUnsetConfigurationSection(configuration.GetSection("Whizbang:Scope"));
+      section.Bind(options);
 #pragma warning restore IL2026, IL3050
     }
     return options;

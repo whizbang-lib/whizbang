@@ -3259,6 +3259,16 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long SourceCommitSequence { get; init; }
+
+  /// <summary>
+  /// The dead letter this message re-enters the inbox from, set only by dead-letter recovery. A message that
+  /// names its dead letter claims it as it is stored, is stored even though its id was already seen (the
+  /// observation is still counted), and settles the dead letter when it completes: Recovered once processed, held
+  /// for review when a gate completes it unprocessed (#1664). Null for every delivery.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ARecoveredMessage_IsStoredInTheSameWorkShapeAsADeliveryOfTheSameEnvelopeAsync</tests>
+  public Guid? RecoveredFromDeadLetterId { get; init; }
 }
 
 /// <summary>
