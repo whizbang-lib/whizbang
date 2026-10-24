@@ -29,7 +29,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// <docs>components/transports/azure-service-bus#sqlfilter-syntax</docs>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]
-[Timeout(120_000)]  // 120s timeout — retry on quota exhaustion needs headroom
+[Timeout(120_000)]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Emulator;
@@ -38,6 +38,9 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   private const string TOPIC_NAME = "topic-filter-test";
   private const string FILTERED_SUBSCRIPTION = "sub-namespace-filter";  // SqlFilter: [Subject] LIKE 'app.contracts.chat.%'
   private const string ALL_MESSAGES_SUBSCRIPTION = "sub-all-messages";   // TrueFilter - receives all
+
+  // How long a test waits for its own message to come off a subscription before failing.
+  private static readonly TimeSpan _budget = TimeSpan.FromSeconds(30);
 
   /// <summary>
   /// <para>RED TEST: Validates that SqlFilter LIKE pattern matches Subject containing '+' character.</para>
@@ -50,70 +53,15 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// If this test FAILS, it proves `+` is the problem and we need to normalize it.</para>
   /// </summary>
   [Test]
-  public async Task SqlFilter_WithPlusInSubject_ShouldMatchLikePatternAsync() {
-    _ = _fixture.ConnectionString;
-
-    Console.WriteLine("[MANUAL TEST] Testing SqlFilter LIKE pattern with '+' character in Subject...");
-    Console.WriteLine($"[MANUAL TEST] Topic: {TOPIC_NAME}");
-    Console.WriteLine($"[MANUAL TEST] Filtered subscription: {FILTERED_SUBSCRIPTION}");
-    Console.WriteLine($"[MANUAL TEST] All-messages subscription: {ALL_MESSAGES_SUBSCRIPTION}");
-
-    var client = _fixture.Client;
-
-    // Drain any stale messages from previous test runs
-    await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-
-    // Create sender
-    var sender = client.CreateSender(TOPIC_NAME);
-
+  public async Task SqlFilter_WithPlusInSubject_ShouldMatchLikePatternAsync(CancellationToken cancellationToken) {
     // This is the exact format TransportPublishStrategy would generate for a nested class
     const string subjectWithPlus = "app.contracts.chat.chatconversationscontracts+createcommand";
 
-    var message = new ServiceBusMessage("test payload for + character") {
-      MessageId = Guid.NewGuid().ToString(),
-      Subject = subjectWithPlus,
-      ContentType = "application/json"
-    };
+    var filteredMessage = await _publishAndReceiveFilteredAsync(subjectWithPlus, cancellationToken);
 
-    Console.WriteLine($"[MANUAL TEST] Publishing message with Subject: '{subjectWithPlus}'");
-    Console.WriteLine($"[MANUAL TEST] MessageId: {message.MessageId}");
-    await sender.SendMessageAsync(message);
-    Console.WriteLine("[MANUAL TEST] Message published");
-
-    // First, verify the message exists in the all-messages subscription (TrueFilter)
-    Console.WriteLine("[MANUAL TEST] Checking all-messages subscription (should receive)...");
-    var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-    var allMessage = await allReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-
-    if (allMessage != null) {
-      Console.WriteLine($"[MANUAL TEST] All-messages received: {allMessage.Subject}");
-      await allReceiver.CompleteMessageAsync(allMessage);
-    } else {
-      Console.WriteLine("[MANUAL TEST] All-messages: NO MESSAGE - emulator may have issue");
-    }
-
-    // Now check the filtered subscription - this is the real test
-    Console.WriteLine("[MANUAL TEST] Checking filtered subscription (SqlFilter test)...");
-    var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    var filteredMessage = await filteredReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-
-    if (filteredMessage != null) {
-      Console.WriteLine($"[MANUAL TEST] FILTERED subscription received: {filteredMessage.Subject}");
-      Console.WriteLine("[MANUAL TEST] CONCLUSION: '+' character DOES match SqlFilter LIKE pattern");
-      await filteredReceiver.CompleteMessageAsync(filteredMessage);
-    } else {
-      Console.WriteLine("[MANUAL TEST] FILTERED subscription: NO MESSAGE");
-      Console.WriteLine("[MANUAL TEST] CONCLUSION: '+' character DOES NOT match SqlFilter LIKE pattern");
-      Console.WriteLine("[MANUAL TEST] FIX REQUIRED: Normalize '+' to '.' in routing keys");
-    }
-
-    await Assert.That(filteredMessage)
-      .IsNotNull()
+    await Assert.That(filteredMessage.Subject).IsEqualTo(subjectWithPlus)
       .Because("Message with '+' in Subject should match SqlFilter LIKE 'app.contracts.chat.%'. " +
                "If this fails, the '+' character is causing SqlFilter mismatch.");
-
-    await Assert.That(filteredMessage!.Subject).IsEqualTo(subjectWithPlus);
   }
 
   /// <summary>
@@ -121,55 +69,14 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// This should always pass - it's the baseline behavior.
   /// </summary>
   [Test]
-  public async Task SqlFilter_WithDotInSubject_ShouldMatchLikePatternAsync() {
-    _ = _fixture.ConnectionString;
-
-    Console.WriteLine("[MANUAL TEST] Control test: SqlFilter LIKE pattern with '.' only (no '+')...");
-
-    var client = _fixture.Client;
-
-    // Drain any stale messages
-    await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-
-    var sender = client.CreateSender(TOPIC_NAME);
-
+  public async Task SqlFilter_WithDotInSubject_ShouldMatchLikePatternAsync(CancellationToken cancellationToken) {
     // This is what the Subject SHOULD look like after normalizing '+' to '.'
     const string subjectWithDots = "app.contracts.chat.chatconversationscontracts.createcommand";
 
-    var message = new ServiceBusMessage("test payload for . character") {
-      MessageId = Guid.NewGuid().ToString(),
-      Subject = subjectWithDots,
-      ContentType = "application/json"
-    };
+    var filteredMessage = await _publishAndReceiveFilteredAsync(subjectWithDots, cancellationToken);
 
-    Console.WriteLine($"[MANUAL TEST] Publishing message with Subject: '{subjectWithDots}'");
-    await sender.SendMessageAsync(message);
-    Console.WriteLine("[MANUAL TEST] Message published");
-
-    // Verify all-messages receives it
-    var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-    var allMessage = await allReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-    if (allMessage != null) {
-      await allReceiver.CompleteMessageAsync(allMessage);
-    }
-
-    // Check filtered subscription
-    var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    var filteredMessage = await filteredReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-
-    if (filteredMessage != null) {
-      Console.WriteLine("[MANUAL TEST] Control test PASSED - dots work correctly");
-      await filteredReceiver.CompleteMessageAsync(filteredMessage);
-    } else {
-      Console.WriteLine("[MANUAL TEST] Control test FAILED - this should never happen!");
-    }
-
-    await Assert.That(filteredMessage)
-      .IsNotNull()
+    await Assert.That(filteredMessage.Subject).IsEqualTo(subjectWithDots)
       .Because("Control test: Subject with dots (no '+') should always match SqlFilter LIKE pattern");
-
-    await Assert.That(filteredMessage!.Subject).IsEqualTo(subjectWithDots);
   }
 
   /// <summary>
@@ -177,50 +84,13 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// Tests edge case of deeply nested classes.
   /// </summary>
   [Test]
-  public async Task SqlFilter_WithMultiplePlusInSubject_ShouldMatchLikePatternAsync() {
-    _ = _fixture.ConnectionString;
-
-    Console.WriteLine("[MANUAL TEST] Testing multiple '+' characters in Subject...");
-
-    var client = _fixture.Client;
-
-    await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-
-    var sender = client.CreateSender(TOPIC_NAME);
-
+  public async Task SqlFilter_WithMultiplePlusInSubject_ShouldMatchLikePatternAsync(CancellationToken cancellationToken) {
     // Simulates a doubly-nested class: OuterClass+InnerClass+DeepestClass
     const string subjectWithMultiplePlus = "app.contracts.chat.outer+inner+createcommand";
 
-    var message = new ServiceBusMessage("test payload for multiple + characters") {
-      MessageId = Guid.NewGuid().ToString(),
-      Subject = subjectWithMultiplePlus,
-      ContentType = "application/json"
-    };
+    var filteredMessage = await _publishAndReceiveFilteredAsync(subjectWithMultiplePlus, cancellationToken);
 
-    Console.WriteLine($"[MANUAL TEST] Publishing message with Subject: '{subjectWithMultiplePlus}'");
-    await sender.SendMessageAsync(message);
-
-    // Verify all-messages receives it
-    var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-    var allMessage = await allReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-    if (allMessage != null) {
-      await allReceiver.CompleteMessageAsync(allMessage);
-    }
-
-    // Check filtered subscription
-    var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    var filteredMessage = await filteredReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-
-    if (filteredMessage != null) {
-      Console.WriteLine("[MANUAL TEST] Multiple '+' test PASSED");
-      await filteredReceiver.CompleteMessageAsync(filteredMessage);
-    } else {
-      Console.WriteLine("[MANUAL TEST] Multiple '+' test FAILED");
-    }
-
-    await Assert.That(filteredMessage)
-      .IsNotNull()
+    await Assert.That(filteredMessage.Subject).IsEqualTo(subjectWithMultiplePlus)
       .Because("Message with multiple '+' in Subject should match SqlFilter LIKE pattern");
   }
 
@@ -228,86 +98,73 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
   /// Negative test: Validates that SqlFilter correctly REJECTS non-matching subjects.
   /// This proves the filter is actually being applied.
   /// </summary>
+  /// <remarks>
+  /// Absence is proven against a sentinel, not a timeout: the broker applies a subscription's
+  /// filter when the topic fans a message out, so once a matching sentinel published AFTER the
+  /// non-matching message has reached the filtered subscription, the non-matching message has
+  /// already been either admitted or rejected there. Everything received ahead of the sentinel,
+  /// and everything still on the subscription after it, must not include the non-matching message.
+  /// </remarks>
   [Test]
-  public async Task SqlFilter_WithNonMatchingSubject_ShouldNotReceiveAsync() {
-    _ = _fixture.ConnectionString;
-
-    Console.WriteLine("[MANUAL TEST] Negative test: Non-matching subject should NOT be received...");
-
+  public async Task SqlFilter_WithNonMatchingSubject_ShouldNotReceiveAsync(CancellationToken cancellationToken) {
     var client = _fixture.Client;
-
-    await _drainSubscriptionAsync(client, TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    await _drainSubscriptionAsync(client, TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-
-    var sender = client.CreateSender(TOPIC_NAME);
 
     // This subject does NOT match 'app.contracts.chat.%'
     const string nonMatchingSubject = "other.namespace.somecommand";
+    var nonMatchingId = Guid.NewGuid().ToString();
+    var sentinelId = Guid.NewGuid().ToString();
 
-    var message = new ServiceBusMessage("test payload for non-matching subject") {
-      MessageId = Guid.NewGuid().ToString(),
-      Subject = nonMatchingSubject,
-      ContentType = "application/json"
-    };
+    await using (var sender = client.CreateSender(TOPIC_NAME)) {
+      await sender.SendMessageAsync(_message(nonMatchingId, nonMatchingSubject), cancellationToken);
+      await sender.SendMessageAsync(_message(sentinelId, "app.contracts.chat.sentinel"), cancellationToken);
+    }
 
-    Console.WriteLine($"[MANUAL TEST] Publishing message with Subject: '{nonMatchingSubject}'");
-    await sender.SendMessageAsync(message);
-
-    // All-messages should receive it (TrueFilter)
-    var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION);
-    var allMessage = await allReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-
-    await Assert.That(allMessage)
-      .IsNotNull()
-      .Because("All-messages subscription (TrueFilter) should receive any message");
-
-    if (allMessage != null) {
-      await allReceiver.CompleteMessageAsync(allMessage);
+    // All-messages should receive it (TrueFilter): the message really was published.
+    await using (var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION)) {
+      var (allMessage, _) = await CorrelatedReceive.UntilAsync(allReceiver, nonMatchingId, _budget, cancellationToken);
+      await Assert.That(allMessage.Subject).IsEqualTo(nonMatchingSubject)
+        .Because("All-messages subscription (TrueFilter) should receive any message");
     }
 
     // Filtered subscription should NOT receive it (SqlFilter mismatch)
-    var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
-    var filteredMessage = await filteredReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(3));
+    await using var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
+    var (_, receivedBeforeSentinel) =
+      await CorrelatedReceive.UntilAsync(filteredReceiver, sentinelId, _budget, cancellationToken);
+    var stillQueued = await filteredReceiver.PeekMessagesAsync(maxMessages: 250, fromSequenceNumber: 0, cancellationToken);
 
-    if (filteredMessage == null) {
-      Console.WriteLine("[MANUAL TEST] Negative test PASSED - filter correctly rejected non-matching subject");
-    } else {
-      Console.WriteLine("[MANUAL TEST] Negative test FAILED - filter did NOT reject non-matching subject!");
-      await filteredReceiver.CompleteMessageAsync(filteredMessage);
-    }
-
-    await Assert.That(filteredMessage)
-      .IsNull()
+    await Assert.That(receivedBeforeSentinel).DoesNotContain(nonMatchingId)
+      .Because("Filtered subscription should NOT receive messages with non-matching Subject");
+    await Assert.That(stillQueued.Select(m => m.MessageId)).DoesNotContain(nonMatchingId)
       .Because("Filtered subscription should NOT receive messages with non-matching Subject");
   }
 
   /// <summary>
-  /// Helper method to drain stale messages from a subscription.
+  /// Publishes one message with <paramref name="subject"/>, confirms the TrueFilter subscription got
+  /// it, and returns it as the filtered subscription delivers it (failing if it never does).
   /// </summary>
-  private static async Task _drainSubscriptionAsync(ServiceBusClient client, string topicName, string subscriptionName) {
-    // Retry on ConnectionsQuotaExceeded — emulator has limited connections
-    for (var attempt = 0; attempt < 3; attempt++) {
-      try {
-        var receiver = client.CreateReceiver(topicName, subscriptionName);
-        var drained = 0;
-        for (var i = 0; i < 100; i++) {
-          var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
-          if (msg == null) {
-            break;
-          }
+  private async Task<ServiceBusReceivedMessage> _publishAndReceiveFilteredAsync(string subject, CancellationToken cancellationToken) {
+    var client = _fixture.Client;
+    var messageId = Guid.NewGuid().ToString();
 
-          await receiver.CompleteMessageAsync(msg);
-          drained++;
-        }
-        await receiver.DisposeAsync();
-        if (drained > 0) {
-          Console.WriteLine($"[MANUAL TEST] Drained {drained} stale messages from {subscriptionName}");
-        }
-        return; // Success
-      } catch (Azure.Messaging.ServiceBus.ServiceBusException ex) when (ex.Reason == Azure.Messaging.ServiceBus.ServiceBusFailureReason.QuotaExceeded) {
-        Console.WriteLine($"[MANUAL TEST] Connection quota exceeded on attempt {attempt + 1}, waiting 2s...");
-        await Task.Delay(2000);
-      }
+    await using (var sender = client.CreateSender(TOPIC_NAME)) {
+      await sender.SendMessageAsync(_message(messageId, subject), cancellationToken);
     }
+
+    await using (var allReceiver = client.CreateReceiver(TOPIC_NAME, ALL_MESSAGES_SUBSCRIPTION)) {
+      var (allMessage, _) = await CorrelatedReceive.UntilAsync(allReceiver, messageId, _budget, cancellationToken);
+      await Assert.That(allMessage.Subject).IsEqualTo(subject)
+        .Because("All-messages subscription (TrueFilter) should receive any message");
+    }
+
+    await using var filteredReceiver = client.CreateReceiver(TOPIC_NAME, FILTERED_SUBSCRIPTION);
+    var (filteredMessage, _) = await CorrelatedReceive.UntilAsync(filteredReceiver, messageId, _budget, cancellationToken);
+    return filteredMessage;
   }
+
+  private static ServiceBusMessage _message(string messageId, string subject) =>
+    new($"test payload for subject {subject}") {
+      MessageId = messageId,
+      Subject = subject,
+      ContentType = "application/json"
+    };
 }

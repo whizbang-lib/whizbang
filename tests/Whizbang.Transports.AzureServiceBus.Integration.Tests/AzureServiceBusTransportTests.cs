@@ -26,6 +26,10 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// Tests verify transport initialization, publish/subscribe, and lifecycle management.
 /// </summary>
 [Category("Integration")]
+// The tests here consume topic-00/sub-00-a and topic-01/sub-01-a, which other ServiceBus classes
+// (and the tests in this class) also consume: run with them in series, or a concurrent processor on
+// the same subscription takes this test's message as a competing consumer.
+[NotInParallel("ServiceBus")]
 [Timeout(240_000)] // 240s timeout for integration tests (emulator initialization ~72s + test execution)
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtureSource) {
@@ -172,13 +176,12 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Act
     await transport.PublishAsync(envelope, destination);
 
-    // Assert - Verify message arrived by receiving it
+    // Assert - THIS message arrived: receive until its id comes off the shared subscription
     var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
     try {
-      var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
-      await Assert.That(received).IsNotNull();
-      await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
-      await receiver.CompleteMessageAsync(received);
+      var (received, _) = await CorrelatedReceive.UntilAsync(
+        receiver, envelope.MessageId.Value.ToString(), TimeSpan.FromSeconds(30));
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
     } finally {
       await receiver.DisposeAsync();
     }
@@ -206,20 +209,23 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Drain any existing messages first
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
-    // Create warmup and test awaiters using harnesses
+    // Create warmup and test awaiters using harnesses. The test awaiter accepts ONLY the envelope
+    // this test publishes, so a stray message on the shared subscription cannot satisfy it.
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
     var warmupAwaiter = new SignalAwaiter();
-    var testAwaiter = new MessageAwaiter<IMessageEnvelope>(envelope => envelope);
+    var envelope = _createTestEnvelope();
+    var testAwaiter = new MessageAwaiter<IMessageEnvelope>(
+      received => received, filter: received => received.MessageId == envelope.MessageId);
 
     // Act - Create subscription with warmup detection
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
+      async (received, envelopeType, ct) => {
         // Check if this is the warmup message or actual test message
-        if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
+        if (received is MessageEnvelope<TestMessage> testEnvelope &&
             testEnvelope.Payload.Content.Contains(warmupId)) {
           warmupAwaiter.Signal();
         } else {
-          await testAwaiter.Handler(envelope, envelopeType, ct);
+          await testAwaiter.Handler(received, envelopeType, ct);
         }
       },
       destination
@@ -236,15 +242,13 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
       );
 
       // Act: Publish the actual test message
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, publishDestination);
 
-      // Wait for handler to be invoked
+      // Wait for the handler to be invoked with THIS message
       var receivedEnvelope = await testAwaiter.WaitAsync(TimeSpan.FromSeconds(30));
 
       // Assert
-      await Assert.That(receivedEnvelope).IsNotNull();
-      await Assert.That(receivedEnvelope!.MessageId.Value).IsEqualTo(envelope.MessageId.Value);
+      await Assert.That(receivedEnvelope.MessageId.Value).IsEqualTo(envelope.MessageId.Value);
     } finally {
       subscription.Dispose();
     }

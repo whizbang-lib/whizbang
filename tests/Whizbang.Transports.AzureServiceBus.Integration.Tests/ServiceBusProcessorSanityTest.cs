@@ -63,64 +63,60 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
       MaxConcurrentCalls = 1,
       AutoCompleteMessages = false
     };
-    var processor = client.CreateProcessor(topicName, subscriptionName, processorOptions);
+    await using var processor = client.CreateProcessor(topicName, subscriptionName, processorOptions);
 
-    // Track received messages
-    var receivedMessageId = "";
+    // The subscription is shared, so the processor completes whatever it gets but signals only on
+    // THIS test's message: a stray from another test must neither satisfy nor fail the wait.
+    var testMessageId = Guid.NewGuid().ToString();
     // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
-    var messageReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var messageReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     processor.ProcessMessageAsync += async args => {
-      Console.WriteLine($"[PROCESSOR TEST] ✅ PROCESSOR RECEIVED MESSAGE: {args.Message.MessageId}");
-      receivedMessageId = args.Message.MessageId;
+      Console.WriteLine($"[PROCESSOR TEST] PROCESSOR RECEIVED MESSAGE: {args.Message.MessageId}");
       await args.CompleteMessageAsync(args.Message);
-      messageReceived.TrySetResult(true);
+      if (args.Message.MessageId == testMessageId) {
+        messageReceived.TrySetResult(args.Message.MessageId);
+      }
     };
 
     processor.ProcessErrorAsync += args => {
-      Console.WriteLine($"[PROCESSOR TEST] ❌ PROCESSOR ERROR: {args.Exception.Message}");
+      Console.WriteLine($"[PROCESSOR TEST] PROCESSOR ERROR: {args.Exception.Message}");
       return Task.CompletedTask;
     };
 
-    // Start processor BEFORE sending message
+    // Start processor BEFORE sending message. No settle wait: the subscription is durable, so the
+    // message waits on the broker until the processor's receive link takes it.
     Console.WriteLine("[PROCESSOR TEST] Starting processor...");
     await processor.StartProcessingAsync();
-    Console.WriteLine("[PROCESSOR TEST] ✅ Processor started!");
+    Console.WriteLine("[PROCESSOR TEST] Processor started!");
 
-    // Wait a moment for processor to initialize
-    await Task.Delay(1000);
+    string receivedMessageId;
+    try {
+      // Send test message
+      Console.WriteLine("[PROCESSOR TEST] Sending test message...");
+      await using (var sender = client.CreateSender(topicName)) {
+        var message = new ServiceBusMessage("{\"test\":true}") {
+          MessageId = testMessageId,
+          ContentType = "application/json"
+        };
+        message.ApplicationProperties["EnvelopeType"] = "TestMessage";
+        await sender.SendMessageAsync(message);
+      }
+      Console.WriteLine($"[PROCESSOR TEST] Message sent: {testMessageId}");
 
-    // Send test message
-    Console.WriteLine("[PROCESSOR TEST] Sending test message...");
-    var sender = client.CreateSender(topicName);
-    var testMessageId = Guid.NewGuid().ToString();
-    var message = new ServiceBusMessage("{\"test\":true}") {
-      MessageId = testMessageId,
-      ContentType = "application/json"
-    };
-    message.ApplicationProperties["EnvelopeType"] = "TestMessage";
-
-    await sender.SendMessageAsync(message);
-    Console.WriteLine($"[PROCESSOR TEST] ✅ Message sent: {testMessageId}");
-
-    // Wait for processor to receive message (30s timeout)
-    Console.WriteLine("[PROCESSOR TEST] Waiting for processor to receive message (30s timeout)...");
-    var receivedTask = messageReceived.Task;
-    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-    var completedTask = await Task.WhenAny(receivedTask, timeoutTask);
-
-    // Stop processor
-    await processor.StopProcessingAsync();
-    await processor.DisposeAsync();
-
-    if (completedTask == timeoutTask) {
-      Console.WriteLine("[PROCESSOR TEST] ❌❌❌ PROCESSOR DID NOT RECEIVE MESSAGE!");
-      Console.WriteLine("[PROCESSOR TEST] This confirms Azure Service Bus Emulator does NOT support ServiceBusProcessor!");
-      Console.WriteLine("[PROCESSOR TEST] The emulator only supports explicit receivers (ReceiveMessageAsync)!");
-      throw new TimeoutException("ServiceBusProcessor did not receive message - emulator limitation");
+      // Wait for the processor to receive THIS message
+      Console.WriteLine("[PROCESSOR TEST] Waiting for processor to receive message (20s budget, inside the 30s test timeout)...");
+      try {
+        receivedMessageId = await messageReceived.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      } catch (TimeoutException ex) {
+        Console.WriteLine("[PROCESSOR TEST] PROCESSOR DID NOT RECEIVE MESSAGE!");
+        throw new TimeoutException("ServiceBusProcessor did not receive message - emulator limitation", ex);
+      }
+    } finally {
+      await processor.StopProcessingAsync();
     }
 
-    Console.WriteLine($"[PROCESSOR TEST] ✅✅✅ PROCESSOR RECEIVED MESSAGE: {receivedMessageId}");
+    Console.WriteLine($"[PROCESSOR TEST] PROCESSOR RECEIVED MESSAGE: {receivedMessageId}");
     await Assert.That(receivedMessageId).IsEqualTo(testMessageId);
   }
 }
