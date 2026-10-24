@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Startup;
@@ -26,13 +27,20 @@ public sealed class CapabilityOptions {
 }
 
 /// <summary>
-/// The <c>Capabilities</c> startup step: after <c>Migrate</c>, on every instance, probes every provider
-/// and writes the verdict.
+/// The <c>Capabilities</c> startup step: after <c>Migrate</c>, on every instance, probes every provider,
+/// judges every requirement in force against the result, publishes the verdict on the registry and writes it.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Non-blocking: readiness never waits for it, and it runs inside the startup pipeline, which by design
 /// cannot stop the host. The registry reads a scope it cannot probe as Unknown, so the step completes
-/// either way.
+/// either way. A failing verdict stops the host from <see cref="CapabilityVerdictEnforcer"/>, outside the
+/// pipeline.
+/// </para>
+/// <para>
+/// With the probe turned off the verdict is still published, every capability Unknown, so an explicit
+/// requirement warns rather than passing unseen.
+/// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
 /// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilitiesStartupStepTests.cs</tests>
@@ -44,21 +52,30 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 
   private readonly ICapabilityRegistry _registry;
   private readonly CapabilityOptions _options;
+  private readonly IReadOnlyList<ICapabilityRequirementSource> _sources;
+  private readonly IConfiguration? _configuration;
   private readonly ILogger<CapabilitiesStartupStep> _logger;
 
   /// <summary>Creates the step.</summary>
-  /// <param name="registry">The registry it refreshes.</param>
+  /// <param name="registry">The registry it refreshes and publishes the verdict on.</param>
   /// <param name="options">Whether to probe at all.</param>
+  /// <param name="sources">Every source of declared requirements.</param>
+  /// <param name="configuration">The host's configuration, which decides which requirements are in force; null when it has none.</param>
   /// <param name="logger">Where the verdict goes.</param>
   public CapabilitiesStartupStep(
       ICapabilityRegistry registry,
       IOptions<CapabilityOptions> options,
+      IEnumerable<ICapabilityRequirementSource> sources,
+      IConfiguration? configuration,
       ILogger<CapabilitiesStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(registry);
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(logger);
     _registry = registry;
     _options = options.Value;
+    _sources = [.. sources];
+    _configuration = configuration;
     _logger = logger;
   }
 
@@ -71,14 +88,20 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+    if (_options.ProbeOnStartup) {
+      await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
+    }
+    var statuses = _registry.Statuses;
+    var requirements = _sources.SelectMany(source => source.Requirements).Distinct();
+    var verdict = CapabilityVerdict.Evaluate(statuses, CapabilityActivationResolver.Resolve(requirements, _configuration));
+    _registry.PublishVerdict(verdict);
+    CapabilityReport.LogVerdict(_logger, verdict);
+
     if (!_options.ProbeOnStartup) {
       return new StartupStepReport(StartupStepOutcome.Skipped,
         "probe turned off (Whizbang:Capabilities:ProbeOnStartup = false); every capability reads Unknown");
     }
-
-    await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
-    var statuses = _registry.Statuses;
-    CapabilityReport.Log(_logger, statuses);
+    CapabilityReport.Log(_logger, [.. statuses.Where(status => !verdict.IsRequired(status))]);
     return new StartupStepReport(StartupStepOutcome.Completed,
       $"{statuses.Count(s => s.IsUsable)} of {statuses.Count} usable");
   }

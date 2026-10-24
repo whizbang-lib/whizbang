@@ -21,7 +21,7 @@ public class ConfigurationManifestSnippets {
   public object RequirementExample() {
     return
       #region REQUIREMENT
-      new global::Whizbang.Core.Capabilities.CapabilityRequirement(new global::Whizbang.Core.Capabilities.CapabilityId(__PROVIDER__, __NAME__), __FEATURE__, __KEY__, __VALUE__)
+      new global::Whizbang.Core.Capabilities.CapabilityRequirement(new global::Whizbang.Core.Capabilities.CapabilityId(__PROVIDER__, __NAME__), __FEATURE__, __KEY__, __VALUE__, __DEFAULT__)
       #endregion
       ;
   }

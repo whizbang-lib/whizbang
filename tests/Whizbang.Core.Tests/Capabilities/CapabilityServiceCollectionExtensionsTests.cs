@@ -81,14 +81,16 @@ public class CapabilityServiceCollectionExtensionsTests {
   [Test]
   public async Task Registers_TheManifestSource_TheEnforcer_AndOneHealthEntry_HoweverOftenCalledAsync() {
     var services = _services();
+    services.AddSingleton<IHostApplicationLifetime>(new Microsoft.Extensions.Hosting.Internal.ApplicationLifetime(
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<Microsoft.Extensions.Hosting.Internal.ApplicationLifetime>.Instance));
     services.AddWhizbangCapabilities();
     services.AddWhizbangCapabilities();
 
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetServices<ICapabilityRequirementSource>().OfType<ConfigurationManifestRequirementSource>().Count()).IsEqualTo(1);
-    await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
-      && d.Lifetime == ServiceLifetime.Singleton)).IsEqualTo(1).Because("one enforcer, however often capabilities are added");
+    await Assert.That(provider.GetServices<IHostedService>().OfType<CapabilityVerdictEnforcer>().Count()).IsEqualTo(1)
+      .Because("one enforcer, however often capabilities are added");
     var registrations = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<HealthCheckServiceOptions>>().Value.Registrations;
     var entry = registrations.Single(r => r.Name == CapabilityHealthCheck.NAME);
     await Assert.That(entry.Factory(provider)).IsTypeOf<CapabilityHealthCheck>();

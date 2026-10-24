@@ -230,6 +230,8 @@ public class ConfigurationManifestGeneratorCoverageTests {
         public Mode NotAMember { get; set; } = (Mode)7;
         [RequiresCapability("p", "on")]
         public bool On { get; set; } = true;
+        [RequiresCapability("p", "off")]
+        public bool Off { get; set; } = false;
         [RequiresCapability("p", "nullable-bool")]
         public bool? NullableBool { get; set; }
         [RequiresCapability("p", "name")]
@@ -259,6 +261,7 @@ public class ConfigurationManifestGeneratorCoverageTests {
     await Assert.That(manifest).Contains(Requirement("p", "mode", "Squeeze", "D:NotAMember", "Squeeze", null))
       .Because("an initializer naming no member has no member to default to");
     await Assert.That(manifest).Contains(Requirement("p", "on", "On", "D:On", "true", "true"));
+    await Assert.That(manifest).Contains(Requirement("p", "off", "Off", "D:Off", "true", "false"));
     await Assert.That(manifest).Contains(Requirement("p", "nullable-bool", "NullableBool", "D:NullableBool", "true", null))
       .Because("a nullable setting with no initializer is unset");
     await Assert.That(manifest).Contains("\"D:Name\", null, \"a\\\"b\")")

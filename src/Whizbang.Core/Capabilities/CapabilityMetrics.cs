@@ -8,8 +8,9 @@ namespace Whizbang.Core.Capabilities;
 
 /// <summary>
 /// The <c>Whizbang.Capabilities</c> meter: <c>whizbang.capability.state</c>, an observable gauge with one
-/// series per capability and scope, value 1, tagged <c>provider</c>, <c>capability</c>, <c>scope</c> and
-/// <c>state</c>, for every provider alike.
+/// series per capability and scope, value 1, tagged <c>provider</c>, <c>capability</c>, <c>scope</c>,
+/// <c>state</c> and <c>required</c> (<c>explicit</c>, <c>implicit</c> or <c>none</c>, from the latest verdict), for
+/// every provider alike.
 /// </summary>
 /// <remarks>
 /// Value 1 on a state tag lets a dashboard count or alert by state ("any capability NotPermitted
@@ -36,8 +37,9 @@ public sealed class CapabilityMetrics {
         new KeyValuePair<string, object?>("provider", status.Descriptor.Id.Provider),
         new KeyValuePair<string, object?>("capability", status.Descriptor.Id.Name),
         new KeyValuePair<string, object?>("scope", status.Scope),
-        new KeyValuePair<string, object?>("state", status.State.ToString()))),
-      description: "One series per capability and scope, value 1, tagged with the capability's state");
+        new KeyValuePair<string, object?>("state", status.State.ToString()),
+        new KeyValuePair<string, object?>("required", registry.Verdict.RequiredTag(status)))),
+      description: "One series per capability and scope, value 1, tagged with the capability's state and how the verdict requires it");
   }
 
   /// <summary>The <c>whizbang.capability.state</c> gauge.</summary>

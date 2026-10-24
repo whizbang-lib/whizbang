@@ -87,6 +87,9 @@ public class CapabilityVerdictEnforcerTests {
     await Assert.That(enforcer.Watching.IsCompletedSuccessfully).IsTrue();
     await Assert.That(lifetime.StopCalls).IsEqualTo(0);
     await Assert.That(exitCodes).IsEmpty();
+    enforcer.Dispose();
+    await Assert.That(() => enforcer.StartAsync(CancellationToken.None)).Throws<ObjectDisposedException>()
+      .Because("disposing releases the stop signal, so a disposed enforcer cannot watch again");
   }
 
   [Test]

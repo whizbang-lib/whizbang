@@ -12,8 +12,8 @@ namespace Whizbang.Core.Capabilities;
 /// </summary>
 /// <remarks>
 /// A line reads <c>provider/name (State[, version][; detail][: reason]): purpose</c>, and an unusable one
-/// adds <c>. Fix: ...</c>. Later slices add the features that require each capability and the setting
-/// that turned them on.
+/// adds <c>. Fix: ...</c>. A required capability is reported instead by its verdict line
+/// (<see cref="LogVerdict"/>), which names every feature that requires it and the setting that turned it on.
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
 /// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityReportTests.cs</tests>
@@ -58,6 +58,30 @@ public static partial class CapabilityReport {
     }
   }
 
+  /// <summary>
+  /// Writes one line per required capability and scope: Information when it is satisfied, Warning when it warns or
+  /// degrades, Error when it fails start.
+  /// </summary>
+  /// <param name="logger">Where it goes.</param>
+  /// <param name="verdict">The verdict.</param>
+  public static void LogVerdict(ILogger logger, CapabilityVerdict verdict) {
+    ArgumentNullException.ThrowIfNull(logger);
+    ArgumentNullException.ThrowIfNull(verdict);
+    foreach (var entry in verdict.Entries) {
+      switch (entry.Outcome) {
+        case CapabilityVerdictOutcome.Proceed or CapabilityVerdictOutcome.Use:
+          LogSatisfied(logger, entry.Line);
+          break;
+        case CapabilityVerdictOutcome.Fail:
+          LogFailing(logger, entry.Line);
+          break;
+        default:
+          LogUnsatisfied(logger, entry.Line);
+          break;
+      }
+    }
+  }
+
   private static string _head(CapabilityStatus status) {
     var state = status.State.ToString();
     if (status.Version is not null) {
@@ -75,6 +99,15 @@ public static partial class CapabilityReport {
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Capabilities of {Provider} on '{Scope}': {Usable} usable of {Known}\n{Capabilities}")]
   static partial void LogUsable(ILogger logger, string provider, string scope, int usable, int known, string capabilities);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "{Line}")]
+  static partial void LogSatisfied(ILogger logger, string line);
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "{Line}")]
+  static partial void LogUnsatisfied(ILogger logger, string line);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Error, Message = "{Line}")]
+  static partial void LogFailing(ILogger logger, string line);
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Debug,
     Message = "Capabilities of {Provider} on '{Scope}' that are not usable\n{Capabilities}")]

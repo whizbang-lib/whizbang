@@ -178,7 +178,16 @@ Each slice is one red-then-green increment and its own commit.
    property or enum member, registered through `[ModuleInitializer]`. RED: generator tests for an
    attributed property, an enum member, a nested section, a dictionary wildcard, a private type
    (skipped) and a second assembly. Docs: "Declaring a requirement" on the capabilities page.
-3. **Activation and the verdict.** Explicit vs implicit from configuration; the verdict line per
+3. **Activation and the verdict.** DONE on branch `feat/1703-ws8s2` (issue #1704): `CapabilityActivationResolver`
+   (explicit = key set to a value that turns the feature on, wildcard keys per configured entry; implicit = key
+   absent and the generator-recorded declared default turns it on), `CapabilityVerdict` (satisfied means Ready;
+   Provisionable fails an explicit requirement until slice 4 provisions), published on `ICapabilityRegistry` by
+   the `Capabilities` step, the `required` gauge tag, the `whizbang_capabilities` health entry,
+   `ICapabilityRequirementSource` with the configuration manifest as the first source, and
+   `CapabilityVerdictEnforcer`, a hosted service that waits for the verdict in the background and on a failing
+   line logs Critical, sets exit code 1 and stops the application. Not covered: a value set only in code
+   (activation reads configuration and declared defaults). No library setting carries a requirement yet: the
+   features the plan names (slices 7 to 9) do not exist. Original scope: Explicit vs implicit from configuration; the verdict line per
    required capability naming each feature and its key; the `required` gauge tag; the health entry.
    RED: one test per row of the validation table, including the exact line text.
 4. **Provisioning runner and `AutoProvision`.** Generic runner with the three-level switch; the

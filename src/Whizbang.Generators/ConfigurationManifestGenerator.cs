@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -45,6 +46,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
   private const string INSTANCE_PARAMETER = "instance";
   private const string KEY_PARAMETER = "key";
   private const string FEATURE = "Feature";
+  private const string TRUE = "true";
+  private const string FALSE = "false";
   private const string MANIFEST_FILE = "ConfigurationManifest.g.cs";
   private const string SNIPPETS_FILE = "ConfigurationManifestSnippets.cs";
 
@@ -168,8 +171,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var walk = new Walk(ct);
-    _walk(options, path, walk);
+    var walk = new Walk(ctx.SemanticModel.Compilation, ct);
+    _walk(options, path, walk, declaredDefault: null);
     return new SectionBindingInfo(
       path,
       TypeNameUtilities.FullyQualified(options),
@@ -209,9 +212,10 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Records the keys the binder reads at <paramref name="key"/> for a value of <paramref name="declared"/>, and
-  /// the requirements of every attributed enum member and property reached from it.
+  /// the requirements of every attributed enum member and property reached from it. <paramref name="declaredDefault"/>
+  /// is the default of the setting at <paramref name="key"/>, which an enum member's requirement carries.
   /// </summary>
-  private static void _walk(ITypeSymbol declared, string key, Walk walk) {
+  private static void _walk(ITypeSymbol declared, string key, Walk walk, string? declaredDefault) {
     walk.CancellationToken.ThrowIfCancellationRequested();
     var type = _unwrapNullable(declared);
 
@@ -219,7 +223,7 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
       walk.Keys.Add(key);
       if (type.TypeKind == TypeKind.Enum) {
         foreach (var member in type.GetMembers().OfType<IFieldSymbol>()) {
-          _addRequirements(member.GetAttributes(), member.Name, key, member.Name, walk.Requirements);
+          _addRequirements(member.GetAttributes(), member.Name, key, member.Name, declaredDefault, walk.Requirements);
         }
       }
       return;
@@ -228,7 +232,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     // A dictionary entry or list item is a name the consumer chooses.
     var element = _elementType(type);
     if (element is not null) {
-      _walk(element, key + SEPARATOR + WILDCARD, walk);
+      // An entry exists only when configured, so it has no default.
+      _walk(element, key + SEPARATOR + WILDCARD, walk, declaredDefault: null);
       return;
     }
 
@@ -240,8 +245,11 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     var before = walk.Keys.Count;
     foreach (var property in _bindableProperties(type)) {
       var child = key + SEPARATOR + _keyName(property);
-      _addRequirements(property.GetAttributes(), property.Name, child, null, walk.Requirements);
-      _walk(property.Type, child, walk);
+      var propertyDefault = _declaredDefault(property, walk);
+      // A bool setting turns its feature on when true; any other setting, when it has a value.
+      var onValue = _unwrapNullable(property.Type).SpecialType == SpecialType.System_Boolean ? TRUE : null;
+      _addRequirements(property.GetAttributes(), property.Name, child, onValue, propertyDefault, walk.Requirements);
+      _walk(property.Type, child, walk, propertyDefault);
     }
     walk.Path.Remove(type);
 
@@ -315,15 +323,65 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     return property.Name;
   }
 
+  /// <summary>
+  /// A setting's declared default, as configuration would spell it: its constant initializer, or, with no
+  /// initializer, <c>false</c> for a bool and the zero member for an enum. Null when the default is unset or cannot
+  /// be read at compile time (a non-constant initializer, or a type from a referenced assembly, whose initializers
+  /// metadata does not carry).
+  /// </summary>
+  private static string? _declaredDefault(IPropertySymbol property, Walk walk) {
+    var declarations = property.DeclaringSyntaxReferences;
+    if (declarations.IsEmpty) {
+      return null;
+    }
+    var type = _unwrapNullable(property.Type);
+    var initializer = declarations
+      .Select(reference => reference.GetSyntax(walk.CancellationToken))
+      .OfType<PropertyDeclarationSyntax>()
+      .Select(declaration => declaration.Initializer)
+      .FirstOrDefault(candidate => candidate is not null);
+    if (initializer is not null) {
+      var constant = walk.Compilation.GetSemanticModel(initializer.SyntaxTree)
+        .GetConstantValue(initializer.Value, walk.CancellationToken);
+      return constant.HasValue ? _format(constant.Value, type) : null;
+    }
+    // A nullable setting with no initializer is unset.
+    if (!SymbolEqualityComparer.Default.Equals(type, property.Type)) {
+      return null;
+    }
+    if (type.SpecialType == SpecialType.System_Boolean) {
+      return FALSE;
+    }
+    return type.TypeKind == TypeKind.Enum ? _memberWithValue(type, 0) : null;
+  }
+
+  private static string? _format(object? value, ITypeSymbol type) {
+    if (type.TypeKind == TypeKind.Enum) {
+      return _memberWithValue(type, value);
+    }
+    return value switch {
+      bool flag => flag ? TRUE : FALSE,
+      IFormattable number => number.ToString(null, CultureInfo.InvariantCulture),
+      _ => value as string,
+    };
+  }
+
+  /// <summary>The enum member whose value is <paramref name="value"/>, compared numerically, or null.</summary>
+  private static string? _memberWithValue(ITypeSymbol type, object? value) =>
+    type.GetMembers().OfType<IFieldSymbol>()
+      .FirstOrDefault(member => Convert.ToDecimal(member.ConstantValue, CultureInfo.InvariantCulture)
+        == Convert.ToDecimal(value, CultureInfo.InvariantCulture))?.Name;
+
   private static void _addRequirements(
-      ImmutableArray<AttributeData> attributes, string memberName, string key, string? value, List<RequirementInfo> into) {
+      ImmutableArray<AttributeData> attributes, string memberName, string key, string? value, string? declaredDefault,
+      List<RequirementInfo> into) {
     foreach (var attribute in attributes) {
       var capability = _capability(attribute);
       if (capability is null) {
         continue;
       }
       var feature = AttributeUtilities.GetStringValue(attribute, FEATURE) ?? memberName;
-      into.Add(new RequirementInfo(capability.Value.Provider, capability.Value.Name, feature, key, value));
+      into.Add(new RequirementInfo(capability.Value.Provider, capability.Value.Name, feature, key, value, declaredDefault));
     }
   }
 
@@ -356,7 +414,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
         .Replace("__NAME__", _literal(r.Name))
         .Replace("__FEATURE__", _literal(r.Feature))
         .Replace("__KEY__", _literal(r.Key))
-        .Replace("__VALUE__", _literal(r.Value)));
+        .Replace("__VALUE__", _literal(r.Value))
+        .Replace("__DEFAULT__", _literal(r.Default)));
       lines.AppendLine(bindingSnippet
         .Replace("__SECTION__", _literal(binding.Section))
         .Replace("__OPTIONS_TYPE__", binding.OptionsType)
@@ -375,7 +434,8 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     value is null ? "null" : SymbolDisplay.FormatLiteral(value, quote: true);
 
   /// <summary>The state of one bound type's walk: what it found, and the types on the current path.</summary>
-  private sealed class Walk(CancellationToken cancellationToken) {
+  private sealed class Walk(Compilation compilation, CancellationToken cancellationToken) {
+    public Compilation Compilation { get; } = compilation;
     public CancellationToken CancellationToken { get; } = cancellationToken;
     public List<string> Keys { get; } = [];
     public List<RequirementInfo> Requirements { get; } = [];
@@ -390,5 +450,5 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     EquatableArray<RequirementInfo> Requirements);
 
   /// <summary>One capability requirement, value-equal for caching.</summary>
-  private sealed record RequirementInfo(string Provider, string Name, string Feature, string Key, string? Value);
+  private sealed record RequirementInfo(string Provider, string Name, string Feature, string Key, string? Value, string? Default);
 }

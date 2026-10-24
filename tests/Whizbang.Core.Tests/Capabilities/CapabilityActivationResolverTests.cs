@@ -114,6 +114,19 @@ public class CapabilityActivationResolverTests {
   }
 
   [Test]
+  public async Task WildcardKey_WithNoConfiguredEntry_IsNotInForceWhateverTheDefaultAsync() {
+    var requirement = new CapabilityRequirement(new CapabilityId("postgres", "vector"), "Vector fields", "W:Databases:*:Vectors", "true", "true");
+
+    await Assert.That(CapabilityActivationResolver.Resolve([requirement], _configuration())).IsEmpty()
+      .Because("an entry exists only when configured, so no default can turn one on");
+  }
+
+  [Test]
+  public async Task SettingWithoutAValueOrADefault_IsNotInForceUntilSetAsync() {
+    await Assert.That(CapabilityActivationResolver.Resolve([_valued("W:Delay:Exchange")], _configuration())).IsEmpty();
+  }
+
+  [Test]
   public async Task NoConfiguration_LeavesOnlyDefaultsAsync() {
     var active = CapabilityActivationResolver.Resolve([_enum("PgSqueeze"), _bool("false")], configuration: null);
 
