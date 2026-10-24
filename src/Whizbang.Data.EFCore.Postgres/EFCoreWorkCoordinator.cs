@@ -1325,6 +1325,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<bool> RecordStartupStageAsync(
+      Guid instanceId, Whizbang.Core.Startup.StartupStage stage, string message,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(message);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var fn = BuildSchemaQualifiedName(schema, "wh_record_startup_stage");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@id, @stage, @message, @phase)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("id", instanceId);
+    cmd.Parameters.AddWithValue(nameof(stage), (short)stage);
+    cmd.Parameters.AddWithValue(nameof(message), message);
+    // lifecycle_phase stays on the row, written from the stage, for the readers and dashboards that read it.
+    cmd.Parameters.AddWithValue("phase", Whizbang.Core.Startup.StartupStages.LifecyclePhaseOf(stage).ToString());
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return ScalarResult.IsTrue(result);
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(version);
     return await _scalarFunctionAsync<bool>("request_standby", cancellationToken,
@@ -3885,6 +3909,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var messageId = reader.GetGuid(0);
       var envelope = JsonSerializer.Deserialize(reader.GetString(5), envelopeTypeInfo) as IMessageEnvelope<JsonElement>
         ?? throw new InvalidOperationException($"Failed to deserialize envelope for coalesce-pending message {messageId}.");
+      MessageParseDiagnostics.Record(messageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
       EnvelopeMetadata metadata;
       try {
         metadata = JsonSerializer.Deserialize(reader.GetString(6), metadataTypeInfo) as EnvelopeMetadata
@@ -4429,10 +4454,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
+    var sweepRelation = BuildSchemaQualifiedName(schema, "wh_partition_sweep_relation");
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
 
+    // The whole table, or only its default partition once the partition manager keeps it: expired partitions are then
+    // dropped whole, and the default holds the rows no partition covers (#1646). Nothing when there is no default.
 #pragma warning disable S2077
+    var relationSql = $"SELECT {sweepRelation}('wh_lifecycle_completions') AS \"Value\"";
+    var relations = await _dbContext.Database.SqlQueryRaw<string?>(relationSql).ToListAsync(cancellationToken);
+    if (relations[0] is not { } tableName) {
+      return 0;
+    }
     var sql = $"DELETE FROM {tableName} WHERE completed_at < {{0}}";
 #pragma warning restore S2077
 
@@ -4444,7 +4476,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Deserializes an orphaned event row from the event store into a MessageEnvelope with JsonElement payload.
-  /// Falls back to JsonDocument.Parse when the type resolver returns incompatible type info.
+  /// Falls back to JsonElement.Parse when the type resolver returns incompatible type info.
   /// </summary>
   /// <docs>fundamentals/events/event-store-serialization</docs>
   private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
@@ -4459,12 +4491,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (NotSupportedException) {
       // Fallback: deserializing an interface/abstract type is not supported.
       // The chained type resolver may return polymorphic IEvent type info.
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
       // Fallback: the type resolver returned a JsonTypeInfo for a different type
       // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     }
+    MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
 
     // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
     // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.

@@ -67,7 +67,7 @@ public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
     await _callClaimOrphanedPerspectiveEventsAsync(conn, meId);
 
     var owner = await _readActiveStreamsOwnerAsync(conn, streamId);
-    await Assert.That(owner).IsNotNull()
+    await Assert.That(owner.HasValue).IsTrue()
       .Because("claim_orphaned_perspective_events must create the wh_active_streams row when none exists");
     await Assert.That(owner!.Value).IsEqualTo(meId)
       .Because("the claiming instance must become the pinned owner");

@@ -107,7 +107,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       _outboxMessage(eventId, streamId, "Whizbang.Tests.DigestFoldEvent", flags: 0));
 
     var row = await _digestRowAsync(connection, streamId);
-    await Assert.That(row).IsNotNull()
+    await Assert.That(row.HasValue).IsTrue()
       .Because("A locally-published sourced event must fold into the zero-uuid (local origin) bucket.");
     var (Lo, Hi) = await _expectedDigestAsync(connection, eventId);
     await Assert.That(row!.Value.Lo).IsEqualTo(Lo).Because("digest_lo = hashtextextended(event_id, 0).");
@@ -163,7 +163,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(await _digestRowAsync(connection, atMostOnceStream)).IsNull()
       .Because("an at-most-once event (flags & 32) is not owed to anyone, so it never enters the audited digest (#1484).");
     var owned = await _digestRowAsync(connection, ownedStream);
-    await Assert.That(owned).IsNotNull();
+    await Assert.That(owned.HasValue).IsTrue();
     await Assert.That(owned!.Value.Count).IsEqualTo(1);
   }
 
@@ -183,7 +183,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(await _digestRowAsync(connection, atMostOnceStream, originId.ToString())).IsNull()
       .Because("the inbox flavor of the fold uses the same predicate as the outbox flavor and the full recompute.");
     var owned = await _digestRowAsync(connection, ownedStream, originId.ToString());
-    await Assert.That(owned).IsNotNull();
+    await Assert.That(owned.HasValue).IsTrue();
     await Assert.That(owned!.Value.Count).IsEqualTo(1);
   }
 
@@ -201,7 +201,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     var (Lo, Hi) = await _expectedDigestAsync(connection, survivor);
 
     var folded = await _digestRowAsync(connection, streamId);
-    await Assert.That(folded).IsNotNull();
+    await Assert.That(folded.HasValue).IsTrue();
     await Assert.That(folded!.Value.Count).IsEqualTo(1)
       .Because("only the at-least-once event was folded on emit.");
 
@@ -212,7 +212,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     }
 
     var after = await _digestRowAsync(connection, streamId);
-    await Assert.That(after).IsNotNull()
+    await Assert.That(after.HasValue).IsTrue()
       .Because("the close truncated only the at-most-once event, which the bucket never held.");
     await Assert.That(after!.Value.Count).IsEqualTo(1);
     await Assert.That(after.Value.Lo).IsEqualTo(Lo)
@@ -320,7 +320,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     }
 
     var row = await _digestRowAsync(connection, streamId, originId.ToString());
-    await Assert.That(row).IsNotNull().Because("The received event folds into ITS ORIGIN's bucket, not the local one.");
+    await Assert.That(row.HasValue).IsTrue().Because("The received event folds into ITS ORIGIN's bucket, not the local one.");
     await Assert.That(row!.Value.Count).IsEqualTo(1);
     var localRow = await _digestRowAsync(connection, streamId);
     await Assert.That(localRow).IsNull().Because("A received event must not pollute the local-origin lane.");
@@ -376,7 +376,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
         .Because("A zero/self source means locally-originated — origin_service_id stays NULL per the 046 contract.");
     }
     var row = await _digestRowAsync(connection, streamId);
-    await Assert.That(row).IsNotNull().Because("The loopback event folds into the LOCAL (zero-uuid) bucket.");
+    await Assert.That(row.HasValue).IsTrue().Because("The loopback event folds into the LOCAL (zero-uuid) bucket.");
     await Assert.That(row!.Value.Count).IsEqualTo(1);
   }
 
@@ -392,7 +392,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     var seeded = await _digestRowAsync(connection, streamId);
-    await Assert.That(seeded).IsNotNull();
+    await Assert.That(seeded.HasValue).IsTrue();
     await Assert.That(seeded!.Value.Count).IsEqualTo(3).Because("All three events folded on emit.");
 
     // The event surviving the close is the version-3 row (versions follow message_id order).
@@ -411,7 +411,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     }
 
     var after = await _digestRowAsync(connection, streamId);
-    await Assert.That(after).IsNotNull().Because("The surviving carry-forward keeps the bucket alive.");
+    await Assert.That(after.HasValue).IsTrue().Because("The surviving carry-forward keeps the bucket alive.");
     await Assert.That(after!.Value.Count).IsEqualTo(1).Because("close_stream subtracted the two truncated events.");
     var (Lo, Hi) = await _expectedDigestAsync(connection, survivorId);
     await Assert.That(after.Value.Lo).IsEqualTo(Lo)
@@ -431,7 +431,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     var seeded = await _digestRowAsync(connection, streamId);
-    await Assert.That(seeded).IsNotNull();
+    await Assert.That(seeded.HasValue).IsTrue();
     await Assert.That(seeded!.Value.Count).IsEqualTo(2);
 
     await using (var reclassify = connection.CreateCommand()) {
@@ -548,7 +548,7 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await Assert.That(unscoped.TenantScope).IsNull()
       .Because("The table's '' sentinel maps back to null, matching recomputed rows.");
     await Assert.That(unscoped.DigestLo).IsEqualTo(11L);
-    await Assert.That(unscoped.UpdatedAt).IsNotNull().Because("Table reads carry the bucket update time for settle-skipping.");
+    await Assert.That(unscoped.UpdatedAt.HasValue).IsTrue().Because("Table reads carry the bucket update time for settle-skipping.");
     var scoped = own.Single(d => d.StreamId == streamB);
     await Assert.That(scoped.TenantScope).IsEqualTo("tenant-r");
 

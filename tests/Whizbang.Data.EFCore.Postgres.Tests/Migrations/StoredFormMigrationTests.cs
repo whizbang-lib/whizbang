@@ -408,9 +408,9 @@ public class StoredFormMigrationTests : IAsyncDisposable {
     await Assert.That(applied.RowsConverted).IsEqualTo(1L);
     await Assert.That(applied.Table).IsEqualTo(TABLE);
     await Assert.That(applied.Kind).IsEqualTo("generated");
-    await Assert.That(applied.FirstAppliedAt).IsNotNull();
-    await Assert.That(applied.LastAppliedAt).IsNotNull();
-    await Assert.That(applied.DeclaredAt).IsNotNull();
+    await Assert.That(applied.FirstAppliedAt.HasValue).IsTrue();
+    await Assert.That(applied.LastAppliedAt.HasValue).IsTrue();
+    await Assert.That(applied.DeclaredAt.HasValue).IsTrue();
     await Assert.That(applied.SettledAt).IsNull();
     var neverRun = status.Single(s => s.State == StoredFormMigrationState.Pending);
     await Assert.That(neverRun.DeclaredAt).IsNull().Because("A migration no pass has declared has no journal row.");

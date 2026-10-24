@@ -304,6 +304,7 @@ Whizbang:SystemEvents:AuditShipSlideSeconds
 Whizbang:SystemEvents:LocalOnly
 Whizbang:SystemEvents:PermissionChangedEnabled
 Whizbang:SystemEvents:ScopeContextEstablishedEnabled
+Whizbang:TableStatistics:CollectionInterval
 Whizbang:TableStatistics:EventTypeSampleInterval
 Whizbang:TableStatistics:EventTypeSamplePercent
 Whizbang:TableStatistics:MaxEventTypes

@@ -132,7 +132,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
 
     var next = await claimer.GetNextFireTimeAsync();
 
-    await Assert.That(next).IsNotNull();
+    await Assert.That(next.HasValue).IsTrue();
     await Assert.That(next!.Value).IsEqualTo((await _fireAtForStreamAsync(stream))!.Value)
       .Because("arming to anything later than the earliest pending schedule leaves that one to be "
              + "picked up by the backstop, which is the latency this path exists to avoid");
@@ -156,7 +156,7 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
 
     var next = await claimer.GetNextFireTimeAsync();
 
-    await Assert.That(next).IsNotNull();
+    await Assert.That(next.HasValue).IsTrue();
     await Assert.That(next!.Value).IsEqualTo((await _fireAtForStreamAsync(mine))!.Value)
       .Because("the sooner schedule belongs to another instance; answering with it would arm a "
              + "wake this pod cannot act on and drop the one it could");

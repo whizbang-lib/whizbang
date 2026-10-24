@@ -23,7 +23,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <tests>No tests found</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
-public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
+public partial class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string ENVELOPE_TYPE_PROPERTY = "EnvelopeType";
 
   /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
@@ -200,6 +200,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   internal Func<string, string, CancellationToken, Task<DateTimeOffset?>>? OldestEnqueuedTimeProbe { get; set; }
 
   /// <summary>
+  /// The shortest time between two warnings for a failed head peek on one entity. A peek that fails
+  /// on every duty tick (a missing permission, a deleted entity) is reported once per interval per
+  /// entity rather than on every tick.
+  /// </summary>
+  internal static readonly TimeSpan BacklogPeekFailureLogInterval = TimeSpan.FromMinutes(5);
+
+  /// <summary>When each entity's last failed head peek was logged, on <see cref="_timeProvider"/>.</summary>
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastPeekFailureLogged = new(StringComparer.Ordinal);
+
+  /// <summary>
   /// Samples every subscription this transport currently consumes from (topology arc phase 10):
   /// DEPTH from the management plane, AGE from a single head peek. One management operation and
   /// one peek per entity per call — an observer of idle churn must never become idle churn.
@@ -207,7 +217,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <remarks>
   /// A failure on either read degrades that entity's sample rather than the whole pass: depth
   /// without age is still useful, and the duty reports the missing age as a capability gap instead
-  /// of silently treating an unknown age as a young one.
+  /// of silently treating an unknown age as a young one. A failed head peek is logged at Warning with the
+  /// entity and the exception, at most once per <see cref="BacklogPeekFailureLogInterval"/> per entity, so
+  /// it is never mistaken for an empty entity (#1643).
   /// </remarks>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One sample per live subscription; empty when nothing is subscribed yet.</returns>
@@ -227,16 +239,19 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         continue;  // this entity is unreadable right now; the next tick retries.
       }
 
+      var entity = $"{topic}/{subscription}";
       DateTimeOffset? oldestEnqueued = null;
       try {
         oldestEnqueued = await _peekOldestEnqueuedTimeAsync(topic, subscription, cancellationToken)
           .ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Age unavailable on this surface right now — reported as a capability gap upstream.
+        // Age unavailable on this surface right now: reported as a capability gap upstream, and
+        // logged here so a failed peek can be told apart from an empty entity (#1643).
+        _logPeekFailureRateLimited(entity, depth, ex);
       }
 
       samples.Add(new Whizbang.Core.Transports.BacklogSample(
-        Entity: $"{topic}/{subscription}",
+        Entity: entity,
         Depth: depth,
         OldestAge: oldestEnqueued is { } enqueued && enqueued > DateTimeOffset.MinValue
           ? _timeProvider.GetUtcNow() - enqueued
@@ -245,6 +260,23 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     return samples;
   }
+
+  /// <summary>
+  /// Logs a failed head peek for <paramref name="entity"/> at Warning, at most once per
+  /// <see cref="BacklogPeekFailureLogInterval"/> per entity.
+  /// </summary>
+  private void _logPeekFailureRateLimited(string entity, long depth, Exception exception) {
+    var now = _timeProvider.GetUtcNow();
+    if (_lastPeekFailureLogged.TryGetValue(entity, out var last) && now - last < BacklogPeekFailureLogInterval) {
+      return;
+    }
+    _lastPeekFailureLogged[entity] = now;
+    LogBacklogHeadPeekFailed(_logger, exception, entity, exception.GetType().Name, exception.Message, depth);
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Backlog head peek failed for {Entity} ({ExceptionType}: {ExceptionMessage}); reporting depth {Depth} with no age")]
+  private static partial void LogBacklogHeadPeekFailed(
+    ILogger logger, Exception exception, string entity, string exceptionType, string exceptionMessage, long depth);
 
   private async Task<DateTimeOffset?> _peekOldestEnqueuedTimeAsync(
       string topic, string subscription, CancellationToken cancellationToken) {
@@ -1607,10 +1639,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Topology arc phase 8.5 — adapts a broker message into the transport-NEUTRAL poison context
   /// Core decides on, and declares this surface's age capability.
   /// <para>
-  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery, which
-  /// is what makes it the only usable signal on a session-enabled entity: a lock lost to connection
-  /// death does not increment <c>DeliveryCount</c>, so the broker's MaxDeliveryCount valve and this
-  /// transport's own <c>MaxDeliveryAttempts</c> branch are both structurally unreachable there.
+  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery. Since
+  /// issue #1663 it only REPORTS an aged message (the receive gate never quarantines on age); a
+  /// session lock-loss storm, whose <c>DeliveryCount</c> never moves, is bounded after storage by
+  /// durable observations.
   /// A real Service Bus namespace always stamps it; a message arriving without one (default) means
   /// this surface cannot do age detection at all, and says so rather than silently treating an
   /// absent stamp as an infinitely old message.
@@ -1639,6 +1671,30 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       BrokerDeliveryCount: message.DeliveryCount,
       DurableObservationCount: null,
       Now: _timeProvider.GetUtcNow());
+  }
+
+  /// <summary>
+  /// Issue #1663: reports an aged message the receive gate accepted, so a backlog stays visible.
+  /// No-op unless the decision carries an aged-on-receive verdict, so the caller invokes it
+  /// unconditionally.
+  /// </summary>
+  private void _recordAgedOnReceive(
+      AsbReceiveDecision decision,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext,
+      TransportDestination destination,
+      string subscription) {
+    if (_poisonDetector is null || decision.PoisonVerdict is not { ShouldQuarantine: false } verdict) {
+      return;
+    }
+    _poisonDetector.RecordAgedOnReceive(
+      Whizbang.Core.Routing.PoisonQuarantineGate.Receive,
+      verdict,
+      poisonContext,
+      new Dictionary<string, object?> {
+        ["transport"] = ASB_TRANSPORT_TAG,
+        ["topic"] = destination.Address,
+        ["subscription"] = subscription,
+      });
   }
 
   /// <summary>
@@ -1693,6 +1749,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       absorbedNamespaces: _absorbedNamespaces,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1778,6 +1835,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       absorbedNamespaces: _absorbedNamespaces,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:

@@ -1588,13 +1588,13 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task ExtractStreamIdFromMetadata_NoParsableAggregateId_YieldsNothingAsync() {
     var withoutTheKey = new Dictionary<string, JsonElement> {
-      ["SomethingElse"] = JsonDocument.Parse("\"" + Guid.CreateVersion7() + "\"").RootElement.Clone()
+      ["SomethingElse"] = JsonElement.Parse("\"" + Guid.CreateVersion7() + "\"")
     };
     var withANonStringValue = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonDocument.Parse("42").RootElement.Clone()
+      ["AggregateId"] = JsonElement.Parse("42")
     };
     var withAnUnparsableString = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonDocument.Parse("\"not-a-guid\"").RootElement.Clone()
+      ["AggregateId"] = JsonElement.Parse("\"not-a-guid\"")
     };
 
     await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withoutTheKey)).IsNull()
@@ -1613,7 +1613,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task ExtractStreamIdFromMetadata_WellFormedAggregateId_IsReadAsync() {
     var streamId = Guid.CreateVersion7();
     var metadata = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonDocument.Parse("\"" + streamId + "\"").RootElement.Clone()
+      ["AggregateId"] = JsonElement.Parse("\"" + streamId + "\"")
     };
 
     await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(metadata)).IsEqualTo(streamId)

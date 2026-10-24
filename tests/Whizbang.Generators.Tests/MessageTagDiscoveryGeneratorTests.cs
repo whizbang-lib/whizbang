@@ -214,6 +214,31 @@ public class MessageTagDiscoveryGeneratorTests {
   }
 
   /// <summary>
+  /// The generated merge parses the extra JSON into a document it disposes, so a tag with extra JSON does not
+  /// strand the document's pooled buffers on every message it is applied to (#1679). The merged values are
+  /// cloned out of the document first, so they stay valid after it is disposed.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithExtraJson_DisposesTheParsedDocumentAsync() {
+    const string source = """"
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [SignalTag(Tag = "order-updated", ExtraJson = """{"source": "api"}""")]
+            public record OrderUpdatedEvent(Guid OrderId);
+            """";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).Contains("using var extra = JsonDocument.Parse(");
+    await Assert.That(code).Contains("dict[prop.Name] = prop.Value.Clone();");
+  }
+
+  /// <summary>
   /// Test that generator handles Properties array correctly.
   /// </summary>
   [Test]

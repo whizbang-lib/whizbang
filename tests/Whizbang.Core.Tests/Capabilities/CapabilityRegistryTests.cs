@@ -132,4 +132,32 @@ public class CapabilityRegistryTests {
     await Assert.That(GaugeRecorder.Collect(withMetrics.Metrics!.CapabilityState).Count).IsEqualTo(1);
     await Assert.That(without.Metrics).IsNull();
   }
+
+  [Test]
+  public async Task Verdict_IsEmptyUntilPublished_ThenTheLatestAsync() {
+    var registry = new CapabilityRegistry([_broker()], NullLogger<CapabilityRegistry>.Instance);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, []);
+
+    var before = registry.Verdict;
+    registry.PublishVerdict(verdict);
+
+    await Assert.That(before).IsSameReferenceAs(CapabilityVerdict.Empty);
+    await Assert.That(registry.Verdict).IsSameReferenceAs(verdict);
+    await Assert.That(await registry.WaitForVerdictAsync(CancellationToken.None)).IsSameReferenceAs(verdict)
+      .Because("a waiter after the verdict is published returns it at once");
+    await Assert.That(() => registry.PublishVerdict(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task WaitForVerdict_CompletesWhenTheVerdictIsPublishedAsync() {
+    var registry = new CapabilityRegistry([_broker()], NullLogger<CapabilityRegistry>.Instance);
+    var waiting = registry.WaitForVerdictAsync(CancellationToken.None);
+    var verdict = CapabilityVerdict.Evaluate(registry.Statuses, []);
+
+    var pendingBefore = !waiting.IsCompleted;
+    registry.PublishVerdict(verdict);
+
+    await Assert.That(pendingBefore).IsTrue();
+    await Assert.That(await waiting).IsSameReferenceAs(verdict);
+  }
 }

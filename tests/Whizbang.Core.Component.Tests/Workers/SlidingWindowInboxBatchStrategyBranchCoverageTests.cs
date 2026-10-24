@@ -24,7 +24,7 @@ public class SlidingWindowInboxBatchStrategyBranchCoverageTests {
     return new InboxMessage {
       MessageId = messageId,
       HandlerName = "test",
-      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{}").RootElement, []),
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{}"), []),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = streamId,

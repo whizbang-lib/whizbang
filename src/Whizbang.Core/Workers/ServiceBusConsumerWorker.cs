@@ -359,6 +359,7 @@ public partial class ServiceBusConsumerWorker(
       // Type to ask about. Loss is bounded: PostInbox below already deserializes
       // unconditionally, so worst-case we go from 1 to 2 parses per message.
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
       // Slice 4-symmetry gate: skip PreInbox firing when neither stage has receptors —
@@ -428,6 +429,7 @@ public partial class ServiceBusConsumerWorker(
 
     foreach (var work in myWork) {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = LifecycleStage.PostInboxDetached,
@@ -444,7 +446,9 @@ public partial class ServiceBusConsumerWorker(
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
 
-      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+      // Not for an event something in this service applies later: the collective sink fires these for a
+      // collective event once its apply commits (#1676).
+      if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
         await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
       }
     }
@@ -566,33 +570,6 @@ public partial class ServiceBusConsumerWorker(
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
 
   /// <summary>
-  /// Checks if the given message type is an event type that has NO associated perspectives.
-  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
-  /// Events without perspectives need PostLifecycle fired here immediately.
-  /// </summary>
-  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      // No perspectives registered at all - all events are "without perspectives"
-      return true;
-    }
-
-    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-
-    var perspectives = registry.GetRegisteredPerspectives();
-    foreach (var perspective in perspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
-        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
-          return false; // This event type has at least one perspective
-        }
-      }
-    }
-
-    return true; // No perspectives handle this event type
-  }
-
-  /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
   /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
   /// The actual type information is preserved in envelopeTypeFromTransport for later deserialization.
@@ -648,17 +625,9 @@ public partial class ServiceBusConsumerWorker(
       // because the transport's metadata is authoritative
     }
 
-    // Determine if message is an event using IEventTypeProvider
-    // This is more reliable than "payload is IEvent" when payload is JsonElement
-    var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
-    if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
-    } else {
-      // Fallback to runtime check if provider not available
-      isEvent = payload is IEvent;
-    }
+    // The event catalog decides by name (reliable for a JsonElement payload); the payload's marker is the
+    // fallback for a host with no catalog. Shared with dead-letter recovery (#1664).
+    var isEvent = ReceivedInboxMessageBuilder.ClassifiesAsEvent(scopeServiceProvider, messageTypeName, payload);
 
     var streamId = _extractStreamId(envelope);
     var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);

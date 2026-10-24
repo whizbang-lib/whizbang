@@ -288,4 +288,24 @@ public class PerspectiveRunnerTemplateInvariantTests {
     }
     return count;
   }
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SaveModelAndCheckpoint_AsksTheWriteGuardBeforeItWritesAsync() {
+    // #1677 regression lock: every row write goes through SaveModelAndCheckpointAsync, which asks
+    // PerspectiveRowWriteGuard first, so a model no Apply produced (the scaffolded default) is never stored.
+    var template = _loadTemplate();
+    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var guard = template.IndexOf("PerspectiveRowWriteGuard.AllowsWrite(producedByApply", StringComparison.Ordinal);
+    var upsert = template.IndexOf("#region UPSERT_CALL", StringComparison.Ordinal);
+
+    await Assert.That(method).IsGreaterThan(0);
+    await Assert.That(guard).IsGreaterThan(method).Because("the guard is inside the write method");
+    await Assert.That(guard).IsLessThan(upsert).Because("the guard runs before the upsert");
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
+    var provenance = template.Split("perspectiveName,\n                updatedModel,\n                hasWrittenUpdate,").Length - 1
+      + template.Split("perspectiveName,\n              updatedModel,\n              hasWrittenUpdate,").Length - 1
+      + template.Split("streamId, perspectiveName, updatedModel, producedByApply,").Length - 1;
+    await Assert.That(provenance).IsEqualTo(calls)
+      .Because("every write passes whether an Apply produced the model: the live, partial and rewind writes");
+  }
 }

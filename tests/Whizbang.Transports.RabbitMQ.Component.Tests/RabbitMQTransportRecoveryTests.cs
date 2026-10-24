@@ -44,7 +44,7 @@ public class RabbitMQTransportRecoveryTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -91,7 +91,7 @@ public class RabbitMQTransportRecoveryTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -134,7 +134,7 @@ public class RabbitMQTransportRecoveryTests {
     await transport.InitializeAsync(ct);
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -178,7 +178,7 @@ public class RabbitMQTransportRecoveryTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -334,7 +334,7 @@ public class RabbitMQTransportRecoveryTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 

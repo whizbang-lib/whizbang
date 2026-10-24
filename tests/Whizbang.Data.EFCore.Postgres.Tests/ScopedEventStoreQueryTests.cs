@@ -56,7 +56,7 @@ public class ScopedEventStoreQueryTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = version,
       EventType = eventType,
-      EventData = JsonDocument.Parse("{}").RootElement,
+      EventData = JsonElement.Parse("{}"),
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(eventId),
         Hops = []

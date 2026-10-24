@@ -64,7 +64,7 @@ public class MessageEnvelopeSourceIdentityTests {
 
     await Assert.That(env.SourceServiceId).IsEqualTo(serviceId);
     await Assert.That(env.SourceCommitSequence).IsEqualTo(42L);
-    await Assert.That(env.CausedByServiceId).IsNotNull();
+    await Assert.That(env.CausedByServiceId.HasValue).IsTrue();
     await Assert.That(env.CausedByCommitSequence).IsEqualTo((long?)41L);
   }
 

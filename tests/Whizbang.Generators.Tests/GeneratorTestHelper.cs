@@ -364,6 +364,41 @@ public static class GeneratorTestHelper {
   }
 
   /// <summary>
+  /// Runs one generator over a named compilation against the full reference set (framework, Whizbang.Core) and
+  /// any further references, and returns the run result with the compilation it produced.
+  /// </summary>
+  /// <remarks>
+  /// A test of a second assembly compiles the first with the generator, emits it, and passes the image here, so
+  /// the second sees the first's types as metadata, the way a consumer sees a package.
+  /// </remarks>
+  /// <param name="generator">The generator to run.</param>
+  /// <param name="source">The compilation's only source file.</param>
+  /// <param name="assemblyName">The compilation's assembly name.</param>
+  /// <param name="additionalReferences">References beyond the full set, or null.</param>
+  /// <returns>The run result and the compilation with the generated sources added.</returns>
+  [RequiresAssemblyFiles()]
+  public static (GeneratorDriverRunResult Result, Compilation Output) RunGeneratorWithFullReferences(
+      IIncrementalGenerator generator,
+      string source,
+      string assemblyName = "TestAssembly",
+      IEnumerable<MetadataReference>? additionalReferences = null) {
+    ArgumentNullException.ThrowIfNull(generator);
+    var references = _fullFrameworkReferences();
+    references.AddRange(additionalReferences ?? []);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: assemblyName,
+        syntaxTrees: [CSharpSyntaxTree.ParseText(source)],
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+    var ran = CSharpGeneratorDriver.Create(generator)
+        .RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    var result = ran.GetRunResult();
+    _throwIfAnyGeneratorFailed(result);
+    return (result, output);
+  }
+
+  /// <summary>
   /// Turns a generator that threw into a loud failure instead of a clean compile.
   /// </summary>
   /// <remarks>

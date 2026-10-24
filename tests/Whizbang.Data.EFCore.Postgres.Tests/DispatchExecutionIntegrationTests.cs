@@ -194,7 +194,7 @@ public class DispatchExecutionIntegrationTests : EFCoreTestBase {
       : await _singleRowOfAsync<DxStampedEvent>(entry);
     var (storedSentAt, storedCorrelation) = await _storedStampAsync(row.MessageId);
     var seen = StampProbe.Seen(id);
-    await Assert.That(seen).IsNotNull().Because($"{entry}: the handler ran here");
+    await Assert.That(seen.HasValue).IsTrue().Because($"{entry}: the handler ran here");
     await Assert.That(seen!.Value.SentAt).IsEqualTo(storedSentAt)
       .Because($"{entry}: the handler reads the sent time the stored row carries, so a key derived from it matches on redelivery");
     await Assert.That(seen.Value.CorrelationId).IsEqualTo(storedCorrelation)

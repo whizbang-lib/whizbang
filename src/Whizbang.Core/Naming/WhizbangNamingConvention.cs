@@ -75,11 +75,13 @@ public static class WhizbangNamingConvention {
     return legacyName;
   }
 
+  // A key present with a blank value (an appsettings placeholder, an environment variable set to nothing) holds no
+  // connection string, so it does not count as configured (#1660).
   private static bool _isConfigured(Microsoft.Extensions.Configuration.IConfiguration configuration, string name) {
     var connectionStrings = configuration.GetSection("ConnectionStrings");
-    return connectionStrings[name] is not null
-      || connectionStrings[name + "-direct"] is not null
-      || connectionStrings[name + "-init"] is not null;
+    return !string.IsNullOrWhiteSpace(connectionStrings[name])
+      || !string.IsNullOrWhiteSpace(connectionStrings[name + "-direct"])
+      || !string.IsNullOrWhiteSpace(connectionStrings[name + "-init"]);
   }
 }
 

@@ -43,7 +43,7 @@ public class TransportPublishStrategyCoverageTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement>(
         messageId: MessageId.From(id),
-        payload: JsonDocument.Parse("{}").RootElement,
+        payload: JsonElement.Parse("{}"),
         hops: []),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
@@ -225,7 +225,7 @@ public class TransportPublishStrategyCoverageTests {
     var envelope = new MessageEnvelope<JsonElement> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":\"hello\"}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":\"hello\"}"),
       Hops = [
         new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }
       ]
@@ -363,7 +363,7 @@ public class TransportPublishStrategyCoverageTests {
     public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) {
       return Task.FromResult(new PostSerializeResult {
         AdditionalDestinationMetadata = new Dictionary<string, JsonElement> {
-          [key] = JsonDocument.Parse($"\"{value}\"").RootElement
+          [key] = JsonElement.Parse($"\"{value}\"")
         }
       });
     }

@@ -125,8 +125,8 @@ public class TrackedGuidLockChangeLevelTests {
       inner = (Guid)TrackedGuid.New();
     });
 
-    await Assert.That(outer).IsNotNull();
-    await Assert.That(inner).IsNotNull();
+    await Assert.That(outer.HasValue).IsTrue();
+    await Assert.That(inner.HasValue).IsTrue();
     var cmp = string.CompareOrdinal(inner!.Value.ToString("D"), outer!.Value.ToString("D"));
     await Assert.That(cmp).IsGreaterThan(0);
   }

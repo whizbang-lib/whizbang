@@ -595,10 +595,15 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// every read path, naming the row.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
-  private object _deserializePayload(EventRow record, JsonElement eventData, Type payloadType) =>
-    JsonSerializer.Deserialize(eventData.GetRawText(), _jsonOptions.GetTypeInfo(payloadType))
+  private object _deserializePayload(EventRow record, JsonElement eventData, Type payloadType) {
+    // The row's payload column was already parsed once into a JsonElement when the row was materialized;
+    // this is the second parse, from its raw text into the event's own type.
+    var payload = JsonSerializer.Deserialize(eventData.GetRawText(), _jsonOptions.GetTypeInfo(payloadType))
       ?? throw new InvalidOperationException(
         $"Failed to deserialize event ID {record.Id} at version {record.Version} of type {record.EventType}: the stored payload is JSON null.");
+    MessageParseDiagnostics.Record(record.Id, MessageParseSource.EventStoreRead, MessageParseKind.Payload);
+    return payload;
+  }
 
   private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata? metadata, PerspectiveScope? scope) {
     var hops = metadata?.Hops?.ToList() ?? [];
@@ -706,12 +711,13 @@ public sealed class EFCoreEventStore<TDbContext>(
 
     var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
     var eventData = JsonSerializer.Deserialize(raw.EventData, typeInfo);
+    MessageParseDiagnostics.Record(raw.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Payload);
     if (eventData is null) {
       return null;
     }
 
-    var metadata = _deserializeMetadataIfPresent(raw.Metadata);
-    var scope = _deserializeScopeIfPresent(raw.Scope);
+    var metadata = _deserializeMetadataIfPresent(raw.EventId, raw.Metadata);
+    var scope = _deserializeScopeIfPresent(raw.EventId, raw.Scope);
 
     // Same restore path the read methods use, so drain mode and ReadPolymorphicAsync cannot
     // drift apart on scope handling again — they previously did, and the drain-mode copy was
@@ -729,18 +735,20 @@ public sealed class EFCoreEventStore<TDbContext>(
     };
   }
 
-  private EnvelopeMetadata? _deserializeMetadataIfPresent(string? raw) {
+  private EnvelopeMetadata? _deserializeMetadataIfPresent(Guid eventId, string? raw) {
     if (string.IsNullOrEmpty(raw)) {
       return null;
     }
+    MessageParseDiagnostics.Record(eventId, MessageParseSource.EventStoreRead, MessageParseKind.Metadata);
     var metadataTypeInfo = _jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
     return (EnvelopeMetadata?)JsonSerializer.Deserialize(raw, metadataTypeInfo);
   }
 
-  private PerspectiveScope? _deserializeScopeIfPresent(string? raw) {
+  private PerspectiveScope? _deserializeScopeIfPresent(Guid eventId, string? raw) {
     if (string.IsNullOrEmpty(raw)) {
       return null;
     }
+    MessageParseDiagnostics.Record(eventId, MessageParseSource.EventStoreRead, MessageParseKind.Scope);
     var scopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
     return (PerspectiveScope?)JsonSerializer.Deserialize(raw, scopeTypeInfo);
   }

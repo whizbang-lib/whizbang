@@ -552,7 +552,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
       var extraJson = _escapeString(tag.ExtraJson!);
       sb.AppendLine($"        // Merge extra JSON: {extraJson}");
-      sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{extraJson}\"\"\");");
+      sb.AppendLine($"        using var extra = JsonDocument.Parse(\"\"\"{extraJson}\"\"\");");
       sb.AppendLine("        foreach (var prop in extra.RootElement.EnumerateObject()) {");
       sb.AppendLine("          dict[prop.Name] = prop.Value.Clone();");
       sb.AppendLine("        }");

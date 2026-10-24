@@ -33,7 +33,8 @@ public class TableRewriteStartupStepCoverageTests {
     var provider = services.BuildServiceProvider();
     var step = new TableRewriteStartupStep(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }),
+      rewriters: [new VacuumFullTableRewriter(Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }))],
+      strategy: TableRewriteStrategies.VACUUM_FULL,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);

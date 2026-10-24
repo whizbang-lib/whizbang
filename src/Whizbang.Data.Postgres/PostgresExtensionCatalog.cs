@@ -75,8 +75,11 @@ public sealed record PostgresExtensionInfo(
 /// <tests>tests/Whizbang.Core.Tests/PostgresExtensions/PostgresExtensionCatalogTests.cs</tests>
 public static class PostgresExtensionCatalog {
 #pragma warning disable CA1707
-  /// <summary>The provider name every Postgres extension's <see cref="CapabilityId"/> carries.</summary>
-  public const string PROVIDER = "postgres";
+  /// <summary>
+  /// The provider name every Postgres extension's <see cref="CapabilityId"/> carries: the one
+  /// <see cref="RequiresPostgresExtensionAttribute"/> declares requirements under.
+  /// </summary>
+  public const string PROVIDER = RequiresPostgresExtensionAttribute.PROVIDER;
 #pragma warning restore CA1707
 
   private const PostgresExtensionPrerequisites ALLOWLIST = PostgresExtensionPrerequisites.Allowlist;

@@ -1211,7 +1211,7 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(hop.Type).IsEqualTo(HopType.Causation);
-    await Assert.That(hop.CausationId).IsNotNull();
+    await Assert.That(hop.CausationId.HasValue).IsTrue();
     await Assert.That(hop.CausationType).IsEqualTo("OrderCreated");
   }
 
@@ -1818,7 +1818,7 @@ public class MessageTracingTests {
     var hop = _testMethod_ThatRecordsHop();
 
     // Assert
-    await Assert.That(hop.CallerLineNumber).IsNotNull();
+    await Assert.That(hop.CallerLineNumber.HasValue).IsTrue();
     await Assert.That(hop.CallerLineNumber!.Value).IsGreaterThan(0);
   }
 

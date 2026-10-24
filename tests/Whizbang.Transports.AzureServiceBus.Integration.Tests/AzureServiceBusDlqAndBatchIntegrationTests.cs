@@ -486,20 +486,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   // ========================================
 
   [Test]
-  public async Task SubscribeAsync_AgedSessionMessage_QuarantinesToTheEntityDlqWithDeliveryCountOneAsync() {
-    // The arc's motivating failure, at broker tier on a SESSION-enabled subscription.
-    //
-    // The emulator spike and a live Standard-namespace probe both established that a lock lost to
-    // connection death on a session entity does NOT increment DeliveryCount. So the broker's
-    // MaxDeliveryCount valve and the transport's MaxDeliveryAttempts branch — both reading that
-    // counter — can never fire under a consumer-death storm, and the message is hostage forever.
-    // This test proves the replacement works where the counter cannot: the message quarantines on
-    // AGE with DeliveryCount still at 1, and lands in the real per-entity DLQ that the existing
-    // dead-letter drainer already replays.
-    //
-    // AgeThreshold = zero makes any already-enqueued message aged, which is the only way to write
-    // this as a bounded test — the derivation (renewal x attempts, floored at 30 minutes) is
-    // property-locked in Whizbang.Core.Tests, not re-derived here.
+  public async Task SubscribeAsync_AgedSessionMessage_IsAcceptedNotDeadLetteredAsync() {
+    // Issue #1663, at broker tier on a SESSION-enabled subscription. AgeThreshold = zero makes the
+    // message aged on arrival, the shape of a backlog: first enqueued long ago, delivered now for the
+    // first time with DeliveryCount 1. The receive gate accepts it and hands it to the handler (which
+    // is what stores it in a host); it must not reach the DLQ. A session lock-loss storm, whose
+    // DeliveryCount never moves, is bounded after storage by durable observations (layer 2), which
+    // the data-driver tests lock.
     var options = new AzureServiceBusOptions { EnableSessions = true };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
@@ -508,6 +501,51 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       logger: null,
       adminClient: null,
       poisonDetector: _poisonDetector(TimeSpan.Zero));
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+    await _drainDeadLetterQueueAsync("topic-fifo-02", "sub-fifo-session");
+
+    var received = Channel.CreateUnbounded<string>();
+    var marker = $"aged-session-{Guid.CreateVersion7():N}";
+    var subscription = await transport.SubscribeAsync(
+      async (env, _, _) => {
+        if (env.Payload is TestMessage m) { await received.Writer.WriteAsync(m.Content, CancellationToken.None); }
+      },
+      new TransportDestination("topic-fifo-02", "sub-fifo-session")
+    );
+
+    try {
+      await transport.PublishBatchAsync(
+        [_createBulkItem(_createTestEnvelope(marker), Guid.CreateVersion7())],
+        new TransportDestination("topic-fifo-02"));
+
+      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+      string? delivered = null;
+      while (delivered != marker) {
+        delivered = await received.Reader.ReadAsync(cts.Token);
+      }
+
+      await Assert.That(delivered).IsEqualTo(marker)
+        .Because("an aged message is accepted at receive; the gate never quarantines on age");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  public async Task SubscribeAsync_QuarantineVerdictOnASession_LandsInTheEntityDlqWithDeliveryCountOneAsync() {
+    // The broker-tier lock on the quarantine MECHANISM for a SESSION-enabled subscription: a
+    // quarantine verdict reaches the real per-entity DLQ that the existing dead-letter drainer
+    // replays, with DeliveryCount still at 1. Since #1663 the default detector never quarantines at
+    // receive (an aged message is accepted), so a detector that does (a custom policy) drives it.
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      JsonContextRegistry.CreateCombinedOptions(),
+      options,
+      logger: null,
+      adminClient: null,
+      poisonDetector: new QuarantineEveryMessage());
     _disposables.Add(transport);
     await transport.InitializeAsync();
     await _drainDeadLetterQueueAsync("topic-fifo-02", "sub-fifo-session");
@@ -529,10 +567,10 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
         "topic-fifo-02", "sub-fifo-session", envelope.MessageId.Value.ToString());
 
       await Assert.That(deadLettered).IsNotNull()
-        .Because("an aged session message must reach the DLQ on age alone");
+        .Because("a quarantine verdict on a session message must reach the entity DLQ");
       await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("PoisonQuarantine");
       await Assert.That(deadLettered.DeliveryCount).IsEqualTo(1)
-        .Because("the counter every legacy valve reads never moved — that is the whole point");
+        .Because("the verdict acts on the first delivery, before any count-based valve could");
       await Assert.That(Volatile.Read(ref handlerInvoked)).IsEqualTo(0)
         .Because("quarantine happens at the receive boundary, before the handler");
     } finally {
@@ -583,8 +621,26 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     }
   }
 
-  /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
-  /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
+  /// <summary>A custom detector that quarantines every message, to lock the broker-tier DLQ mechanism.</summary>
+  private sealed class QuarantineEveryMessage : Whizbang.Core.Routing.IPoisonMessageDetector {
+    public Whizbang.Core.Routing.PoisonVerdict Evaluate(Whizbang.Core.Routing.PoisonEvaluationContext context) =>
+      Whizbang.Core.Routing.PoisonVerdict.Quarantine(
+        Whizbang.Core.Routing.PoisonQuarantineReason.ObservationCountExceeded, "custom policy");
+
+    public void RecordQuarantine(
+        Whizbang.Core.Routing.PoisonQuarantineGate gate,
+        Whizbang.Core.Routing.PoisonVerdict verdict,
+        Whizbang.Core.Routing.PoisonEvaluationContext context,
+        IReadOnlyDictionary<string, object?>? additionalTags = null) {
+    }
+
+    public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) {
+    }
+  }
+
+  /// <summary>Real Core detector with an explicit age threshold. Layer 2 is unreachable here (the
+  /// transport boundary reports no durable observation count), and since #1663 layer 1 never
+  /// quarantines on age, so this detector only reports aged messages.</summary>
   private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
     new(
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
@@ -772,9 +828,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   /// <summary>
   /// Waits (broker-side) for a specific message to arrive in the subscription's
-  /// dead-letter sub-queue. Completes and returns the match; completes and skips
+  /// dead-letter sub-queue. Removes and returns the match; removes and skips
   /// stray dead-lettered messages from earlier runs. Returns null if the message
   /// never arrives within ~60 seconds of broker-side waits.
+  /// <para>
+  /// Receive-and-delete, not peek-lock: these helpers only consume, and completing a
+  /// peek-locked dead-letter message intermittently failed with MessageLockLost on the
+  /// emulator, failing a test whose assertion had nothing to do with locks.
+  /// </para>
   /// </summary>
   private async Task<ServiceBusReceivedMessage?> _receiveDeadLetteredMessageAsync(
     string topicName,
@@ -782,7 +843,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     string expectedMessageId
   ) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var attempt = 0; attempt < 12; attempt++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
@@ -790,7 +851,6 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
           continue;
         }
 
-        await receiver.CompleteMessageAsync(message);
         if (message.MessageId == expectedMessageId) {
           return message;
         }
@@ -802,14 +862,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
+      new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();
@@ -818,14 +878,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   private async Task _drainDeadLetterQueueAsync(string topicName, string subscriptionName) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();

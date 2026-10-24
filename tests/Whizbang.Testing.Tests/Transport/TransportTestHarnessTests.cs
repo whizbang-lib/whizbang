@@ -14,11 +14,9 @@ namespace Whizbang.Testing.Tests.Transport;
 /// <see cref="TransportTestHarness"/> factory.
 /// </summary>
 /// <remarks>
-/// Most tests here drive setup only as far as the warmup delay, with a pre-canceled token: that
-/// wires the subscription and the test awaiter deterministically and costs nothing. The one test
-/// that runs setup to completion pays SubscriptionWarmup's hard-coded 5-second initial delay,
-/// which <c>SetupSubscriptionAsync</c> does not expose - that delay belongs to the code under
-/// test, and completion is still the echoed warmup signal rather than a wait.
+/// Most tests here drive setup only as far as the warmup, with a pre-canceled token: that wires
+/// the subscription and the test awaiter deterministically and stops before anything is
+/// published. The one test that runs setup to completion finishes on the echoed warmup signal.
 /// </remarks>
 public class TransportTestHarnessTests {
   private static readonly TransportDestination _subscribeDestination = new("topic/subscription");
@@ -34,7 +32,7 @@ public class TransportTestHarnessTests {
 
   /// <summary>
   /// Runs setup far enough to register the subscription and test awaiter. The pre-canceled
-  /// token aborts the warmup publish loop at its initial delay, deterministically.
+  /// token stops the warmup before it publishes, deterministically.
   /// </summary>
   private static async Task _setupSubscriptionAsync(
     TransportTestHarness<TestPayload> harness,
@@ -42,7 +40,7 @@ public class TransportTestHarnessTests {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
-    await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+    await Assert.ThrowsAsync<OperationCanceledException>(async () =>
       await harness.SetupSubscriptionAsync(
         _subscribeDestination, _publishDestination, cancellationToken: cts.Token));
 
@@ -165,15 +163,9 @@ public class TransportTestHarnessTests {
   [Test]
   public async Task SetupSubscriptionAsync_WhenTheWarmupMessageComesBack_CompletesSetupAsync(
       CancellationToken cancellationToken) {
-    // The happy path through setup: the harness mints a warmup id, subscribes, and keeps
-    // publishing an envelope built from THAT id until the subscription echoes one back. The
-    // looping transport echoes the first publish, so warmup completes on the first attempt and
-    // setup returns.
-    //
-    // This test spends SubscriptionWarmup's hard-coded 5-second initial delay, which
-    // SetupSubscriptionAsync does not expose. The wait is the code under test's own, not a
-    // synchronization device: completion is still the echoed warmup signal, nothing is polled,
-    // and no timeout stands in for a signal.
+    // The happy path through setup: the harness mints a warmup id, subscribes, and publishes one
+    // envelope built from THAT id, then waits for the subscription to echo it back. The looping
+    // transport echoes the publish, so warmup completes on that signal and setup returns.
     var transport = new FakeTransport { LoopbackOnPublish = true };
     await using var harness = _createHarness(transport);
 
@@ -181,7 +173,7 @@ public class TransportTestHarnessTests {
       _subscribeDestination, _publishDestination, cancellationToken: cancellationToken);
 
     await Assert.That(transport.Published.Count).IsEqualTo(1)
-      .Because("the echoed warmup message ends the loop after a single publish");
+      .Because("warmup publishes one message and completes on its echo");
 
     var warmupPayload = ((IMessageEnvelope<TestPayload>)transport.Published[0]).Payload.Content;
     await Assert.That(SubscriptionWarmup.IsWarmupMessage(warmupPayload)).IsTrue()

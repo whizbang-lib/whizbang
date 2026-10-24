@@ -135,7 +135,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await svc.ScheduleNextAttemptAsync(dlqId, future);
 
     var scheduled = await _getNextRecoveryAtAsync(conn, dlqId);
-    await Assert.That(scheduled).IsNotNull()
+    await Assert.That(scheduled.HasValue).IsTrue()
       .Because("scheduling the next attempt must land on the row the caller named");
     await Assert.That((scheduled!.Value - future).Duration()).IsLessThan(TimeSpan.FromSeconds(1))
       .Because("the caller's instant is the retry deadline — a wrapper that dropped or reordered "

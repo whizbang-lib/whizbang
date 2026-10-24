@@ -299,7 +299,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
   private static MessageEnvelope<JsonElement> _jsonEnvelope(MessageId messageId, Guid streamId, string? traceParent) =>
     new() {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{\"Data\":\"branch-test-data\"}").RootElement,
+      Payload = JsonElement.Parse("{\"Data\":\"branch-test-data\"}"),
       Hops = _hops(streamId, traceParent),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -316,7 +316,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
         ProcessId = 4321
       },
       Metadata = new Dictionary<string, JsonElement> {
-        ["AggregateId"] = JsonDocument.Parse($"\"{streamId}\"").RootElement
+        ["AggregateId"] = JsonElement.Parse($"\"{streamId}\"")
       }
     }
   ];

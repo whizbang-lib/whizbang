@@ -54,14 +54,14 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var hopsJson = JsonSerializer.Serialize(source.Hops?.ToList() ?? [], hopsTypeInfo);
 
     var metadataDict = new Dictionary<string, JsonElement> {
-      ["message_id"] = JsonDocument.Parse(messageIdJson).RootElement.Clone(),
-      ["correlation_id"] = JsonDocument.Parse(correlationIdJson).RootElement.Clone(),
-      ["causation_id"] = JsonDocument.Parse(causationIdJson).RootElement.Clone(),
-      ["hops"] = JsonDocument.Parse(hopsJson).RootElement.Clone()
+      ["message_id"] = JsonElement.Parse(messageIdJson),
+      ["correlation_id"] = JsonElement.Parse(correlationIdJson),
+      ["causation_id"] = JsonElement.Parse(causationIdJson),
+      ["hops"] = JsonElement.Parse(hopsJson)
     };
     // Priority step 1: the number lives in the metadata column, omitted when undeclared (the wire's convention).
     if (Whizbang.Core.Priority.WorkPriority.IsDeclared(source.Priority)) {
-      metadataDict["pri"] = JsonDocument.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
+      metadataDict["pri"] = JsonElement.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));

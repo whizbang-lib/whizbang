@@ -33,6 +33,18 @@ public interface ICapabilityRegistry {
   /// <param name="cancellationToken">The caller's cancellation, the only thing that propagates.</param>
   /// <returns>A task that completes when every scope has its new answer.</returns>
   Task RefreshAsync(CancellationToken cancellationToken);
+
+  /// <summary>The latest verdict over the required capabilities; <see cref="CapabilityVerdict.Empty"/> until one is published.</summary>
+  CapabilityVerdict Verdict { get; }
+
+  /// <summary>Records a new verdict and releases every waiter. The <c>Capabilities</c> startup step publishes one per run.</summary>
+  /// <param name="verdict">The verdict.</param>
+  void PublishVerdict(CapabilityVerdict verdict);
+
+  /// <summary>Completes with the first verdict published, at once when one already is.</summary>
+  /// <param name="cancellationToken">Ends the wait.</param>
+  /// <returns>The verdict.</returns>
+  Task<CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -49,7 +61,9 @@ public sealed partial class CapabilityRegistry : ICapabilityRegistry {
 #pragma warning restore CA1707
 
   private readonly ILogger<CapabilityRegistry> _logger;
+  private readonly TaskCompletionSource<CapabilityVerdict> _firstVerdict = new(TaskCreationOptions.RunContinuationsAsynchronously);
   private volatile CapabilityStatus[] _statuses;
+  private volatile CapabilityVerdict _verdict = CapabilityVerdict.Empty;
 
   /// <summary>Creates the registry over the providers.</summary>
   /// <param name="providers">The providers, in registration order.</param>
@@ -82,6 +96,20 @@ public sealed partial class CapabilityRegistry : ICapabilityRegistry {
       string.Equals(s.Descriptor.Id.Provider, id.Provider, StringComparison.OrdinalIgnoreCase)
       && string.Equals(s.Descriptor.Id.Name, id.Name, StringComparison.OrdinalIgnoreCase)
       && string.Equals(s.Scope, scope, StringComparison.Ordinal))?.State ?? CapabilityState.Unknown;
+
+  /// <inheritdoc />
+  public CapabilityVerdict Verdict => _verdict;
+
+  /// <inheritdoc />
+  public void PublishVerdict(CapabilityVerdict verdict) {
+    ArgumentNullException.ThrowIfNull(verdict);
+    _verdict = verdict;
+    _firstVerdict.TrySetResult(verdict);
+  }
+
+  /// <inheritdoc />
+  public Task<CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken) =>
+    _firstVerdict.Task.WaitAsync(cancellationToken);
 
   /// <inheritdoc />
   public async Task RefreshAsync(CancellationToken cancellationToken) {

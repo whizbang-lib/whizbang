@@ -38,7 +38,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
   }
 
   private static InboxMessage _inbox(Guid messageId, Guid streamId, int priority, string messageType = "Test.X, Test") {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []);
     return new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
@@ -53,7 +53,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
   }
 
   private static OutboxMessage _outbox(Guid messageId, Guid streamId, int priority) {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []);
     return new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",

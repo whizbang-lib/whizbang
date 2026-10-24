@@ -119,6 +119,25 @@ public class DapperPartitionMaintenanceStepTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task AnIndefiniteWindow_DropsNothingAsync() {
+    await using (var setup = await _openAsync()) {
+      await setup.ExecuteAsync(
+        "CREATE TABLE wh_partition_probe (id BIGSERIAL, at TIMESTAMPTZ NOT NULL, PRIMARY KEY (id, at)) PARTITION BY RANGE (at)");
+    }
+    var probe = PartitionedTable.RetainedIndefinitely("wh_partition_probe", "at", TimeSpan.FromDays(1));
+    await using var services = _services(enabled: true, createAhead: 1, tables: probe);
+    await _step().RunAsync(services, CancellationToken.None);
+
+    await _step(_now.AddDays(400)).RunAsync(services, CancellationToken.None);
+
+    await using var connection = await _openAsync();
+    var partitions = (await connection.QueryAsync<string>(
+      "SELECT c.relname::text FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'wh_partition_probe'::regclass ORDER BY 1")).ToList();
+    await Assert.That(partitions).Contains("wh_partition_probe_p20261021")
+      .Because("with no window and no setting key, the manager is passed no window and removes nothing");
+  }
+
+  [Test]
   public async Task Disabled_ChangesNothingAsync() {
     await using var services = _services(enabled: false, tables: PartitionedTables.Log);
 
@@ -192,7 +211,7 @@ public class DapperPartitionMaintenanceStepTests : PostgresTestBase {
   [Test]
   [Arguments(true, true)]
   [Arguments(false, false)]
-  public async Task TheDriver_RegistersTheStepAndTheLogAsync(bool entriesOverload, bool hostLogging) {
+  public async Task TheDriver_RegistersTheStepAndTheFrameworkTablesAsync(bool entriesOverload, bool hostLogging) {
     var services = new ServiceCollection();
     if (hostLogging) {
       services.AddLogging();
@@ -207,7 +226,8 @@ public class DapperPartitionMaintenanceStepTests : PostgresTestBase {
     await using var provider = services.BuildServiceProvider();
     using var scope = provider.CreateScope();
     await Assert.That(scope.ServiceProvider.GetServices<IMaintenanceStep>().OfType<DapperPartitionMaintenanceStep>().Count()).IsEqualTo(1);
-    await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo([PartitionedTables.Log]);
+    await Assert.That(scope.ServiceProvider.GetServices<PartitionedTable>().Distinct()).IsEquivalentTo(
+      [PartitionedTables.Log, PartitionedTables.Signals(TimeSpan.FromDays(7)), PartitionedTables.LifecycleCompletions(7)]);
   }
 
   private sealed class FixedClock(DateTimeOffset now) : TimeProvider {

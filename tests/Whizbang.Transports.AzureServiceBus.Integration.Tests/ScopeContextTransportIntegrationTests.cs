@@ -87,7 +87,7 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-      await Assert.That(received).IsNotNull();
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
 
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNotNull()
@@ -148,6 +148,7 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNotNull()
         .Because("SYSTEM scope should survive Azure Service Bus round-trip");
@@ -221,6 +222,7 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNull()
         .Because("Envelope without ScopeDelta should have null scope after round-trip");
@@ -255,6 +257,7 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
     };
 
     var received = await _roundTripAsync(envelope, cancellationToken);
+    await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
 
     await Assert.That(received.DispatchContext.Mode).IsEqualTo(mode)
       .Because("whether the sender already handled the copy must survive the broker");

@@ -72,7 +72,7 @@ Each slice is one red-then-green increment and its own commit.
 5. **Growth.** No new instrument: growth is `deriv()` or `delta()` over the gauges, which every
    Prometheus-compatible backend computes. The dashboard ships those panels. RED: the dashboard
    drift test (slice 7) checks each panel names a real instrument.
-6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is still a constant. On `EventTypeSampleInterval`, one instance per window (the
+6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is a bound, validated setting since #1668 (2026-10-23). The `database` tag on every table-statistics gauge and the configurable `MaxTrackedTables` cap (decisions 1 and 3) DONE in #1717 (2026-10-24). On `EventTypeSampleInterval`, one instance per window (the
    claim `IndexStatisticsMaintenanceStep` uses in `wh_unique_emission_claims`,
    `src/Whizbang.Data.EFCore.Postgres/IndexStatisticsMaintenanceStep.cs:42`) samples
    `wh_event_body TABLESAMPLE SYSTEM (EventTypeSamplePercent)` joined to `wh_event_store` for
@@ -117,10 +117,11 @@ Each slice is one red-then-green increment and its own commit.
 - The sampled type breakdown agrees in rank with a one-off full scan on a copied table.
 - The meter's series count stays under `MaxTrackedTables + MaxEventTypes` plus a small constant.
 
-## Open questions
+## Decisions (formerly open questions)
 
-- Add a `database` tag to the table gauges? A host with several databases reports colliding series
-  today; adding the tag changes every existing series.
-- Should the sample also cover `wh_event_store` pointer rows and the inline metadata on the outbox?
-- Is 500 the right table cap for services with many perspectives?
-- Where does the dashboard live long term: this repository, or a separate observability package?
+All decided on 2026-10-22 in #1675 (the owner accepted the recommendations).
+
+1. **A `database` tag** is added to the table gauges before 1.0, while the series are new. DONE (#1717): every gauge on the meter carries it.
+2. **The bytes sample** also covers `wh_event_store` pointer rows and the inline outbox metadata.
+3. **The table cap** stays at 500 and becomes configurable. DONE (#1717): `Whizbang:TableStatistics:MaxTrackedTables`, validated at start, applied per database.
+4. **The dashboard** lives in this repository for 1.0.

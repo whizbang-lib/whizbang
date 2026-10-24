@@ -1569,6 +1569,7 @@ public interface IWorkCoordinator {
   /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
   /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
   /// </summary>
+  /// <remarks>The <see cref="Whizbang.Core.Workers.VacuumFullTableRewriter"/> strategy's rewrite.</remarks>
   Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
@@ -1614,6 +1615,24 @@ public interface IWorkCoordinator {
   Task<bool> RecordInstanceStateAsync(
       Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
       CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Records the startup stage this instance is in on its own row (<c>startup_stage</c>,
+  /// <c>startup_stage_message</c>, and <c>startup_stage_entered_at</c> when the stage changed), with the lifecycle
+  /// phase the stage maps to (#1636). Returns false when the instance has no row yet, which is expected before it
+  /// registers. Like <see cref="RecordInstanceStateAsync"/>, it is not a heartbeat and does not refresh liveness.
+  /// Default: nothing is recorded.
+  /// </summary>
+  /// <param name="instanceId">This instance.</param>
+  /// <param name="stage">The stage.</param>
+  /// <param name="message">What the stage is doing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether the instance's row now records the stage.</returns>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs</tests>
+  Task<bool> RecordStartupStageAsync(
+      Guid instanceId, Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) =>
     Task.FromResult(false);
 
   /// <summary>
@@ -3049,6 +3068,8 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:OutboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>
@@ -3201,6 +3222,8 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:InboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>
@@ -3237,6 +3260,16 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long SourceCommitSequence { get; init; }
+
+  /// <summary>
+  /// The dead letter this message re-enters the inbox from, set only by dead-letter recovery. A message that
+  /// names its dead letter claims it as it is stored, is stored even though its id was already seen (the
+  /// observation is still counted), and settles the dead letter when it completes: Recovered once processed, held
+  /// for review when a gate completes it unprocessed (#1664). Null for every delivery.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ARecoveredMessage_IsStoredInTheSameWorkShapeAsADeliveryOfTheSameEnvelopeAsync</tests>
+  public Guid? RecoveredFromDeadLetterId { get; init; }
 }
 
 /// <summary>

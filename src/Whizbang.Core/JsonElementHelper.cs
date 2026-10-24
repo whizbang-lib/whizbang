@@ -8,7 +8,7 @@ namespace Whizbang.Core;
 
 /// <summary>
 /// AOT-compatible helper methods for creating JsonElement values without reflection.
-/// Uses manual JSON construction and JsonDocument.Parse for primitive types.
+/// Uses manual JSON construction and JsonElement.Parse for primitive types.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs</tests>
 internal static class JsonElementHelper {
@@ -20,7 +20,7 @@ internal static class JsonElementHelper {
   /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs:JsonElementHelper_FromString_WithSpecialCharacters_EscapesCorrectlyAsync</tests>
   public static JsonElement FromString(string? value) {
     if (value == null) {
-      return JsonDocument.Parse("null").RootElement.Clone();
+      return JsonElement.Parse("null");
     }
 
     // Manual JSON escaping for AOT compatibility
@@ -33,7 +33,7 @@ internal static class JsonElementHelper {
       .Replace("\b", "\\b")
       .Replace("\f", "\\f");
 
-    return JsonDocument.Parse($"\"{escaped}\"").RootElement.Clone();
+    return JsonElement.Parse($"\"{escaped}\"");
   }
 
   /// <summary>
@@ -41,7 +41,7 @@ internal static class JsonElementHelper {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs:JsonElementHelper_FromInt32_WithValidInt_ReturnsJsonElementAsync</tests>
   public static JsonElement FromInt32(int value) {
-    return JsonDocument.Parse(value.ToString(CultureInfo.InvariantCulture)).RootElement.Clone();
+    return JsonElement.Parse(value.ToString(CultureInfo.InvariantCulture));
   }
 
   /// <summary>
@@ -50,7 +50,7 @@ internal static class JsonElementHelper {
   /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs:JsonElementHelper_FromBoolean_WithTrue_ReturnsJsonElementAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs:JsonElementHelper_FromBoolean_WithFalse_ReturnsJsonElementAsync</tests>
   public static JsonElement FromBoolean(bool value) {
-    return JsonDocument.Parse(value ? "true" : "false").RootElement.Clone();
+    return JsonElement.Parse(value ? "true" : "false");
   }
 
   /// <summary>
@@ -78,6 +78,6 @@ internal static class JsonElementHelper {
     });
 
     var json = $"[{string.Join(",", escapedValues)}]";
-    return JsonDocument.Parse(json).RootElement.Clone();
+    return JsonElement.Parse(json);
   }
 }

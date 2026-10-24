@@ -201,7 +201,7 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
         new PerspectiveScope());
     }
 
-    var stored = JsonDocument.Parse(await _storedDataAsync(id)).RootElement;
+    var stored = JsonElement.Parse(await _storedDataAsync(id));
     await Assert.That(stored.GetProperty("StartedAt").ValueKind).IsEqualTo(JsonValueKind.Number)
       .Because("the upsert writes under the persistence profile, where a date is a number");
     await Assert.That(stored.GetProperty("Turns")[0].GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.Number)
@@ -398,7 +398,7 @@ public class OpaqueDocumentRoundTripTests : IAsyncDisposable {
       await writer.SaveChangesAsync();
     }
 
-    var stored = JsonDocument.Parse(await _storedDataAsync(id)).RootElement;
+    var stored = JsonElement.Parse(await _storedDataAsync(id));
     await Assert.That(stored.GetProperty("StartedAt").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_startedAt))
       .Because("both writers use the same options, so a row is the same row whichever wrote it");

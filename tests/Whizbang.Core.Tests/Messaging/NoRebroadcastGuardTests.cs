@@ -48,7 +48,7 @@ public class NoRebroadcastGuardTests {
 
   private static MessageEnvelope<JsonElement> _envelope(EventFlags flags) => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     Flags = flags,

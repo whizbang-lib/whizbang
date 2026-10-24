@@ -288,7 +288,7 @@ public class StreamPurgeTests : EFCoreTestBase {
 
     // Inbound: an event from another service lands in the inbox; the claim stores it and creates perspective work.
     var eventId = Guid.CreateVersion7();
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(eventId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(eventId), JsonElement.Parse("{\"p\":1}"), []);
     await coordinator.StoreInboxMessagesAsync([new InboxMessage {
       MessageId = eventId,
       HandlerName = "PurgeHandler",
@@ -326,7 +326,7 @@ public class StreamPurgeTests : EFCoreTestBase {
     await coordinator.StoreOutboxMessagesAsync([new OutboxMessage {
       MessageId = Guid.CreateVersion7(),
       Destination = "topic",
-      Envelope = new MessageEnvelope<JsonElement>(MessageId.New(), JsonDocument.Parse("{}").RootElement, []),
+      Envelope = new MessageEnvelope<JsonElement>(MessageId.New(), JsonElement.Parse("{}"), []),
       Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       MessageType = "Purge.Tests.Outbound",

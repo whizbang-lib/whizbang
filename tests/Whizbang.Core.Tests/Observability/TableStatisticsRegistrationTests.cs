@@ -114,6 +114,8 @@ public class TableStatisticsRegistrationTests {
   [Arguments("EventTypeSamplePercent", "100.5")]
   [Arguments("MaxEventTypes", "0")]
   [Arguments("MaxTrackedTables", "0")]
+  [Arguments("CollectionInterval", "00:00:00")]
+  [Arguments("CollectionInterval", "-00:00:01")]
   public async Task AValueNoReadingCouldHonor_IsRefusedNamingItsKeyAsync(string setting, string value) {
     var exception = Assert.Throws<OptionsValidationException>(() => _bound(new Dictionary<string, string?> {
       ["Whizbang:TableStatistics:" + setting] = value,
@@ -146,6 +148,26 @@ public class TableStatisticsRegistrationTests {
     await Assert.That(provider.GetServices<IHostedService>().OfType<EventTypeBytesSampler>().Count()).IsEqualTo(1)
       .Because("two samplers would each try to claim the same window, and one is all a fleet needs");
     await Assert.That(provider.GetServices<IValidateOptions<TableStatisticsOptions>>().Count()).IsEqualTo(1);
+  }
+
+  // ==== #1668: the collection interval is a setting ====
+
+  [Test]
+  public async Task TheCollectionInterval_BindsFromTheTableStatisticsSectionAsync() {
+    var options = _bound(new Dictionary<string, string?> {
+      ["Whizbang:TableStatistics:CollectionInterval"] = "00:02:00",
+    });
+
+    await Assert.That(options.CollectionInterval).IsEqualTo(TimeSpan.FromMinutes(2))
+      .Because("a documented key that binds to nothing is a setting that silently does nothing (#646)");
+  }
+
+  [Test]
+  public async Task WithoutConfiguration_TheTablesAreReadEveryThirtySecondsAsync() {
+    var options = _bound([]);
+
+    await Assert.That(options.CollectionInterval).IsEqualTo(TimeSpan.FromSeconds(30))
+      .Because("the default is the interval the collector always used, so nothing changes for a host that sets nothing");
   }
 
   private static TableStatisticsOptions _bound(Dictionary<string, string?> settings) {

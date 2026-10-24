@@ -115,7 +115,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [
       new MessageHop {
         Type = HopType.Current,

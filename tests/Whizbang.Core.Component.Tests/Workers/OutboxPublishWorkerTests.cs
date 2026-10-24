@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -65,16 +66,6 @@ public class OutboxPublishWorkerTests {
     }
   }
 
-  private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
-    public TaskCompletionSource<Guid> FirstRenewal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public ConcurrentBag<(WorkCategory cat, Guid id)> All { get; } = [];
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) {
-      All.Add((category, id));
-      FirstRenewal.TrySetResult(id);
-      return ValueTask.CompletedTask;
-    }
-  }
-
   private sealed class FakeSingularStrategy : IMessagePublishStrategy {
     public bool ReadyValue { get; set; } = true;
     public bool ShouldFailPublish { get; set; }
@@ -124,7 +115,7 @@ public class OutboxPublishWorkerTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
       },
@@ -147,7 +138,6 @@ public class OutboxPublishWorkerTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -158,7 +148,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -183,7 +172,6 @@ public class OutboxPublishWorkerTests {
     await Assert.That(publishedId).IsEqualTo(work.MessageId);
     await Assert.That(strategy.Published).Contains(work);
     await Assert.That(failure.All).IsEmpty();
-    await Assert.That(renewal.All).IsEmpty();
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -194,7 +182,6 @@ public class OutboxPublishWorkerTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeBulkStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -205,7 +192,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -246,22 +232,22 @@ public class OutboxPublishWorkerTests {
   }
 
   [Test]
-  public async Task TransportNotReady_RebuffersAndEnqueuesRenewalAsync() {
+  public async Task TransportNotReady_RebuffersAndRenewsTheLeaseAsync() {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy { ReadyValue = false };
     var gate = new SchemaReadyGate();
     gate.MarkReady();
 
-    var sp = new ServiceCollection().BuildServiceProvider();
+    // The not-ready hold renews the held row's lease through the work coordinator (#1606).
+    var coordinator = new HeldLeaseCoordinator(new FakeTimeProvider(), TimeSpan.FromMinutes(5));
+    var sp = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
     var worker = new OutboxPublishWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       // Short retry delay so we don't sit in the busy-loop guard for the full 100ms default
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
@@ -284,8 +270,8 @@ public class OutboxPublishWorkerTests {
     var work = _makeWork();
     await channel.WriteAsync(work, cts.Token);
 
-    var renewedId = await renewal.FirstRenewal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(renewedId).IsEqualTo(work.MessageId);
+    await coordinator.WaitForRenewalsAsync(1);
+    await Assert.That(coordinator.Renewals.First().Ids).IsEquivalentTo([work.MessageId]);
 
     // Re-buffered at least once → the message is back in the channel; the worker keeps trying
     // while transport stays not-ready, so we just assert no completion fired and no failure routed.
@@ -301,7 +287,6 @@ public class OutboxPublishWorkerTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy { ShouldFailPublish = true };
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -312,7 +297,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -338,7 +322,6 @@ public class OutboxPublishWorkerTests {
     await Assert.That(routed.Error).IsEqualTo("simulated failure");
     await Assert.That(channel.RemovedInFlight).Contains(work.MessageId);
     await Assert.That(completion.AllIds).IsEmpty();
-    await Assert.That(renewal.All).IsEmpty();
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -349,7 +332,6 @@ public class OutboxPublishWorkerTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready but Enabled=false should still skip
@@ -360,7 +342,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -396,7 +377,6 @@ public class OutboxPublishWorkerTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var strategy = new FakeSingularStrategy();
     var gate = new SchemaReadyGate();  // not marked ready
 
@@ -406,7 +386,6 @@ public class OutboxPublishWorkerTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,

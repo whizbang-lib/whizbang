@@ -143,11 +143,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         if (canElect
             && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
                is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
+          // #1636: Elect is entered before the registration, so the row records it from the moment it exists.
+          await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
           staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
             serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
               as Whizbang.Core.Startup.IDutyElector,
-            ct => Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
-              segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct),
+            async ct => {
+              await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
+                segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct);
+              // The row exists now: the stage held until it did is written.
+              await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
+            },
             "__SCHEMA__", logger, cancellationToken);
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -158,6 +164,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           + "under the advisory lock alone", "__SCHEMA__");
       }
     }
+
+    // #1636: the election's outcome, or Elect skipped when no election was held.
+    await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
 
     // Released when this method returns, however it returns. A duty still held by an instance that
     // has finished, or failed, would leave every other instance waiting on it indefinitely.
@@ -269,6 +278,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         if (isWaiter
             || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
           // Another instance is doing the schema work; this one waits for it, and says so first.
+          await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
+            serviceProvider, "waiting for the instance migrating the schema", cancellationToken);
           await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
           var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
             ct => _isSchemaCurrentAsync(waitConnection, ct),
@@ -390,6 +401,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
                   if (logger is not null) {
                     Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
                   }
+                  await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+                    serviceProvider, "the schema is already current", cancellationToken);
                   break; // Exit retry loop — no changes, no lock needed
                 }
               }
@@ -448,12 +461,15 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             if (logger is not null) {
               Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
             }
+            await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+              serviceProvider, "another instance migrated the schema", cancellationToken);
             break;
           }
 
           logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__, infra={InfraChanged}, persp={PerspChanged})...",
             "__DBCONTEXT_CLASS__", pass.Infra, pass.Persp);
           steps.BeginPass(pass.TotalSteps);
+          await Whizbang.Data.Postgres.SchemaInitializationStages.ApplyingAsync(serviceProvider, pass.TotalSteps, cancellationToken);
 
           // Step 1: core infrastructure tables (Inbox, Outbox, EventStore, etc.)
           phaseSw.Restart();
@@ -499,6 +515,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
           if (steps.CompletedElsewhere) {
             // Another instance finished the pass while this one waited for a step's lock; its commits serve this one.
+            await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+              serviceProvider, "another instance finished the pass", cancellationToken);
             break;
           }
           steps.CompletePass();
@@ -566,6 +584,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // has statistics for each new index's expression rather than a default that can make it ignore the
     // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
     // never fatal: a table left unanalyzed is found by the maintenance step.
+    await Whizbang.Data.Postgres.SchemaInitializationStages.ConvergingAsync(serviceProvider, cancellationToken);
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
 
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
@@ -1134,6 +1153,7 @@ END $$;
       await _runRecordedStepAsync(steps, connection, pass, _perspectiveTablesStep, async ct => {
         const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
         if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
+          // __ENSURE_REQUIRED_EXTENSIONS__
           await _underSavepointAsync(connection, "whizbang_perspective_tables",
             () => _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, ct),
             ex => {
@@ -1254,6 +1274,17 @@ END $$;
       await dbContext.Database.CloseConnectionAsync();
     }
   }
+
+  /// <summary>
+  /// The capabilities this context's schema requires, in force whatever configuration says: pgvector for every
+  /// vector column, explicitly, because the column cannot exist without it; and pg_trgm (or any other optional
+  /// extension) for every perspective whose schema has a block needing it, implicitly, because the schema pass skips
+  /// the block. The generated registration puts them in force as a requirement source, and the data source passes
+  /// them to the extension helper so a refusal names the columns.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
+  public static System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Capabilities.ActiveCapabilityRequirement> GetCapabilityRequirements() =>
+    global::Whizbang.Data.Postgres.PostgresSchemaRequirements.From(__VECTOR_COLUMNS__, GetPerspectiveEntries());
 
   /// <summary>
   /// Returns per-perspective (name, sql) entries for individual hash tracking.

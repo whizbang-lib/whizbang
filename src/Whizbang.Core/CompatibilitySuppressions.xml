@@ -8,4 +8,11 @@
     <Right>lib/net10.0/Whizbang.Core.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Startup.TableRewriteStartupStep.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.MaintenanceWorkerOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Startup.TableRewriteStartupStep})</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
 </Suppressions>

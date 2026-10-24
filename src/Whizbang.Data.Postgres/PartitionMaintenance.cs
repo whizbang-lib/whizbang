@@ -14,9 +14,10 @@ namespace Whizbang.Data.Postgres;
 /// <summary>One thing a partition maintenance cycle did to one table.</summary>
 /// <param name="Table">The table.</param>
 /// <param name="Action">
-/// What happened: <c>converted</c>; or, per partition, <c>created</c>, <c>dropped</c>, <c>emptied</c> (expired but the
-/// table was in use, so only truncated), <c>deferred</c> (a lock was not free), <c>kept</c> (debug mode), or
-/// <c>skipped</c> (the table is not partitioned, or another instance is maintaining it).
+/// What happened: <c>converted</c>; or, per partition, <c>created</c>, <c>tuned</c> (given the storage settings its
+/// table declares), <c>dropped</c>, <c>emptied</c> (expired but the table was in use, so only truncated),
+/// <c>deferred</c> (a lock was not free), <c>kept</c> (debug mode), or <c>skipped</c> (the table is not partitioned,
+/// or another instance is maintaining it).
 /// </param>
 /// <param name="Partition">The partition, or the table itself for <c>converted</c> and <c>skipped</c>.</param>
 /// <docs>operations/infrastructure/partitioned-ledgers#what-a-cycle-does</docs>
@@ -102,7 +103,7 @@ internal static partial class PartitionMaintenance {
     var results = new List<PartitionMaintenanceResult>();
     await using var command = connection.CreateCommand();
     // The window is read in the same statement, so a fixed window, a stored window and the stored window's default
-    // are one expression: COALESCE(fixed, stored days, default days).
+    // are one expression: COALESCE(fixed, stored days, default days). All three null means no window.
     command.CommandText =
       $"SELECT action, partition_name FROM {quotedSchema}.wh_partition_maintain(@table, @interval, @ahead, " +
       $"COALESCE(@keep, (SELECT make_interval(days => s.setting_value::INTEGER) FROM {quotedSchema}.wh_settings s " +
@@ -112,7 +113,10 @@ internal static partial class PartitionMaintenance {
     command.Parameters.AddWithValue("ahead", createAhead);
     command.Parameters.Add(new NpgsqlParameter("keep", NpgsqlDbType.Interval) { Value = table.Retention is { } keep ? keep : (object)DBNull.Value });
     command.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text) { Value = (object?)table.RetentionSettingKey ?? DBNull.Value });
-    command.Parameters.AddWithValue("defaultDays", table.RetentionDefaultDays);
+    // With neither a fixed window nor a key, the default is null too, so the window is null and nothing is dropped.
+    command.Parameters.Add(new NpgsqlParameter("defaultDays", NpgsqlDbType.Integer) {
+      Value = table.RetentionSettingKey is null ? DBNull.Value : table.RetentionDefaultDays,
+    });
     command.Parameters.AddWithValue(nameof(now), now.ToUniversalTime());
     await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {

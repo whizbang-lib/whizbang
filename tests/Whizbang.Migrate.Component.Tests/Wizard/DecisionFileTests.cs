@@ -207,7 +207,7 @@ public class DecisionFileTests {
 
     // Assert
     await Assert.That(decisionFile.State.Status).IsEqualTo(MigrationStatus.Completed);
-    await Assert.That(decisionFile.State.CompletedAt).IsNotNull();
+    await Assert.That(decisionFile.State.CompletedAt.HasValue).IsTrue();
   }
 
   [Test]

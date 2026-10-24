@@ -85,7 +85,7 @@ public sealed class DapperPerspectiveSnapshotStoreCoverageTests : IDisposable {
     var stored = await conn.QuerySingleAsync<string>(
       "SELECT snapshot_data::text FROM wh_perspective_snapshots WHERE stream_id = @p AND perspective_name = @n",
       new { p = streamId, n = perspectiveName });
-    var storedValue = JsonDocument.Parse(stored).RootElement.GetProperty("x").GetInt32();
+    var storedValue = JsonElement.Parse(stored).GetProperty("x").GetInt32();
     await Assert.That(storedValue).IsEqualTo(1);
   }
 

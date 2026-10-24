@@ -146,7 +146,7 @@ public class DispatcherPayloadLimitTests {
     var ex = await Assert.ThrowsAsync<MessagePayloadTooLargeException>(
       () => dispatcher.PublishAsync(new SizedEvent(Guid.CreateVersion7(), 1500)));
 
-    await Assert.That(ex!.StreamId).IsNotNull();
+    await Assert.That(ex!.StreamId.HasValue).IsTrue();
     await Assert.That(strategy.QueuedOutbox).IsEmpty();
   }
 

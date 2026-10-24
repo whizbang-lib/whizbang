@@ -35,7 +35,7 @@ public class SagaItemCompletionReconcilerTests {
       getItems: _ => throw new InvalidOperationException("should not be called"),
       reader, CancellationToken.None);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Completed).IsEqualTo(9);
     await Assert.That(result.Value.Failed).IsEqualTo(1)
       .Because("Fast path avoids the event-store walk when the projection's aggregate already shows the saga is done. The reader being throwing proves no read happened.");
@@ -80,7 +80,7 @@ public class SagaItemCompletionReconcilerTests {
       getItems: _ => Task.FromResult<IReadOnlyList<SagaItemModel>>(items),
       reader, CancellationToken.None);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Completed).IsEqualTo(3)
       .Because("Reconciler trusts the event store over the stranded projection row. Without this path the saga's lost-update strand becomes permanent and it never completes.");
     await Assert.That(result.Value.Failed).IsEqualTo(0);
@@ -105,7 +105,7 @@ public class SagaItemCompletionReconcilerTests {
       getItems: _ => Task.FromResult<IReadOnlyList<SagaItemModel>>(items),
       reader, CancellationToken.None);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Completed).IsEqualTo(1);
     await Assert.That(result.Value.Failed).IsEqualTo(1)
       .Because("Reconciled outcome of a stranded row is whichever terminal type the event store has — Failed here.");

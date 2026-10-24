@@ -46,7 +46,7 @@ public class ScopedLensFactoryImplTests {
 
     // Assert
     await Assert.That(lens).IsNotNull();
-    await Assert.That(lens.AppliedFilter).IsNotNull();
+    await Assert.That(lens.AppliedFilter.HasValue).IsTrue();
     await Assert.That(lens.AppliedFilter!.Value.TenantId).IsEqualTo("tenant-123");
   }
 

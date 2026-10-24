@@ -562,7 +562,7 @@ public class DispatcherCoverageSweepOutboxTests {
 
     // Assert
     await Assert.That(dispatcher.EventStoreCascades).Count().IsEqualTo(1);
-    await Assert.That(dispatcher.EventStoreCascades[0].EventId).IsNotNull();
+    await Assert.That(dispatcher.EventStoreCascades[0].EventId.HasValue).IsTrue();
   }
 
   [Test]
@@ -576,7 +576,7 @@ public class DispatcherCoverageSweepOutboxTests {
 
     // Assert
     await Assert.That(dispatcher.OutboxCascades).Count().IsEqualTo(1);
-    await Assert.That(dispatcher.OutboxCascades[0].EventId).IsNotNull();
+    await Assert.That(dispatcher.OutboxCascades[0].EventId.HasValue).IsTrue();
   }
 
   [Test]

@@ -174,10 +174,10 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
-        // TURNKEY: the partition manager (#1611). It converts wh_log once and keeps the framework's time-partitioned
-        // tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and is idle otherwise. One per
-        // DbContext, since each context's schema has its own tables.
-        selector.Services.AddPartitionedTable(PartitionedTables.Log);
+        // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
+        // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
+        // is true, and is idle otherwise. One per DbContext, since each context's schema has its own tables.
+        selector.Services.AddFrameworkPartitionedTables();
         selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
             new PartitionMaintenanceStep(
                 dbContextType,
@@ -426,6 +426,8 @@ public static class PostgresDriverExtensions {
         // same name. The data source is resolved when the probe runs, after the schema is ready, not here.
         selector.Services.AddWhizbangPostgresCapabilities(connectionStringName,
           (sp, ct) => sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(ct));
+        // What this context's schema requires (pgvector for a vector column), judged on this database only.
+        selector.Services.AddWhizbangPostgresSchemaRequirements(selector.DbContextType, connectionStringName);
         selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
           if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
             options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(

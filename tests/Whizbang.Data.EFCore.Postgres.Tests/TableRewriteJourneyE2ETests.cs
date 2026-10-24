@@ -98,11 +98,13 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await using var providerB = _servicesForPod();
     var stepA = new TableRewriteStartupStep(
       scopeFactory: providerA.GetRequiredService<IServiceScopeFactory>(),
-      options: allow,
+      rewriters: [new VacuumFullTableRewriter(allow)],
+      strategy: TableRewriteStrategies.VACUUM_FULL,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
     var stepB = new TableRewriteStartupStep(
       scopeFactory: providerB.GetRequiredService<IServiceScopeFactory>(),
-      options: allow,
+      rewriters: [new VacuumFullTableRewriter(allow)],
+      strategy: TableRewriteStrategies.VACUUM_FULL,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
     // Post-ready means AFTER Migrate: each pod carries the full declared chain, its schema gate
     // already open — exactly the state a running instance is in when the rewrite band begins.

@@ -127,6 +127,53 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
     """;
 
   /// <summary>
+  /// The indexes on the schema's <c>wh_</c> tables with no scans since the statistics were last reset, with their
+  /// size, the largest past the cap summed under <see cref="TableStatisticsOptions.OTHER_TABLES"/>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>pg_stat_user_indexes</c> lists the indexes that hold storage, which for a partitioned table are its partitions'
+  /// indexes. Each is rolled up to the index it was created from (<c>pg_partition_root</c>, null for an index not in a
+  /// partition tree), so an index on a partitioned table is one row whose scans and bytes are its partitions' summed.
+  /// </para>
+  /// <para>
+  /// A unique, primary-key or exclusion index enforces a rule whether or not a query reads it, so it is left out. The
+  /// table filter is on the table the rolled-up index belongs to, with the underscore escaped.
+  /// </para>
+  /// </remarks>
+  private const string UNUSED_INDEXES_SQL = """
+    WITH leaves AS (
+      SELECT COALESCE(pg_catalog.pg_partition_root(s.indexrelid), s.indexrelid) AS index_oid,
+             COALESCE(s.idx_scan, 0) AS scans,
+             COALESCE(pg_catalog.pg_relation_size(s.indexrelid), 0) AS bytes
+      FROM pg_catalog.pg_stat_user_indexes s
+      WHERE s.schemaname = COALESCE(@schema, current_schema())
+    ),
+    per_index AS (
+      SELECT index_oid, sum(scans) AS scans, sum(bytes)::bigint AS bytes
+      FROM leaves
+      GROUP BY index_oid
+    ),
+    unused AS (
+      SELECT ic.relname AS index_name, tc.relname AS table_name, p.bytes,
+             row_number() OVER (ORDER BY p.bytes DESC, ic.relname) AS size_rank
+      FROM per_index p
+      JOIN pg_catalog.pg_index x ON x.indexrelid = p.index_oid
+      JOIN pg_catalog.pg_class ic ON ic.oid = p.index_oid
+      JOIN pg_catalog.pg_class tc ON tc.oid = x.indrelid
+      WHERE p.scans = 0
+        AND NOT x.indisunique
+        AND NOT x.indisexclusion
+        AND tc.relname LIKE 'wh\_%'
+    )
+    SELECT CASE WHEN size_rank <= @cap THEN index_name ELSE @other END AS index_name,
+           CASE WHEN size_rank <= @cap THEN table_name ELSE @other END AS table_name,
+           sum(bytes)::bigint AS bytes
+    FROM unused
+    GROUP BY 1, 2
+    """;
+
+  /// <summary>
   /// Tables with no more live rows than this report no bloat ratio: with few rows the per-row average
   /// is dominated by page overhead and reads as alarming for a table measured in kilobytes.
   /// </summary>
@@ -172,6 +219,14 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   }
 
   /// <inheritdoc />
+  /// <remarks><c>current_database()</c> on a connection the provider opens: the database every other reading reads.</remarks>
+  public async Task<string?> GetDatabaseNameAsync(CancellationToken ct = default) {
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    await using var cmd = new NpgsqlCommand("SELECT current_database()", connection);
+    return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyDictionary<string, TableStorageStatistics>> GetTableStorageAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, TableStorageStatistics>(StringComparer.Ordinal);
 
@@ -190,6 +245,25 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
         IndexBytes: reader.GetInt64(3),
         LiveRows: reader.GetInt64(4),
         BloatRatio: reader.IsDBNull(5) ? null : reader.GetDouble(5));
+    }
+
+    return results;
+  }
+
+  /// <inheritdoc />
+  /// <remarks>One catalog statement over the index statistics; nothing reads an index or a table.</remarks>
+  public async Task<IReadOnlyDictionary<string, UnusedIndex>> GetUnusedIndexesAsync(CancellationToken ct = default) {
+    var results = new Dictionary<string, UnusedIndex>(StringComparer.Ordinal);
+
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    await using var cmd = new NpgsqlCommand(UNUSED_INDEXES_SQL, connection);
+    _addSchema(cmd);
+    cmd.Parameters.AddWithValue("cap", _maxTrackedTables);
+    cmd.Parameters.AddWithValue("other", TableStatisticsOptions.OTHER_TABLES);
+
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      results[reader.GetString(0)] = new UnusedIndex(reader.GetString(1), reader.GetInt64(2));
     }
 
     return results;

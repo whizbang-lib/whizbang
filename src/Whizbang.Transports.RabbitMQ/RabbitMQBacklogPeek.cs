@@ -30,7 +30,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// ownership-drift probe learned this the same way).
 /// </para>
 /// </remarks>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQBacklogPeekTests.cs</tests>
 /// <remarks>Creates the peek.</remarks>
 /// <param name="channelPool">The channel pool passive declares are rented from.</param>

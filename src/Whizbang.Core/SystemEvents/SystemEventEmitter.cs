@@ -162,7 +162,9 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
 
     // Emit to the tenant's audit ledger (SystemEventStreams.StreamFor routes it). No enablement check:
     // event audit is on to get here, and an audit record is always stored while any audit is on.
-    await _appendAsync(session, auditEvent, cancellationToken);
+    // The record is caused by the event it audits, so the trail can be walked back from the envelope as well as
+    // from the payload's OriginalEventId. Taken from the audited envelope, where it is already a message id.
+    await _appendAsync(session, auditEvent, cancellationToken, causationId: envelope.MessageId);
   }
 
   /// <inheritdoc />
@@ -244,7 +246,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
   private async Task _appendAsync<TSystemEvent>(
       ISystemEventSinkSession session,
       TSystemEvent systemEvent,
-      CancellationToken cancellationToken) where TSystemEvent : ISystemEvent {
+      CancellationToken cancellationToken,
+      MessageId? causationId = null) where TSystemEvent : ISystemEvent {
     // Create envelope for the system event
     var envelope = new MessageEnvelope<TSystemEvent> {
       // Per type, not one band for all of them. Audit follows SystemEventOptions.AuditPriority,
@@ -262,6 +265,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = HopStamping.AmbientTraceParent,
+          CausationId = causationId,
           Scope = AuditRecordScope.For(systemEvent switch {
               EventAudited e => e.TenantId,
               CommandAudited c => c.TenantId,

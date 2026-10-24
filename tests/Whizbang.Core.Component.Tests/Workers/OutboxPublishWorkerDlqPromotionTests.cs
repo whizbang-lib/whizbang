@@ -80,10 +80,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     }
   }
 
-  private sealed class FakeLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-  }
-
   private sealed class FakeFailingStrategy : IMessagePublishStrategy {
     public TaskCompletionSource<OutboxWork> AttemptedPublish { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string ErrorMessage { get; init; } = "simulated transport failure";
@@ -149,7 +145,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       },
@@ -170,7 +166,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new FakeOutboxCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new FakeLeaseRenewalChannel();
     var dlq = new FakeDeadLetterStore();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -181,7 +176,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions {
         Enabled = true,
@@ -366,7 +360,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var dlq = new FakeDeadLetterStore();
@@ -376,7 +369,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -423,7 +415,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
     var channel = new FakeWorkChannelWriter();
     var completion = new NoOpCompletionChannel();
     var failure = new FakeFailureChannel();
-    var renewal = new NoOpLeaseRenewalChannel();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     var sp = new ServiceCollection().BuildServiceProvider();
@@ -432,7 +423,6 @@ public class OutboxPublishWorkerDlqPromotionTests {
       workChannelWriter: channel,
       outboxCompletionChannel: completion,
       failureChannel: failure,
-      leaseRenewalChannel: renewal,
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxOutboxAttempts = 2 }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -467,9 +457,5 @@ public class OutboxPublishWorkerDlqPromotionTests {
   // --- shared no-op channels for the catch/throw tests above ---
   private sealed class NoOpCompletionChannel : IOutboxCompletionChannel {
     public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
-  }
-
-  private sealed class NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
   }
 }

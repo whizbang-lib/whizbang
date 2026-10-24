@@ -101,7 +101,7 @@ public class InboxChannelWriterInFlightBoundingTests {
         MessageId = messageId,
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = [],
-        Payload = JsonDocument.Parse("{}").RootElement
+        Payload = JsonElement.Parse("{}")
       },
       MessageType = "test-message"
     };

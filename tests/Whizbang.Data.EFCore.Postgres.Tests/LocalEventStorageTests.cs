@@ -450,7 +450,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var matchingMessage = outboxMessages.FirstOrDefault(m => m.MessageType == expectedType);
     await Assert.That(matchingMessage).IsNotNull()
       .Because("Event should be stored to outbox");
-    await Assert.That(matchingMessage!.StreamId).IsNotNull()
+    await Assert.That(matchingMessage!.StreamId.HasValue).IsTrue()
       .Because("Events should have a StreamId set for event store ordering (fallback to MessageId for nested test types)");
   }
 
@@ -486,7 +486,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var matchingMessage = outboxMessages.FirstOrDefault(m => m.MessageType == expectedType);
     await Assert.That(matchingMessage).IsNotNull()
       .Because("Event should be stored to outbox");
-    await Assert.That(matchingMessage!.StreamId).IsNotNull()
+    await Assert.That(matchingMessage!.StreamId.HasValue).IsTrue()
       .Because("Events should have a StreamId set for event store ordering (fallback to MessageId for nested test types)");
   }
 

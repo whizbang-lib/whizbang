@@ -509,8 +509,8 @@ public class CanonicalTemporalConventionTests {
     await using var reader = await command.ExecuteReaderAsync(cancellationToken);
     await Assert.That(await reader.ReadAsync(cancellationToken)).IsTrue();
     return (
-      JsonDocument.Parse(reader.GetString(0)).RootElement,
-      JsonDocument.Parse(reader.GetString(1)).RootElement);
+      JsonElement.Parse(reader.GetString(0)),
+      JsonElement.Parse(reader.GetString(1)));
   }
 }
 

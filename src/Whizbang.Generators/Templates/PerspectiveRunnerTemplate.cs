@@ -763,7 +763,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             // Soft delete: Model should have DeletedAt set by perspective or caller
             // For now, keep the model (it may have been modified by perspective)
             updatedModel = appliedModel ?? updatedModel;
-            hasWrittenUpdate = true;
+            // A soft delete with no model produces nothing: on a stream with no row it would store the
+            // scaffolded default (#1677). With a model, or on a row already produced, it writes as before.
+            hasWrittenUpdate |= appliedModel != null;
             break;
           case global::Whizbang.Core.Perspectives.ModelAction.Purge:
             // Hard delete: Mark for purge, skip upsert
@@ -856,7 +858,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // left untouched is not a changed row (#1342).
           rowChanged = await SaveModelAndCheckpointAsync(
               streamId,
+              perspectiveName,
               updatedModel,
+              hasWrittenUpdate,
               lastSuccessfulEventId!.Value,
               lastSuccessfulEventType ?? string.Empty,
               checkpointCommitSequence,
@@ -1037,7 +1041,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             var partialScopeWrite = _resolveScopeWrite(lastScope, applyRead, modelLoadedFromDb, scopeEventScope);
             await SaveModelAndCheckpointAsync(
                 streamId,
+                perspectiveName,
                 updatedModel,
+                hasWrittenUpdate,
                 lastSuccessfulEventId.Value,
                 lastSuccessfulEventType ?? string.Empty,
                 partialCheckpointCommitSequence,
@@ -1258,7 +1264,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// </returns>
   private async Task<bool> SaveModelAndCheckpointAsync(
       Guid streamId,
+      string perspectiveName,
       __MODEL_TYPE_NAME__ model,
+      bool producedByApply,
       Guid checkpointEventId,
       string checkpointEventType,
       long? checkpointCommitSequence,
@@ -1267,6 +1275,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       PerspectiveScope? scope = null,
       bool forceUpdateScope = false,
       global::Whizbang.Core.Perspectives.PerspectiveRowVersion expectedVersion = default) {
+
+    // The last check before the write (#1677): a row is stored only from a model an Apply produced, or the stored
+    // row or snapshot an apply continues from, never from the scaffolded default built as Apply input.
+    if (!global::Whizbang.Core.Perspectives.PerspectiveRowWriteGuard.AllowsWrite(producedByApply, _logger, perspectiveName, streamId)) {
+      return false;
+    }
 
     // Build metadata that captures the last applied event's identity AND commit_sequence.
     // The runner reads metadata back on the next run (ReadForApplyAsync, or GetMetadataByStreamIdAsync) to filter
@@ -1504,6 +1518,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Use provided model or create empty one (full replay from event zero)
     var currentModel = initialModel ?? CreateEmptyModel(streamId);
+    // True once the model is one an Apply produced: a snapshot's model was, the scaffolded empty one is only Apply
+    // input. A replay whose every event the perspective declines writes nothing, exactly as the live drain does,
+    // instead of storing the scaffold as a blank row (#1677).
+    var producedByApply = initialModel is not null;
 
     // Purge stays purged (issue #1027): a full replay begins purged when the stream is marked, exactly as the
     // live drain does on a missing row — the history before an operator purge is gone, so the fold alone could
@@ -1636,6 +1654,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         pendingPurge = false;
         resurrected = true;
         updatedModel = resurrection;
+        producedByApply = true;
         lastSuccessfulEventType = @event.GetType().FullName ?? @event.GetType().Name;
         continue;
       }
@@ -1662,6 +1681,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       switch (action) {
         case global::Whizbang.Core.Perspectives.ModelAction.Delete:
           updatedModel = appliedModel ?? updatedModel;
+          producedByApply |= appliedModel != null;
           break;
         case global::Whizbang.Core.Perspectives.ModelAction.Purge:
           pendingPurge = true;
@@ -1671,6 +1691,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         default:
           if (appliedModel != null) {
             updatedModel = appliedModel;
+            producedByApply = true;
           }
           break;
       }
@@ -1688,7 +1709,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // caps total snapshots per stream so this can't bloat the table without bound.
       if (rewindSnapshotInterval > 0
           && _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-          && !pendingPurge && updatedModel is not null) {
+          && !pendingPurge && updatedModel is not null && producedByApply) {
         eventsSinceIntermediateSnapshot++;
         if (eventsSinceIntermediateSnapshot >= rewindSnapshotInterval) {
           try {
@@ -1742,7 +1763,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         }
         await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
         rowChanged = true;
-      } else if (updatedModel != null) {
+      } else if (updatedModel != null && producedByApply) {
         var checkpointEventId = frontierEventId ?? lastSuccessfulEventId!.Value;
         var replayCheckpointCommitSequence = frontierCommitSequence
             ?? await _eventStore.GetCommitSequenceAsync(checkpointEventId, cancellationToken);
@@ -1750,7 +1771,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var snapshotDue = _snapshotStore is not null && _snapshotOptions?.Value.Enabled == true && lastSuccessfulEventId.HasValue;
         snapshotBeforeWrite = snapshotDue ? SnapshotBeforeWrite(updatedModel) : null;
         rowChanged = await SaveModelAndCheckpointAsync(
-            streamId, updatedModel, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
+            streamId, perspectiveName, updatedModel, producedByApply, checkpointEventId, lastSuccessfulEventType ?? string.Empty,
             replayCheckpointCommitSequence, lastSuccessfulEventAt ?? DateTime.UtcNow, cancellationToken,
             // A rewind reads no stored scope, so it writes scope only if it recreates the row; an existing row keeps
             // its scope (Always fields catch up on the next live apply).
@@ -1774,7 +1795,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // snapshot_commit_sequence IS NOT NULL) silently misses this snapshot on subsequent
       // rewinds — defeating the deterministic-replay invariant the column was added for.
       if (_snapshotStore is not null && _snapshotOptions?.Value.Enabled == true
-          && !pendingPurge && updatedModel is not null && lastSuccessfulEventId.HasValue) {
+          && !pendingPurge && updatedModel is not null && producedByApply && lastSuccessfulEventId.HasValue) {
         var afterReplayCommitSequence = await _eventStore.GetCommitSequenceAsync(
             lastSuccessfulEventId.Value, cancellationToken);
         await _snapshotStore.CreateSnapshotAsync(

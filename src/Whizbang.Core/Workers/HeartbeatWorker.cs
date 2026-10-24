@@ -286,6 +286,11 @@ public partial class HeartbeatWorker(
       return false;
     }
     OnHeartbeatRecorded?.Invoke();
+    // #1636: an accepted beat means the row exists, so a startup stage held since before it did, or since its write
+    // was lost, is written now. Nothing to do (and no wait) when nothing is held.
+    if (scope.ServiceProvider.GetService<Startup.IStartupStageReporter>() is { } stages) {
+      await stages.InstanceRegisteredAsync(ct);
+    }
 
     // Announce InstanceJoined once, after the first successful heartbeat (which is the
     // moment wh_service_instances first has a row for this pod). Subscribers use this to

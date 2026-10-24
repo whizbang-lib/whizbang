@@ -158,7 +158,7 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
 
   private static MessageEnvelope<JsonElement> _envelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [
       new MessageHop {
         Type = HopType.Current,

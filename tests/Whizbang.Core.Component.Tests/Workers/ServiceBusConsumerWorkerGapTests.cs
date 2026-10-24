@@ -113,7 +113,7 @@ public class ServiceBusConsumerWorkerGapTests {
 
     var envelope = new MessageEnvelope<object> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"Data\":\"boxed\"}").RootElement,
+      Payload = JsonElement.Parse("{\"Data\":\"boxed\"}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -596,7 +596,7 @@ public class ServiceBusConsumerWorkerGapTests {
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithRawAggregateId(
     MessageId messageId, string rawAggregateIdJson, string? traceParent = null) {
-    var payload = JsonDocument.Parse("{\"Data\":\"gap-test-data\"}").RootElement;
+    var payload = JsonElement.Parse("{\"Data\":\"gap-test-data\"}");
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -612,7 +612,7 @@ public class ServiceBusConsumerWorkerGapTests {
             ProcessId = 4321
           },
           Metadata = new Dictionary<string, JsonElement> {
-            ["AggregateId"] = JsonDocument.Parse(rawAggregateIdJson).RootElement
+            ["AggregateId"] = JsonElement.Parse(rawAggregateIdJson)
           }
         }
       ],

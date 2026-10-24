@@ -73,35 +73,26 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
 
     Console.WriteLine($"[SANITY TEST] Sending message: {message.MessageId}");
 
-    // Send with timeout
-    var sendTask = sender.SendMessageAsync(message);
-    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-    var completedTask = await Task.WhenAny(sendTask, timeoutTask);
-
-    if (completedTask == timeoutTask) {
+    // Send, bounded: a send that never completes means the emulator is not responding
+    try {
+      await sender.SendMessageAsync(message).WaitAsync(TimeSpan.FromSeconds(30));
+    } catch (TimeoutException ex) {
       Console.WriteLine("[SANITY TEST] ❌ FAILED: SendMessageAsync timed out after 30 seconds");
-      throw new TimeoutException("SendMessageAsync timed out after 30 seconds - emulator not responding");
+      throw new TimeoutException("SendMessageAsync timed out after 30 seconds - emulator not responding", ex);
     }
-
-    await sendTask; // Re-await to propagate exceptions
     Console.WriteLine("[SANITY TEST] ✅ Message sent successfully!");
 
     // Now try to receive it
     Console.WriteLine("[SANITY TEST] Creating receiver...");
     var receiver = client.CreateReceiver(topicName, subscriptionName);
 
+    // The subscription is shared: receive until THIS message arrives (completing it and any stray)
     Console.WriteLine("[SANITY TEST] Waiting to receive message (30s timeout)...");
-    var receivedMessage = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(30));
-
-    await Assert.That(receivedMessage).IsNotNull();
-    Console.WriteLine($"[SANITY TEST] ✅ Received message: {receivedMessage!.MessageId}");
+    var (receivedMessage, _) = await CorrelatedReceive.UntilAsync(receiver, message.MessageId, TimeSpan.FromSeconds(30));
+    Console.WriteLine($"[SANITY TEST] ✅ Received and completed message: {receivedMessage.MessageId}");
 
     await Assert.That(receivedMessage.MessageId).IsEqualTo(message.MessageId);
     await Assert.That(receivedMessage.Body.ToString()).IsEqualTo(testMessageBody);
-
-    // Complete the message
-    await receiver.CompleteMessageAsync(receivedMessage);
-    Console.WriteLine("[SANITY TEST] ✅ Message completed successfully!");
 
     Console.WriteLine("[SANITY TEST] ✅✅✅ ALL CHECKS PASSED - Emulator is working correctly!");
   }
@@ -152,11 +143,9 @@ public class ServiceBusEmulatorSanityTests(ServiceBusEmulatorFixtureSource fixtu
     Console.WriteLine("[SANITY TEST] ✅ Message sent!");
 
     var receiver = client.CreateReceiver(topicName, subscriptionName);
-    var receivedMessage = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(30));
+    var (receivedMessage, _) = await CorrelatedReceive.UntilAsync(receiver, message.MessageId, TimeSpan.FromSeconds(30));
 
-    await Assert.That(receivedMessage).IsNotNull();
-    await Assert.That(receivedMessage!.MessageId).IsEqualTo(message.MessageId);
-    await receiver.CompleteMessageAsync(receivedMessage);
+    await Assert.That(receivedMessage.MessageId).IsEqualTo(message.MessageId);
 
     Console.WriteLine("[SANITY TEST] ✅✅✅ Generic topic works!");
   }

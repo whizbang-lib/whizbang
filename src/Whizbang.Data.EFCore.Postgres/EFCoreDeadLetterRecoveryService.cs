@@ -288,6 +288,29 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<DeadLetterRedelivery?> ReadRedeliveryAsync(Guid deadLetterId, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT source_table, source_id, message_type, (envelope -> 'event_data')::text FROM {_fn("wh_dead_letters")} "
+      + "WHERE dead_letter_id = @id AND source_table IN ('wh_inbox', 'broker') AND envelope -> 'event_data' IS NOT NULL";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      return null;
+    }
+    return new DeadLetterRedelivery(
+      DeadLetterId: deadLetterId,
+      SourceTable: reader.GetString(0),
+      SourceId: reader.GetGuid(1),
+      MessageType: reader.GetString(2),
+      EnvelopeJson: reader.GetString(3));
+  }
+
+  /// <inheritdoc />
   public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default)
     => _execAsync($"SELECT {_fn("mark_dead_letter_holding")}(@id)", deadLetterId, ct);
 

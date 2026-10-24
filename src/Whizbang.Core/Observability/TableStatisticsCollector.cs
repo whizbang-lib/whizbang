@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,17 +12,27 @@ namespace Whizbang.Core.Observability;
 /// <summary>
 /// Background service that periodically queries <see cref="ITableStatisticsProvider"/>
 /// and updates <see cref="TableStatisticsMetrics"/> caches.
-/// Runs every 30 seconds. Waits for database readiness before starting. Registered by
+/// Runs every <see cref="TableStatisticsOptions.CollectionInterval"/> (thirty seconds unless configured). Waits for
+/// database readiness before starting. Registered by
 /// <see cref="TableStatisticsServiceCollectionExtensions.AddWhizbangTableStatistics"/>, which both
 /// PostgreSQL drivers call.
 /// </summary>
 /// <docs>operations/observability/metrics#table-statistics</docs>
+/// <param name="scopeFactory">Resolves the provider for each cycle.</param>
+/// <param name="metrics">The meter the readings are reported on.</param>
+/// <param name="schemaReadyGate">Holds the first cycle until the schema exists; null starts at once.</param>
+/// <param name="logger">Optional logger.</param>
+/// <param name="options">The interval between cycles; an unset interval is thirty seconds.</param>
+/// <param name="timeProvider">The clock the interval is measured on; null is the system clock.</param>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs</tests>
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
   Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
-  ILogger<TableStatisticsCollector> logger
+  ILogger<TableStatisticsCollector> logger,
+  Microsoft.Extensions.Options.IOptions<TableStatisticsOptions> options,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
 
   private readonly ILogger<TableStatisticsCollector> _logger =
@@ -37,7 +48,14 @@ public sealed partial class TableStatisticsCollector(
   /// </remarks>
   private QueryExposureAdvisory? _exposureAdvisory;
 
-  private const int COLLECTION_INTERVAL_SECONDS = 30;
+  /// <summary>The unused indexes last seen, so the log line is written when the set changes rather than every cycle.</summary>
+  private HashSet<string> _lastUnusedIndexes = new(StringComparer.Ordinal);
+
+  /// <summary>The database the provider reads, kept once it has answered, since it does not change.</summary>
+  private string? _database;
+
+  private readonly TimeSpan _interval = options.Value.CollectionInterval;
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>
   /// Raised once every collection cycle, after every metric cache has been written.
@@ -74,6 +92,11 @@ public sealed partial class TableStatisticsCollector(
           LogProviderNotRegistered(_logger);
           return;
         }
+
+        // The database tags every gauge, so the same table in two databases is two series. Asked until the provider
+        // names it, then kept.
+        _database ??= await provider.GetDatabaseNameAsync(stoppingToken);
+        metrics.UpdateDatabase(_database);
 
         // One reading for the tables: sizes, their split, rows and bloat together, so a cycle reads the
         // catalog once for every table rather than once per kind of figure.
@@ -118,6 +141,12 @@ public sealed partial class TableStatisticsCollector(
         // rather than having to go looking.
         metrics.UpdateTableBloat(bloat);
 
+        // Indexes nothing has scanned: on the gauge every cycle, in the log only when the set changes, so the
+        // operator is told once. Reported, never dropped.
+        var unused = await provider.GetUnusedIndexesAsync(stoppingToken);
+        metrics.UpdateUnusedIndexes(unused);
+        _reportUnusedIndexes(unused);
+
         CycleCompleted?.Invoke();
       } catch (ObjectDisposedException) {
         break;  // Host is shutting down — exit the collection loop
@@ -126,12 +155,36 @@ public sealed partial class TableStatisticsCollector(
       }
 
       try {
-        await Task.Delay(TimeSpan.FromSeconds(COLLECTION_INTERVAL_SECONDS), stoppingToken);
+        await Task.Delay(_interval, _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
     }
   }
+
+  /// <summary>
+  /// Logs the unused indexes when the set differs from the one last seen, and nothing when it is empty.
+  /// </summary>
+  private void _reportUnusedIndexes(IReadOnlyDictionary<string, UnusedIndex> unused) {
+    if (_lastUnusedIndexes.SetEquals(unused.Keys)) {
+      return;
+    }
+    _lastUnusedIndexes = [.. unused.Keys];
+    if (unused.Count == 0 || !_logger.IsEnabled(LogLevel.Information)) {
+      return;
+    }
+    var listed = string.Join(", ", unused
+      .OrderByDescending(index => index.Value.Bytes)
+      .ThenBy(index => index.Key, StringComparer.Ordinal)
+      .Select(index => string.Create(CultureInfo.InvariantCulture,
+        $"{index.Key} ({index.Value.TableName}, {index.Value.Bytes} bytes)")));
+    var bytes = unused.Values.Sum(index => index.Bytes);
+    LogUnusedIndexes(_logger, unused.Count, bytes, listed);
+  }
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
+    Message = "{Count} indexes on wh_ tables have not been scanned since the statistics were last reset, {Bytes} bytes in all: {Indexes}. Nothing is dropped; an unused index may serve a rare path")]
+  static partial void LogUnusedIndexes(ILogger logger, int count, long bytes, string indexes);
 
   /// <summary>
   /// Reads the tables: the storage reading, with the sizes and bloat ratios taken from it, or, from a

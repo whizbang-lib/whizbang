@@ -73,7 +73,7 @@ public class MessageChangesTests {
       Attribute = new SignalTagAttribute { Tag = "t" },
       Message = new Archive(),
       MessageType = typeof(Archive),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
     };
 
     await Assert.That(context.Changes.Kind).IsEqualTo(MessageChangeKind.Collective);

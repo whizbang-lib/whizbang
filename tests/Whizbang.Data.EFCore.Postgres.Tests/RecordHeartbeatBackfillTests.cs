@@ -79,7 +79,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
 
     await Assert.That(accepted).IsTrue();
     var row = await _rowAsync(id, cancellationToken);
-    await Assert.That(row).IsNotNull();
+    await Assert.That(row.HasValue).IsTrue();
     await Assert.That(row!.Value.Phase).IsEqualTo("Running")
       .Because("a row created by the heartbeat must not start blank when the beat knows the phase");
     await Assert.That(row.Value.Version).IsEqualTo("1.2.3");
@@ -147,7 +147,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
 
     await Assert.That(accepted).IsTrue();
     var row = await _rowAsync(id, cancellationToken);
-    await Assert.That(row).IsNotNull();
+    await Assert.That(row.HasValue).IsTrue();
     await Assert.That(row!.Value.Phase).IsNull();
   }
 
@@ -174,7 +174,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     _ = await _beatAsync(beater, "Running", "1.0.0", 150, cancellationToken);
 
     var row = await _rowAsync(peer, cancellationToken);
-    await Assert.That(row).IsNotNull()
+    await Assert.That(row.HasValue).IsTrue()
       .Because("40 s is well inside a 150 s threshold; the peer is late, not dead");
   }
 
@@ -226,6 +226,6 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     var accepted = await coordinator.RecordHeartbeatAsync(new HeartbeatRequest(id, "coord-svc", "coord-host", 7), cancellationToken);
 
     await Assert.That(accepted).IsTrue();
-    await Assert.That(await _rowAsync(id, cancellationToken)).IsNotNull();
+    await Assert.That((await _rowAsync(id, cancellationToken)).HasValue).IsTrue();
   }
 }

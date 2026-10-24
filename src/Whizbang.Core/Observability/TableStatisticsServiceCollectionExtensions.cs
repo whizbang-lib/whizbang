@@ -69,7 +69,9 @@ public static class TableStatisticsServiceCollectionExtensions {
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<TableStatisticsMetrics>(),
         sp.GetService<ISchemaReadyGate>()!,
-        sp.GetService<ILogger<TableStatisticsCollector>>()!)));
+        sp.GetService<ILogger<TableStatisticsCollector>>()!,
+        sp.GetRequiredService<IOptions<TableStatisticsOptions>>(),
+        sp.GetService<TimeProvider>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, EventTypeBytesSampler>(sp =>
       new EventTypeBytesSampler(
         sp.GetRequiredService<IServiceScopeFactory>(),

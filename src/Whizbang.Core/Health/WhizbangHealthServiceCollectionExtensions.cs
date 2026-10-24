@@ -33,7 +33,10 @@ public static class WhizbangHealthServiceCollectionExtensions {
     // #1014: Whizbang:Health binds over the lambda's values when the options first resolve.
     services.TryAddSingleton(sp => Configuration.ProcessWideOptionsBinding.BindHealth(sp, options));
     services.TryAddSingleton(static sp => new WhizbangHealthAggregator(
-      sp.GetServices<IWhizbangHealthSource>(), sp.GetRequiredService<WhizbangHealthOptions>()));
+      sp.GetServices<IWhizbangHealthSource>(), sp.GetRequiredService<WhizbangHealthOptions>(),
+      // A host that composes health without the worker pipeline records no stages; the pipeline's reporter wins
+      // whenever it is registered, whichever of the two registrations runs first.
+      sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>() ?? Whizbang.Core.Startup.NullStartupStageReporter.Instance));
     return services;
   }
 

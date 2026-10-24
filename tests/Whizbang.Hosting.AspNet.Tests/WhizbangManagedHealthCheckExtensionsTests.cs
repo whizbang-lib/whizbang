@@ -20,6 +20,7 @@ public class WhizbangManagedHealthCheckExtensionsTests {
   private static ServiceProvider _buildProvider(Action<IHealthChecksBuilder>? configure = null) {
     var services = new ServiceCollection();
     services.AddSingleton(new WhizbangHealthOptions());
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(Whizbang.Core.Startup.NullStartupStageReporter.Instance);
     services.AddSingleton<WhizbangHealthAggregator>();
     var builder = services.AddHealthChecks();
     (configure ?? (b => b.AddWhizbangManagedHealthChecks()))(builder);

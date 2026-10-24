@@ -499,7 +499,7 @@ public class WorkCoordinatorFlushHelperTests {
     public MessageDispatchContext DispatchContext { get; } = new() { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");
     object IMessageEnvelope.Payload => Payload;
     public void AddHop(MessageHop hop) => Hops.Add(hop);
     public DateTimeOffset GetMessageTimestamp() => Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;

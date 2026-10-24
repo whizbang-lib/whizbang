@@ -180,6 +180,19 @@ public static class WorkerPipelineExtensions {
       new Observability.ServiceInstanceProvider(
         sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
+    // The startup stage (#1636): one reporter owns it, logs each stage as "Stage X of 7" and records it on this
+    // instance's row. The lifecycle moves it into Accept commands and Running (and Draining and Stopped on a
+    // killswitch stop); the host's own lifecycle marks Preflight before anything starts, Draining before anything
+    // stops, and Stopped after everything has; schema initialization reports Elect, Migrate, Converge and Coordinate.
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(sp => new Whizbang.Core.Startup.StartupStageReporter(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Observability.IServiceInstanceProvider>(),
+      sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
+      sp.GetService<TimeProvider>()));
+    services.AddSingleton<IWhizbangRunControl>(sp =>
+      new Whizbang.Core.Startup.StartupStageRunControl(sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Startup.StartupStageHostLifecycle>());
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
     // resolved from their dependencies, and per-step outcome/duration/reason. The state is
@@ -215,10 +228,14 @@ public static class WorkerPipelineExtensions {
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
+    // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
+      new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
       new Whizbang.Core.Startup.TableRewriteStartupStep(
         sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetServices<ITableRewriter>(),
+        TableRewriteStrategies.VACUUM_FULL,
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
     // The work tables are vacuumed when an instance acquires the maintainer duty, never merely because
     // it started (#1351). The holder loop runs it; without role assignment nothing acquires the duty.
@@ -253,12 +270,14 @@ public static class WorkerPipelineExtensions {
     // this pod not ready" is answerable from the health surface without reading logs.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
-      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
-      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>()));
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>(),
+      sp.GetRequiredService<TimeProvider>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
     // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
@@ -278,6 +297,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
+      sp.GetRequiredService<TimeProvider>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
 
@@ -1006,6 +1026,8 @@ public static class WorkerPipelineExtensions {
     // Both batchers flush while the host stops, after every hosted service and before the container is disposed:
     // flushed only at disposal, their last batch ran against a service provider that was already gone (#1333).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
+    // The detached lifecycle stages the outbox flush starts; the shutdown flush waits for them before the container goes.
+    services.TryAddSingleton<DetachedLifecycleWork>();
 
     return services;
   }
@@ -1074,6 +1096,7 @@ public static class WorkerPipelineExtensions {
     var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
+    var detachedWork = sp.GetService<DetachedLifecycleWork>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1096,7 +1119,8 @@ public static class WorkerPipelineExtensions {
         LifecycleMessageDeserializer: lifecycleDeserializer,
         Logger: lifecycleLogger,
         EnableLifecycleTracing: enableLifecycleTracing,
-        Metrics: lifecycleMetrics);
+        Metrics: lifecycleMetrics,
+        DetachedWork: detachedWork);
 
       try {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

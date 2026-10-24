@@ -38,7 +38,7 @@ public class StartupPipelineHealthSourceTests {
 
   [Test]
   public async Task NotStarted_ReportsStartingWithAStatedDetailAsync() {
-    var source = new StartupPipelineHealthSource(state: new StartupPipelineState(), readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: new StartupPipelineState(), readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -54,7 +54,7 @@ public class StartupPipelineHealthSourceTests {
       _completed("Assess"));
     await state.OnStepStartingAsync(
       new StartupStepContext(_step(FrameworkStartupSteps.MIGRATE)), CancellationToken.None);
-    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -70,7 +70,7 @@ public class StartupPipelineHealthSourceTests {
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
       new StartupStepResult(FrameworkStartupSteps.MIGRATE, StartupStepOutcome.Failed,
         TimeSpan.FromMilliseconds(2), "42P01: relation tenant_secrets does not exist"));
-    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal());
+    var source = new StartupPipelineHealthSource(state: state, readySignal: new StartupReadySignal(), NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -91,7 +91,7 @@ public class StartupPipelineHealthSourceTests {
     await state.OnStepStartingAsync(new StartupStepContext(_step("Rewrite", blocking: false)), CancellationToken.None);
     var signal = new StartupReadySignal();
     signal.MarkReady();
-    var source = new StartupPipelineHealthSource(state, signal);
+    var source = new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
@@ -109,7 +109,7 @@ public class StartupPipelineHealthSourceTests {
     var signal = new StartupReadySignal();
     signal.MarkReady();
 
-    var health = await new StartupPipelineHealthSource(state, signal).ReportAsync(CancellationToken.None);
+    var health = await new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance).ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Ready);
     await Assert.That(health.Detail).IsEqualTo("ready (1/1 steps complete)");
@@ -121,12 +121,57 @@ public class StartupPipelineHealthSourceTests {
       new StartupRunPlan([_step(FrameworkStartupSteps.MIGRATE)]),
       _completed(FrameworkStartupSteps.MIGRATE));
     var signal = new StartupReadySignal();   // transports have not subscribed yet
-    var source = new StartupPipelineHealthSource(state, signal);
+    var source = new StartupPipelineHealthSource(state, signal, NullStartupStageReporter.Instance);
 
     var health = await source.ReportAsync(CancellationToken.None);
 
     await Assert.That(health.State).IsEqualTo(ComponentState.Starting)
       .Because("Ready is the COMPOSITE — the pipeline drained but a readiness contributor has "
              + "not answered, and health must not report fully-up before it has");
+  }
+
+  // --- the startup stage (#1636) ---------------------------------------------------------------
+
+  [Test]
+  public async Task WithAStageEntered_TheDetailLeadsWithTheStagesLineAsync() {
+    var state = await _drivenAsync(
+      new StartupRunPlan([_step("Assess"), _step(FrameworkStartupSteps.MIGRATE), _step("Reconcile")]),
+      _completed("Assess"));
+    await state.OnStepStartingAsync(
+      new StartupStepContext(_step(FrameworkStartupSteps.MIGRATE)), CancellationToken.None);
+    var stages = new Whizbang.Core.Tests.Startup.RecordingStageReporter {
+      Current = new StartupStageSnapshot(StartupStage.Migrate, "migration 42 of 231", false, DateTimeOffset.UnixEpoch),
+    };
+    var source = new StartupPipelineHealthSource(state, new StartupReadySignal(), stages);
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Migrating)
+      .Because("the stage adds to the detail; what the state means for a probe is unchanged");
+    await Assert.That(health.Detail).IsEqualTo("Stage 3 of 7: Migrate - migration 42 of 231; Migrate (1/3 steps complete)")
+      .Because("the startup component reports the same line the instance logs");
+  }
+
+  [Test]
+  public async Task WithAStageEntered_BeforeThePipelineStarts_TheDetailStillLeadsWithItAsync() {
+    var stages = new Whizbang.Core.Tests.Startup.RecordingStageReporter {
+      Current = new StartupStageSnapshot(StartupStage.Preflight, "host starting", false, DateTimeOffset.UnixEpoch),
+    };
+    var source = new StartupPipelineHealthSource(new StartupPipelineState(), new StartupReadySignal(), stages);
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Starting);
+    await Assert.That(health.Detail).IsEqualTo("Stage 1 of 7: Preflight - host starting; pipeline not started");
+  }
+
+  [Test]
+  public async Task WithAReporterButNoStageYet_TheDetailIsThePipelinesAloneAsync() {
+    var source = new StartupPipelineHealthSource(
+      new StartupPipelineState(), new StartupReadySignal(), new Whizbang.Core.Tests.Startup.RecordingStageReporter());
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.Detail).IsEqualTo("pipeline not started");
   }
 }

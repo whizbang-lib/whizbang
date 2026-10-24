@@ -68,12 +68,25 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly StandbyWatcherOptions _options;
   private readonly ILogger<StandbyWatcher> _logger;
+  private readonly TimeProvider _time;
 
   private bool _standingByForHandshake;
   private bool _standingDownAsObsolete;
   private DateTimeOffset _lastObsolescenceCheck = DateTimeOffset.MinValue;
 
   /// <summary>Creates the watcher. Inert without an instance identity or a coordinator.</summary>
+  /// <param name="scopeFactory">Scopes the work coordinator the standby ledger is read through.</param>
+  /// <param name="lifecycle">The lifecycle advanced to standby and back.</param>
+  /// <param name="hostLifetime">Stopped when a migration commits beneath this instance.</param>
+  /// <param name="instanceProvider">This instance's identity; the watcher is inert without it.</param>
+  /// <param name="schemaReadyGate">Waited on before the first read, since the ledger may not exist yet.</param>
+  /// <param name="versionProvider">This binary's version, ranked against a requester's.</param>
+  /// <param name="assessor">Re-assesses this instance's verdict.</param>
+  /// <param name="logger">Logger.</param>
+  /// <param name="timeProvider">The clock for the poll cadence, requester liveness and the
+  /// obsolescence cadence; the host's registered clock.</param>
+  /// <param name="pipelineRunner">Re-run on revival; null when the host has no pipeline.</param>
+  /// <param name="options">Cadences and bounds; null takes the defaults.</param>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Dependency-injection constructor: every parameter is a registered service or an optional seam the container fills, and a parameter object would only move the list. Same reasoning as Dispatcher.")]
   public StandbyWatcher(
       IServiceScopeFactory scopeFactory,
@@ -84,11 +97,13 @@ public sealed partial class StandbyWatcher : BackgroundService {
       ILibraryVersionProvider versionProvider,
       IStartupAssessor assessor,
       ILogger<StandbyWatcher> logger,
+      TimeProvider timeProvider,
       StartupPipelineRunner? pipelineRunner = null,
       StandbyWatcherOptions? options = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(lifecycle);
     ArgumentNullException.ThrowIfNull(hostLifetime);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _scopeFactory = scopeFactory;
     _lifecycle = lifecycle;
     _hostLifetime = hostLifetime;
@@ -99,6 +114,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
     _schemaReadyGate = schemaReadyGate;
     _options = options ?? new StandbyWatcherOptions();
     _logger = logger;
+    _time = timeProvider;
   }
 
   /// <inheritdoc />
@@ -127,7 +143,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
       }
 #pragma warning restore CA1031, RCS1075
       try {
-        await Task.Delay(_options.PollInterval, stoppingToken).ConfigureAwait(false);
+        await Task.Delay(_options.PollInterval, _time, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         break;
       }
@@ -162,8 +178,8 @@ public sealed partial class StandbyWatcher : BackgroundService {
 
     // The verdict is not a startup-only fact — re-assess on the slow cadence.
     if (_assessor.IsConfigured
-        && DateTimeOffset.UtcNow - _lastObsolescenceCheck >= _options.ObsolescenceInterval) {
-      _lastObsolescenceCheck = DateTimeOffset.UtcNow;
+        && _time.GetUtcNow() - _lastObsolescenceCheck >= _options.ObsolescenceInterval) {
+      _lastObsolescenceCheck = _time.GetUtcNow();
       var assessment = await _assessor.AssessAsync(cancellationToken).ConfigureAwait(false);
       if (assessment.Verdict == StartupVerdict.StandDown) {
         LogStandingDownAsObsolete(_logger, assessment.Reason);
@@ -198,7 +214,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private bool _requesterIsAlive(StandbyRequest request) =>
     request.RequesterAliveLockHeld
       || (request.RequesterLastHeartbeatAt is { } heardAt
-          && DateTimeOffset.UtcNow - heardAt <= _options.RequesterLivenessWindow);
+          && _time.GetUtcNow() - heardAt <= _options.RequesterLivenessWindow);
 
   private async Task _watchOutcomeAsync(StandbyRequest? request, CancellationToken cancellationToken) {
     if (request is not null && _requesterIsAlive(request)) {

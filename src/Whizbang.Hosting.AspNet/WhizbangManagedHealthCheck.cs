@@ -40,6 +40,12 @@ public sealed class WhizbangManagedHealthCheck : IHealthCheck {
       var key = seen == 1 ? c.Component : $"{c.Component}[{seen}]";
       data[key] = c.Detail is null ? $"{c.State} => {c.Status}" : $"{c.State} => {c.Status} ({c.Detail})";
     }
+    // #1636: the startup stage the instance is in, by number, name and message.
+    if (result.Stage is { } stage) {
+      data["startup_stage"] = (int)stage.Stage;
+      data["startup_stage_name"] = stage.Name;
+      data["startup_stage_message"] = stage.Message;
+    }
     var description = string.Join(", ", result.Components.Select(static c => $"{c.Component}={c.State}"));
     return result.Status switch {
       HealthStatus.Healthy => HealthCheckResult.Healthy(description, data),

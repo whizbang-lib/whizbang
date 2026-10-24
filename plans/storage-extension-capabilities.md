@@ -161,14 +161,33 @@ Each slice is one red-then-green increment and its own commit.
    `Capabilities` startup step after `Migrate`, `Whizbang.Capabilities` meter), the Postgres catalog
    and probe in `src/Whizbang.Data.Postgres/`, `Whizbang:Capabilities:ProbeOnStartup`. Docs:
    `operations/infrastructure/capabilities.md` and the Postgres provider page.
-2. **Requirement attribute, manifest generator, registry.** `[RequiresCapability]` and
+2. **Requirement attribute, manifest generator, registry.** DONE on branch `feat/1703-ws8s2` (issue #1703):
+   the two attributes in `src/Whizbang.Core/Capabilities/`, `CapabilityRequirement`, the
+   `ConfigurationManifestGenerator` (template `ConfigurationManifestTemplate.cs`), and
+   `ConfigurationManifestRegistry` / `ConfigurationManifest` in `src/Whizbang.Core/Configuration/`. Recognized
+   bindings: `Bind` (both forms), `Get<T>`, `services.Configure<T>(section)`, `OptionsBuilder<T>.Bind(section)`,
+   over `GetSection` chains with constant keys. Whizbang.Core's generated key tree matches the recorded
+   manifest exactly for every section it binds literally (283 keys). Left for slice 3: the
+   `ICapabilityRequirementSource` seam (the registry is static and module-initialized; the verdict should read
+   requirements through the seam so slice 6's vector columns can add a runtime source), and each setting's
+   declared default (needed for "a default turned the feature on"). Not replaced: the recorded key manifest
+   and `RemovedConfigurationKeys` (no `[RemovedConfigurationKey]` yet). Original scope: `[RequiresCapability]` and
    `[RequiresPostgresExtension]` in core; a `ConfigurationManifestGenerator` in
    `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs`, recognizing each literal
    `GetSection("<key>")` binding and emitting the key tree plus one requirement per attributed
    property or enum member, registered through `[ModuleInitializer]`. RED: generator tests for an
    attributed property, an enum member, a nested section, a dictionary wildcard, a private type
    (skipped) and a second assembly. Docs: "Declaring a requirement" on the capabilities page.
-3. **Activation and the verdict.** Explicit vs implicit from configuration; the verdict line per
+3. **Activation and the verdict.** DONE on branch `feat/1703-ws8s2` (issue #1704): `CapabilityActivationResolver`
+   (explicit = key set to a value that turns the feature on, wildcard keys per configured entry; implicit = key
+   absent and the generator-recorded declared default turns it on), `CapabilityVerdict` (satisfied means Ready;
+   Provisionable fails an explicit requirement until slice 4 provisions), published on `ICapabilityRegistry` by
+   the `Capabilities` step, the `required` gauge tag, the `whizbang_capabilities` health entry,
+   `ICapabilityRequirementSource` with the configuration manifest as the first source, and
+   `CapabilityVerdictEnforcer`, a hosted service that waits for the verdict in the background and on a failing
+   line logs Critical, sets exit code 1 and stops the application. Not covered: a value set only in code
+   (activation reads configuration and declared defaults). No library setting carries a requirement yet: the
+   features the plan names (slices 7 to 9) do not exist. Original scope: Explicit vs implicit from configuration; the verdict line per
    required capability naming each feature and its key; the `required` gauge tag; the health entry.
    RED: one test per row of the validation table, including the exact line text.
 4. **Provisioning runner and `AutoProvision`.** Generic runner with the three-level switch; the
@@ -176,10 +195,19 @@ Each slice is one red-then-green increment and its own commit.
    created / present / upgraded. RED: provisioning off still detects an operator-created extension;
    per-capability `false` overrides global `true`; an upgrade is recorded; NoPrivilege is reported,
    never thrown, on an implicit requirement. Docs: configuration reference (`Whizbang:Capabilities`).
-5. **pg_trgm onto the pattern.** `OptionalExtensionBlocks.ApplyAsync` consults the capability before
+5. **pg_trgm onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1705): `OptionalExtensionBlocks`
+   reads the extension's state with the probe's query first (installed: used without CREATE; known refusal:
+   skipped without trying, warning names state and fix; otherwise created, with the refusal classification as the
+   fallback), and each perspective with an optional-extension block is an implicit requirement read from its
+   schema SQL (`PostgresSchemaRequirements`). Original scope: `OptionalExtensionBlocks.ApplyAsync` consults the capability before
    `CREATE EXTENSION`; the refusal classification stays as the fallback. RED: extend
    `OptionalExtensionBlocksTests.cs`. Docs: `fundamentals/perspectives/perspective-indexes.md`.
-6. **pgvector onto the pattern.** The three generated sites in
+6. **pgvector onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1706): `PostgresRequiredExtension.EnsureAsync`
+   at all three sites; a refusal fails start with the verdict line naming each vector column and the fix; every
+   context registers its schema requirements as a `FixedCapabilityRequirementSource` (explicit pgvector per vector
+   column). The data source creates pgvector before it is built and the probe connects through it, so an
+   available-but-not-installed server is Ready. Requirements from the schema apply to every Postgres scope (no
+   per-database scoping yet). Original scope: The three generated sites in
    `EFCoreServiceRegistrationGenerator.cs` call one runtime helper instead of inline SQL; vector
    columns become a runtime requirement source (always explicit: the column cannot exist without
    the extension). RED: generator snapshot tests for the emitted call; integration test for the
@@ -234,9 +262,14 @@ Each slice is one red-then-green increment and its own commit.
 - Setting `TableRewriteStrategy=PgSqueeze` on a server without it stops startup with the fix text.
 - A deployment still carrying `MaintenanceInterval` logs one warning naming the replacement.
 
-## Open questions
+## Decisions (formerly open questions)
 
-- Should Unknown plus explicit throw after a bounded retry, rather than warn?
-- Does `Throw` for unknown keys belong in 1.0, or only `Warn`?
-- The `Capabilities` startup step runs after `Migrate`; a provider that needs no schema may want an
-  earlier dependency.
+All decided on 2026-10-22 in #1672 (the owner accepted the recommendations).
+
+1. **Unknown plus explicit.** When the probe can't tell whether an explicitly configured extension
+   is usable, startup throws after a bounded retry. Explicit configuration means the feature is
+   required.
+2. **Unknown configuration keys.** 1.0 ships `Warn` as the default, with `Throw` available as an
+   opt-in.
+3. **Startup order.** The `Capabilities` step stays after `Migrate` in 1.0. A provider that needs no
+   schema does not get an earlier step.

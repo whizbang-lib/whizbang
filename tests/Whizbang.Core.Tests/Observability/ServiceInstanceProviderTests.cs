@@ -168,6 +168,34 @@ public class ServiceInstanceProviderTests {
     await Assert.That(ServiceInstanceProvider.ResolveServiceName(configuration, new NamelessAssembly())).IsEqualTo("Unknown");
   }
 
+  /// <summary>
+  /// <c>Whizbang:ServiceName</c> present but empty (an appsettings placeholder, or an environment variable set to
+  /// nothing) names no service, so the next source is read, as when the key is absent.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task ResolveServiceName_BlankWhizbangServiceName_ReadsServiceNameAsync(string blank) {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["Whizbang:ServiceName"] = blank, ["ServiceName"] = "orders" })
+      .Build();
+
+    await Assert.That(ServiceInstanceProvider.ResolveServiceName(configuration, null)).IsEqualTo("orders");
+  }
+
+  /// <summary>Both keys blank: the entry assembly names the service, as when neither is set.</summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task ResolveServiceName_BothKeysBlank_UsesTheEntryAssemblyAsync(string blank) {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["Whizbang:ServiceName"] = blank, ["ServiceName"] = blank })
+      .Build();
+    var entry = typeof(ServiceInstanceProviderTests).Assembly;
+
+    await Assert.That(ServiceInstanceProvider.ResolveServiceName(configuration, entry)).IsEqualTo(entry.GetName().Name);
+  }
+
   private sealed class NamelessAssembly : System.Reflection.Assembly {
     public override System.Reflection.AssemblyName GetName() => new();
   }

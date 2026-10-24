@@ -27,7 +27,7 @@ public class WhizbangHealthAggregatorTests {
   }
 
   private static WhizbangHealthAggregator _agg(WhizbangHealthOptions options, params IWhizbangHealthSource[] sources)
-    => new(sources, options);
+    => new(sources, options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
   [Test]
   public async Task LenientDefault_Migrating_IsDegradedButServingAsync() {
@@ -170,5 +170,33 @@ public class WhizbangHealthAggregatorTests {
     await Assert.That(policy.Map(ComponentState.Faulted, HealthProbe.Readiness)).IsEqualTo(HealthStatus.Unhealthy);
     await Assert.That(policy.Map(ComponentState.Faulted, HealthProbe.Liveness)).IsEqualTo(HealthStatus.Healthy);
     await Assert.That(policy.Map(ComponentState.Degraded, HealthProbe.Readiness)).IsEqualTo(HealthStatus.Healthy);
+  }
+
+  // --- the startup stage (#1636) ---------------------------------------------------------------
+
+  [Test]
+  public async Task Evaluate_CarriesTheStartupStage_ForEveryProbeAsync() {
+    var snapshot = new Whizbang.Core.Startup.StartupStageSnapshot(
+      Whizbang.Core.Startup.StartupStage.Coordinate, "recomputing partitions", false, DateTimeOffset.UnixEpoch);
+    var stages = new Whizbang.Core.Tests.Startup.RecordingStageReporter { Current = snapshot };
+    var aggregator = new WhizbangHealthAggregator(
+      [new FakeSource("schema", ComponentState.Migrating)], new WhizbangHealthOptions(), stages);
+
+    var readiness = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
+    var liveness = await aggregator.EvaluateAsync(HealthProbe.Liveness, CancellationToken.None);
+
+    await Assert.That(readiness.Stage).IsEqualTo(snapshot)
+      .Because("readiness says which stage the instance is in, not only whether it is ready");
+    await Assert.That(liveness.Stage).IsEqualTo(snapshot);
+    await Assert.That(readiness.Status).IsEqualTo(HealthStatus.Degraded)
+      .Because("carrying the stage changes no status");
+  }
+
+  [Test]
+  public async Task Evaluate_WithoutAStageReporter_CarriesNoStageAsync() {
+    var result = await _agg(new WhizbangHealthOptions(), new FakeSource("schema", ComponentState.Operational))
+      .EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
+
+    await Assert.That(result.Stage).IsNull();
   }
 }

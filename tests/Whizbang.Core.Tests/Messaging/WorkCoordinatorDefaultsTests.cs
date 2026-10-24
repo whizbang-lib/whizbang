@@ -445,6 +445,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task RecordStartupStageAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecordStartupStageAsync(Guid.Empty, Whizbang.Core.Startup.StartupStage.Running, "serving");
+
+    await Assert.That(result).IsFalse()
+      .Because("a coordinator with no instance rows records no stage, so the reporter holds it as unwritten");
+  }
+
+  [Test]
   public async Task RequestStandbyAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

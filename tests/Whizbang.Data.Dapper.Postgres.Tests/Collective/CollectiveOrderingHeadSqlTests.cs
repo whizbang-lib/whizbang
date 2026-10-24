@@ -41,7 +41,7 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
       MessageId = MessageId.From(id),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
       Hops = [],
-      Payload = JsonDocument.Parse(payload).RootElement,
+      Payload = JsonElement.Parse(payload),
     },
     Metadata = new EnvelopeMetadata { MessageId = MessageId.From(id), Hops = [] },
     EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
@@ -254,6 +254,6 @@ public class CollectiveOrderingHeadSqlTests : PostgresTestBase {
 
     await Assert.That(pruned).IsGreaterThanOrEqualTo(1L);
     await Assert.That(await _headAsync(idle)).IsNull();
-    await Assert.That(await _headAsync(active)).IsNotNull();
+    await Assert.That((await _headAsync(active)).HasValue).IsTrue();
   }
 }

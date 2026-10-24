@@ -374,7 +374,7 @@ public class MultiStreamCommandStoreSqlTests : EFCoreTestBase {
     await Assert.That(last.Single()).IsEqualTo(new MultiStreamRunCompletion(run.RunId, COMMAND, 2, 2, 0));
     await Assert.That(repeat).IsEmpty().Because("a run completes exactly once");
     var status = await store.ReadRunAsync(run.RunId, CancellationToken.None);
-    await Assert.That(status!.CompletedAt).IsNotNull();
+    await Assert.That(status!.CompletedAt.HasValue).IsTrue();
     await Assert.That(status.Pending).IsEqualTo(0);
   }
 

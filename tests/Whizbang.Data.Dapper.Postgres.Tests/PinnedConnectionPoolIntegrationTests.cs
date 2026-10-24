@@ -126,7 +126,7 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
       secondPid = (second.Connection as NpgsqlConnection)?.ProcessID;
     }
 
-    await Assert.That(firstPid).IsNotNull();
+    await Assert.That(firstPid.HasValue).IsTrue();
     await Assert.That(firstPid).IsEqualTo(secondPid)
       .Because("MinPoolSize=MaxPoolSize=1 means the Npgsql pool holds exactly one physical conn. Successive borrow + dispose MUST hand out the same conn — that's the DISCARD-ALL-skip guarantee at the SDK level.");
   }

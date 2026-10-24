@@ -378,8 +378,8 @@ public class ScopeColumnMaterializationTests : EFCoreTestBase {
         AggregateType = "TestAggregate",
         Version = 1,
         EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-        EventData = System.Text.Json.JsonDocument.Parse(
-          $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+        EventData = System.Text.Json.JsonElement.Parse(
+          $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(Guid.CreateVersion7()),
           // A hop with NO ScopeDelta — the shape a deployment shows on the failing events.

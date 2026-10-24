@@ -93,4 +93,24 @@ public static class PostgresCapabilityServiceCollectionExtensions {
       sp => new PostgresCapabilityProvider(sp.GetServices<PostgresCapabilityDatabase>())));
     return services.AddWhizbangCapabilities();
   }
+
+  /// <summary>
+  /// Puts a context's schema requirements in force on its own database: the requirement source the generated code
+  /// keyed by <paramref name="contextKey"/>, scoped to <paramref name="database"/>. A context with no keyed source
+  /// requires nothing.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="contextKey">The key the generated code registered the context's requirements under (its type).</param>
+  /// <param name="database">The name the database is probed under, as given to <see cref="AddWhizbangPostgresCapabilities"/>.</param>
+  /// <returns>The same collection.</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Capabilities/TwoDatabaseHostRequirementTests.cs</tests>
+  public static IServiceCollection AddWhizbangPostgresSchemaRequirements(
+      this IServiceCollection services, object contextKey, string database) {
+    ArgumentNullException.ThrowIfNull(services);
+    ArgumentNullException.ThrowIfNull(contextKey);
+    ArgumentException.ThrowIfNullOrWhiteSpace(database);
+    services.AddSingleton<ICapabilityRequirementSource>(sp => new ScopedCapabilityRequirementSource(
+      sp.GetKeyedService<ICapabilityRequirementSource>(contextKey) ?? new FixedCapabilityRequirementSource([]), database));
+    return services;
+  }
 }

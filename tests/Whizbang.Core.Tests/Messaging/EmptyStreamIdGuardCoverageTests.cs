@@ -73,7 +73,7 @@ public class EmptyStreamIdGuardCoverageTests {
 
   private static MessageEnvelope<JsonElement> _envelope(Guid messageId) => new() {
     MessageId = new MessageId(messageId),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [],
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
   };

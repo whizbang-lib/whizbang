@@ -41,7 +41,7 @@ public class GeneratedFacadeHonorsProfileConvertersTests {
     var json = JsonSerializer.Serialize(
       new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _at },
       options.GetTypeInfo(typeof(PerspectiveMetadata)));
-    return JsonDocument.Parse(json).RootElement.GetProperty("Timestamp").ValueKind;
+    return JsonElement.Parse(json).GetProperty("Timestamp").ValueKind;
   }
 
   /// <summary>The facade first, then the framework's context: still the profile's number.</summary>
@@ -65,9 +65,9 @@ public class GeneratedFacadeHonorsProfileConvertersTests {
       MessageJsonContext.Default, global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
 
     await Assert.That(_timestampKind(options)).IsEqualTo(JsonValueKind.Number);
-    await Assert.That(JsonDocument.Parse(JsonSerializer.Serialize(
+    await Assert.That(JsonElement.Parse(JsonSerializer.Serialize(
         new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _at },
-        options.GetTypeInfo(typeof(PerspectiveMetadata)))).RootElement.GetProperty("Timestamp").GetInt64())
+        options.GetTypeInfo(typeof(PerspectiveMetadata)))).GetProperty("Timestamp").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at));
   }
 

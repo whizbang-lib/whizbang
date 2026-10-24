@@ -523,7 +523,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       Address: $"products-{_testId}",
       RoutingKey: $"inventory-products-queue-{_testId}",
       Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+        ["SubscriberName"] = JsonElement.Parse("\"inventory-worker\"")
       }
     ));
     builder.Services.AddSingleton(consumerOptions);
@@ -690,14 +690,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       Address: $"products-{_testId}",
       RoutingKey: $"bff-products-queue-{_testId}",
       Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+        ["SubscriberName"] = JsonElement.Parse("\"bff-api\"")
       }
     ));
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"inventory-{_testId}",
       RoutingKey: $"bff-inventory-queue-{_testId}",
       Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+        ["SubscriberName"] = JsonElement.Parse("\"bff-api\"")
       }
     ));
     builder.Services.AddSingleton(consumerOptions);

@@ -315,7 +315,7 @@ public class DapperWorkCoordinatorNamedSchemaTests {
   private static OutboxMessage _outbox(Guid messageId, Guid streamId) => new() {
     MessageId = messageId,
     Destination = "named-schema-topic",
-    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"k\":1}").RootElement, []),
+    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"k\":1}"), []),
     EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Test.NamedSchema, Test]], Whizbang.Core",
     MessageType = MESSAGE_TYPE,
     Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },
@@ -326,7 +326,7 @@ public class DapperWorkCoordinatorNamedSchemaTests {
   private static InboxMessage _inbox(Guid messageId, Guid streamId) => new() {
     MessageId = messageId,
     HandlerName = "NamedSchemaHandler",
-    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []),
+    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []),
     EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Test.NamedSchema, Test]], Whizbang.Core",
     MessageType = MESSAGE_TYPE,
     Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },

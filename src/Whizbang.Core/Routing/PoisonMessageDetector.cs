@@ -27,8 +27,10 @@ public enum PoisonQuarantineReason {
   None,
 
   /// <summary>
-  /// Layer 1 — the message is older than the age threshold. The broker's first-enqueue timestamp
-  /// survives every redelivery, so this fires where delivery-count-based valves cannot.
+  /// The message is older than the age threshold. The default detector no longer produces this
+  /// (issue #1663): the receive gate never quarantines on age, it reports
+  /// <see cref="AgedOnReceive"/> instead. Kept so a custom detector can still quarantine on age and
+  /// so dead-letter records written before the change still read.
   /// </summary>
   MessageAgeExceeded,
 
@@ -38,6 +40,15 @@ public enum PoisonQuarantineReason {
   /// no trustworthy first-enqueue timestamp exists.
   /// </summary>
   ObservationCountExceeded,
+
+  /// <summary>
+  /// Accompanies a PROCEED verdict at the receive gate: the message is older than the age threshold
+  /// (issue #1663). The receive gate never quarantines on age, because age measures queueing, not
+  /// failure, and a backlog ages every message in it. The message is accepted and stored; the
+  /// verdict names the case so the caller can make the backlog visible with
+  /// <see cref="IPoisonMessageDetector.RecordAgedOnReceive"/>.
+  /// </summary>
+  AgedOnReceive,
 }
 
 /// <summary>
@@ -48,7 +59,8 @@ public enum PoisonQuarantineReason {
 /// <param name="MessageId">Broker or envelope message id, for logs and metrics.</param>
 /// <param name="FirstEnqueuedAt">
 /// Broker-supplied first-enqueue timestamp. Azure Service Bus always has one; RabbitMQ's is
-/// publisher-set and therefore optional. <c>null</c> disables layer 1 for this message.
+/// publisher-set and therefore optional. Used only to REPORT an aged message on receive; it never
+/// quarantines (issue #1663). <c>null</c> means the age cannot be judged for this message.
 /// </param>
 /// <param name="BrokerDeliveryCount">
 /// The broker's delivery counter. Carried for telemetry and for custom detectors ONLY — the
@@ -104,6 +116,16 @@ public readonly record struct PoisonVerdict(
   /// <returns>A quarantining verdict.</returns>
   public static PoisonVerdict Quarantine(PoisonQuarantineReason reason, string detail) =>
     new(ShouldQuarantine: true, reason, detail);
+
+  /// <summary>
+  /// The message proceeds although it is past the age threshold (issue #1663). Carries
+  /// <see cref="PoisonQuarantineReason.AgedOnReceive"/> so the caller can report the backlog with
+  /// <see cref="IPoisonMessageDetector.RecordAgedOnReceive"/>.
+  /// </summary>
+  /// <param name="detail">Human-readable diagnosis for the log line.</param>
+  /// <returns>A non-quarantining verdict naming the aged case.</returns>
+  public static PoisonVerdict ProceedAgedOnReceive(string detail) =>
+    new(ShouldQuarantine: false, PoisonQuarantineReason.AgedOnReceive, detail);
 }
 
 /// <summary>
@@ -146,19 +168,40 @@ public interface IPoisonMessageDetector {
 
   /// <summary>
   /// Declares whether a receive surface can supply a trustworthy broker first-enqueue timestamp.
-  /// A surface that cannot degrades from layer 1 to layer 2 — and says so, loudly and once, on the
-  /// log and health surfaces. Layer 1 must never go silently inert; that silence is exactly how
-  /// the delivery-count valve failed.
+  /// A surface that cannot has no aged-on-receive reporting (layer 1 only reports since issue
+  /// #1663), and says so, loudly and once, on the log and health surfaces; redelivery loops stay
+  /// bounded by layer 2. A signal must never go silently inert; that silence is exactly how the
+  /// delivery-count valve failed.
   /// </summary>
   /// <param name="transport">Transport identifier, e.g. <c>azure-service-bus</c>.</param>
   /// <param name="entity">The broker entity the surface consumes.</param>
   /// <param name="canSupplyTrustworthyAge">Whether a usable first-enqueue timestamp is present.</param>
   void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge);
+
+  /// <summary>
+  /// Records an aged message that the receive gate accepted (issue #1663): structured warning plus
+  /// the <c>whizbang.message.aged_on_receive</c> OTel counter, so a backlog stays visible. No-op for
+  /// every other verdict, so callers can invoke it unconditionally. The default implementation does
+  /// nothing, which keeps a custom detector's behavior as it was.
+  /// </summary>
+  /// <param name="gate">Which gate evaluated the message.</param>
+  /// <param name="verdict">The verdict acted on.</param>
+  /// <param name="context">The facts the verdict was made from.</param>
+  /// <param name="additionalTags">Extra OTel tags (entity, subscription, …).</param>
+  void RecordAgedOnReceive(
+      PoisonQuarantineGate gate,
+      PoisonVerdict verdict,
+      PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+  }
 }
 
 /// <summary>
-/// Default two-layer detector. Layer 1 quarantines on broker age; layer 2 quarantines on durable
-/// redelivery observations. The broker delivery count is carried but never acted on — see
+/// Default two-layer detector. Layer 1, at the receive gate, never quarantines: it reports a message
+/// older than the age threshold and lets it be stored (issue #1663), because age measures queueing,
+/// not failure, and a backlog ages every message in it. Layer 2 quarantines on durable redelivery
+/// observations after storage, which is what bounds a redelivery loop, including a session lock-loss
+/// storm whose broker delivery count never moves. The broker delivery count is carried but never acted on; see
 /// <see cref="PoisonEvaluationContext.BrokerDeliveryCount"/>.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
@@ -168,6 +211,7 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
   private readonly TimeSpan _ageThreshold;
   private readonly ILogger<PoisonMessageDetector> _logger;
   private readonly PassiveCounter<long> _quarantinedCounter;
+  private readonly PassiveCounter<long> _agedOnReceiveCounter;
   private readonly PoisonDetectionCapabilityState? _capabilityState;
 
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
@@ -176,6 +220,12 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 
   /// <summary>OTel counter name. Keep stable — dashboards depend on it.</summary>
   public const string COUNTER_NAME = "whizbang.message.quarantined";
+
+  /// <summary>
+  /// OTel counter for aged messages the receive gate accepted (issue #1663). Tagged by <c>gate</c>.
+  /// Keep stable: dashboards depend on it.
+  /// </summary>
+  public const string AGED_ON_RECEIVE_COUNTER_NAME = "whizbang.message.aged_on_receive";
 #pragma warning restore CA1707
 
   /// <summary>Constructs the default detector.</summary>
@@ -202,10 +252,15 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
     _quarantinedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
-      description: "Count of messages quarantined by the poison detector (age | durable observations).");
+      description: "Count of messages quarantined by the poison detector (durable observations).");
+    _agedOnReceiveCounter = meter.CreatePassiveCounter<long>(
+      AGED_ON_RECEIVE_COUNTER_NAME,
+      unit: "{message}",
+      description: "Count of messages older than the poison age threshold that the receive gate accepted.");
     // Issue #711: one series per gate exists at zero from construction (see PassiveCounter).
     foreach (var gate in Enum.GetValues<PoisonQuarantineGate>()) {
       _quarantinedCounter.Touch(new KeyValuePair<string, object?>("gate", _gateTag(gate)));
+      _agedOnReceiveCounter.Touch(new KeyValuePair<string, object?>("gate", _gateTag(gate)));
     }
   }
 
@@ -213,19 +268,6 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
   public PoisonVerdict Evaluate(PoisonEvaluationContext context) {
     if (!_options.Enabled) {
       return PoisonVerdict.Proceed();
-    }
-
-    // Layer 1 — age. The only signal that survives a session lock-loss storm. A null timestamp is
-    // INERT, never defaulted: DateTimeOffset.MinValue would quarantine every message on earth.
-    if (context.FirstEnqueuedAt is { } firstEnqueuedAt) {
-      var age = context.Now - firstEnqueuedAt;
-      if (age > _ageThreshold) {
-        return PoisonVerdict.Quarantine(
-          PoisonQuarantineReason.MessageAgeExceeded,
-          $"Message '{context.MessageId}' first enqueued at {firstEnqueuedAt:O} is {age} old, past the "
-          + $"{_ageThreshold} threshold; the broker delivery counter cannot bound this loop on a "
-          + "session-enabled entity, so it is quarantined on age.");
-      }
     }
 
     // Layer 2 — durable redelivery observations. Bounds the loop where no trustworthy timestamp
@@ -251,7 +293,45 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
         + "redelivery is not making progress.");
     }
 
+    // Layer 1, age at the receive gate (issue #1663). It REPORTS, never quarantines: age measures
+    // queueing, not failure, so a backlog that took longer than the threshold to drain would be
+    // dead-lettered on its first delivery. Every message is accepted until it is stored; a loop is
+    // bounded after storage by layer 2, whose observation counter rises on every redelivery of a
+    // stored message before any handler runs. A null timestamp is INERT, never defaulted.
+    if (context.FirstEnqueuedAt is { } firstEnqueuedAt && context.Now - firstEnqueuedAt > _ageThreshold) {
+      return PoisonVerdict.ProceedAgedOnReceive(
+        $"Message '{context.MessageId}' first enqueued at {firstEnqueuedAt:O} is {context.Now - firstEnqueuedAt} "
+        + $"old, past the {_ageThreshold} threshold; it is accepted and stored, because age alone is "
+        + "a backlog, not a failure.");
+    }
+
     return PoisonVerdict.Proceed();
+  }
+
+  /// <inheritdoc />
+  public void RecordAgedOnReceive(
+      PoisonQuarantineGate gate,
+      PoisonVerdict verdict,
+      PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+    if (verdict.ShouldQuarantine || verdict.Reason != PoisonQuarantineReason.AgedOnReceive) {
+      return;
+    }
+
+    if (_logger.IsEnabled(LogLevel.Warning)) {
+#pragma warning disable CA1848 // Diagnostic logging on a backlog path; LoggerMessage source-gen buys nothing here.
+      _logger.LogWarning(
+        "Whizbang aged message accepted. Gate={Gate} MessageId={MessageId} "
+        + "BrokerDeliveryCount={BrokerDeliveryCount} Detail={Detail}",
+        _gateTag(gate), context.MessageId, context.BrokerDeliveryCount, verdict.Detail);
+#pragma warning restore CA1848
+    }
+
+    var tags = new TagList { { "gate", _gateTag(gate) } };
+    if (additionalTags is not null) {
+      foreach (var (key, value) in additionalTags) { tags.Add(key, value); }
+    }
+    _agedOnReceiveCounter.Add(1, tags);
   }
 
   /// <inheritdoc />
@@ -299,9 +379,9 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 #pragma warning disable CA1848 // One-shot startup-class diagnostic; LoggerMessage source-gen buys nothing here.
     _logger.LogWarning(
       "Whizbang age-based poison detection is INERT on {Transport} entity {Entity}: the broker supplies no "
-      + "trustworthy first-enqueue timestamp, so quarantine falls back to durable observation counting "
-      + "(bound {MaxDurableObservations}). Messages older than {AgeThreshold} will NOT be quarantined on age here.",
-      transport, entity, _options.MaxDurableObservations, _ageThreshold);
+      + "trustworthy first-enqueue timestamp, so messages older than {AgeThreshold} are not reported as aged "
+      + "here. Redelivery loops stay bounded by durable observation counting (bound {MaxDurableObservations}).",
+      transport, entity, _ageThreshold, _options.MaxDurableObservations);
 #pragma warning restore CA1848
   }
 

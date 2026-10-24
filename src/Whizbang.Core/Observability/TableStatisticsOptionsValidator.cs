@@ -20,6 +20,9 @@ public sealed class TableStatisticsOptionsValidator : IValidateOptions<TableStat
   public ValidateOptionsResult Validate(string? name, TableStatisticsOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var failures = new List<string>();
+    if (options.CollectionInterval <= TimeSpan.Zero) {
+      failures.Add(_failure(nameof(options.CollectionInterval), "must be greater than zero", options.CollectionInterval));
+    }
     if (options.MaxTrackedTables < 1) {
       failures.Add(_failure(nameof(options.MaxTrackedTables), "must be at least 1", options.MaxTrackedTables));
     }
