@@ -26,7 +26,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   private static MessageEnvelope<JsonElement> _createEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };

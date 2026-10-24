@@ -113,7 +113,7 @@ public class BacklogAgeDutyTests {
     await worker.PeekOnceAsync(CancellationToken.None);
 
     var sample = metrics.GetBacklogForTest("inbox.whizbang.control");
-    await Assert.That(sample).IsNotNull();
+    await Assert.That(sample.HasValue).IsTrue();
     await Assert.That(sample!.Value.Depth).IsEqualTo(3L);
     await Assert.That(sample.Value.TrafficClass).IsEqualTo("sys-control");
     await Assert.That(sample.Value.TransportNamespace).IsEqualTo("control");
@@ -181,7 +181,7 @@ public class BacklogAgeDutyTests {
     await worker.PeekOnceAsync(CancellationToken.None);
 
     var control = metrics.GetOpsRateForTest("control");
-    await Assert.That(control).IsNotNull();
+    await Assert.That(control.HasValue).IsTrue();
     await Assert.That(control!.Value.OpsPerSecond).IsEqualTo(0.4);
     await Assert.That(control.Value.TrafficClass).IsEqualTo("sys-control");
     await Assert.That(metrics.GetOpsRateForTest("default")!.Value.OpsPerSecond).IsEqualTo(12.5);

@@ -291,7 +291,7 @@ public class TransportConsumerWorkerResilienceTests {
     // Assert - after success, last error should still be tracked
     await Assert.That(state.LastError).IsNotNull();
     await Assert.That(state.LastError!.Message).IsEqualTo("Test failure");
-    await Assert.That(state.LastErrorTime).IsNotNull();
+    await Assert.That(state.LastErrorTime.HasValue).IsTrue();
   }
 
   #endregion

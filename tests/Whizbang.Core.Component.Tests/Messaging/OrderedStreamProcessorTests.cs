@@ -194,7 +194,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert - Partial status should reflect what completed before failure
-    await Assert.That(reportedPartialStatus).IsNotNull();
+    await Assert.That(reportedPartialStatus.HasValue).IsTrue();
     await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Partial completion should include Stored flag");
     // EventStored flag should NOT be set since that's where processing failed
@@ -643,7 +643,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert
-    await Assert.That(reportedPartialStatus).IsNotNull();
+    await Assert.That(reportedPartialStatus.HasValue).IsTrue();
     await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Partial completion should include Stored flag");
     await Assert.That(reportedError).Contains("Publishing failed");
@@ -868,7 +868,7 @@ public class OrderedStreamProcessorTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");  // Test payload
     object IMessageEnvelope.Payload => Payload;  // Explicit interface implementation
 
     public void AddHop(MessageHop hop) {

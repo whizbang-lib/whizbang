@@ -235,6 +235,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **Every runtime parse of a message can be counted (#1691, part of #1526).** `MessageParseDiagnostics` is a
+  public, AOT-safe seam through which each parse of a stored or received message on the outbox, inbox, transport
+  receive, offload, event store, lifecycle, multi-stream and redelivery paths reports its message id, source, kind
+  and call site; with no observer subscribed a parse site costs one volatile read. `MessageParseRecorder` counts and
+  summarizes the parses of chosen messages. Regression tests pin today's counts per flow (a locally published event
+  feeding two perspectives is parsed 17 times), and `plans/message-cache.md` proposes the cache that lowers them.
 - **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
   rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
   `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is
@@ -539,6 +545,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   perspective table the pass had already applied, so `wh_schema_migrations` said they were never applied. The schema
   itself was complete and every hash was right, so nothing re-ran; the ledger was wrong. Only the beginning of a pass
   records skips now.
+- **Parsed JSON values no longer strand pooled buffers (#1679).** Twenty-three places in the libraries built a
+  `JsonElement` with `JsonDocument.Parse(json).RootElement` (outbox and transport metadata, body offload claims,
+  control-message lifetimes, audit payloads, the Dapper envelope adapter and the EF Core orphaned-event fallback)
+  and never disposed the document, so the buffers it rented from the shared pool were never returned, on paths that
+  run per message. They now use `JsonElement.Parse`, whose element owns its memory; every returned element keeps the
+  same content and stays valid after the call. Generated message-tag registries with `ExtraJson` now dispose the
+  document they merge from. A repository analyzer (WHZ0005) fails the build on the pattern, so it cannot return while
+  the SDK's own rule, CA2026, ships only with SDK 11; `.editorconfig` raises CA2026 to an error for that SDK.
 - **A perspective no longer loses an earlier event when a later one of its stream was applied first (#1608).** Under
   burst load two apply workers can carry one stream's events with overlapping transactions, and the later event can
   reach the row first. The framework answers that by folding the earlier event onto the row the other worker
@@ -550,6 +564,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a live write the ordering guard refuses re-folds the stream instead of being reported applied. Rows already
   missing an event are repaired by rebuilding the perspective (any mode); on earlier releases only a blue-green
   rebuild repairs them, because an in-place rebuild of a strictly ordered row was refused the same way.
+- **The rollback outbox publisher's not-ready hold now keeps its leases (#1606).** `OutboxPublishWorker` (off by
+  default; `OutboxDrainWorker` is the default publisher) held rows while the transport reported not ready by queueing
+  their ids on the lease renewal channel, which drops any id with no registered lease handle, and a held row has
+  none. The leases lapsed, another claim took the rows, and each re-claim charged an attempt. The hold now renews the
+  held rows' leases directly through the work coordinator, as the drain worker does (#1558): when a row is first held
+  and again once half of `LeaseRenewalWorkerOptions.LeaseSeconds` has passed, so it does not make a round trip on
+  every retry. A renewal that fails is logged and retried on the next pass; it is not reported as a failed publish.
+  The worker's constructor no longer takes an `ILeaseRenewalChannel`.
+- **A failed backlog head peek on Azure Service Bus is logged (#1643).** The backlog sample reports an entity whose
+  oldest-message peek throws (a missing permission, a deleted entity, a broker error) with its depth and no age, as it
+  does an empty entity, and nothing said why. The failure is now logged at Warning with the entity, the exception type
+  and its message, at most once every five minutes per entity on the transport's `TimeProvider`; the depth is still
+  reported.
+- **An event's flags keep every bit when the JSON options write enums as names (#1612).** The outbox and inbox
+  store functions read an event's flags from the stored message's JSON and, for anything but a number, kept only
+  `Collective`. JSON options carrying `JsonStringEnumConverter` (added by a host to its options, or registered with
+  `JsonContextRegistry`) write the flags as names, so on such a host an ephemeral event was stored as Sourced (its body
+  never reaped, its stream invisible to the WHIZ133 and rebuild guards), and the `Composite`, `NoRebroadcast`,
+  `Compacted` and `AtMostOnce` bits were stored as 0, with nothing reported. The framework's default options write the
+  number and were not affected. `OutboxMessage.Flags` and `InboxMessage.Flags` are now always written as the number
+  (`EventFlagsNumberJsonConverter`, a property-level converter that outranks the options), and the store functions
+  (migration 232) read a name list bit by bit for any writer that still sends one: every `EventFlags` name, under any
+  naming policy, and a number among the names. A name `EventFlags` does not define raises SQLSTATE `22P02` naming it,
+  so an event whose kind cannot be read is refused rather than stored as Sourced. Events already stored with the lost
+  bits are not repaired by this change.
+- **The managed-object reconcile can no longer leave the schema lock held behind a transaction-pooling pooler
+  (#1639).** It took the schema initialization lock with `pg_try_advisory_lock` and released it in a separate
+  statement, so behind a pooler the release could run on another backend: PostgreSQL warned `you don't own a lock of
+  type ExclusiveLock`, the release returned false unchecked, and the backend that took the lock kept it, so every
+  later schema initialization on every instance found the key held. The plan and its ledger rows now run in one
+  transaction under `pg_try_advisory_xact_lock`, and each drop other than a concurrent index drop runs in a
+  transaction of its own under the same lock; the commit or rollback releases it where it was taken. A concurrent
+  index drop cannot run in a transaction, so it holds the session lock for its own statements only on a connection
+  that reaches one backend (the server's process id matches the one the connection was given); behind a pooler it
+  stays pending with a Warning naming the indexes until a direct initialization connection is configured. A drop
+  that finds another session holding the lock stays pending for the next run. Every release of a session-level
+  advisory lock (the reconcile, the duty elector, the role elector's bridge and the commit-order stamper's leader
+  lock) now checks the result and logs a Warning naming the lock and its key when this session did not hold it, and
+  the role elector warns, as the duty elector and the stamper already did, when its bridge lock resolves through a
+  pooled connection-string key.
+
+- **An event audit record's envelope names the audited event as its cause.** The emitter built the audit envelope's
+  hop with no causation, so the record could be traced to the event it audits only through the payload's
+  `OriginalEventId`; the hop's `CausationId` is now that event's message id. The test meant to hold this had passed
+  without checking anything: its `IsNotNull()` on a nullable value passes on null under the pinned TUnit (#1642).
 - **A failed migration step no longer discards the steps that succeeded before it (#1637).** The EF Core driver ran
   its whole schema pass (core tables, every migration file and its ledger row, perspective tables, constraints,
   associations, registries) in one transaction, so a failure in any step, such as a `40P01` on a fresh database

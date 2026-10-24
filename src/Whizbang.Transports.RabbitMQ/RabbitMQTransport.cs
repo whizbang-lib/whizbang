@@ -1337,6 +1337,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         args.BasicProperties.MessageId, envelopeTypeName);
       return null;
     }
+    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
 
     return envelope;
   }
@@ -1398,6 +1399,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         args.BasicProperties.MessageId, envelopeTypeName);
       return null;
     }
+    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       var envelopeType = TypeNameFormatter.DisplayName(envelope.GetType());

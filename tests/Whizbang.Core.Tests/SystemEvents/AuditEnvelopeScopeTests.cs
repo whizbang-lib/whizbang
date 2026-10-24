@@ -113,7 +113,7 @@ public class AuditEnvelopeScopeTests {
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, source);
 
-    await Assert.That(store.Envelopes[0].Hops[0].CausationId).IsNotNull()
+    await Assert.That(store.Envelopes[0].Hops[0].CausationId).IsEqualTo(source.MessageId)
       .Because("an audit record whose whole purpose is to reference another event must record "
              + "which one; without causation the trail cannot be walked backwards");
   }

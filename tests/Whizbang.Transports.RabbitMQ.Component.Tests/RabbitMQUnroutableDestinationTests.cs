@@ -28,7 +28,7 @@ public class RabbitMQUnroutableDestinationTests {
     new(address,
         "myapp.orders.commands.placeordercommand",
         new Dictionary<string, JsonElement> {
-          [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement.Clone()
+          [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
         });
 
   [Test]

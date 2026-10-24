@@ -49,7 +49,7 @@ public class RabbitMQTransportGuardCoverageTests {
       "inbox.orders.commands",
       "#",
       new Dictionary<string, JsonElement> {
-        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement.Clone()
+        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
       });
     var items = new List<BulkPublishItem> {
       new() { Envelope = RabbitTestWire.NewEnvelope("provisioned"), EnvelopeType = null, MessageId = Guid.CreateVersion7() }
@@ -203,7 +203,7 @@ public class RabbitMQTransportGuardCoverageTests {
     var destination = RabbitTestWire.Destination(
       routingKey: "orders.created,orders.updated",
       extraMetadata: new Dictionary<string, JsonElement> {
-        ["RoutingPattern"] = JsonDocument.Parse("\"\"").RootElement.Clone()
+        ["RoutingPattern"] = JsonElement.Parse("\"\"")
       });
 
     await transport.SubscribeBatchAsync((_, _) => Task.CompletedTask, destination, new TransportBatchOptions());

@@ -423,7 +423,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
         .FirstOrDefaultAsync(r => r.Id == rowId2, cancellationToken);
 
     // Assert
-    await Assert.That(retrieved1!.Data.AuthorizedOn).IsNotNull();
+    await Assert.That(retrieved1!.Data.AuthorizedOn.HasValue).IsTrue();
     await Assert.That(retrieved2!.Data.AuthorizedOn).IsNull();
   }
 

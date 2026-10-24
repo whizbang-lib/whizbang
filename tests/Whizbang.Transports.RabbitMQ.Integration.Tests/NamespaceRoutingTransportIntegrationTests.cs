@@ -409,7 +409,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
   /// </summary>
   private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"test-sub-{Guid.NewGuid():N}\"")
     };
     return new TransportDestination(address, routingKey, metadata);
   }

@@ -668,8 +668,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -736,8 +736,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [hop]
@@ -788,8 +788,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -1261,8 +1261,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -1311,8 +1311,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -1361,8 +1361,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = []
@@ -1424,8 +1424,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -1539,8 +1539,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}"),
       Metadata = new EnvelopeMetadata {
         MessageId = messageId,
         Hops = [CreateTestHop()]
@@ -1749,8 +1749,8 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       AggregateType = "TestAggregate",
       Version = 1,
       EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
-      EventData = System.Text.Json.JsonDocument.Parse(
-        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Origin\"}}").RootElement,
+      EventData = System.Text.Json.JsonElement.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Origin\"}}"),
       Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [CreateTestHop()] },
       CreatedAt = DateTime.UtcNow,
       OriginServiceId = originId,
@@ -1819,7 +1819,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await using var context = CreateDbContext();
     var streamId = Guid.NewGuid();
     var messageId = MessageId.New();
-    var nullPayload = System.Text.Json.JsonDocument.Parse("null").RootElement;
+    var nullPayload = System.Text.Json.JsonElement.Parse("null");
     var record = new EventStoreRecord {
       Id = messageId.Value,
       StreamId = streamId,

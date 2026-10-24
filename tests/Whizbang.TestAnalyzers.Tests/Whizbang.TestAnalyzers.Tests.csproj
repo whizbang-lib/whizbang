@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
+    <!-- Unit: compiles source in memory and runs the analyzers over it, no I/O beyond reading reference assemblies -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Referenced twice over in one item: as an assembly, so the tests can construct the analyzer, and as an
+         analyzer, so this project's own assertions are held to the rules it tests (tests/Directory.Build.props
+         skips this project for that reason). -->
+    <ProjectReference Include="../../src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+</Project>

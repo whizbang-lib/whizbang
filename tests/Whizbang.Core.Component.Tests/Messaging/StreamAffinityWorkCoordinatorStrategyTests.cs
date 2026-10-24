@@ -262,7 +262,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var messageId = _idProvider.NewGuid();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []);
     return new OutboxMessage {
       MessageId = messageId,
@@ -286,7 +286,7 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var messageId = _idProvider.NewGuid();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []);
     return new InboxMessage {
       MessageId = messageId,

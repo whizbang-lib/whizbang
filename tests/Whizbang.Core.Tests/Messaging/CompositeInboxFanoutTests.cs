@@ -481,7 +481,7 @@ public class CompositeInboxFanoutTests {
   // Fakes + helpers
   // ============================================================
 
-  private static JsonElement _raw(string json) => JsonDocument.Parse(json).RootElement.Clone();
+  private static JsonElement _raw(string json) => JsonElement.Parse(json);
 
   // ── Hypothesis battery: malformed raw composites must FAIL, never THROW ──────────────────────
   // The dispatch path handles a RETURNED failure correctly (dead-letter, then a terminal completion

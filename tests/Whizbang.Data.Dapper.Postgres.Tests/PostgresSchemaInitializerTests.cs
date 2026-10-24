@@ -1148,7 +1148,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     // Verify migration 033 was recorded as applied (not failed)
     var status = await connection.ExecuteScalarAsync<short?>(
       "SELECT status FROM wh_schema_migrations WHERE file_name = '033_RenamePerspectiveCheckpointsToCursors'");
-    await Assert.That((int?)status).IsNotNull();
+    await Assert.That(((int?)status).HasValue).IsTrue();
     await Assert.That((int)status!.Value).IsNotEqualTo(-1); // -1 = Failed
   }
 

@@ -64,7 +64,7 @@ public class MessageTagHookTests {
     var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.TryGetProperty("modified", out var modified)).IsTrue();
     await Assert.That(modified.GetBoolean()).IsTrue();
   }

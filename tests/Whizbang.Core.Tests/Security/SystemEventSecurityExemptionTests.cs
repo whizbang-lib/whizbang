@@ -38,7 +38,7 @@ public class SystemEventSecurityExemptionTests {
     DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
   };
 
-  private static JsonElement _emptyBody() => JsonDocument.Parse("{}").RootElement.Clone();
+  private static JsonElement _emptyBody() => JsonElement.Parse("{}");
 
   private sealed class EmptyServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;

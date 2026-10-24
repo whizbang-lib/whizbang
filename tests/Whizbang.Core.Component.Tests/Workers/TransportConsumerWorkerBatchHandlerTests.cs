@@ -364,7 +364,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -379,7 +379,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
   private static MessageEnvelope<JsonElement> _createSelfEchoEnvelope(MessageId messageId, string sourceServiceName) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -531,7 +531,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
         MessageId = workMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(workMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,

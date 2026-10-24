@@ -40,7 +40,7 @@ public class OsvClientTests {
     var request = handler.Requests[0];
     await Assert.That(request.Method).IsEqualTo(HttpMethod.Post);
     await Assert.That(request.Uri.ToString()).IsEqualTo("https://api.osv.dev/v1/querybatch");
-    var queries = JsonDocument.Parse(request.Body!).RootElement.GetProperty("queries");
+    var queries = JsonElement.Parse(request.Body!).GetProperty("queries");
     await Assert.That(queries.GetArrayLength()).IsEqualTo(2);
     await Assert.That(queries[0].GetProperty("package").GetProperty("name").GetString()).IsEqualTo(CORE);
     await Assert.That(queries[0].GetProperty("package").GetProperty("ecosystem").GetString()).IsEqualTo("NuGet");
@@ -131,8 +131,8 @@ public class OsvClientTests {
 
     var matches = await client.FindAdvisoriesAsync([_core, _data], CancellationToken.None);
 
-    var second = JsonDocument.Parse(handler.Requests.Where(r => r.Method == HttpMethod.Post).ElementAt(1).Body!)
-      .RootElement.GetProperty("queries");
+    var second = JsonElement.Parse(handler.Requests.Where(r => r.Method == HttpMethod.Post).ElementAt(1).Body!)
+      .GetProperty("queries");
     await Assert.That(second.GetArrayLength()).IsEqualTo(1);
     await Assert.That(second[0].GetProperty("package").GetProperty("name").GetString()).IsEqualTo(DATA);
     await Assert.That(second[0].GetProperty("version").GetString()).IsEqualTo("1.0.0");

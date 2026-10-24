@@ -39,7 +39,7 @@ public class TransportNamespacesTests {
   [Test]
   public async Task FromMetadata_NoKey_ReturnsDefaultAsync() {
     var metadata = new Dictionary<string, JsonElement> {
-      ["StreamId"] = JsonDocument.Parse("\"abc\"").RootElement
+      ["StreamId"] = JsonElement.Parse("\"abc\"")
     };
 
     await Assert.That(TransportNamespaces.FromMetadata(metadata)).IsEqualTo(TransportNamespaces.DefaultKey);
@@ -48,7 +48,7 @@ public class TransportNamespacesTests {
   [Test]
   public async Task FromMetadata_StampedKey_ReturnsItAsync() {
     var metadata = new Dictionary<string, JsonElement> {
-      [TransportNamespaces.MetadataKey] = JsonDocument.Parse("\"bulk\"").RootElement
+      [TransportNamespaces.MetadataKey] = JsonElement.Parse("\"bulk\"")
     };
 
     await Assert.That(TransportNamespaces.FromMetadata(metadata)).IsEqualTo("bulk");
@@ -57,7 +57,7 @@ public class TransportNamespacesTests {
   [Test]
   public async Task FromMetadata_NonStringValue_ReturnsDefaultAsync() {
     var metadata = new Dictionary<string, JsonElement> {
-      [TransportNamespaces.MetadataKey] = JsonDocument.Parse("42").RootElement
+      [TransportNamespaces.MetadataKey] = JsonElement.Parse("42")
     };
 
     await Assert.That(TransportNamespaces.FromMetadata(metadata)).IsEqualTo(TransportNamespaces.DefaultKey);
@@ -72,7 +72,7 @@ public class TransportNamespacesTests {
       Address: "inbox.myapp.orders.commands",
       RoutingKey: "myapp.orders.commands.createorder",
       Metadata: new Dictionary<string, JsonElement> {
-        ["StreamId"] = JsonDocument.Parse("\"abc\"").RootElement
+        ["StreamId"] = JsonElement.Parse("\"abc\"")
       });
 
     var stamped = TransportNamespaces.Stamp(original, "bulk");

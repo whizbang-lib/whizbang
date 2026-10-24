@@ -123,7 +123,7 @@ public class InboxDispatchWorkerParallelismTests {
     public int CallCount;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) { Interlocked.Increment(ref CallCount); return envelope.Payload; }
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) { Interlocked.Increment(ref CallCount); return JsonDocument.Parse(jsonBytes).RootElement; }
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) { Interlocked.Increment(ref CallCount); return JsonElement.Parse(jsonBytes); }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) { Interlocked.Increment(ref CallCount); return jsonElement; }
   }
 
@@ -132,7 +132,7 @@ public class InboxDispatchWorkerParallelismTests {
       MessageId = messageId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -246,8 +246,8 @@ public class InboxDispatchWorkerParallelismTests {
     // Assert msg1's PreInboxInline ended before msg2's started.
     var m1End = harness.Invoker.EndedAt(m1, LifecycleStage.PreInboxInline);
     var m2Start = harness.Invoker.StartedAt(m2, LifecycleStage.PreInboxInline);
-    await Assert.That(m1End).IsNotNull();
-    await Assert.That(m2Start).IsNotNull();
+    await Assert.That(m1End.HasValue).IsTrue();
+    await Assert.That(m2Start.HasValue).IsTrue();
     await Assert.That(m1End!.Value <= m2Start!.Value).IsTrue()
       .Because("Same-stream FIFO: msg1's PreInboxInline must complete before msg2's PreInboxInline begins.");
     await cts.CancelAsync();

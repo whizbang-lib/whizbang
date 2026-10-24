@@ -185,7 +185,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
       .Because("epoch 0 is fully settled and below the frontier target — it must close");
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
-    await Assert.That(row).IsNotNull()
+    await Assert.That(row.HasValue).IsTrue()
       .Because("closing must materialize the bucket-epoch fold row");
     var (Lo, Hi) = await _expectedFoldAsync(conn, e1, e2);
     await Assert.That(row!.Value.Lo).IsEqualTo(Lo)
@@ -238,7 +238,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     _ = await _closeAsync(conn);
 
     var row = await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0);
-    await Assert.That(row).IsNotNull();
+    await Assert.That(row.HasValue).IsTrue();
     var (Lo, _) = await _expectedFoldAsync(conn, kept);
     await Assert.That(row!.Value.Count).IsEqualTo(1)
       .Because("ephemeral and at-most-once events must not be counted — they are outside the audited set");
@@ -264,7 +264,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     _ = await _closeAsync(conn);
 
     var row = await _epochRowAsync(conn, origin.ToString(), "", "Contracts.EpochProbe", 0);
-    await Assert.That(row).IsNotNull()
+    await Assert.That(row.HasValue).IsTrue()
       .Because("each origin gets its own lane with its own frontier");
     var (Lo, _) = await _expectedFoldAsync(conn, e1, e2);
     await Assert.That(row!.Value.Lo).IsEqualTo(Lo);
@@ -340,7 +340,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
     await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 105, settled: true);
     _ = await _closeAsync(conn);
-    await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNotNull();
+    await Assert.That((await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).HasValue).IsTrue();
 
     // Sabotage the setting, extend history, close again: epoch 1 must close at the ORIGINAL width.
     await _setWidthAsync(conn, 10);
@@ -348,7 +348,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     await _seedLocalAsync(conn, stream, Guid.NewGuid(), "Contracts.EpochProbe", 205, settled: true);
     _ = await _closeAsync(conn);
 
-    await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 1)).IsNotNull()
+    await Assert.That((await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 1)).HasValue).IsTrue()
       .Because("epoch 1 under the pinned width [100,200) is closable once the frontier passes it");
   }
 
@@ -372,7 +372,7 @@ public class DigestEpochSqlTests : EFCoreTestBase {
 
     await Assert.That(closed).IsGreaterThanOrEqualTo(1)
       .Because("epoch 0 was closable, and the coordinator must have actually run the closure to know that");
-    await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNotNull()
+    await Assert.That((await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).HasValue).IsTrue()
       .Because("the live effect — a persisted epoch row — is the proof the call reached the database");
   }
 

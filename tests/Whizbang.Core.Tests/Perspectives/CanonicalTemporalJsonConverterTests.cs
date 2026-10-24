@@ -103,7 +103,7 @@ public class CanonicalTemporalJsonConverterTests {
   /// </summary>
   private static JsonElement _written() {
     var json = JsonSerializer.Serialize(_model(), _writerOptions(SerializationProfile.Persistence));
-    return JsonDocument.Parse(json).RootElement;
+    return JsonElement.Parse(json);
   }
 
   /// <summary>Each temporal property is written as a number.</summary>
@@ -199,7 +199,7 @@ public class CanonicalTemporalJsonConverterTests {
     var metadata = new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _origin };
 
     var json = JsonSerializer.Serialize(metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
-    var written = JsonDocument.Parse(json).RootElement;
+    var written = JsonElement.Parse(json);
 
     await Assert.That(written.GetProperty("Timestamp").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_origin))
@@ -219,7 +219,7 @@ public class CanonicalTemporalJsonConverterTests {
   [Test]
   public async Task TheTransportProfileStillWritesARenderingAsync() {
     var json = JsonSerializer.Serialize(_model(), _writerOptions(SerializationProfile.Default));
-    var written = JsonDocument.Parse(json).RootElement;
+    var written = JsonElement.Parse(json);
 
     foreach (var property in new[] { "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed" }) {
       await Assert.That(written.GetProperty(property).ValueKind).IsEqualTo(JsonValueKind.String)
@@ -238,7 +238,7 @@ public class CanonicalTemporalJsonConverterTests {
 
     var json = JsonSerializer.Serialize(metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
 
-    await Assert.That(JsonDocument.Parse(json).RootElement.GetProperty("Timestamp").ValueKind)
+    await Assert.That(JsonElement.Parse(json).GetProperty("Timestamp").ValueKind)
       .IsEqualTo(JsonValueKind.String);
   }
 
@@ -258,7 +258,7 @@ public class CanonicalTemporalJsonConverterTests {
     };
 
     var json = JsonSerializer.Serialize(model, options);
-    var written = JsonDocument.Parse(json).RootElement;
+    var written = JsonElement.Parse(json);
 
     await Assert.That(written.GetProperty("MaybeAt").ValueKind).IsEqualTo(JsonValueKind.Number);
 
@@ -310,7 +310,7 @@ public class CanonicalTemporalJsonConverterTests {
       Label = "kept",
     };
 
-    var written = JsonDocument.Parse(JsonSerializer.Serialize(model, options)).RootElement;
+    var written = JsonElement.Parse(JsonSerializer.Serialize(model, options));
 
     foreach (var key in new[] { "At", "Offset", "Day", "Clock", "Elapsed" }) {
       await Assert.That(written.GetProperty(key).ValueKind).IsEqualTo(JsonValueKind.Number)

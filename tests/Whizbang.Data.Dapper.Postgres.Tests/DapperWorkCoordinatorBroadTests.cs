@@ -40,7 +40,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId, string? destination = "test-dest") {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -353,7 +353,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     await conn.OpenAsync();
     var publishedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT published_at FROM wh_outbox WHERE message_id = @m", new { m = msgId });
-    await Assert.That(publishedAt).IsNotNull();
+    await Assert.That(publishedAt.HasValue).IsTrue();
   }
 
   [Test]

@@ -321,7 +321,7 @@ public class SubscriptionRetryHelperTests {
     // Assert intermediate state - should be recovering with last error set
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Recovering);
     await Assert.That(state.LastError).IsEqualTo(disconnectException);
-    await Assert.That(state.LastErrorTime).IsNotNull();
+    await Assert.That(state.LastErrorTime.HasValue).IsTrue();
   }
 
   [Test]

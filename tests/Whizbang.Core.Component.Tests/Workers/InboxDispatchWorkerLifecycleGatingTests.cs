@@ -115,7 +115,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     }
     public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) {
       Interlocked.Increment(ref CallCount);
-      return JsonDocument.Parse(jsonBytes).RootElement;
+      return JsonElement.Parse(jsonBytes);
     }
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
       Interlocked.Increment(ref CallCount);
@@ -162,7 +162,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },

@@ -36,7 +36,7 @@ public class InboxRecordCoverageTests {
       MessageType = "Sample.Type, Sample",
       MessageData = new InboxMessageData {
         MessageId = new MessageId(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
       },
       Metadata = new EnvelopeMetadata { MessageId = new MessageId(messageId), Hops = [] },
@@ -57,7 +57,7 @@ public class InboxRecordCoverageTests {
       MessageType = "Sample.Type, Sample",
       MessageData = new InboxMessageData {
         MessageId = new MessageId(messageId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
       },
       Metadata = new EnvelopeMetadata { MessageId = new MessageId(messageId), Hops = [] },

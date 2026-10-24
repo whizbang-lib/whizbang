@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Tags;
 public class MessageTagProcessorBranchCoverageTests {
 
   private const string TAG = "branch-custom-tag";
-  private static readonly JsonElement _modifiedPayload = JsonDocument.Parse("""{"modified":true}""").RootElement.Clone();
+  private static readonly JsonElement _modifiedPayload = JsonElement.Parse("""{"modified":true}""");
 
   [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
   private sealed class BranchCustomTagAttribute : MessageTagAttribute;
@@ -131,7 +131,7 @@ public class MessageTagProcessorBranchCoverageTests {
         .Because("the registered dispatcher handled the custom attribute and returned a payload");
       await Assert.That(messages.Any(m => m.Contains("Hook invocation complete, result: modified payload", StringComparison.Ordinal))).IsTrue()
         .Because("the first hook returned a payload, and the diagnosis must say it modified it");
-      await Assert.That(observing.SeenPayload).IsNotNull();
+      await Assert.That(observing.SeenPayload.HasValue).IsTrue();
       await Assert.That(observing.SeenPayload!.Value.GetRawText()).IsEqualTo(_modifiedPayload.GetRawText())
         .Because("a hook's modified payload replaces the current payload for every later hook");
     } finally {

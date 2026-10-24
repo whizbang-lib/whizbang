@@ -84,7 +84,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
 
     var row = await _readLiveInstanceRowAsync(conn, meId);
 
-    await Assert.That(row).IsNotNull()
+    await Assert.That(row.HasValue).IsTrue()
       .Because("The view exposes one row per registered instance — LEFT JOIN onto pg_stat_activity, so the instance row always appears even when no LISTEN connection exists.");
     await Assert.That(row!.Value.ListenAlive).IsFalse()
       .Because("No side connection with the matching application_name is open, so the LEFT JOIN produces NULL pg_stat_activity columns and listen_alive resolves to false.");
@@ -102,7 +102,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
 
     var row = await _readLiveInstanceRowAsync(conn, meId);
 
-    await Assert.That(row).IsNotNull();
+    await Assert.That(row.HasValue).IsTrue();
     await Assert.That(row!.Value.ListenAlive).IsTrue()
       .Because("Side connection with application_name='whizbang-<instance_id>' is open, so pg_stat_activity reports a backend matching the join predicate and listen_alive resolves to true.");
   }

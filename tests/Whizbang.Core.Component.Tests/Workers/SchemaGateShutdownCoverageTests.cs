@@ -236,7 +236,6 @@ public class SchemaGateShutdownCoverageTests {
       workChannelWriter: channel,
       outboxCompletionChannel: new NoOpOutboxCompletionChannel(),
       failureChannel: new NoOpFailureChannel(),
-      leaseRenewalChannel: new NoOpLeaseRenewalChannel(),
       schemaReadyGate: gate,
       options: Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       logger: NullLogger<OutboxPublishWorker>.Instance,
@@ -487,11 +486,6 @@ public class SchemaGateShutdownCoverageTests {
 
   private sealed class NoOpFailureChannel : IFailureChannel {
     public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default)
-      => ValueTask.CompletedTask;
-  }
-
-  private sealed class NoOpLeaseRenewalChannel : ILeaseRenewalChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, Guid id, CancellationToken cancellationToken = default)
       => ValueTask.CompletedTask;
   }
 

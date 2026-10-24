@@ -56,4 +56,12 @@
     <!-- Test projects may need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure (e.g., Npgsql.EnableDynamicJson) -->
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests'))" />
   </ItemGroup>
+  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers) for the sample test projects, as in
+       tests/Directory.Build.props: assertions that cannot fail are build errors (WHZ0004 and on). This file does not
+       import the parent props, so the reference is repeated here. An Aspire host is not a test project, and Aspire
+       reads every project it references as a resource to launch (ASPIRE004), so it is left out. -->
+  <ItemGroup Condition="$(MSBuildProjectName.Contains('Test')) and !$(MSBuildProjectName.EndsWith('AppHost'))">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

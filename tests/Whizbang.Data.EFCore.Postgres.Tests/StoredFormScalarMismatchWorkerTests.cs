@@ -560,7 +560,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
           MessageId = MessageId.From(eventIds[i]),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [],
-          Payload = JsonDocument.Parse(payloadJson).RootElement
+          Payload = JsonElement.Parse(payloadJson)
         };
         var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
         messages.Add($$"""

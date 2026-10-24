@@ -1256,7 +1256,7 @@ public class TransportConsumerWorkerCoverageTests {
     // Use a concrete MessageEnvelope<JsonElement> so _populateDeliveredAtTimestamp is exercised
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1731,7 +1731,7 @@ public class TransportConsumerWorkerCoverageTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1747,7 +1747,7 @@ public class TransportConsumerWorkerCoverageTests {
       MessageId messageId, string traceParent) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1773,7 +1773,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -2014,7 +2014,7 @@ public class TransportConsumerWorkerCoverageTests {
         MessageId = _expectedMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(_expectedMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,

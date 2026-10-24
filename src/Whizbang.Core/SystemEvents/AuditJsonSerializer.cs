@@ -36,7 +36,7 @@ internal static partial class AuditJsonSerializer {
     try {
       var typeInfo = options.GetTypeInfo(typeof(T));
       var json = JsonSerializer.Serialize(value, typeInfo);
-      return JsonDocument.Parse(json).RootElement.Clone();
+      return JsonElement.Parse(json);
     } catch (NotSupportedException) {
       // Type not registered with JsonContextRegistry — fall through to fallback
     }
@@ -45,7 +45,7 @@ internal static partial class AuditJsonSerializer {
       // Fallback: try the runtime type (may differ from compile-time type)
       var typeInfo = options.GetTypeInfo(value.GetType());
       var json = JsonSerializer.Serialize(value, typeInfo);
-      return JsonDocument.Parse(json).RootElement.Clone();
+      return JsonElement.Parse(json);
     } catch (NotSupportedException) {
       // Type not registered — return empty object (logged below).
     }
@@ -54,7 +54,7 @@ internal static partial class AuditJsonSerializer {
     // empty object. That's a silent compliance hole, so ALWAYS surface it (NullLogger no-ops only
     // when a caller genuinely has no logger, e.g. AuditOutboxMessageBuilder).
     LogEmptyAuditPayload(logger ?? NullLogger.Instance, TypeNameFormatter.DisplayName(value.GetType()));
-    return JsonDocument.Parse("{}").RootElement.Clone();
+    return JsonElement.Parse("{}");
   }
 
   [LoggerMessage(

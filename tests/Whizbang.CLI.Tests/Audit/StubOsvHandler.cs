@@ -32,7 +32,7 @@ internal sealed class StubOsvHandler : HttpMessageHandler {
 
   /// <summary>A batch answer with an empty result for each query in <paramref name="requestBody"/>.</summary>
   public static string EmptyBatchFor(string requestBody) {
-    var count = System.Text.Json.JsonDocument.Parse(requestBody).RootElement.GetProperty("queries").GetArrayLength();
+    var count = System.Text.Json.JsonElement.Parse(requestBody).GetProperty("queries").GetArrayLength();
     return $"{{\"results\":[{string.Join(",", Enumerable.Repeat("{}", count))}]}}";
   }
 

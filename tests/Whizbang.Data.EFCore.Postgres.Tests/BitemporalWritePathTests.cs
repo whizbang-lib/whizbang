@@ -92,7 +92,7 @@ public class BitemporalWritePathTests : EFCoreTestBase {
         + "not the moment the row happened to be written");
     await Assert.That(Updated).IsEqualTo(occurredAt)
       .Because("updated_at is business time — the applied event's own timestamp");
-    await Assert.That(SysCreated).IsNotNull();
+    await Assert.That(SysCreated.HasValue).IsTrue();
     await Assert.That(SysCreated!.Value).IsGreaterThanOrEqualTo(beforeWrite)
       .Because("sys_created_at is system time — the wall clock at write, which is 'now' regardless of "
         + "how long ago the event occurred");

@@ -87,7 +87,7 @@ public partial class EnvelopeSerializerTests {
     var options = _createTestJsonOptions();
     var serializer = new EnvelopeSerializer(options);
     var msgId = MessageId.New();
-    var jsonElement = JsonDocument.Parse("{\"value\":\"test\"}").RootElement;
+    var jsonElement = JsonElement.Parse("{\"value\":\"test\"}");
 
     // Create envelope with JsonElement payload (simulating double serialization)
     var envelope = new MessageEnvelope<JsonElement> {
@@ -258,7 +258,7 @@ public partial class EnvelopeSerializerTests {
     var msgId = MessageId.New();
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = msgId,
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -276,7 +276,7 @@ public partial class EnvelopeSerializerTests {
     var msgId = MessageId.New();
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = msgId,
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -294,7 +294,7 @@ public partial class EnvelopeSerializerTests {
     var msgId = MessageId.New();
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = msgId,
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -310,7 +310,7 @@ public partial class EnvelopeSerializerTests {
     var serializer = new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions());
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("null").RootElement,
+      Payload = JsonElement.Parse("null"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -422,7 +422,7 @@ public partial class EnvelopeSerializerTests {
     var msgId = MessageId.New();
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = msgId,
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -442,7 +442,7 @@ public partial class EnvelopeSerializerTests {
     var msgId = MessageId.New();
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = msgId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [_createTestHop()],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };

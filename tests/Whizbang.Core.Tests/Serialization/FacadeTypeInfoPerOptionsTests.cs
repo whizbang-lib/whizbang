@@ -38,7 +38,7 @@ public class FacadeTypeInfoPerOptionsTests {
 
   private static JsonValueKind _kindOfAt(JsonSerializerOptions options) {
     var json = JsonSerializer.Serialize(new StampedEvent(Guid.CreateVersion7(), _at), options.GetTypeInfo(typeof(StampedEvent)));
-    return JsonDocument.Parse(json).RootElement.GetProperty("At").ValueKind;
+    return JsonElement.Parse(json).GetProperty("At").ValueKind;
   }
 
   /// <summary>The wire profile asking first does not make the persistence profile write a rendering.</summary>
