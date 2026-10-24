@@ -1153,6 +1153,7 @@ END $$;
       await _runRecordedStepAsync(steps, connection, pass, _perspectiveTablesStep, async ct => {
         const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
         if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
+          // __ENSURE_REQUIRED_EXTENSIONS__
           await _underSavepointAsync(connection, "whizbang_perspective_tables",
             () => _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, ct),
             ex => {
@@ -1273,6 +1274,16 @@ END $$;
       await dbContext.Database.CloseConnectionAsync();
     }
   }
+
+  /// <summary>
+  /// The capabilities this context's schema requires, in force whatever configuration says: pgvector for every
+  /// vector column, explicitly, because the column cannot exist without it. The generated registration puts them in
+  /// force as a requirement source, and the data source passes them to the extension helper so a refusal names the
+  /// columns.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
+  public static System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Capabilities.ActiveCapabilityRequirement> GetCapabilityRequirements() =>
+    global::Whizbang.Data.Postgres.PostgresSchemaRequirements.From(__VECTOR_COLUMNS__);
 
   /// <summary>
   /// Returns per-perspective (name, sql) entries for individual hash tracking.

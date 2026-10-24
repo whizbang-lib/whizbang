@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Configuration;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -24,7 +25,7 @@ public class ConfigurationManifestRequirementSourceTests {
     ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.RequirementSource",
       [new ConfigurationBinding("Tests:Source", typeof(ConfigurationManifestRequirementSourceTests), ["Tests:Source"], [declared])]));
 
-    var configured = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+    var configured = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> { ["Tests:Source"] = "set" }).Build();
 
     await Assert.That(new ConfigurationManifestRequirementSource().Resolve(null)).Contains(

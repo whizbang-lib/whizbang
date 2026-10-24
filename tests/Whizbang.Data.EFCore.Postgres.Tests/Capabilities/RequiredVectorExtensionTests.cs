@@ -112,9 +112,13 @@ public class RequiredVectorExtensionTests : IAsyncDisposable {
   public async Task RefusedByTheServer_StartFails_NamingTheFeatureTheColumnAndTheFixAsync() {
     var limited = await _limitedRoleAsync();
     await using var connection = new NpgsqlConnection(limited);
+    var otherProvider = new ActiveCapabilityRequirement(
+      new CapabilityRequirement(new CapabilityId("broker", "vector"), "A broker feature", "W:Broker", null, null), "W:Broker", null, CapabilityActivation.Explicit);
+    var otherExtension = new ActiveCapabilityRequirement(
+      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Substring indexes", "wh_per_product", null, null), "wh_per_product", null, CapabilityActivation.Implicit);
 
     var failure = await Assert.That(async () =>
-      await PostgresRequiredExtension.EnsureAsync(connection, "vector", SCOPE, _requirements, CancellationToken.None))
+      await PostgresRequiredExtension.EnsureAsync(connection, "vector", SCOPE, [otherProvider, .. _requirements, otherExtension], CancellationToken.None))
       .Throws<InvalidOperationException>();
 
     await Assert.That(failure!.Message).IsEqualTo(
@@ -128,20 +132,23 @@ public class RequiredVectorExtensionTests : IAsyncDisposable {
 
   [Test]
   public async Task RefusedOnlyWhenCreated_StartFails_WithTheServersAnswerAsync() {
-    // A trusted extension and CREATE on the database read as creatable, but schema public no longer grants
-    // CREATE to every role, so the server refuses at CREATE EXTENSION: the fallback names what it said.
+    // An extension that needs preloading reads Unknown to a role that cannot read shared_preload_libraries, so
+    // the helper tries to create it; the server refuses then, and the fallback names what it said.
+    await _executeAsync(_connectionString, "DROP EXTENSION IF EXISTS pg_stat_statements");
     var limited = await _limitedRoleAsync();
     await using var connection = new NpgsqlConnection(limited);
     await connection.OpenAsync();
-    var trigram = new ActiveCapabilityRequirement(
-      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Substring indexes on perspective fields", "wh_per_product", null, null),
-      "wh_per_product", null, CapabilityActivation.Explicit);
+    var statistics = new ActiveCapabilityRequirement(
+      new CapabilityRequirement(new CapabilityId("postgres", "pg_stat_statements"), "Expensive-predicate advice", "W:Advisor:Enabled", "true", "false"),
+      "W:Advisor:Enabled", "true", CapabilityActivation.Explicit);
 
     var failure = await Assert.That(async () =>
-      await PostgresRequiredExtension.EnsureAsync(connection, "pg_trgm", SCOPE, [trigram], CancellationToken.None))
+      await PostgresRequiredExtension.EnsureAsync(connection, "pg_stat_statements", SCOPE, [statistics], CancellationToken.None))
       .Throws<InvalidOperationException>();
 
-    await Assert.That(failure!.Message).StartsWith($"capability postgres/pg_trgm on '{SCOPE}': NoPrivilege; 42501: permission denied for schema public. Fix: ");
+    await Assert.That(failure!.Message).StartsWith(
+      $"capability postgres/pg_stat_statements on '{SCOPE}': NoPrivilege; 42501: permission denied to create extension \"pg_stat_statements\". Fix: ");
+    await Assert.That(failure.Message).EndsWith("Required by: Expensive-predicate advice (W:Advisor:Enabled = true, explicit)");
     await Assert.That(failure.InnerException).IsTypeOf<PostgresException>();
     await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Open)
       .Because("a connection the caller opened is the caller's to close");

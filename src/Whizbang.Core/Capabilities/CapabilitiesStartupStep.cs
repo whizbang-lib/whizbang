@@ -92,8 +92,8 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
       await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
     }
     var statuses = _registry.Statuses;
-    var requirements = _sources.SelectMany(source => source.Requirements).Distinct();
-    var verdict = CapabilityVerdict.Evaluate(statuses, CapabilityActivationResolver.Resolve(requirements, _configuration));
+    var inForce = _sources.SelectMany(source => source.Resolve(_configuration)).Distinct().ToList();
+    var verdict = CapabilityVerdict.Evaluate(statuses, inForce);
     _registry.PublishVerdict(verdict);
     CapabilityReport.LogVerdict(_logger, verdict);
 
