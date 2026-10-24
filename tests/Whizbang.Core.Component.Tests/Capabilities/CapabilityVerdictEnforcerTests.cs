@@ -117,7 +117,7 @@ public class CapabilityVerdictEnforcerTests {
     var registry = new CapabilityRegistry([], NullLogger<CapabilityRegistry>.Instance);
     var lifetime = new RecordingHostLifetime();
     var logger = NullLogger<CapabilityVerdictEnforcer>.Instance;
-    Action<int> exit = _ => { };
+    static void exit(int _) { }
 
     await Assert.That(() => new CapabilityVerdictEnforcer(null!, lifetime.StopApplication, logger, exit)).Throws<ArgumentNullException>();
     await Assert.That(() => new CapabilityVerdictEnforcer(registry, null!, logger, exit)).Throws<ArgumentNullException>();

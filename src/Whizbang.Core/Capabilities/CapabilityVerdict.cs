@@ -40,8 +40,10 @@ public sealed record CapabilityVerdictEntry(
     RequiredBy.Any(r => r.Activation == CapabilityActivation.Explicit) ? CapabilityActivation.Explicit : CapabilityActivation.Implicit;
 
   /// <summary>
-  /// The verdict line: <c>capability provider/name on 'scope': State[, version][; detail][: reason][. Fix: fix].
-  /// Required by: Feature (Key = Value, explicit|default)[; ...]</c>. A capability no provider describes has no scope.
+  /// The verdict line, in the form
+  /// <code>capability provider/name on 'scope': State[, version][; detail][: reason][. Fix: fix].
+  /// Required by: Feature (Key = Value, explicit|default)[; ...]</code>
+  /// A capability no provider describes has no scope.
   /// </summary>
   public string Line {
     get {
