@@ -93,7 +93,9 @@ internal sealed partial class CapabilityVerdictEnforcer : IHostedService, IDispo
     if (failures.Count == 0) {
       return;
     }
-    LogStopping(_logger, failures.Count, string.Join('\n', failures.Select(entry => "  " + entry.Line)));
+    // Built once, on the way to stopping the host, so the cost does not depend on the log level.
+    var lines = string.Join('\n', failures.Select(entry => "  " + entry.Line));
+    LogStopping(_logger, failures.Count, lines);
     _setExitCode(1);
     _stopApplication();
   }
