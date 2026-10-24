@@ -33,7 +33,7 @@ namespace Whizbang.Core.Startup;
 /// ineffective rewrite stays queued for the next boot instead of being silently forgotten.
 /// </remarks>
 /// <docs>operations/startup/capabilities-and-duties</docs>
-/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready</docs>
+/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepCoverageTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>

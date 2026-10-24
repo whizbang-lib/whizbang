@@ -20,7 +20,7 @@ namespace Whizbang.Core.Workers;
 /// rewrite itself is <see cref="IWorkCoordinator.RewriteTableAsync"/>, which validates the table name,
 /// runs on the schema-initialization connection when one is configured, and measures the ratio afterwards.
 /// </remarks>
-/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready</docs>
+/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
 public sealed class VacuumFullTableRewriter : ITableRewriter {

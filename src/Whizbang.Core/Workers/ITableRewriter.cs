@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// <see cref="CannotRunReason"/> as why it skipped.
 /// </para>
 /// </remarks>
-/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready</docs>
+/// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/VacuumFullTableRewriterTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Startup/TableRewriteStartupStepTests.cs</tests>
 public interface ITableRewriter {
