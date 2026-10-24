@@ -502,13 +502,18 @@ public class DutyHolderWorkerTests {
     await Assert.That(elector.Attempts).IsEqualTo(2);
     await Assert.That(notify.Subscription.ChannelName).IsEqualTo(DutyHolderWorker.RELEASE_CHANNEL);
     // The grant is held back between the attempt and its processing, which is the window #1707 raced:
-    // "an attempt was made" is not "the role is held".
+    // "an attempt was made" is not "the role is held". Only the held-role signal proves the latter.
     var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var becameHolder = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnBecameHolder += role => becameHolder.TrySetResult(role);
     elector.Proceed = proceed.Task;
     notify.Subscription.OnNotification(ROLE);
     await Assert.That(await elector.Attempted.Task).IsEqualTo(3);
-    await Assert.That(worker.Holds(ROLE)).IsTrue();
+    await Assert.That(becameHolder.Task.IsCompleted).IsFalse()
+      .Because("the vote's answer has not reached the worker yet, so nothing is held");
     proceed.SetResult();
+    await Assert.That(await becameHolder.Task).IsEqualTo(ROLE);
+    await Assert.That(worker.Holds(ROLE)).IsTrue();
 
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(grant.Disposed).IsTrue().Because("a graceful stop releases the role, so the next holder takes it at once");

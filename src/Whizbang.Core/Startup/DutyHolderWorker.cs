@@ -128,6 +128,15 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <returns>True when held.</returns>
   public bool Holds(string role) => _held.ContainsKey(role);
 
+  /// <summary>
+  /// Raised when this instance wins a role, with the role, once it is recorded as held: from then on
+  /// <see cref="Holds"/> returns true for it. Raised on the pass that won it, before the role's
+  /// acquisition and owed work run. Must not block.
+  /// </summary>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
+  public event Action<string>? OnBecameHolder;
+
   /// <summary>Runs the next pass at once instead of at the next interval.</summary>
   public void Wake() => Volatile.Read(ref _wake).TrySetResult();
 
@@ -246,6 +255,7 @@ public sealed partial class DutyHolderWorker : BackgroundService {
         _held[roles[i]] = grant;
         _ = won.Add(roles[i]);
         LogBecameHolder(_logger, roles[i], grant.Epoch);
+        OnBecameHolder?.Invoke(roles[i]);
       }
     }
     return won;
