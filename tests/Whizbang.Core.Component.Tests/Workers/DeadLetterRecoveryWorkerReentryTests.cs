@@ -50,6 +50,20 @@ public class DeadLetterRecoveryWorkerReentryTests {
   }
 
   [Test]
+  public async Task WithoutClaimWorkerOptions_TheRowIsStoredWithTheDefaultPartitionCountAsync() {
+    var fake = new ReadingFakeStore();
+    var entry = _entry(DeadLetterSourceTable.BROKER);
+    fake.Redelivery = new DeadLetterRedelivery(entry.DeadLetterId, DeadLetterSourceTable.BROKER, entry.SourceId, EVENT_TYPE, _wire(entry.SourceId));
+    fake.Batches.Enqueue([entry]);
+
+    _ = await _scanOnceAsync(fake, registerCoordinator: true, partitionCount: null);
+
+    await Assert.That(fake.Stored).Count().IsEqualTo(1);
+    await Assert.That(fake.Stored[0].PartitionCount).IsEqualTo(new ClaimWorkerOptions().PartitionCount)
+      .Because("a host that never configures the claim workers stores every arrival with their default partition count");
+  }
+
+  [Test]
   public async Task AServiceThatCannotReadTheEnvelope_ReDrivesTheRowItselfAsync() {
     // The interface's default read answers null, as a recovery service written before #1664 does.
     var fake = new FakeStore();
