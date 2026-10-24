@@ -105,7 +105,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
       // Wait for OUR message specifically. The shared emulator subscription is at-least-once
       // and the pre-test drain is best-effort, so a straggler from a prior test can land
-      // first — asserting on .First() flaked exactly that way in CI. The strategy signals the
+      // first; asserting on .First() flaked exactly that way in CI. The strategy signals the
       // moment the worker hands it this message id.
       var inbox = await strategy.WaitForInboxMessageAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 

@@ -285,7 +285,7 @@ public class DeclinedStreamLeavesNoRowTests {
     }
   }
 
-  private static long _clock = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+  private static long _clock = 1_767_225_600_000; // 2026-01-01T00:00:00Z; only the order of the ids matters
 
   /// <summary>An envelope whose id sorts after every earlier one, so id order is the order the test wrote them in.</summary>
   private static MessageEnvelope<IEvent> _envelope(IEvent payload) => new() {
