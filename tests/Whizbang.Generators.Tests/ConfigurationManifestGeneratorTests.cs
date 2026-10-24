@@ -105,8 +105,9 @@ public class ConfigurationManifestGeneratorTests {
         public RetentionOptions Retention { get; set; } = new();
       }
       public static class Binding {
+        private const string LEDGER = "Ledger";
         public static LedgerOptions? Read(IConfiguration configuration) =>
-          configuration.GetSection("Whizbang").GetSection("Ledger").Get<LedgerOptions>();
+          configuration.GetSection("Whizbang").GetSection(LEDGER).Get<LedgerOptions>();
       }
       """;
 
@@ -114,7 +115,7 @@ public class ConfigurationManifestGeneratorTests {
 
     await Assert.That(errors).IsEmpty();
     await Assert.That(manifest).Contains(Binding("Whizbang:Ledger", "global::App.LedgerOptions"))
-      .Because("a chain of literal GetSection calls is one section path");
+      .Because("a chain of GetSection calls with constant keys, literal or const, is one section path");
     await Assert.That(manifest).Contains("\"Whizbang:Ledger:Partitioning:Managed\", \"Whizbang:Ledger:Retention:Age\"")
       .Because("a nested options object is a nested section; a renamed property is read under its configured name; a TimeSpan is a value, not a section");
     await Assert.That(manifest).Contains(Requirement("postgres", "pg_partman", "Partition management", "Whizbang:Ledger:Partitioning:Managed", null));

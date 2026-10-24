@@ -137,7 +137,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // The manifest is a source file in the same assembly, so it can only name types it can see.
     // Private and protected nested types (test fixtures, mostly) would emit code that does not
     // compile, turning a guard into a build break for everyone.
-    if (!_isReferenceable(implementation)) {
+    if (!IsReferenceable(implementation)) {
       return null;
     }
 
@@ -170,7 +170,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
       if (p.Type.TypeKind != TypeKind.Interface) {
         continue;
       }
-      if (p.Type is not INamedTypeSymbol dependency || !_isReferenceable(dependency)) {
+      if (p.Type is not INamedTypeSymbol dependency || !IsReferenceable(dependency)) {
         continue;
       }
       dependencies.Add(TypeNameUtilities.FullyQualified(p.Type));
@@ -213,7 +213,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
       return HOSTED_SERVICE_TYPE;
     }
     if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
-        is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
+        is not INamedTypeSymbol serviceType || !IsReferenceable(serviceType)) {
       return null;
     }
     return TypeNameUtilities.FullyQualified(serviceType);
@@ -268,7 +268,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
       return null;
     }
     if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
-        is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
+        is not INamedTypeSymbol serviceType || !IsReferenceable(serviceType)) {
       return null;
     }
     var owner = TypeNameUtilities.FullyQualified(serviceType);
@@ -288,7 +288,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
         continue;
       }
       if (ctx.SemanticModel.GetSymbolInfo(resolve.TypeArgumentList.Arguments[0], ct).Symbol
-          is not INamedTypeSymbol dep || dep.TypeKind != TypeKind.Interface || !_isReferenceable(dep)) {
+          is not INamedTypeSymbol dep || dep.TypeKind != TypeKind.Interface || !IsReferenceable(dep)) {
         continue;
       }
       dependencies.Add(TypeNameUtilities.FullyQualified(dep));
@@ -311,7 +311,8 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   /// <summary>
   /// True when generated source in the same assembly can name this type.
   /// </summary>
-  private static bool _isReferenceable(INamedTypeSymbol type) {
+  /// <remarks>Shared with <see cref="ConfigurationManifestGenerator"/>, whose manifest also names types.</remarks>
+  internal static bool IsReferenceable(INamedTypeSymbol type) {
     for (INamedTypeSymbol? t = type; t is not null; t = t.ContainingType) {
       if (t.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal)) {
         return false;
@@ -322,7 +323,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     // fine: ILensQuery<PrivateTestModel> names a type the generated file cannot see, and emitting
     // it turns this guard into a build break for everyone.
     foreach (var argument in type.TypeArguments) {
-      if (argument is INamedTypeSymbol named && !_isReferenceable(named)) {
+      if (argument is INamedTypeSymbol named && !IsReferenceable(named)) {
         return false;
       }
     }

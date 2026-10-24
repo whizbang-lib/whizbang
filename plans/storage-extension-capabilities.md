@@ -161,7 +161,17 @@ Each slice is one red-then-green increment and its own commit.
    `Capabilities` startup step after `Migrate`, `Whizbang.Capabilities` meter), the Postgres catalog
    and probe in `src/Whizbang.Data.Postgres/`, `Whizbang:Capabilities:ProbeOnStartup`. Docs:
    `operations/infrastructure/capabilities.md` and the Postgres provider page.
-2. **Requirement attribute, manifest generator, registry.** `[RequiresCapability]` and
+2. **Requirement attribute, manifest generator, registry.** DONE on branch `feat/1703-ws8s2` (issue #1703):
+   the two attributes in `src/Whizbang.Core/Capabilities/`, `CapabilityRequirement`, the
+   `ConfigurationManifestGenerator` (template `ConfigurationManifestTemplate.cs`), and
+   `ConfigurationManifestRegistry` / `ConfigurationManifest` in `src/Whizbang.Core/Configuration/`. Recognized
+   bindings: `Bind` (both forms), `Get<T>`, `services.Configure<T>(section)`, `OptionsBuilder<T>.Bind(section)`,
+   over `GetSection` chains with constant keys. Whizbang.Core's generated key tree matches the recorded
+   manifest exactly for every section it binds literally (283 keys). Left for slice 3: the
+   `ICapabilityRequirementSource` seam (the registry is static and module-initialized; the verdict should read
+   requirements through the seam so slice 6's vector columns can add a runtime source), and each setting's
+   declared default (needed for "a default turned the feature on"). Not replaced: the recorded key manifest
+   and `RemovedConfigurationKeys` (no `[RemovedConfigurationKey]` yet). Original scope: `[RequiresCapability]` and
    `[RequiresPostgresExtension]` in core; a `ConfigurationManifestGenerator` in
    `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs`, recognizing each literal
    `GetSection("<key>")` binding and emitting the key tree plus one requirement per attributed

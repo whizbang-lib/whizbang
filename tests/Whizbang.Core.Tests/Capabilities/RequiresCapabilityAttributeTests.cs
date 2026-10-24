@@ -28,12 +28,13 @@ public class RequiresCapabilityAttributeTests {
   }
 
   [Test]
-  public async Task RequiresPostgresExtension_IsTheExtensionUnderThePostgresProviderAsync() {
+  public async Task RequiresPostgresExtension_CarriesTheExtensionAndNoFeatureByDefaultAsync() {
     var attribute = new RequiresPostgresExtensionAttribute("pg_squeeze");
 
     await Assert.That(attribute.Extension).IsEqualTo("pg_squeeze");
     await Assert.That(attribute.Feature).IsNull().Because("with no feature named, the requirement is named after the member");
-    await Assert.That(RequiresPostgresExtensionAttribute.PROVIDER).IsEqualTo("postgres");
+    await Assert.That(new RequiresPostgresExtensionAttribute("pg_partman") { Feature = "Partition management" }.Feature)
+      .IsEqualTo("Partition management");
   }
 
   [Test]

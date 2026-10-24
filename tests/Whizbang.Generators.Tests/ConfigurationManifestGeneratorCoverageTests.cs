@@ -47,6 +47,8 @@ public class ConfigurationManifestGeneratorCoverageTests {
           Custom.Bind(configuration.GetSection("Whizbang:Custom"), options);
           // Binds to a runtime type: nothing to walk.
           ConfigurationBinder.Get(configuration.GetSection("Whizbang:Typed"), typeof(Options));
+          // The section is the instance being bound; the configuration it binds from is not a GetSection call.
+          configuration.Bind(configuration.GetSection("Whizbang:AsInstance"));
           // An array is not a named options type.
           configuration.GetSection("Whizbang:Array").Get<string[]>();
         }
@@ -152,6 +154,8 @@ public class ConfigurationManifestGeneratorCoverageTests {
         [System.Obsolete("old")]
         public bool Flag { get; set; }
         public Mode Mode { get; set; }
+        [ConfigurationKeyName(null)]
+        public int Unnamed { get; set; }
         [RequiresCapability("broker", "delayed_exchange", Feature = "Delayed delivery")]
         public Inner Delay { get; set; } = new();
       }
@@ -169,9 +173,37 @@ public class ConfigurationManifestGeneratorCoverageTests {
     await Assert.That(errors).IsEmpty();
     await Assert.That(manifest).Contains(Requirement("broker", "delayed_exchange", "Delayed delivery", "Whizbang:Attrs:Delay", null))
       .Because("any provider can be named, and a section-valued setting is required under the section's key");
+    await Assert.That(manifest).Contains("\"Whizbang:Attrs:Flag\", \"Whizbang:Attrs:Mode\", \"Whizbang:Attrs:Unnamed\", \"Whizbang:Attrs:Delay:Seconds\"")
+      .Because("a key name attribute without a name leaves the property's own name");
     await Assert.That(manifest).DoesNotContain("\"x\"").Because("a requirement without a provider names no capability");
     await Assert.That(manifest).DoesNotContain("Broken").Because("a requirement without an extension names no capability");
     await Assert.That(manifest).DoesNotContain("plain");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AttributesMissingTheirArguments_AreIgnoredWhileTheCodeIsEditedAsync() {
+    const string source = """
+      using Microsoft.Extensions.Configuration;
+      using Whizbang.Core.Capabilities;
+      namespace App;
+      public sealed class Options {
+        [ConfigurationKeyName]
+        [RequiresPostgresExtension]
+        [RequiresCapability("broker")]
+        public bool Half { get; set; }
+      }
+      public static class Binding {
+        public static void Apply(IConfiguration configuration, Options options) =>
+          configuration.GetSection("Whizbang:Editing").Bind(options);
+      }
+      """;
+
+    var (manifest, errors) = Run(source);
+
+    await Assert.That(errors).IsNotEmpty().Because("each attribute is missing a required argument");
+    await Assert.That(manifest).Contains(Binding("Whizbang:Editing", "global::App.Options") + " [\"Whizbang:Editing:Half\"], []")
+      .Because("an attribute without its arguments renames nothing and requires nothing, and the generator still runs");
   }
 
   [Test]
