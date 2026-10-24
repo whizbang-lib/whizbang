@@ -196,6 +196,7 @@ public static class LifecycleInvocationHelper {
           continue;
         }
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+        MessageParseDiagnostics.Record(outboxMsg.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
         var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
 
         metrics?.ReceptorInvocations.Add(1,
@@ -246,6 +247,7 @@ public static class LifecycleInvocationHelper {
           continue;
         }
         var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+        MessageParseDiagnostics.Record(inboxMsg.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
         var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
 
         metrics?.ReceptorInvocations.Add(1,

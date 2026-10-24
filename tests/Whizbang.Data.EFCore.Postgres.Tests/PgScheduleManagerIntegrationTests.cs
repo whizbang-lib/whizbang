@@ -263,7 +263,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
 
     var occurrenceId = await mgr.TriggerNowAsync(handle.ScheduleId);
 
-    await Assert.That(occurrenceId).IsNotNull();
+    await Assert.That(occurrenceId.HasValue).IsTrue();
     await Assert.That(await _runCountAsync(handle.ScheduleId, 3)).IsEqualTo(1L);   // TriggeredEarly run
     var (nextFire, count) = await _cadenceAsync(handle.ScheduleId);
     await Assert.That(nextFire).IsEqualTo(future);   // cadence untouched
@@ -306,7 +306,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
       StartAt = _utc(2026, 07, 13, 08, 00)
     });
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.NextFireAt).IsEqualTo(_utc(2026, 07, 13, 17, 00));
     var (nextFire, _) = await _cadenceAsync(handle.ScheduleId);
     await Assert.That(nextFire).IsEqualTo(_utc(2026, 07, 13, 17, 00));   // persisted

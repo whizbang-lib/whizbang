@@ -109,7 +109,7 @@ public class MaintenanceWorkerBestEffortStepsTests {
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coord.RetentionSyncCalls).IsEqualTo(2);
-    await Assert.That(coord.LastDebugMode).IsNotNull();
+    await Assert.That(coord.LastDebugMode.HasValue).IsTrue();
   }
 
   [Test]

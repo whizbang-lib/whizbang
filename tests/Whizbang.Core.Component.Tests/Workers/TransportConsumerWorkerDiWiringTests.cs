@@ -112,7 +112,7 @@ public class TransportConsumerWorkerDiWiringTests {
         var payloadType = typeof(DiContractsCollectiveEvent);
         var envelope = new MessageEnvelope<JsonElement> {
           MessageId = new MessageId(TrackedGuid.New()),
-          Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+          Payload = JsonElement.Parse("{\"x\":1}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,
@@ -193,7 +193,7 @@ public class TransportConsumerWorkerDiWiringTests {
         var payloadType = typeof(DiContractsCollectiveEvent);
         var envelope = new MessageEnvelope<JsonElement> {
           MessageId = new MessageId(TrackedGuid.New()),
-          Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+          Payload = JsonElement.Parse("{\"x\":1}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,

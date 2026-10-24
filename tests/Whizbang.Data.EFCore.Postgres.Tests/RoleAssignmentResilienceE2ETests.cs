@@ -369,7 +369,7 @@ public class RoleAssignmentResilienceE2ETests : EFCoreTestBase {
 
     var snapshot = (await elector.ReadAssignmentsAsync(cancellationToken)).Single(s => s.Role == ROLE);
 
-    await Assert.That(snapshot.DrainRequestedAt).IsNotNull();
+    await Assert.That(snapshot.DrainRequestedAt.HasValue).IsTrue();
     await Assert.That(snapshot.DutyBackendActive).IsFalse();
     await grant.DisposeAsync();
   }

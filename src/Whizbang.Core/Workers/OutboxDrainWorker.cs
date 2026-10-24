@@ -1221,6 +1221,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private IMessageEnvelope? _tryResolveTypedEnvelope(OutboxWork work) {
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       return work.Envelope.ReconstructWithPayload(message);
     } catch (Exception ex) {
       LogLifecycleDeserializeError(_logger, work.MessageId, ex);
@@ -1378,6 +1379,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for message {row.MessageId}.");
+    MessageParseDiagnostics.Record(row.MessageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
 
     // Slice 26.6b: inject source identity into the envelope before publish. The wire
     // version of this envelope must carry SourceServiceId + SourceCommitSequence so

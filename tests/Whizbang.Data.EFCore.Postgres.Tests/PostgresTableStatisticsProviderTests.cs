@@ -467,7 +467,7 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
   /// </summary>
   private async Task _fillOutboxAsync(int rows) {
     await using var db = CreateDbContext();
-    var payload = JsonDocument.Parse("{}").RootElement;
+    var payload = JsonElement.Parse("{}");
     for (var i = 0; i < rows; i++) {
       var id = (Guid)TrackedGuid.New();
       db.Outbox.Add(new OutboxRecord {

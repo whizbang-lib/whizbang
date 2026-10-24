@@ -3909,6 +3909,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var messageId = reader.GetGuid(0);
       var envelope = JsonSerializer.Deserialize(reader.GetString(5), envelopeTypeInfo) as IMessageEnvelope<JsonElement>
         ?? throw new InvalidOperationException($"Failed to deserialize envelope for coalesce-pending message {messageId}.");
+      MessageParseDiagnostics.Record(messageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
       EnvelopeMetadata metadata;
       try {
         metadata = JsonSerializer.Deserialize(reader.GetString(6), metadataTypeInfo) as EnvelopeMetadata
@@ -4468,7 +4469,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Deserializes an orphaned event row from the event store into a MessageEnvelope with JsonElement payload.
-  /// Falls back to JsonDocument.Parse when the type resolver returns incompatible type info.
+  /// Falls back to JsonElement.Parse when the type resolver returns incompatible type info.
   /// </summary>
   /// <docs>fundamentals/events/event-store-serialization</docs>
   private MessageEnvelope<JsonElement> _deserializeEventEnvelope(OrphanedEventRow row) {
@@ -4483,12 +4484,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (NotSupportedException) {
       // Fallback: deserializing an interface/abstract type is not supported.
       // The chained type resolver may return polymorphic IEvent type info.
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     } catch (InvalidOperationException ex) when (ex.Message.Contains("incompatible JsonTypeInfo")) {
       // Fallback: the type resolver returned a JsonTypeInfo for a different type
       // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
-      payload = JsonDocument.Parse(row.EventData).RootElement.Clone();
+      payload = JsonElement.Parse(row.EventData);
     }
+    MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
 
     // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
     // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.

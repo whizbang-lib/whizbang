@@ -78,7 +78,7 @@ public class LifecycleInvocationHelperCoverageTests {
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"value\":\"test\"}"),
       Hops = [new MessageHop {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,

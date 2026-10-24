@@ -66,7 +66,7 @@ public class PartitionAssignmentCacheTests {
     _ = await cache.ForClaimAsync(_self, CancellationToken.None);
 
     clock.Advance(TimeSpan.FromSeconds(89));
-    await Assert.That(await cache.ForClaimAsync(_self, CancellationToken.None)).IsNotNull()
+    await Assert.That((await cache.ForClaimAsync(_self, CancellationToken.None)).HasValue).IsTrue()
       .Because("the last assignment is kept until it expires");
     clock.Advance(TimeSpan.FromSeconds(1));
     await Assert.That(await cache.ForClaimAsync(_self, CancellationToken.None)).IsNull()

@@ -68,3 +68,7 @@ allow-dependencies-licenses:
   - pkg:nuget/Microsoft.AspNetCore.Http.Abstractions      # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
   - pkg:nuget/Microsoft.AspNetCore.Http.Features          # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
   - pkg:nuget/RabbitMQ.Client                             # Apache-2.0 OR MPL-2.0; the SBOM splits the OR into two entries
+  # Microsoft's test-only coverage collector, under the Microsoft .NET Library license. Every test project
+  # (about 70 of them) references it in its project file; it runs only in test runs and ships in no package, so a
+  # new test project only adds another reference to a dependency the repository already has.
+  - pkg:nuget/Microsoft.Testing.Extensions.CodeCoverage

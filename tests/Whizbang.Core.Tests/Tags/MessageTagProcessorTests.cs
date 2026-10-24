@@ -222,7 +222,7 @@ public class MessageTagProcessorTests {
     await processor.ProcessAsync(context, CancellationToken.None);
 
     // Assert
-    await Assert.That(receivingHook.ReceivedPayload).IsNotNull();
+    await Assert.That(receivingHook.ReceivedPayload.HasValue).IsTrue();
     await Assert.That(receivingHook.ReceivedPayload!.Value.TryGetProperty("Modified", out var modified)).IsTrue();
     await Assert.That(modified.GetBoolean()).IsTrue();
   }
@@ -303,7 +303,7 @@ public class MessageTagProcessorTests {
     await processor.ProcessAsync(context, CancellationToken.None);
 
     // Assert
-    await Assert.That(receivingHook.ReceivedPayload).IsNotNull();
+    await Assert.That(receivingHook.ReceivedPayload.HasValue).IsTrue();
     await Assert.That(receivingHook.ReceivedPayload!.Value.TryGetProperty("Original", out var original)).IsTrue();
     await Assert.That(original.GetBoolean()).IsTrue();
   }
@@ -567,7 +567,7 @@ public class MessageTagProcessorTests {
       Attribute = new SignalTagAttribute { Tag = "t" },
       Message = new TaggedTestMessage("1"),
       MessageType = typeof(TaggedTestMessage),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Changes = changes,
     }, default);
 
@@ -629,7 +629,7 @@ public class MessageTagProcessorTests {
     await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
 
     // Assert - payload should contain message data
-    await Assert.That(hook.ReceivedPayload).IsNotNull();
+    await Assert.That(hook.ReceivedPayload.HasValue).IsTrue();
     await Assert.That(hook.ReceivedPayload!.Value.TryGetProperty("OrderId", out var orderId)).IsTrue();
     await Assert.That(orderId.GetString()).IsEqualTo("order-123");
   }

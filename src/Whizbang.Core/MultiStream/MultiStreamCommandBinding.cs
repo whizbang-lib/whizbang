@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.MultiStream;
 
@@ -39,6 +40,7 @@ public sealed class MultiStreamCommandBinding<TCommand> : IMultiStreamCommandBin
     }
     var command = MultiStreamJson.Deserialize<TCommand>(payload)
       ?? throw new InvalidOperationException($"The stored payload of a {CommandType} run reads back as nothing; the stream cannot be worked.");
+    MessageParseDiagnostics.Record(command.RunId, MessageParseSource.MultiStreamRun, MessageParseKind.Payload);
     Volatile.Write(ref _lastReadBack, new ReadBack(payload, command));
     return command;
   }

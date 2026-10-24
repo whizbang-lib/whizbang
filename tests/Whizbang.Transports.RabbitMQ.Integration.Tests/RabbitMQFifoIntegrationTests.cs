@@ -243,7 +243,7 @@ public class RabbitMQFifoIntegrationTests {
 
   private static TransportDestination _createSubscribeDestination(string exchangeName) {
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"fifo-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"fifo-sub-{Guid.NewGuid():N}\"")
     };
     return new TransportDestination(exchangeName, "#", metadata);
   }

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Transports;
 /// <param name="Depth">Messages waiting on the entity.</param>
 /// <param name="OldestAge">Age of the oldest waiting message, or null when the transport cannot
 /// supply one (capability honesty — reported, never silently treated as zero).</param>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public readonly record struct BacklogSample(string Entity, long Depth, TimeSpan? OldestAge) {
   /// <summary>The short transport tag (<c>asb</c>, <c>rabbitmq</c>); defaults to unknown.</summary>
@@ -39,7 +39,7 @@ public readonly record struct BacklogSample(string Entity, long Depth, TimeSpan?
 /// The traffic-class vocabulary used as an observability dimension. A class names WHY traffic
 /// exists, which is the axis an operator reasons about when one class starves another.
 /// </summary>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 public static class TrafficClasses {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>Unclassified (application) traffic — everything with no routing tag bound.</summary>

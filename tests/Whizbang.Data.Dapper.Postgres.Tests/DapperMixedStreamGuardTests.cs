@@ -147,7 +147,7 @@ public class DapperMixedStreamGuardTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,

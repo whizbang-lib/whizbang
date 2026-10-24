@@ -550,6 +550,7 @@ public sealed partial class InboxDrainWorker(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for inbox message {row.MessageId}.");
+    MessageParseDiagnostics.Record(row.MessageId, MessageParseSource.InboxRead, MessageParseKind.Envelope);
     // Priority step 1 on the wire: the row's number is the consumer's classification, and the envelope the handler
     // and the inheritance rule read carries the same number (a fan-out hands it to every child). A row fetched
     // before the column existed keeps what its envelope stored.

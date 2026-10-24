@@ -275,7 +275,7 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var eventId = Guid.CreateVersion7();
     var envelope = new MessageEnvelope<System.Text.Json.JsonElement> {
       MessageId = new MessageId(eventId),
-      Payload = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+      Payload = System.Text.Json.JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     };

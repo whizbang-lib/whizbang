@@ -15,6 +15,7 @@ using Whizbang.Core.MultiStream;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.MultiStream;
@@ -26,7 +27,7 @@ namespace Whizbang.Core.Tests.MultiStream;
 /// </summary>
 /// <docs>fundamentals/dispatcher/multi-stream-commands#worker</docs>
 [Category("MultiStream")]
-[NotInParallel("AmbientScope")]
+[NotInParallel(["AmbientScope", "MessageParseDiagnostics"])]
 public class MultiStreamCommandWorkerTests {
   private static readonly Guid _instance = Guid.Parse("0199d000-0000-7000-8000-000000000001");
   private static readonly Guid _run = Guid.Parse("0199d000-0000-7000-8000-0000000000aa");
@@ -365,6 +366,76 @@ public class MultiStreamCommandWorkerTests {
   [Test]
   public async Task Options_Validate_AcceptsTheDefaultsAsync() {
     await Assert.That(new MultiStreamCommandOptions().Validate).ThrowsNothing();
+  }
+
+  // ── Parse counts (#1526): how many times a run's stored payload and scope are read back per pass ──
+
+  private static string _scopeJson() => MultiStreamScope.Capture(new ScopeContext {
+    Scope = new PerspectiveScope { TenantId = "tenant-p", UserId = "user-p" },
+    Roles = new HashSet<string>(),
+    Permissions = new HashSet<Permission>(),
+    SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+    Claims = new Dictionary<string, string>()
+  })!;
+
+  private static List<MultiStreamWorkItem> _streamsOf(Guid runId, int streams, string payload, string? scope) =>
+    [.. Enumerable.Range(0, streams).Select(_ => new MultiStreamWorkItem(runId, TrackedGuid.New().Value, _probeType, payload, scope, 1))];
+
+  [Test]
+  public async Task ParseCount_OneRunOfEightStreams_ReadsThePayloadOnceAndTheScopeOncePerStreamAsync() {
+    var runId = TrackedGuid.New().Value;
+    using var parses = new MessageParseRecorder(runId);
+    // The store hands every stream of a run the same payload string, as the Postgres claim does.
+    var payload = MultiStreamJson.Serialize(new ProbeMultiStreamCommand(runId, [], "w"));
+    var h = new Harness();
+    h.Store.Claims.Enqueue(_streamsOf(runId, 8, payload, _scopeJson()));
+
+    _ = await h.Build().RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(h.Handler.Calls.Count).IsEqualTo(8);
+    await Assert.That(parses.CountFor(runId, MessageParseKind.Payload)).IsEqualTo(1)
+      .Because("the binding's one-slot read-back hands one parsed command to every stream of the run");
+    await Assert.That(parses.CountFor(runId, MessageParseKind.Scope)).IsEqualTo(8)
+      .Because("the run's scope is read back for every stream; nothing caches it");
+  }
+
+  [Test]
+  public async Task ParseCount_TwoRunsInterleavedInOneBatch_ReadsEachPayloadOncePerStreamAsync() {
+    var first = TrackedGuid.New().Value;
+    var second = TrackedGuid.New().Value;
+    using var parses = new MessageParseRecorder(first, second);
+    var firstPayload = MultiStreamJson.Serialize(new ProbeMultiStreamCommand(first, [], "a"));
+    var secondPayload = MultiStreamJson.Serialize(new ProbeMultiStreamCommand(second, [], "b"));
+    var a = _streamsOf(first, 4, firstPayload, null);
+    var b = _streamsOf(second, 4, secondPayload, null);
+    var h = new Harness();
+    h.Store.Claims.Enqueue([.. a.Zip(b).SelectMany(pair => new[] { pair.First, pair.Second })]);
+
+    _ = await h.Build().RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(parses.CountFor(first, MessageParseKind.Payload)).IsEqualTo(4)
+      .Because("one slot holds one run: each switch between runs evicts the other, so an interleaved batch reads every stream's payload");
+    await Assert.That(parses.CountFor(second, MessageParseKind.Payload)).IsEqualTo(4);
+    await Assert.That(parses.CountFor(first, MessageParseKind.Scope)).IsEqualTo(0)
+      .Because("a run sent with no scope has none to read back");
+  }
+
+  [Test]
+  public async Task ParseCount_TheSameRunInALaterBatch_IsNotReadAgainAsync() {
+    var runId = TrackedGuid.New().Value;
+    using var parses = new MessageParseRecorder(runId);
+    var command = new ProbeMultiStreamCommand(runId, [], "w");
+    var h = new Harness();
+    // A later claim reads the payload into a new string with the same text.
+    h.Store.Claims.Enqueue(_streamsOf(runId, 2, MultiStreamJson.Serialize(command), null));
+    h.Store.Claims.Enqueue(_streamsOf(runId, 2, MultiStreamJson.Serialize(command), null));
+    var worker = h.Build();
+
+    _ = await worker.RunOnceAsync(CancellationToken.None);
+    _ = await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(parses.CountFor(runId, MessageParseKind.Payload)).IsEqualTo(1)
+      .Because("a new string with the same text is matched by content, at the cost of comparing the whole payload once per stream");
   }
 
   private sealed class FixedInstance(Guid id) : IServiceInstanceProvider {

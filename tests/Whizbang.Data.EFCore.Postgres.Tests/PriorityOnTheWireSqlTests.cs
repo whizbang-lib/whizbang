@@ -38,7 +38,7 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   }
 
   private static OutboxMessage _outbox(Guid messageId, Guid streamId, int priority, string? coalesceGroup = null) {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []) { Priority = priority };
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []) { Priority = priority };
     return new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",

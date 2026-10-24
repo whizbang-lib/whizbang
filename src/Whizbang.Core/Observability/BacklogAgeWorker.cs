@@ -15,7 +15,7 @@ namespace Whizbang.Core.Observability;
 /// <summary>
 /// Tuning for the backlog-age duty (topology arc phase 10).
 /// </summary>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs:Options_DefaultsAreTheDocumentedPostureAsync</tests>
 public sealed class BacklogAgeOptions {
   /// <summary>Run the duty (default true). Disabled ⇒ no peeks, no gauges, no health signal.</summary>
@@ -55,7 +55,7 @@ public sealed class BacklogAgeOptions {
 /// observer, and the next tick retries.
 /// </para>
 /// </remarks>
-/// <docs>operations/observability/managed-resource-health#backlog-age</docs>
+/// <docs>resilience/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public sealed partial class BacklogAgeWorker : BackgroundService {
   /// <summary>How far the idle cadence may stretch past the configured interval.</summary>

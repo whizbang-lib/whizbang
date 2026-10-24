@@ -124,7 +124,7 @@ public class RoleAssignmentSqlTests : EFCoreTestBase {
     await Assert.That(vote.Outcome).IsEqualTo("granted");
     await Assert.That(vote.Holder).IsEqualTo(a);
     await Assert.That(vote.Epoch).IsEqualTo(1L);
-    await Assert.That(vote.LeaseRemaining).IsNotNull();
+    await Assert.That(vote.LeaseRemaining.HasValue).IsTrue();
     await Assert.That(vote.LeaseRemaining!.Value).IsLessThanOrEqualTo(_lease)
       .Because("the remaining lease is a duration computed by the database, never an instant for the caller's clock");
     await Assert.That(vote.LeaseRemaining.Value).IsGreaterThan(TimeSpan.Zero);

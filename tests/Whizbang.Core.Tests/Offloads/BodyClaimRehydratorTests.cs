@@ -24,7 +24,29 @@ namespace Whizbang.Core.Tests.Offloads;
 /// / deserialization-failure, rehydrate on success.
 /// </summary>
 /// <docs>fundamentals/offloads/body-offload-receive</docs>
+[NotInParallel("MessageParseDiagnostics")]
 public class BodyClaimRehydratorTests {
+
+  [Test]
+  public async Task MaybeRehydrateAsync_ParseCount_ARehydratedBodyIsParsedOnceAndAPassThroughNotAtAllAsync() {
+    using var parses = new MessageParseRecorder();
+    var sp = _buildProviderWithOptions(out var store, activeCleanup: false);
+    var (claim, originalTypeName) = await _uploadSerializedEnvelopeAsync(store, _buildJsonOptions());
+    var claimEnvelope = _wrapInClaimEnvelope(claim, originalTypeName);
+    var plain = _buildOriginalEnvelope();
+
+    var rehydrated = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName, _buildJsonOptions(), sp, CancellationToken.None);
+    _ = await BodyClaimRehydrator.MaybeRehydrateAsync(
+      plain, "OriginalType, MyAssembly", _buildJsonOptions(), sp, CancellationToken.None);
+
+    var id = rehydrated.Envelope!.MessageId.Value;
+    await Assert.That(parses.CountFor(id)).IsEqualTo(1)
+      .Because("the downloaded body is parsed once into the original envelope (#1526 parse-count pin)");
+    await Assert.That(parses.Summarize(id).Single().Source).IsEqualTo(MessageParseSource.OffloadRehydration);
+    await Assert.That(parses.CountFor(plain.MessageId.Value)).IsEqualTo(0)
+      .Because("an envelope that is not a claim is handed on without a parse");
+  }
 
   [Test]
   public async Task MaybeRehydrateAsync_NotAClaim_PassesThroughAsync() {
@@ -248,7 +270,7 @@ public class BodyClaimRehydratorTests {
     var originalEnvelope = new MessageEnvelope<JsonElement> {
       DispatchContext = dispatchContext ?? new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
     var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -319,7 +341,7 @@ public class BodyClaimRehydratorTests {
     return new MessageEnvelope<JsonElement> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown }],
     };
   }

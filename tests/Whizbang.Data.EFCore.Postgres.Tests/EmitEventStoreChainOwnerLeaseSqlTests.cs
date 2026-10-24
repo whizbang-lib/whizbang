@@ -161,7 +161,7 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
     await Assert.That(leasedTo).IsEqualTo(instanceB)
       .Because("perspective_events must lease to the stream's pinned owner (B), not the commit instance (A)");
-    await Assert.That(leaseExpiry).IsNotNull()
+    await Assert.That(leaseExpiry.HasValue).IsTrue()
       .Because("a leased row has a real lease_expiry");
   }
 
@@ -190,7 +190,7 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
     await Assert.That(leasedTo).IsEqualTo(commitInstance)
       .Because("no pinned owner → fall back to commit instance for zero-latency sync paths");
-    await Assert.That(leaseExpiry).IsNotNull()
+    await Assert.That(leaseExpiry.HasValue).IsTrue()
       .Because("fallback leases carry a real lease_expiry");
   }
 
@@ -299,6 +299,6 @@ public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
     var (leasedTo, leaseExpiry) = await _readLeaseAsync(conn, messageId);
 
     await Assert.That(leasedTo).IsEqualTo(instance);
-    await Assert.That(leaseExpiry).IsNotNull();
+    await Assert.That(leaseExpiry.HasValue).IsTrue();
   }
 }

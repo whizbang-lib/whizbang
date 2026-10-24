@@ -38,7 +38,7 @@ public class ControlMessageTtlCoverageTests {
   [Test]
   public async Task FromMetadata_StringEncodedSeconds_ParsesTheValueAsync() {
     var metadata = new Dictionary<string, JsonElement> {
-      [ControlMessageTtl.MetadataKey] = JsonDocument.Parse("\"45\"").RootElement,
+      [ControlMessageTtl.MetadataKey] = JsonElement.Parse("\"45\""),
     };
 
     var ttl = ControlMessageTtl.FromMetadata(metadata);

@@ -146,7 +146,7 @@ public class AuditDecisionHookTests {
       OriginalEventType = "Contracts.BulkImportStarted, Contracts",
       OriginalStreamId = Guid.CreateVersion7().ToString(),
       OriginalStreamPosition = 1,
-      OriginalBody = System.Text.Json.JsonDocument.Parse("{}").RootElement,
+      OriginalBody = System.Text.Json.JsonElement.Parse("{}"),
       Timestamp = DateTimeOffset.UtcNow,
       ActivityName = "Bulk record import",
       ActivityDescription = "Imported 500 records",

@@ -77,7 +77,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
           destination.Address,
           destination.RoutingKey,
           new Dictionary<string, System.Text.Json.JsonElement> {
-            ["StreamId"] = System.Text.Json.JsonDocument.Parse($"\"{streamId}\"").RootElement
+            ["StreamId"] = System.Text.Json.JsonElement.Parse($"\"{streamId}\"")
           }
         );
         await transport.PublishAsync(envelope, destWithStream, cancellationToken: CancellationToken.None);
@@ -150,7 +150,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
           destination.Address,
           destination.RoutingKey,
           new Dictionary<string, System.Text.Json.JsonElement> {
-            ["StreamId"] = System.Text.Json.JsonDocument.Parse($"\"{streamId}\"").RootElement
+            ["StreamId"] = System.Text.Json.JsonElement.Parse($"\"{streamId}\"")
           }
         );
         await transport.PublishAsync(envelope, destWithStream, cancellationToken: CancellationToken.None);
@@ -294,7 +294,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
           destination.Address,
           destination.RoutingKey,
           new Dictionary<string, System.Text.Json.JsonElement> {
-            ["StreamId"] = System.Text.Json.JsonDocument.Parse($"\"{streamId}\"").RootElement
+            ["StreamId"] = System.Text.Json.JsonElement.Parse($"\"{streamId}\"")
           }
         );
         await transport.PublishAsync(envelope, destWithStream, cancellationToken: CancellationToken.None);

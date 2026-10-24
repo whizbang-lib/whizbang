@@ -847,7 +847,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     // Create a concrete MessageEnvelope<JsonElement> to hit _populateDeliveredAtTimestamp path
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{\"Name\":\"test\"}").RootElement,
+      Payload = JsonElement.Parse("{\"Name\":\"test\"}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -927,7 +927,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1124,7 +1124,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1147,7 +1147,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -1333,7 +1333,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         MessageId = _expectedMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(_expectedMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,

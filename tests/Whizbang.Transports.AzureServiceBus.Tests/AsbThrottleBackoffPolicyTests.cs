@@ -97,12 +97,12 @@ public class AsbThrottleBackoffPolicyTests {
     var now = DateTimeOffset.UtcNow;
 
     var first = policy.RecordError(ServiceBusFailureReason.ServiceBusy, now);
-    await Assert.That(first).IsNotNull();
+    await Assert.That(first.HasValue).IsTrue();
     await Assert.That(policy.TryBeginPause()).IsTrue()
       .Because("the first reporter owns the pause");
 
     var concurrent = policy.RecordError(ServiceBusFailureReason.ServiceBusy, now + TimeSpan.FromMilliseconds(50));
-    await Assert.That(concurrent).IsNotNull();
+    await Assert.That(concurrent.HasValue).IsTrue();
     await Assert.That(policy.TryBeginPause()).IsFalse()
       .Because("sibling slots reporting the same throttle must not stack stop/start cycles");
 

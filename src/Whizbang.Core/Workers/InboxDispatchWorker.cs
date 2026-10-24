@@ -564,6 +564,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.ReceptorDispatch, MessageParseKind.Payload);
       _deserializeCache?.Set(work.MessageId, message);
       return (work.Envelope.ReconstructWithPayload(message, work.HandlerName), null);
     } catch (Exception ex) when (IsPayloadRefusal(ex)) {

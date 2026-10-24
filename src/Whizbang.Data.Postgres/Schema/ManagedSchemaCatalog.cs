@@ -95,7 +95,7 @@ internal static class ManagedSchemaCatalog {
   private static string? _text(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
   /// <summary>
-  /// Writes the plan's ledger rows in one transaction. The code pin is written as planned; the database pin is only
+  /// Writes the plan's ledger rows, in the caller's transaction. The code pin is written as planned; the database pin is only
   /// ever added (a new <c>whizbang:pin</c> comment) and never cleared or rewritten here.
   /// </summary>
   public static async Task WriteLedgerAsync(
@@ -104,7 +104,6 @@ internal static class ManagedSchemaCatalog {
       return;
     }
 
-    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
     foreach (var record in records) {
       await using var command = new NpgsqlCommand($"""
         INSERT INTO {ledgerTable} AS m (table_name, object_name, object_kind, definition, owner, status, declared_by,
@@ -133,7 +132,7 @@ internal static class ManagedSchemaCatalog {
           db_pinned_by = CASE WHEN m.db_pinned THEN m.db_pinned_by ELSE EXCLUDED.db_pinned_by END,
           db_pinned_at = CASE WHEN m.db_pinned THEN m.db_pinned_at ELSE EXCLUDED.db_pinned_at END,
           retired_at = CASE WHEN EXCLUDED.status = '{ManagedStatuses.RETIRED}' THEN COALESCE(m.retired_at, NOW()) ELSE NULL END
-        """, connection, transaction);
+        """, connection);
       command.Parameters.AddWithValue("table", record.Table);
       command.Parameters.AddWithValue("name", record.Name);
       command.Parameters.AddWithValue("kind", FormatKind(record.Kind));
@@ -149,7 +148,6 @@ internal static class ManagedSchemaCatalog {
       command.Parameters.AddWithValue("db_pin_reason", (object?)record.NewDbPinReason ?? DBNull.Value);
       await command.ExecuteNonQueryAsync(cancellationToken);
     }
-    await transaction.CommitAsync(cancellationToken);
   }
 
   /// <summary>The statement that drops one object.</summary>

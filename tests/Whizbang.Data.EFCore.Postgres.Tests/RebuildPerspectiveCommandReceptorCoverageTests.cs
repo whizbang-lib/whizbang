@@ -125,7 +125,7 @@ public class RebuildPerspectiveCommandReceptorCoverageTests {
       IncludeStreamIds: [Guid.NewGuid()]), CancellationToken.None);
 
     await Assert.That(rebuilder.LastOrigin).IsNotNull();
-    await Assert.That(rebuilder.LastOrigin!.RequestId).IsNotNull();
+    await Assert.That(rebuilder.LastOrigin!.RequestId.HasValue).IsTrue();
     await Assert.That(rebuilder.LastOrigin.RequestId).IsNotEqualTo(Guid.Empty);
     await Assert.That(rebuilder.LastOrigin.RequestedBy).IsNull();
     await Assert.That(rebuilder.LastOrigin.Trigger).IsEqualTo(RebuildTrigger.Requested);

@@ -234,13 +234,13 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
       Address: $"mockbatchtest-{_testId}",
       RoutingKey: $"lifecycle-mockbatch-queue-{_testId}",
       Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"lifecycle-test\"").RootElement.Clone()
+        ["SubscriberName"] = JsonElement.Parse("\"lifecycle-test\"")
       }));
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"mockbatchnoise-{_testId}",
       RoutingKey: $"lifecycle-mocknoise-queue-{_testId}",
       Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"lifecycle-test\"").RootElement.Clone()
+        ["SubscriberName"] = JsonElement.Parse("\"lifecycle-test\"")
       }));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>

@@ -202,7 +202,7 @@ public class PgWorkNotificationListenerTests {
 
     ((INotifySubscription)listener).OnNotification("outbox");
 
-    await Assert.That(listener.LastSignalAt).IsNotNull();
+    await Assert.That(listener.LastSignalAt.HasValue).IsTrue();
     await Assert.That(listener.LastSignalAt!.Value >= before).IsTrue();
   }
 }

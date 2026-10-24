@@ -89,7 +89,7 @@ public class ScheduleOccurrencePublishGateTests {
         MessageId = MessageId.From(id),
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
         Hops = [],
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
       },
       EnvelopeType = "env",
       MessageType = "PaymentTimedOut",

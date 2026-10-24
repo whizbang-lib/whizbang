@@ -34,7 +34,7 @@ public class OutboxRecordCoverageTests {
     var record = new OutboxRecord {
       MessageId = Guid.NewGuid(),
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
       Scope = scope,
     };
@@ -55,7 +55,7 @@ public class OutboxRecordCoverageTests {
     var record = new OutboxRecord {
       MessageId = Guid.NewGuid(),
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.New(), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
     };
 

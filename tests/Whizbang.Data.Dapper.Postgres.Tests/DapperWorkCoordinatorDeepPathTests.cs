@@ -44,7 +44,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -61,7 +61,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
   private static InboxMessage _makeInbox(Guid msgId, Guid streamId, bool isEvent) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = msgId,
@@ -391,7 +391,7 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
     await Assert.That(affected).IsEqualTo(1);
     var processedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT processed_at FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
-    await Assert.That(processedAt).IsNotNull()
+    await Assert.That(processedAt.HasValue).IsTrue()
       .Because("Debug mode keeps the forensic row with a kept-marker timestamp.");
     var instanceAfter = await conn.ExecuteScalarAsync<Guid?>(
       "SELECT instance_id FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });

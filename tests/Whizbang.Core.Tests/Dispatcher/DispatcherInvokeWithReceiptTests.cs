@@ -117,7 +117,7 @@ public class DispatcherInvokeWithReceiptTests {
     var invokeResult = await dispatcher.LocalInvokeWithReceiptAsync<CreateOrderResponse>((object)command);
 
     // Assert - StreamId populated from [StreamId] attribute
-    await Assert.That(invokeResult.Receipt.StreamId).IsNotNull();
+    await Assert.That(invokeResult.Receipt.StreamId.HasValue).IsTrue();
     await Assert.That(invokeResult.Receipt.StreamId!.Value).IsEqualTo(orderId);
   }
 
@@ -250,7 +250,7 @@ public class DispatcherInvokeWithReceiptTests {
     await Assert.That(invokeResult.Value.OrderId).IsEqualTo(orderId);
     await Assert.That(invokeResult.Receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
     await Assert.That(invokeResult.Receipt.MessageId.Value).IsNotEqualTo(Guid.Empty);
-    await Assert.That(invokeResult.Receipt.StreamId).IsNotNull();
+    await Assert.That(invokeResult.Receipt.StreamId.HasValue).IsTrue();
     await Assert.That(invokeResult.Receipt.StreamId!.Value).IsEqualTo(orderId);
   }
 
@@ -297,7 +297,7 @@ public class DispatcherInvokeWithReceiptTests {
     var invokeResult = await dispatcher.LocalInvokeWithReceiptAsync<CreateOrderResponse>((object)command);
 
     // Assert - StreamId is still populated because AssemblyRegistry contributes generated extractors
-    await Assert.That(invokeResult.Receipt.StreamId).IsNotNull();
+    await Assert.That(invokeResult.Receipt.StreamId.HasValue).IsTrue();
     await Assert.That(invokeResult.Receipt.StreamId!.Value).IsEqualTo(orderId);
     await Assert.That(invokeResult.Value.OrderId).IsEqualTo(orderId);
     await Assert.That(invokeResult.Receipt.Status).IsEqualTo(DeliveryStatus.Delivered);

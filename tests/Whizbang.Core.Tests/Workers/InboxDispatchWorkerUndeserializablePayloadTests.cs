@@ -151,7 +151,7 @@ public class InboxDispatchWorkerUndeserializablePayloadTests {
       MessageId = messageId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),
-        Payload = JsonDocument.Parse(payloadJson).RootElement.Clone(),
+        Payload = JsonElement.Parse(payloadJson),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
       },

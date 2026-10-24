@@ -141,7 +141,7 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
   private static TransportDestination _subscribeDestination(string exchange, string subscriberName) =>
     new(exchange, "#", new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"{subscriberName}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"{subscriberName}\"")
     });
 
   private static string _uniqueService(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
@@ -248,7 +248,7 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       unroutedEntity,
       "wbtopo.unrouted.commands.lostcommand",
       new Dictionary<string, JsonElement> {
-        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement.Clone()
+        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
       });
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

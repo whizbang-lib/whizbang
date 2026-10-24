@@ -932,7 +932,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     await Assert.That(Status).IsEqualTo(3)
       .Because("Debug mode MUST OR p_completions[i].StatusFlags with existing status: 1 (existing) | 2 (new) = 3.");
-    await Assert.That(ProcessedAt).IsNotNull()
+    await Assert.That(ProcessedAt.HasValue).IsTrue()
       .Because("Debug mode MUST stamp processed_at = p_now so update_perspective_cursors' gap-free SELECT sees this row as processed.");
     await Assert.That(InstanceId).IsNull()
       .Because("Debug mode MUST clear instance_id so claim_orphaned_perspective_events doesn't try to re-claim the row.");
@@ -1116,7 +1116,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset?>(@"
       SELECT scheduled_for FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
-    await Assert.That(scheduledFor).IsNotNull();
+    await Assert.That(scheduledFor.HasValue).IsTrue();
     await Assert.That(scheduledFor!.Value).IsGreaterThan(now);
   }
 

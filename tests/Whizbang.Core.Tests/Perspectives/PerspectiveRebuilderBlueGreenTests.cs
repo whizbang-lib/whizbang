@@ -261,7 +261,7 @@ public class PerspectiveRebuilderBlueGreenTests {
         AggregateType = "Test",
         Version = 1,
         EventType = eventType,
-        EventData = JsonDocument.Parse("{}").RootElement,
+        EventData = JsonElement.Parse("{}"),
         Metadata = new EnvelopeMetadata { MessageId = MessageId.New(), Hops = [] },
         CreatedAt = DateTime.UtcNow,
         CommitSequence = commitSequence,
