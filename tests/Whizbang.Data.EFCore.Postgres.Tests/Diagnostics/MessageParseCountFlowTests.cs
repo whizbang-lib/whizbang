@@ -100,15 +100,11 @@ public class MessageParseCountFlowTests {
       .Because("a local event is stored and drained; it never leaves on the wire in this topology");
     await Assert.That(_count(summary, MessageParseSource.LifecycleStage, MessageParseKind.Payload)).IsEqualTo(5)
       .Because("each of the five distribute stages parses the payload again (plans/message-cache.md, migration step 1)");
-    // The drain parses one row per perspective (2). Its refetch reads the stream again and parses both applied rows
-    // again (2) only when it runs before the completion flush deletes them; the flush is asynchronous, so either
-    // order is a correct run (plans/message-cache.md, step 2 removes the refetch parses).
-    var storeReads = _count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload);
-    await Assert.That(storeReads is 2 or 4).IsTrue()
-      .Because($"the drain parses 2 rows, and the refetch 2 more or none; parsed {storeReads}");
-    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(storeReads);
-    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(storeReads);
-    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(5 + (3 * storeReads));
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload)).IsEqualTo(2)
+      .Because("the one drain session parses the event once per row, and there is one row per perspective (step 2)");
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(2);
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(2);
+    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
   }
 
   private static int _count(IReadOnlyList<MessageParseSiteCount> summary, MessageParseSource source, MessageParseKind kind) =>

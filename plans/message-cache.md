@@ -38,28 +38,37 @@ owner has to make before phase 2 starts.
 
   | Test | Flow |
   |---|---|
-  | `tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs` | Real host (public `AddWhizbang` chain on Postgres), real JSON wire, one event, two perspectives, a receptor at the last lifecycle stage |
+  | `tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs` | Real host (public `AddWhizbang` chain on Postgres), real JSON wire, one event, two perspectives, a receptor at the last lifecycle stage, one drain session per stream |
   | `tests/Whizbang.Core.Tests/MultiStream/MultiStreamCommandWorkerTests.cs` (`ParseCount_*`) | Multi-stream runs: K streams of one run, interleaved runs, the same run across batches |
   | `tests/Whizbang.Core.Component.Tests/MultiService/RedeliveryParseCountTests.cs` | Redelivery from the origin's stored events to receiving services |
   | `tests/Whizbang.Core.Tests/Offloads/BodyClaimRehydratorTests.cs` (`ParseCount_*`) | Offload claim-check rehydration |
 
 ## 2. Measurements
 
-Counts are per message, from the pins above. The Postgres flow was run three times; every run gave
-the same counts.
+Counts are per message, from the pins above. The Postgres flow is pinned to one drain session per stream (see 2.1).
 
 ### 2.1 One event, published locally, applied by two perspectives (N = 2)
 
-17 parses of one event.
+11 parses of one event, in one drain session.
 
 | Parses | Kind | Source | Site | Why |
 |---|---|---|---|---|
 | 5 | Payload | LifecycleStage | `LifecycleInvocationHelper.cs` (outbox loop) | The flush runs five distribute stages (PreDistribute detached and inline, Distribute detached, PostDistribute detached and inline). Each stage parses the payload again, and does so whenever an `IReceptorInvoker` is registered, whether or not any receptor exists for that stage. |
-| 4 | Payload | EventStoreRead | `EFCoreEventStore.DeserializeStreamEvents` | `get_stream_events` returns one row per (event, perspective), so the drain parses the event once per perspective (2). The drain's refetch loop then reads the stream again and, when it runs before the asynchronous completion flush deletes the applied rows, parses both rows again (2) before the cooldown filter discards them; when the flush lands first it parses none. |
-| 4 | Metadata | EventStoreRead | same | as above, the stored metadata (hops) for every row |
-| 4 | Scope | EventStoreRead | same | as above, the stored scope for every row |
+| 2 | Payload | EventStoreRead | `EFCoreEventStore.DeserializeStreamEvents` | `get_stream_events` returns one row per (event, perspective), so a drain session parses the event once per perspective (2). |
+| 2 | Metadata | EventStoreRead | same | as above, the stored metadata (hops) for every row |
+| 2 | Scope | EventStoreRead | same | as above, the stored scope for every row |
 
-The multiplier is `5 + 3 x 2N` for a local event (N perspectives), so 17 at N = 2 and 29 at N = 4 when the refetch reads before the completion flush (`5 + 3N` when the flush lands first).
+The multiplier is `5 + 3N` per drain session for a local event (N perspectives), so 11 at N = 2 and
+17 at N = 4.
+
+Each further session that fetches the stream before the completion flush deletes its rows adds
+`3N`. The claim re-emits every stream it still leases on every poll (deliberately: an in-flight
+filter there once stranded streams forever), and the worker runs several drain consumers, so a
+second consumer can fetch the rows while the first session is still applying them; the affinity
+gate and the cooldown filter then keep it from applying them twice. How many sessions do that
+depends on poll timing: the unpinned flow read 17 (two sessions) on some runs and 11 on others.
+The pin therefore passes only the first emission of each stream to the drain. The drain's own
+refetch does not run here: it needs at least `DrainLoopRefetchMinBatch` (2) events in the stream.
 The perspective runners themselves did not parse: drain mode hands the typed envelopes to every
 perspective of the batch, and PostAllPerspectives and PostLifecycle reuse the batch's envelopes.
 
@@ -125,15 +134,16 @@ by the inbox drain (inbound flow).
 ### 3.1 Per-stage payload parses
 `LifecycleInvocationHelper._processOutboxMessagesAsync` / `_processInboxMessagesAsync` parse once per
 message per stage, gated only on an invoker being registered. This is the largest single
-multiplier measured (5 of 17) and the cheapest to remove: parse once per flush and hand the typed
+multiplier measured (5 of 11) and the cheapest to remove: parse once per flush and hand the typed
 envelope to every stage, as `OutboxDrainWorker` already does for Pre and PostOutbox.
 
 ### 3.2 Drain rows per perspective, and the refetch
 `get_stream_events` joins perspective work rows to the event store, so the same event body crosses
 the wire once per perspective and is parsed once per row. `PerspectiveWorker` deduplicates only
 after `DeserializeStreamEvents` (`_groupAndDedupeDrainModeEventsByStream`). The refetch loop
-re-reads rows that were already applied (`_tryRefetchDrainModeStreamEventsAsync`) and parses them
-before the cooldown filter discards them.
+(`_tryRefetchDrainModeStreamEventsAsync`, streams of two or more events) and any further session
+started by a claim re-emission re-read rows that were already applied, and parse them before the
+cooldown filter discards them.
 
 ### 3.3 Hidden parses
 - EF typed reads (`EFCoreEventStore` `ReadAsync`, `ReadPolymorphicAsync`, `GetEventsBetween*`):
@@ -245,7 +255,7 @@ Each step lowers one pinned count and changes the pin in the same pull request.
 | Step | Change | Pin | Today | Target |
 |---|---|---|---|---|
 | 1 | Parse once per flush for the distribute stages (no cache needed, but uses the record's lazy payload) | flow 2.1 LifecycleStage | 5 | 1 |
-| 2 | Deduplicate drain rows by event id before parsing; refetch skips rows in the cooldown cache before parsing | flow 2.1 EventStoreRead x3 kinds | 12 (= 3 x 2N) | 3 (once per event) |
+| 2 | Deduplicate drain rows by event id before parsing; refetch and re-emitted sessions skip rows in the cooldown cache before parsing | flow 2.1 EventStoreRead x3 kinds | 6 (= 3N per session) | 3 (once per event) |
 | 3 | `MessageRecord` store with the byte budget, idle cooldown and hooks; event store drain and typed reads use it | standard-path pin (to add) | up to 6N | 1 |
 | 4 | Multi-stream binding onto the store, keyed by run id and payload hash; scope parsed once per run | multi-stream pins | 4 per run interleaved, K scope | 1 per run, 1 scope |
 | 5 | `InboxDeserializeCache` onto the store (adds hash identity, scope check, byte bound, copy-on-write views) | inbound pin (to finish, 2.6) | 1 per handler row | 1 per message |
