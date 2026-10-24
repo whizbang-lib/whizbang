@@ -141,6 +141,31 @@ public class CapabilityVerdictTests {
   }
 
   [Test]
+  public async Task ScopedRequirement_IsJudgedOnlyAgainstItsOwnScopeAsync() {
+    var orders = _status(CapabilityState.Ready);
+    var plain = _status(CapabilityState.Provisionable) with { Scope = "plain" };
+    var inOrders = _explicit(_rewrite) with { Scope = "orders" };
+    var inPlain = _explicit(_rewrite) with { Scope = "plain" };
+
+    var ordersOnly = CapabilityVerdict.Evaluate([orders, plain], [inOrders]);
+    var plainOnly = CapabilityVerdict.Evaluate([orders, plain], [inPlain]);
+
+    await Assert.That(ordersOnly.Entries.Select(e => e.Status.Scope)).IsEquivalentTo(["orders"])
+      .Because("a database that does not carry the column is not asked for the extension");
+    await Assert.That(ordersOnly.Failures).IsEmpty();
+    await Assert.That(plainOnly.Failures.Single().Status.Scope).IsEqualTo("plain");
+    await Assert.That(ordersOnly.IsRequired(plain)).IsFalse();
+  }
+
+  [Test]
+  public async Task ScopedRequirement_InAScopeNoProviderProbes_IsUnknownThereAsync() {
+    var entry = CapabilityVerdict.Evaluate([_status(CapabilityState.Ready)], [_explicit(_rewrite) with { Scope = "archive" }]).Entries.Single();
+
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Warn);
+    await Assert.That(entry.Line).StartsWith("capability postgres/pg_squeeze on 'archive': Unknown: no registered provider probes this scope. ");
+  }
+
+  [Test]
   public async Task RequiredTag_IsHowEachProbedCapabilityIsRequiredAsync() {
     var ready = _status(CapabilityState.Ready);
     var notRequired = new CapabilityStatus(FakeCapabilityProvider.Describe("postgres", "vector"), "orders", CapabilityState.Ready, null, null, null);

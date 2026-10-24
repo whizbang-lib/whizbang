@@ -76,8 +76,10 @@ public class VectorRequiredExtensionGenerationTests {
     var code = await _generatedAsync(vector: true);
 
     await Assert.That(code).Contains(
-      "services.AddSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(new " + SOURCE)
-      .Because("the startup verdict reads the schema's requirements through the requirement-source seam");
+      "services.TryAddKeyedSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(typeof(global::TestApp.TestDbContext), new " + SOURCE)
+      .Because("the requirements are keyed by the context, so the driver can judge them on that context's database only");
+    await Assert.That(code).DoesNotContain("services.AddSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>")
+      .Because("an unkeyed source would judge the schema's requirements against every database the host probes");
   }
 
   [Test]
