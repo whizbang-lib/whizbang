@@ -1946,7 +1946,7 @@ public interface IWorkCoordinator {
     Task.FromResult(true);
 
   /// <summary>
-  /// A1 (Archival &amp; Compaction) — the gated prefix truncate of a durable Sourced stream: remove the detail at
+  /// A1 (Archival &amp; Compaction): the gated prefix truncate of a durable Sourced stream: remove the detail at
   /// or below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
   /// every event at/below the truncate point) AND a CARRY-FORWARD event survives above it (the domain's closing
   /// event / new origin). The domain appends its carry-forward event BEFORE calling this. Named for what it does
@@ -1992,7 +1992,7 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
 
   /// <summary>
-  /// A1 — read the archived detail of a truncated stream prefix from cold storage (<c>wh_event_archive</c>), ordered
+  /// A1: read the archived detail of a truncated stream prefix from cold storage (<c>wh_event_archive</c>), ordered
   /// by version. This is the retrieval side of an archiving truncate (<see cref="TruncateStreamPrefixAsync"/> with
   /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.
   /// Default: empty (engines without the archive store).
@@ -2769,7 +2769,7 @@ public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 
 /// <summary>
 /// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
-/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a truncated stream prefix. Carries
+/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/>: the preserved detail of a truncated stream prefix. Carries
 /// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>

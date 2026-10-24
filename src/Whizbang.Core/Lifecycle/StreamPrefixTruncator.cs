@@ -8,7 +8,7 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Lifecycle;
 
 /// <summary>
-/// A1 (Archival &amp; Compaction) — the gated prefix truncate of a durable Sourced stream, firing the E2
+/// A1 (Archival &amp; Compaction): the gated prefix truncate of a durable Sourced stream, firing the E2
 /// destruction hook around it so a developer can preserve the carry-forward / archive before the detail goes.
 /// A prefix truncate is a stream-granularity destruction (<see cref="DestructionReason.PeriodClose"/>), so it
 /// reuses the same <see cref="IDestructionHook"/> the ephemeral reaper uses. Named for what it does since
@@ -55,8 +55,8 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   /// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
   public async Task<StreamTruncateResult> TruncateAsync(
       Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
-    // A1-6b full-history guard: a DISCARD truncate (archive:false) that would strand a [FullHistory] projection —
-    // one that consumes an event in the truncated range and cannot resume from the closing event — is refused
+    // A1-6b full-history guard: a DISCARD truncate (archive:false) that would strand a [FullHistory] projection,
+    // one that consumes an event in the truncated range and cannot resume from the closing event, is refused
     // (it could never rebuild). An archiving truncate is always safe (detail retrievable), so it skips the check.
     if (!archive) {
       var consumers = await _coordinator.GetConsumingPerspectiveNamesAsync(streamId, throughVersion, cancellationToken)
@@ -83,7 +83,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
 
     // PreDestruction (awaited, critical path): the hook commits the carry-forward / archive BEFORE the
     // truncate. Cancel or Defer vetoes the truncate (nothing is truncated). A THROWING pre-hook aborts the
-    // truncate — durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
+    // truncate: durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
     // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
     if (await _vetoedByPreDestructionAsync(context, streamId, cancellationToken).ConfigureAwait(false) is { } veto) {
       return veto;
@@ -156,7 +156,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
   static partial void LogPreHookFailed(ILogger logger, Exception ex, Guid streamId);
 
   [LoggerMessage(EventId = 43, Level = LogLevel.Warning,
-    Message = "Discarding truncate of stream {StreamId} refused: a [FullHistory] projection consumes it — archive instead (archive: true)")]
+    Message = "Discarding truncate of stream {StreamId} refused: a [FullHistory] projection consumes it; archive instead (archive: true)")]
   static partial void LogFullHistoryBlocked(ILogger logger, Guid streamId);
 
   [LoggerMessage(EventId = 41, Level = LogLevel.Information,
