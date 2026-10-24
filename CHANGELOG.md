@@ -590,6 +590,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IDeadLetterRecoveryService` gains `ReadRedeliveryAsync` (a default implementation returns `null`, which falls back to
   `RecoverAsync`). Recovered inbox and broker messages now take the priority a delivery takes rather than background.
   Events already lost this way are not restored by this change; see the issue for the repair.
+- **A perspective that declines every event of a stream no longer leaves a blank row for it (#1677).** When every
+  `Apply` returned `ApplyResult<TModel>.None()` for a stream's events, a rewind of that stream (a late event behind
+  the cursor, events of one stream split across concurrent claims, a startup rewind or a resurrection) wrote the
+  empty default model the runner builds as `Apply` input, so the table gained a row of defaults (empty strings, zero
+  counts, `DateTime.MinValue`) that read as a real one, and a rewind with snapshots on could snapshot it too. A
+  rewind now writes, and snapshots, only a model an `Apply` produced or a snapshot it restored, as the live drain
+  already did. A soft delete (`ApplyResult.Delete()`) that returns no model on a stream with no row no longer
+  creates one either. Every generated row write now asks `PerspectiveRowWriteGuard`, which refuses a model no
+  `Apply` produced and logs a `[diag.write.unproduced]` warning. Blank rows already written are left in place;
+  this change does not remove them.
 - **A received collective event no longer fires its post-perspective lifecycle stages twice (#1676).** In a service
   that runs the collective sink, a collective event received from another service ran through `PostAllPerspectives`
   and `PostLifecycle` as soon as it was received, because no per-stream perspective lists a collective event type,
