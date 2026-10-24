@@ -23,7 +23,8 @@ namespace Whizbang.Core.Tests.Capabilities;
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
 public class CapabilitiesStartupStepTests {
   private sealed class FixedRequirements(params CapabilityRequirement[] requirements) : ICapabilityRequirementSource {
-    public IReadOnlyList<CapabilityRequirement> Requirements { get; } = requirements;
+    public IReadOnlyList<ActiveCapabilityRequirement> Resolve(IConfiguration? configuration) =>
+      CapabilityActivationResolver.Resolve(requirements, configuration);
   }
 
   private static CapabilitiesStartupStep _step(

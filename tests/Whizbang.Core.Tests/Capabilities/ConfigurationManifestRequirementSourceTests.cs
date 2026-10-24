@@ -20,10 +20,17 @@ namespace Whizbang.Core.Tests.Capabilities;
 public class ConfigurationManifestRequirementSourceTests {
   [Test]
   public async Task Requirements_AreTheConfigurationManifestsAsync() {
-    var declared = new CapabilityRequirement(new CapabilityId("broker", "source_test"), "Source test", "Tests:Source", null, null);
+    var declared = new CapabilityRequirement(new CapabilityId("broker", "source_test"), "Source test", "Tests:Source", null, "on");
     ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.RequirementSource",
       [new ConfigurationBinding("Tests:Source", typeof(ConfigurationManifestRequirementSourceTests), ["Tests:Source"], [declared])]));
 
-    await Assert.That(new ConfigurationManifestRequirementSource().Requirements).Contains(declared);
+    var configured = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["Tests:Source"] = "set" }).Build();
+
+    await Assert.That(new ConfigurationManifestRequirementSource().Resolve(null)).Contains(
+      new ActiveCapabilityRequirement(declared, "Tests:Source", "on", CapabilityActivation.Implicit))
+      .Because("with no configuration, the declared default decides");
+    await Assert.That(new ConfigurationManifestRequirementSource().Resolve(configured)).Contains(
+      new ActiveCapabilityRequirement(declared, "Tests:Source", "set", CapabilityActivation.Explicit));
   }
 }
