@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// the conversion's bound is taken from, so a host clock running ahead never moves them.
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#lifecycle-completions</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class LifecycleCompletionPartitionConversionTests : EFCoreTestBase {

@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 232_PerspectiveAppliedAutovacuum.sql
+-- Migration: 234_PerspectiveAppliedAutovacuum.sql
 -- Date: 2026-10-22
 -- Description: The applied-event ledger vacuums after a fixed number of changes rather than a fraction of the table
 --              (#1666, WS-4 slice C2).
@@ -19,7 +19,7 @@
 --              The analyze scale factors are left as they are. Storage parameters only; re-applying sets the same
 --              values.
 --
---              Number 232: 231 is taken by another change in flight.
+--              Number 234: 231 and 232 are taken by other changes.
 --
 -- Dependencies: 177 (wh_perspective_applied)
 -- Objects: reloptions of wh_perspective_applied

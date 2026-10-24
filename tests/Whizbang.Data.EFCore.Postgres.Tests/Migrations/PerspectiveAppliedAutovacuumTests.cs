@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// a fraction of a table that only ever holds the last hour.
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#autovacuum</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/232_PerspectiveAppliedAutovacuum.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/234_PerspectiveAppliedAutovacuum.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
 public class PerspectiveAppliedAutovacuumTests : EFCoreTestBase {

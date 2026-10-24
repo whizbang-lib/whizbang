@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// </summary>
 /// <docs>operations/infrastructure/partitioned-ledgers</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/226_PartitionManager.sql</code-under-test>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
 [NotInParallel("PostgreSQL")]
 [Category("Integration")]
 public class DapperPartitionManagerSqlTests : PostgresTestBase {

@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// (<see cref="Guid.CreateVersion7(DateTimeOffset)"/>), so no test reads a clock.
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#time-ordered-ids</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class UuidPartitionSqlTests : EFCoreTestBase {

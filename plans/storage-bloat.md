@@ -101,7 +101,7 @@ Each slice is one red-then-green increment and its own commit.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
-   **Status (2026-10-23):** done in #1667, migration 233. Nothing in `src/` read the key, so behavior is
+   **Status (2026-10-23):** done in #1667, migration 235. Nothing in `src/` read the key, so behavior is
    unchanged for any value it held.
 5. **PgRepack strategy.** A fifth `TableRewriteStrategy` value, `PgRepack`, carrying
    `[RequiresPostgresExtension("pg_repack")]`. The extension is provisioned and the client program
@@ -121,7 +121,7 @@ Each slice is one red-then-green increment and its own commit.
    threshold. RED: a migration test reading `pg_class.reloptions` and the TOAST relation's
    reloptions per table; idempotence on re-run. Docs: storage-maintenance page.
    **Status (2026-10-23):** shipped in 222 (#1582). `wh_perspective_applied`, which stays unpartitioned
-   (#1577), gets the same shape for deletes and inserts in migration 232 (#1666).
+   (#1577), gets the same shape for deletes and inserts in migration 234 (#1666).
 7. **Perspective tables, by attribute.** Extend `[PerspectiveTableStorage]` with
    `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold` and
    matching TOAST properties. `TableStorageInfo.From` reads them; `ColumnStorageSql.ForTable` emits

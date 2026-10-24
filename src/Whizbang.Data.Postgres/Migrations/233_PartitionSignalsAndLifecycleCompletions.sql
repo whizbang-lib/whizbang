@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 231_PartitionSignalsAndLifecycleCompletions.sql
+-- Migration: 233_PartitionSignalsAndLifecycleCompletions.sql
 -- Date: 2026-10-22
 -- Description: The partition manager (226) keeps a table partitioned by a time-ordered uuid as well as one partitioned
 --              by a timestamp, so wh_lifecycle_completions can be partitioned daily by event_id and wh_signals daily
@@ -36,7 +36,7 @@
 --              key is event_id, the partition column, so it stays as it is and a second completion for one event is
 --              still refused.
 --
---              Number 231: 226 is the partition manager (#1611); 228 to 230 landed while this was written.
+--              Number 233: 226 is the partition manager (#1611); 228 to 232 are taken by other changes.
 --
 -- Dependencies: 226 (_wh_partition_start, wh_partition_maintain, wh_partition_convert), 028 (wh_settings), 035
 --               (wh_lifecycle_completions), 065 (wh_signals)

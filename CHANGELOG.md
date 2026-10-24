@@ -31,9 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The manager now accepts a time-ordered `uuid` key as well as a `timestamptz` one, and the conversion moves a row
   whose key is past the oldest partition's bound (a version-4 id, a clock running ahead) into the default partition
   instead of failing. Once a table is partitioned and maintained, its row sweep clears only the default partition;
-  switched off, it sweeps the whole table again. Migration 231.
+  switched off, it sweeps the whole table again. Migration 233.
 
-- **The applied-event ledger vacuums after a fixed number of changes (#1666).** Migration 232 sets scale factor 0
+- **The applied-event ledger vacuums after a fixed number of changes (#1666).** Migration 234 sets scale factor 0
   with a threshold of 10000 for both dead rows and inserts on `wh_perspective_applied`, which takes a row for every
   completed apply and prunes it an hour later. A scale factor made its vacuum wait on a share of a window that grows
   with the traffic.
@@ -353,7 +353,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not re-run; a row matching neither form belongs to a file that really changed and is applied as before. Later starts
   find nothing to rewrite.
 - **The unread `table_rewrite_policy` setting is retired (#1667).** Migration 089 seeded it in `wh_settings` and
-  nothing ever read it: table rewrites are governed by `AllowTableRewrite` alone. Migration 233 deletes the row, so
+  nothing ever read it: table rewrites are governed by `AllowTableRewrite` alone. Migration 235 deletes the row, so
   behavior is the same whatever it held. `table_rewrite_bloat_threshold`, `table_rewrite_min_rows` and
   `pending_table_rewrites` stay.
 - **System events are stored by default wherever an event store is registered (#1621). Behavior change.**

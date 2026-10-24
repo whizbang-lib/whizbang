@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// removed, and the settings the rewrite detector does read stay where they are.
 /// </summary>
 /// <docs>operations/infrastructure/migrations#table-rewrites-run-post-ready-under-the-maintainer-duty</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_RetireTableRewritePolicySetting.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/235_RetireTableRewritePolicySetting.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard2")]
 public class TableRewritePolicyRetiredTests : EFCoreTestBase {

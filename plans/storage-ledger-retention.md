@@ -153,7 +153,7 @@ signal sweep ship in #1574; the four SQL ledgers ship in #1572.
 **Status (2026-10-21):** S4a ships in #1611: the built-in partition manager (`wh_partition_maintain`,
 `wh_partition_convert`, migration 226), the maintenance step on both drivers under the maintainer duty, the internal
 `PartitionedTable` registration, `Partitioning:Enabled` / `:CreateAhead`, and `wh_log` converted weekly. S4b ships in
-#1646 (migration 231): `wh_signals` daily by `created_at` (key `(id, created_at)`) and `wh_lifecycle_completions` daily
+#1646 (migration 233): `wh_signals` daily by `created_at` (key `(id, created_at)`) and `wh_lifecycle_completions` daily
 by `event_id` range (the manager takes a time-ordered `uuid` key), each converted once and dropped past its option's
 window, with their row sweeps narrowed to the default partition while managed. Remaining: the pg_partman strategy
 (`Partitioning:Strategy`, WS-8 slice 8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
