@@ -246,7 +246,12 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     // production window is 5 s, which a loaded test machine can miss while the signal itself still
     // arrives. The test asserts the probe's verdict, not its speed, so give it a wide window.
     services.Configure<Whizbang.Core.Signals.SignalBusOptions>(o => o.ProbeTimeoutMilliseconds = 30_000);
-    services.AddSingleton<ISignalTransport, PostgresSignalTransport>();
+    // A loaded machine, forced: the bus's first liveness probe reaches the wire only after the delay. The
+    // probe's own window starts when it is published, so the probe still passes; a test that gives it a
+    // fixed window of its own fails.
+    services.AddSingleton<PostgresSignalTransport>();
+    services.AddSingleton<ISignalTransport>(sp => new DelayedProbeTransport(
+      sp.GetRequiredService<PostgresSignalTransport>(), Task.Delay(TimeSpan.FromSeconds(11))));
     await using var provider = services.BuildServiceProvider();
 
     var bus = provider.GetRequiredService<ISignalBus>();
@@ -288,6 +293,20 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
+
+  /// <summary>Holds the bus's liveness probe back from the wire until <paramref name="release"/> completes.</summary>
+  private sealed class DelayedProbeTransport(ISignalTransport inner, Task release) : ISignalTransport {
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) =>
+      inner.StartAsync(sink, cancellationToken);
+
+    public async ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
+        where TSignal : ISignal {
+      if (signal is SignalBusProbeSignal) {
+        await release.WaitAsync(cancellationToken);
+      }
+      await inner.PublishAsync(signal, target, cancellationToken);
+    }
+  }
 
   private readonly System.Collections.Concurrent.ConcurrentQueue<string> _diag = new();
 
