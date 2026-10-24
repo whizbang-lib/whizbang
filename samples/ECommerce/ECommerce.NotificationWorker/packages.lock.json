@@ -1041,7 +1041,7 @@
         "dependencies": {
           "Aspire.Hosting.Azure.ServiceBus": "[13.6.3, )",
           "Azure.Messaging.ServiceBus": "[7.21.0, )",
-          "MessagePack": "[2.5.303, )",
+          "MessagePack": "[2.5.307, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
           "SoftwareExtravaganza.Whizbang.Core": "[0.100.0-local.111, )",
           "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus": "[0.100.0-local.111, )"
@@ -1051,7 +1051,7 @@
         "type": "Project",
         "dependencies": {
           "Aspire.Hosting.RabbitMQ": "[13.6.3, )",
-          "MessagePack": "[2.5.303, )",
+          "MessagePack": "[2.5.307, )",
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
           "RabbitMQ.Client": "[7.2.2, )",
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ": "[0.100.0-local.111, )"
@@ -1178,7 +1178,7 @@
       },
       "MessagePack": {
         "type": "CentralTransitive",
-        "requested": "[2.5.303, )",
+        "requested": "[2.5.307, )",
         "resolved": "2.5.307",
         "contentHash": "P9LNJ2bz/wx8J5W0EQW4Bh7G5BiEikXiiDqGvw/WOMRyRI0QcxVvRM4XkqhidGJG6uzMT7iF89o0uYGLwmGifQ==",
         "dependencies": {
