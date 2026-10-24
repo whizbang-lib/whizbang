@@ -47,7 +47,7 @@ namespace Whizbang.Core.Startup;
 /// it over at once. The migrator is never held here: it is held for one migration at a time.
 /// </para>
 /// </remarks>
-/// <docs>proposals/duty-role-assignment</docs>
+/// <docs>operations/startup/capabilities-and-duties#the-holder-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs</tests>
 public sealed partial class DutyHolderWorker : BackgroundService {
 #pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
@@ -133,17 +133,19 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <see cref="Holds"/> returns true for it. Raised on the pass that won it, before the role's
   /// acquisition and owed work run. Must not block.
   /// </summary>
-  /// <docs>proposals/duty-role-assignment</docs>
+  /// <docs>operations/startup/capabilities-and-duties#watching-the-holder-loop</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
   public event Action<string>? OnBecameHolder;
 
   /// <summary>
   /// Raised, on the caller's thread, each time the next pass is asked to run at once instead of at
-  /// the next interval: a release of a role this worker holds work for was announced, or
-  /// <see cref="Wake"/> was called. A release of any other role does not raise it. Must not block.
+  /// the next interval: a release of a role this worker holds or votes for was announced (one held
+  /// only for its acquisition work included), or <see cref="Wake"/> was called. A release of any
+  /// other role does not raise it. Must not block.
   /// </summary>
-  /// <docs>proposals/duty-role-assignment</docs>
+  /// <docs>operations/startup/capabilities-and-duties#watching-the-holder-loop</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_ARelease_OfARoleHeldOnlyForItsAcquisitionWork_WakesAPassAsync</tests>
   public event Action? OnWakeRequested;
 
   /// <summary>Runs the next pass at once instead of at the next interval.</summary>
