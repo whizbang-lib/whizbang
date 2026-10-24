@@ -95,7 +95,7 @@ public class StartupStageSqlTests : EFCoreTestBase {
     var row = await _rowAsync(conn, instance);
     await Assert.That(row.Stage).IsEqualTo((short)50);
     await Assert.That(row.Message).IsEqualTo("recomputing partitions");
-    await Assert.That(row.EnteredAt).IsNotNull();
+    await Assert.That(row.EnteredAt.HasValue).IsTrue();
     await Assert.That(row.Phase).IsEqualTo(nameof(LifecyclePhase.Migrating))
       .Because("lifecycle_phase stays on the row, written from the stage");
     await Assert.That(row.Heartbeat).IsEqualTo(before.Heartbeat).Because("a stage is not a heartbeat");
