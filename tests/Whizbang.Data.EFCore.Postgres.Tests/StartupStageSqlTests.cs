@@ -255,7 +255,10 @@ public class StartupStageSqlTests : EFCoreTestBase {
     }
   }
 
-  private static async Task<(short? Stage, string? Message, DateTime? EnteredAt, string? Phase, DateTime Heartbeat)> _rowAsync(
+  /// <summary>The stage columns of one instance row, with its heartbeat.</summary>
+  private sealed record InstanceRow(short? Stage, string? Message, DateTime? EnteredAt, string? Phase, DateTime Heartbeat);
+
+  private static async Task<InstanceRow> _rowAsync(
       NpgsqlConnection conn, Guid instanceId) {
     await using var cmd = new NpgsqlCommand("""
       SELECT startup_stage, startup_stage_message, startup_stage_entered_at, lifecycle_phase, last_heartbeat_at
@@ -264,7 +267,7 @@ public class StartupStageSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("id", instanceId);
     await using var reader = await cmd.ExecuteReaderAsync();
     await reader.ReadAsync();
-    return (
+    return new InstanceRow(
       reader.IsDBNull(0) ? null : reader.GetInt16(0),
       reader.IsDBNull(1) ? null : reader.GetString(1),
       reader.IsDBNull(2) ? null : reader.GetDateTime(2),

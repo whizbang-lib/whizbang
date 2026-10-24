@@ -308,7 +308,7 @@ public class StartupStageReporterTests {
 
     await reporter.EnterAsync(StartupStage.Preflight, "host starting");
 
-    await Assert.That(reporter.Current!.EnteredAt).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(reporter.Current!.EnteredAt).IsNotEqualTo(DateTimeOffset.MinValue);
   }
 
   [Test]

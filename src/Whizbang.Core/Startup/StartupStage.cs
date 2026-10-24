@@ -114,8 +114,8 @@ public static class StartupStages {
 
   /// <summary>
   /// The line an instance logs on entering the stage, and the text the <c>startup</c> health component reports:
-  /// <c>Stage X of 7: &lt;name&gt; - &lt;message&gt;</c> for a startup stage, <c>Shutdown stage: &lt;name&gt; -
-  /// &lt;message&gt;</c> for a shutdown stage.
+  /// <c>Stage X of 7: &lt;name&gt; - &lt;message&gt;</c> for a startup stage, and
+  /// <c>Shutdown stage: &lt;name&gt; - &lt;message&gt;</c> for a shutdown stage.
   /// </summary>
   /// <param name="stage">The stage.</param>
   /// <param name="message">What the stage is doing.</param>
