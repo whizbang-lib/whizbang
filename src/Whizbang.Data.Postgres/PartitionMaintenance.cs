@@ -15,7 +15,9 @@ namespace Whizbang.Data.Postgres;
 /// <param name="Table">The table.</param>
 /// <param name="Action">
 /// What happened: <c>converted</c>; or, per partition, <c>created</c>, <c>tuned</c> (given the storage settings its
-/// table declares), <c>dropped</c>, <c>emptied</c> (expired but the table was in use, so only truncated),
+/// table declares), <c>carried</c> (expired, and the rows its table still needs, such as the signals a live instance
+/// has not consumed, were moved to the current partition first), <c>dropped</c>, <c>emptied</c> (expired but the
+/// table was in use, so only truncated),
 /// <c>deferred</c> (a lock was not free), <c>kept</c> (debug mode), or <c>skipped</c> (the table is not partitioned,
 /// or another instance is maintaining it).
 /// </param>
