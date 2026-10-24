@@ -145,6 +145,24 @@ Describe 'Get-DefaultNuGetRoot' {
   }
 }
 
+Describe 'Invoke-UpdateCoverageSourceRoots' {
+  It 'reports the counts and names each skipped mapping' {
+    $repo = New-Repo
+    $null = New-MappingFile (Join-Path $repo 'tests' 'A.Tests' 'bin') 'A.Tests'
+    $junk = New-MappingFile (Join-Path $repo 'tests' 'B.Tests' 'bin') 'B.Tests' -Lines @('junk')
+    $out = @(Invoke-UpdateCoverageSourceRoots -Root $repo -NuGetRoot '/n')
+    $out | Should -Contain "::warning::coverage source-root mapping with no /_/ root left as built: $junk"
+    $out[-1] | Should -Be "Coverage source roots: 1 rewritten to $repo, 0 already here, 1 skipped."
+  }
+
+  It 'uses the default NuGet root when none is given' {
+    $repo = New-Repo
+    $file = New-MappingFile (Join-Path $repo 'tests' 'A.Tests' 'bin') 'A.Tests'
+    $null = Invoke-UpdateCoverageSourceRoots -Root $repo -NuGetRoot ''
+    (Read-MappingFile $file)[0] | Should -BeLike "*|$((Get-DefaultNuGetRoot).TrimEnd('/', '\'))?=/_1/"
+  }
+}
+
 Describe 'The script run as CI runs it' {
   It 'rewrites the mappings under -Root and exits 0' {
     $repo = New-Repo
