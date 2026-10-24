@@ -86,6 +86,10 @@ public sealed record CapabilityVerdictEntry(
 /// no registered provider describes reads Unknown, with that as the reason.
 /// </para>
 /// <para>
+/// A requirement with a <see cref="ActiveCapabilityRequirement.Scope"/> is judged only on that scope's status, and
+/// reads Unknown there when no provider probes it; one without applies to every scope.
+/// </para>
+/// <para>
 /// Capabilities match without regard to case, as <see cref="ICapabilityRegistry.GetState"/> does.
 /// </para>
 /// </remarks>
@@ -94,6 +98,7 @@ public sealed record CapabilityVerdictEntry(
 public sealed class CapabilityVerdict {
   private const string UNDESCRIBED_PURPOSE = "not described by any registered provider";
   private const string UNDESCRIBED_REASON = "no registered provider describes it";
+  private const string UNPROBED_SCOPE_REASON = "no registered provider probes this scope";
 
   private CapabilityVerdict(IReadOnlyList<CapabilityVerdictEntry> entries) {
     Entries = entries;
@@ -120,12 +125,20 @@ public sealed class CapabilityVerdict {
     var entries = new List<CapabilityVerdictEntry>();
     foreach (var group in active.GroupBy(a => _key(a.Requirement.Capability), StringComparer.Ordinal)) {
       var required = group.ToList();
-      var explicitly = required.Exists(a => a.Activation == CapabilityActivation.Explicit);
       var matching = statuses.Where(s => _key(s.Descriptor.Id) == group.Key).ToList();
-      if (matching.Count == 0) {
-        matching.Add(_undescribed(required[0].Requirement.Capability));
+      var judged = entries.Count;
+      foreach (var status in matching) {
+        var applicable = required.FindAll(a => a.Scope is null || string.Equals(a.Scope, status.Scope, StringComparison.Ordinal));
+        if (applicable.Count > 0) {
+          entries.Add(new CapabilityVerdictEntry(status, applicable, _outcome(status.State, _explicitly(applicable))));
+        }
       }
-      entries.AddRange(matching.Select(status => new CapabilityVerdictEntry(status, required, _outcome(status.State, explicitly))));
+      if (entries.Count == judged) {
+        // Nothing judged the requirements: no provider describes the capability, or none probes their scope.
+        var reason = matching.Count == 0 ? UNDESCRIBED_REASON : UNPROBED_SCOPE_REASON;
+        var status = _undescribed(required[0].Requirement.Capability, required[0].Scope ?? string.Empty, reason);
+        entries.Add(new CapabilityVerdictEntry(status, required, _outcome(status.State, _explicitly(required))));
+      }
     }
     return new CapabilityVerdict(entries);
   }
@@ -162,7 +175,10 @@ public sealed class CapabilityVerdict {
       _ => CapabilityVerdictOutcome.Degrade,
     };
 
-  private static CapabilityStatus _undescribed(CapabilityId id) =>
+  private static bool _explicitly(List<ActiveCapabilityRequirement> required) =>
+    required.Exists(a => a.Activation == CapabilityActivation.Explicit);
+
+  private static CapabilityStatus _undescribed(CapabilityId id, string scope, string reason) =>
     new(new CapabilityDescriptor(id, UNDESCRIBED_PURPOSE, [], Provisionable: false, [], new Dictionary<CapabilityState, string>()),
-      Scope: string.Empty, CapabilityState.Unknown, Version: null, Detail: null, UNDESCRIBED_REASON);
+      scope, CapabilityState.Unknown, Version: null, Detail: null, reason);
 }

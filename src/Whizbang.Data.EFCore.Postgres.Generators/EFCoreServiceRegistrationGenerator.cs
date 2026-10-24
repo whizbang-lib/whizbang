@@ -402,8 +402,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"{indent}}});");
     // What the context's schema declares, keyed by the context, so the managed-object maintenance step reconciles it
     // between starts without reflection. Keyed and replaced, so registering twice leaves one.
-    // What the context's schema requires (pgvector for a vector column), judged by the startup capability verdict.
-    sb.AppendLine($"{indent}services.AddSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(new global::Whizbang.Core.Capabilities.FixedCapabilityRequirementSource({_schemaRequirements(dbContext)}));");
+    // What the context's schema requires (pgvector for a vector column), keyed by the context: the driver puts it
+    // in force on the database it probes for this context only.
+    sb.AppendLine($"{indent}services.TryAddKeyedSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(typeof({dbContextFqn}), new global::Whizbang.Core.Capabilities.FixedCapabilityRequirementSource({_schemaRequirements(dbContext)}));");
     sb.AppendLine($"{indent}services.RemoveAllKeyed<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}));");
     sb.AppendLine($"{indent}services.AddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
     sb.AppendLine($"{indent}  typeof({dbContextFqn}), {_csharpString(dbContext.Schema)}, global::{_generatedNamespace(dbContext.Namespace)}.{dbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
@@ -1939,6 +1940,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // registration adds it too; this one runs whoever registered the context, so a consumer-registered context has
     // one as well. TryAdd: the turnkey registration's stands when both ran.
     var dbContextFqn = group.DbContext.FullyQualifiedName;
+    // Its schema's capability requirements too, keyed the same way, for a consumer-registered context.
+    sb.AppendLine($"        services.TryAddKeyedSingleton<global::Whizbang.Core.Capabilities.ICapabilityRequirementSource>(typeof({dbContextFqn}), new global::Whizbang.Core.Capabilities.FixedCapabilityRequirementSource({_schemaRequirements(group.DbContext)}));");
     sb.AppendLine($"        services.TryAddKeyedSingleton<global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest>(typeof({dbContextFqn}), new global::Whizbang.Data.Postgres.Schema.ManagedSchemaManifest(");
     sb.AppendLine($"          typeof({dbContextFqn}), {_csharpString(group.DbContext.Schema)}, global::{_generatedNamespace(group.DbContext.Namespace)}.{group.DbContext.ClassName}SchemaExtensions.GetManagedSchemaObjects));");
 

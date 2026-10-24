@@ -28,6 +28,12 @@ public sealed record ActiveCapabilityRequirement(
   string Key,
   string? Value,
   CapabilityActivation Activation) {
+  /// <summary>
+  /// The one scope the requirement applies to (a context's schema requires its extensions on its own database), or
+  /// null for every scope a provider probes.
+  /// </summary>
+  public string? Scope { get; init; }
+
   /// <summary><c>Feature (Key = Value, explicit)</c>, with <c>default</c> for an implicit one and no value for a section.</summary>
   /// <returns>The requirement as the verdict line names it.</returns>
   public override string ToString() {
