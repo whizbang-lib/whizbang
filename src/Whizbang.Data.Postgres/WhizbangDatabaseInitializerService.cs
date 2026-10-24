@@ -139,6 +139,9 @@ internal sealed partial class WhizbangDatabaseInitializerService(
   private async Task _runInitializationAsync(CancellationToken cancellationToken) {
     await _runMigrationsAsync(cancellationToken);
 
+    // #1636: every driver's schema is in place; what follows is coordinated across the fleet and ends with the gate.
+    await SchemaInitializationStages.CoordinatingAsync(_serviceProvider, cancellationToken);
+
     // Best-effort: recompute partition_number columns that may have drifted across a PartitionCount
     // change. NEVER blocks MarkReady — workers can run on a stale partition map (next claim cycle
     // picks them up correctly via the live PartitionCount).

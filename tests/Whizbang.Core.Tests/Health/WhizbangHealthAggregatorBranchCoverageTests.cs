@@ -39,7 +39,7 @@ public class WhizbangHealthAggregatorBranchCoverageTests {
     var sequence = new CountingSequence(
       new FixedSource("alpha", ComponentState.Ready),
       new FixedSource("beta", ComponentState.Faulted));
-    var aggregator = new WhizbangHealthAggregator(sequence.Lazily(), new WhizbangHealthOptions());
+    var aggregator = new WhizbangHealthAggregator(sequence.Lazily(), new WhizbangHealthOptions(), Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     var first = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);
     var second = await aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None);

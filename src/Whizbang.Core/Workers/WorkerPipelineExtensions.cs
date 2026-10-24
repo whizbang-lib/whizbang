@@ -180,6 +180,19 @@ public static class WorkerPipelineExtensions {
       new Observability.ServiceInstanceProvider(
         sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
+    // The startup stage (#1636): one reporter owns it, logs each stage as "Stage X of 7" and records it on this
+    // instance's row. The lifecycle moves it into Accept commands and Running (and Draining and Stopped on a
+    // killswitch stop); the host's own lifecycle marks Preflight before anything starts, Draining before anything
+    // stops, and Stopped after everything has; schema initialization reports Elect, Migrate, Converge and Coordinate.
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(sp => new Whizbang.Core.Startup.StartupStageReporter(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Observability.IServiceInstanceProvider>(),
+      sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
+      sp.GetService<TimeProvider>()));
+    services.AddSingleton<IWhizbangRunControl>(sp =>
+      new Whizbang.Core.Startup.StartupStageRunControl(sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Startup.StartupStageHostLifecycle>());
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
     // resolved from their dependencies, and per-step outcome/duration/reason. The state is
@@ -253,7 +266,8 @@ public static class WorkerPipelineExtensions {
     // this pod not ready" is answerable from the health surface without reading logs.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
-      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),

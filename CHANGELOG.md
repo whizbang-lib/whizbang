@@ -94,6 +94,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grows with the table, so a large table used to hold hundreds of thousands of dead rows before a vacuum.
 
 #### Startup
+- **Every instance records and logs its startup stage (part of #1636).** One owner, `IStartupStageReporter`, holds the
+  stage this instance is in (`StartupStage`: Preflight 10, Elect 20, Migrate 30, Converge 40, Coordinate 50, Accept
+  commands 60, Running 70, Draining 80, Stopped 90; fixed numbers with gaps, never list positions). Entering a stage
+  logs `Stage X of 7: <name> - <message>` at Information (`Shutdown stage: <name> - <message>` for Draining and
+  Stopped) and writes `startup_stage`, `startup_stage_message` and `startup_stage_entered_at` on the instance's row
+  (migration 231), with `lifecycle_phase` written from the stage. Stages only move forward; progress within a stage
+  repeats its prefix and keeps its entry time. A stage entered before the row exists is held and written when the
+  instance registers, and a failed write is held until the next accepted heartbeat. The host's lifecycle marks
+  Preflight, Draining (before any worker stops) and Stopped; schema initialization reports Elect, Migrate (skipped
+  when the schema is already current), Converge and Coordinate; the lifecycle's AcceptingCommands and Running
+  transitions enter stages 60 and 70. `wh_instance_is_eligible_for_work` reads the stage: a recorded stage must be 60
+  or 70 (a row with none is judged by its phase, as before), so a draining instance stops being eligible the moment
+  Draining is written. `wh_instance_startup_stages()` lists every instance with its stage, `X of 7`, message and time
+  in stage. The `startup` health component's detail leads with the stage's line, `AggregatedHealth.Stage` carries
+  it, and the ASP.NET health checks add `startup_stage`, `startup_stage_name` and `startup_stage_message` to their
+  data. `IStartupStageObserver` watches every change.
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and
   will be retried), on both Postgres drivers.

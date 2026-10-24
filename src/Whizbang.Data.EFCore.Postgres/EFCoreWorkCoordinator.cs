@@ -1325,6 +1325,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<bool> RecordStartupStageAsync(
+      Guid instanceId, Whizbang.Core.Startup.StartupStage stage, string message,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(message);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var fn = BuildSchemaQualifiedName(schema, "wh_record_startup_stage");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {fn}(@id, @stage, @message, @phase)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("id", instanceId);
+    cmd.Parameters.AddWithValue(nameof(stage), (short)stage);
+    cmd.Parameters.AddWithValue(nameof(message), message);
+    // lifecycle_phase stays on the row, written from the stage, for the readers and dashboards that read it.
+    cmd.Parameters.AddWithValue("phase", Whizbang.Core.Startup.StartupStages.LifecyclePhaseOf(stage).ToString());
+    var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+    return ScalarResult.IsTrue(result);
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RequestStandbyAsync(Guid instanceId, string version, CancellationToken cancellationToken = default) {
     ArgumentException.ThrowIfNullOrWhiteSpace(version);
     return await _scalarFunctionAsync<bool>("request_standby", cancellationToken,
