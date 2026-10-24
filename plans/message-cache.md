@@ -55,11 +55,11 @@ the same counts.
 | Parses | Kind | Source | Site | Why |
 |---|---|---|---|---|
 | 5 | Payload | LifecycleStage | `LifecycleInvocationHelper.cs` (outbox loop) | The flush runs five distribute stages (PreDistribute detached and inline, Distribute detached, PostDistribute detached and inline). Each stage parses the payload again, and does so whenever an `IReceptorInvoker` is registered, whether or not any receptor exists for that stage. |
-| 4 | Payload | EventStoreRead | `EFCoreEventStore.DeserializeStreamEvents` | `get_stream_events` returns one row per (event, perspective), so the drain parses the event once per perspective (2). The drain's refetch loop then reads the stream again before the completion flush deletes the applied rows, and parses both rows again (2) before the cooldown filter discards them. |
+| 4 | Payload | EventStoreRead | `EFCoreEventStore.DeserializeStreamEvents` | `get_stream_events` returns one row per (event, perspective), so the drain parses the event once per perspective (2). The drain's refetch loop then reads the stream again and, when it runs before the asynchronous completion flush deletes the applied rows, parses both rows again (2) before the cooldown filter discards them; when the flush lands first it parses none. |
 | 4 | Metadata | EventStoreRead | same | as above, the stored metadata (hops) for every row |
 | 4 | Scope | EventStoreRead | same | as above, the stored scope for every row |
 
-The multiplier is `5 + 3 x 2N` for a local event (N perspectives), so 17 at N = 2 and 29 at N = 4.
+The multiplier is `5 + 3 x 2N` for a local event (N perspectives), so 17 at N = 2 and 29 at N = 4 when the refetch reads before the completion flush (`5 + 3N` when the flush lands first).
 The perspective runners themselves did not parse: drain mode hands the typed envelopes to every
 perspective of the batch, and PostAllPerspectives and PostLifecycle reuse the batch's envelopes.
 
