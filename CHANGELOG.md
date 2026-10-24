@@ -573,6 +573,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **The migration tool reads back the decision file it generates for a Windows project path, and a blank docs
+  path no longer throws on Windows (#1764).** `whizbang-migrate apply --generate-decision-file` wrote the commented
+  decision file by interpolating values into a JSON template, so the backslashes of a path such as `C:\Users\me\App`
+  (or a quote or control character on any platform) made the file invalid and the next run failed to load it. Every
+  string value in the commented file is now JSON-escaped, and the usage comment that repeats the path blanks any
+  character that would end the comment early. Values with no special characters are written exactly as before. The
+  source generators' documentation path resolver now treats a whitespace-only `WhizbangDocsPath` or project directory
+  as unset, as it already did an empty one, instead of passing it to the file system, where Windows rejected it.
 - **A stopping host no longer logs "Error invoking PostDistributeDetached lifecycle receptors ... Cannot access a
   disposed object".** The outbox batcher's flush runs its detached lifecycle stages (`PreDistributeDetached`,
   `DistributeDetached`, `PostDistributeDetached`) in the background, and nothing waited for them: one still running

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System;
 using System.IO;
 
 namespace Whizbang.Generators;
@@ -31,12 +32,34 @@ public static class PathResolver {
   /// <param name="configuredPath">The <c>WhizbangDocsPath</c> property, if set.</param>
   /// <param name="projectDirectory">The project's directory, where sibling discovery starts; none means no discovery.</param>
   /// <returns>Path to documentation repository, or null if not found</returns>
-  public static string? FindDocsRepositoryPath(string? configuredPath, string? projectDirectory) {
-    if (!string.IsNullOrEmpty(configuredPath) && Directory.Exists(configuredPath)) {
+  public static string? FindDocsRepositoryPath(string? configuredPath, string? projectDirectory) =>
+    FindDocsRepositoryPath(configuredPath, projectDirectory, Directory.Exists, _findGitRoot);
+
+  /// <summary>
+  /// <see cref="FindDocsRepositoryPath(string?, string?)"/> with the file system probes supplied, so a test can see which
+  /// inputs reach them. A blank input must reach neither: on Windows a whitespace path is not a path at all, and the
+  /// walk up from it throws (#1764).
+  /// </summary>
+  /// <remarks>
+  /// Public rather than internal because InternalsVisibleTo on this assembly collides with the test project's polyfills
+  /// (see AssemblyInfo.cs). This assembly ships as an analyzer, so its public surface is not a consumer API.
+  /// </remarks>
+  /// <param name="configuredPath">The <c>WhizbangDocsPath</c> property, if set.</param>
+  /// <param name="projectDirectory">The project's directory, where sibling discovery starts; none means no discovery.</param>
+  /// <param name="directoryExists">Answers whether a directory exists.</param>
+  /// <param name="findGitRoot">Walks up from a directory to the git root above it, or returns null.</param>
+  /// <returns>Path to documentation repository, or null if not found</returns>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/PathResolverTests.cs:FindDocsRepositoryPath_WithBlankInputs_NeverProbesTheFileSystemAsync</tests>
+  public static string? FindDocsRepositoryPath(
+      string? configuredPath,
+      string? projectDirectory,
+      Func<string, bool> directoryExists,
+      Func<string, string?> findGitRoot) {
+    if (!string.IsNullOrWhiteSpace(configuredPath) && directoryExists(configuredPath!)) {
       return configuredPath;
     }
 
-    var libraryRoot = string.IsNullOrEmpty(projectDirectory) ? null : _findGitRoot(projectDirectory!);
+    var libraryRoot = string.IsNullOrWhiteSpace(projectDirectory) ? null : findGitRoot(projectDirectory!);
     if (libraryRoot == null) {
       return null;
     }
@@ -45,7 +68,7 @@ public static class PathResolver {
     // its own parent), so a library root of "/" looks for "/whizbang-lib.github.io" rather than needing a
     // case of its own; the existence test below decides either way.
     var docsPath = Path.GetFullPath(Path.Combine(libraryRoot, "..", "whizbang-lib.github.io"));
-    return Directory.Exists(docsPath) ? docsPath : null;
+    return directoryExists(docsPath) ? docsPath : null;
   }
 
   /// <summary>
