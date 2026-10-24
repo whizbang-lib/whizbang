@@ -14,9 +14,10 @@ namespace Whizbang.Data.Postgres;
 /// <summary>One thing a partition maintenance cycle did to one table.</summary>
 /// <param name="Table">The table.</param>
 /// <param name="Action">
-/// What happened: <c>converted</c>; or, per partition, <c>created</c>, <c>dropped</c>, <c>emptied</c> (expired but the
-/// table was in use, so only truncated), <c>deferred</c> (a lock was not free), <c>kept</c> (debug mode), or
-/// <c>skipped</c> (the table is not partitioned, or another instance is maintaining it).
+/// What happened: <c>converted</c>; or, per partition, <c>created</c>, <c>tuned</c> (given the storage settings its
+/// table declares), <c>dropped</c>, <c>emptied</c> (expired but the table was in use, so only truncated),
+/// <c>deferred</c> (a lock was not free), <c>kept</c> (debug mode), or <c>skipped</c> (the table is not partitioned,
+/// or another instance is maintaining it).
 /// </param>
 /// <param name="Partition">The partition, or the table itself for <c>converted</c> and <c>skipped</c>.</param>
 /// <docs>operations/infrastructure/partitioned-ledgers#what-a-cycle-does</docs>

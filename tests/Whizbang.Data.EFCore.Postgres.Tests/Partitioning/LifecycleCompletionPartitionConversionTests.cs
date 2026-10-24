@@ -11,7 +11,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// <summary>
 /// Issue #1646: <c>wh_lifecycle_completions</c> converts to daily partitions by <c>event_id</c> range, keeping its
 /// key and every row, and a row sweep finds the relation it may delete from with <c>wh_partition_sweep_relation</c>:
-/// the table while it is plain or unmanaged, its default partition once the manager keeps it.
+/// the table while it is plain or unmanaged, its default partition once the manager keeps it. Issue #1693: every
+/// partition carries the ledger's autovacuum settings, which a partitioned parent cannot hold.
 /// </summary>
 /// <remarks>
 /// Ids for rows that must land in the legacy partition are made for an hour before the database's clock, the clock
@@ -19,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#lifecycle-completions</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/237_PartitionsCarryTheLedgersAutovacuumSettings.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class LifecycleCompletionPartitionConversionTests : EFCoreTestBase {
