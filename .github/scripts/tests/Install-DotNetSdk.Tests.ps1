@@ -100,6 +100,23 @@ Describe 'Install-DotNetSdk' {
   }
 }
 
+Describe 'Install-DotNetSdk defaults' {
+  It 'uses the runner temp folder and the default download, install and version commands' {
+    $script:DefaultCalls = [System.Collections.Generic.List[string]]::new()
+    Mock Get-DefaultDownload { { param($Uri, $OutFile) $script:DefaultCalls.Add("download $OutFile") } }
+    Mock Get-DefaultInstall { { param($Script, $Channel, $InstallDir) $script:DefaultCalls.Add("install $Channel") } }
+    Mock Get-DefaultGetVersion { { param($Dotnet) '10.0.100' } }
+    $saved = $env:RUNNER_TEMP
+    try {
+      $env:RUNNER_TEMP = $TestDrive
+      $null = Install-DotNetSdk -GlobalJsonPath (Join-Path $TestDrive 'absent.json') -FallbackVersion '10.0.x' -InstallDir (Join-Path $TestDrive 'd') -PathFile '' -EnvFile ''
+    } finally {
+      $env:RUNNER_TEMP = $saved
+    }
+    $script:DefaultCalls | Should -Be @("download $(Join-Path $TestDrive 'dotnet-install.ps1')", 'install 10.0')
+  }
+}
+
 Describe 'The default download, install and version commands' {
   It 'downloads with Invoke-WebRequest' {
     Mock Invoke-WebRequest { }

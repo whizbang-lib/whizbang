@@ -73,10 +73,12 @@ jobs:
 
       - name: Restore Dependencies
         if: inputs.artifact-name == ''
+        shell: pwsh
         run: dotnet restore --locked-mode
 
       - name: Build Solution
         if: inputs.artifact-name == ''
+        shell: pwsh
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Component Tests (pre-built)
