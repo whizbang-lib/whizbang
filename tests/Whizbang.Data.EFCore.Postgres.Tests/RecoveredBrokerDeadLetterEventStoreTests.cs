@@ -84,7 +84,7 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
     var (status, recoveredAt, _) = await _deadLetterAsync(connection, deadLetterId);
     await Assert.That(status).IsEqualTo(RECOVERED)
       .Because("the dispatch completed the recovered event as processed");
-    await Assert.That(recoveredAt).IsNotNull();
+    await Assert.That(recoveredAt.HasValue).IsTrue();
   }
 
   [Test]
@@ -107,7 +107,7 @@ public class RecoveredBrokerDeadLetterEventStoreTests : EFCoreTestBase {
     var refusal = await _refusalDeadLetterIdAsync(connection, messageId);
     await Assert.That(await _storedStreamAsync(connection, messageId)).IsNull()
       .Because("the copy refused the recovered event, so nothing was appended");
-    await Assert.That(refusal).IsNotNull()
+    await Assert.That(refusal.HasValue).IsTrue()
       .Because("the refused message is back in dead-letter custody, under the refusal");
     await Assert.That(status).IsNotEqualTo(RECOVERED)
       .Because("Recovered means the message was processed, and this one was refused");

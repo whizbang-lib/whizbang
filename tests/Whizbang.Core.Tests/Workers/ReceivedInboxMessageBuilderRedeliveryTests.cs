@@ -139,7 +139,7 @@ public class ReceivedInboxMessageBuilderRedeliveryTests {
 
   private static MessageEnvelope<JsonElement> _envelope(Guid messageId, Guid streamId) => new() {
     MessageId = MessageId.From(messageId),
-    Payload = JsonDocument.Parse($$"""{"orderId":"{{streamId}}"}""").RootElement,
+    Payload = JsonElement.Parse($$"""{"orderId":"{{streamId}}"}"""),
     SourceServiceId = _producer,
     SourceCommitSequence = 7,
     Hops = [new MessageHop {

@@ -138,7 +138,7 @@ public class DeadLetterRecoveryWorkerReentryTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
     return JsonSerializer.Serialize(new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("""{"reference":"R-1"}""").RootElement,
+      Payload = JsonElement.Parse("""{"reference":"R-1"}"""),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     }, options.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));

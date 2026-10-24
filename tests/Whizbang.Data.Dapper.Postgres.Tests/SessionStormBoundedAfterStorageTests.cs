@@ -151,7 +151,7 @@ public class SessionStormBoundedAfterStorageTests : PostgresTestBase {
   private static InboxMessage _inbox(Guid messageId) => new() {
     MessageId = messageId,
     HandlerName = "TestHandler",
-    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []),
+    Envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []),
     EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[Test.X, Test]], Whizbang.Core",
     MessageType = "Test.X, Test",
     StreamId = (Guid)TrackedGuid.New(),

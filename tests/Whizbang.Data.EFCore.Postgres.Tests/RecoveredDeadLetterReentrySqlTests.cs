@@ -135,7 +135,7 @@ public class RecoveredDeadLetterReentrySqlTests : EFCoreTestBase {
 
     var (status, recoveredAt, _, generations) = await _deadLetterAsync(connection, deadLetterId);
     await Assert.That(status).IsEqualTo(RECOVERED);
-    await Assert.That(recoveredAt).IsNotNull();
+    await Assert.That(recoveredAt.HasValue).IsTrue();
     await Assert.That(generations).Contains("test/1");
   }
 
@@ -246,7 +246,7 @@ public class RecoveredDeadLetterReentrySqlTests : EFCoreTestBase {
   private static InboxMessage _message(Guid messageId, Guid streamId, bool isEvent) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("""{"reference":"R-1"}""").RootElement,
+      Payload = JsonElement.Parse("""{"reference":"R-1"}"""),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Outbox, Source = MessageSource.Outbox },
     };
