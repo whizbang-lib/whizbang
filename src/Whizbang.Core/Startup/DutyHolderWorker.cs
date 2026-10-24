@@ -396,7 +396,9 @@ public sealed partial class DutyHolderWorker : BackgroundService {
     public string ChannelName => RELEASE_CHANNEL;
 
     public void OnNotification(string payload) {
-      if (worker._handlers.Keys.Any(k => string.Equals(k.Role, payload, StringComparison.Ordinal))) {
+      // Every role this worker holds or votes for, including one held only for its acquisition
+      // work (#1711): a hand-off of such a role must not wait for the next interval either.
+      if (worker._roles.Contains(payload, StringComparer.Ordinal)) {
         worker.Wake();
       }
     }
