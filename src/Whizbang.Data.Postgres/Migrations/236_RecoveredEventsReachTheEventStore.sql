@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 231_RecoveredEventsReachTheEventStore.sql
+-- Migration: 236_RecoveredEventsReachTheEventStore.sql
 -- Date: 2026-10-22
 -- Description: A recovered inbox or broker dead letter re-enters through the inbox's own arrival path, and its
 --              dead letter reads Recovered only once the message has been processed (#1664).
@@ -30,10 +30,11 @@
 --              on the new dead letter, so a cohort release cannot re-drive it while the new row holds its custody.
 --              recover_dead_letter keeps its outbox and perspective branches and declines inbox and broker rows.
 --
---              Number 231: 230 is the latest on develop and no open branch takes 231.
+--              Number 236: 232 (#1612) also redefines store_inbox_messages, so this definition carries its event-flags
+--              read and must apply after it; 231 and 236-235 are taken by open branches.
 --
--- Dependencies: 162 (last word of store_inbox_messages, process_inbox_completions, recover_dead_letter and the
---               wh_inbox_state table), 119 (broker import), 050 (wh_dead_letters)
+-- Dependencies: 232 (last word of store_inbox_messages, and _wh_event_flags_from_names), 162 (last word of
+--               process_inbox_completions, recover_dead_letter and the wh_inbox_state table), 119 (broker import), 050 (wh_dead_letters)
 -- Objects: wh_inbox_state, store_inbox_messages, process_inbox_completions, recover_dead_letter,
 --          _wh_settle_recovered_dead_letter, _wh_settle_superseded_recovery
 -- Constants: the double-underscore tokens in this file (for example __SCHEMA__) are substituted at apply time (README rule 12).
@@ -75,7 +76,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_settle_recovered_dead_letter(UUID, BOOLEAN, TIMESTAMPTZ) IS
-  'Settles the dead letter a recovered message re-entered from (231, #1664): Recovered when the message was processed, HoldForReview with the outcome in operator_notes when a gate completed it unprocessed. Only a Recovering row is settled, so a repeated completion is a no-op.';
+  'Settles the dead letter a recovered message re-entered from (236, #1664): Recovered when the message was processed, HoldForReview with the outcome in operator_notes when a gate completed it unprocessed. Only a Recovering row is settled, so a repeated completion is a no-op.';
 
 -- store_inbox_messages: last word 162, with dead-letter recovery as one more arrival.
 -- <docs>fundamentals/work-coordinator/overview</docs>
@@ -104,8 +105,8 @@ DECLARE
   v_probed_streams UUID[] := ARRAY[]::UUID[];
   v_empty_inbox_streams UUID[] := ARRAY[]::UUID[];
   v_notify_inbox_streams UUID[] := ARRAY[]::UUID[];
-  v_is_new BOOLEAN;           -- 231: a first arrival, or a recovery that claimed its dead letter
-  v_claimed INTEGER;          -- 231: rows the recovery claim or the message insert touched
+  v_is_new BOOLEAN;           -- 236: a first arrival, or a recovery that claimed its dead letter
+  v_claimed INTEGER;          -- 236: rows the recovery claim or the message insert touched
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -122,23 +123,22 @@ BEGIN
       (elem->>'IsEvent')::BOOLEAN as is_event,
       -- 149: the effective priority the consumer classified; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
-      -- EventFlags (062): same robust read as store_outbox_messages so collective events delivered
-      -- cross-service via the inbox also route to the __collective__ sink.
+      -- EventFlags (062): same read as store_outbox_messages so collective events delivered
+      -- cross-service via the inbox also route to the __collective__ sink. 232 (#1612): every bit of a name list.
       CASE
         WHEN elem->>c_field_flags IS NULL OR elem->>c_field_flags = '' THEN 0
         WHEN elem->>c_field_flags ~ '^[0-9]+$' THEN (elem->>c_field_flags)::INTEGER
-        WHEN elem->>c_field_flags ILIKE '%Collective%' THEN 1
-        ELSE 0
+        ELSE __SCHEMA__._wh_event_flags_from_names(elem->>c_field_flags)
       END as flags,
       -- 146 (#727): a zero GUID is "unknown", not a producer; COALESCE below then falls back to this service.
       NULLIF((elem->>'SourceServiceId')::UUID, __EMPTY_UUID__::UUID) as source_service_id,
       (elem->>'SourceCommitSequence')::BIGINT as source_commit_sequence,
-      -- 231 (#1664): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
+      -- 236 (#1664): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
       (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from
     FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
   LOOP
-    -- 231 (#1664): dead-letter recovery re-enters a message HERE, as one more arrival, so every arrival rule
+    -- 236 (#1664): dead-letter recovery re-enters a message HERE, as one more arrival, so every arrival rule
     -- applies to it unchanged. Three things differ, and only for a row that names its dead letter:
     --   1. it claims that dead letter first (Recovering), in this transaction, so two recoveries of one row
     --      cannot both re-enter it, and a dead letter whose message is still in the inbox is left alone;
@@ -173,7 +173,7 @@ BEGIN
       SET observation_count = dedup.observation_count + 1
     RETURNING dedup.observation_count INTO v_observations;
 
-    -- 231: a recovery that claimed its dead letter stores the message whatever the count says.
+    -- 236: a recovery that claimed its dead letter stores the message whatever the count says.
     v_is_new := v_observations = 1 OR v_msg.recovered_from IS NOT NULL;
     IF v_is_new THEN
       IF v_msg.stream_id IS NOT NULL THEN
@@ -243,7 +243,7 @@ BEGIN
       v_msg.priority
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
-    -- 231: a recovery that lost the race to a concurrent arrival of the same id hands its dead letter back,
+    -- 236: a recovery that lost the race to a concurrent arrival of the same id hands its dead letter back,
     -- so the dead letter is never left Recovering behind a row that does not name it.
     GET DIAGNOSTICS v_claimed = ROW_COUNT;
     IF v_claimed = 0 AND v_msg.recovered_from IS NOT NULL THEN
@@ -271,7 +271,7 @@ BEGIN
       NULL,  -- No lease, immediately claimable by WorkCoordinatorPublisherWorker
       NULL,
       0,     -- Initial attempts
-      v_msg.recovered_from  -- 231: NULL for every arrival but a recovery
+      v_msg.recovered_from  -- 236: NULL for every arrival but a recovery
     )
     ON CONFLICT (message_id) DO NOTHING;
 
@@ -290,7 +290,7 @@ BEGIN
         ON CONFLICT (stream_id) DO NOTHING;
       END IF;
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, TRUE AS was_newly_created;
-    END IF;  -- end of the single-observation branch (231: or a claimed recovery)
+    END IF;  -- end of the single-observation branch (236: or a claimed recovery)
   END LOOP;
 
   IF cardinality(v_notify_inbox_streams) > 0 THEN
@@ -300,7 +300,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 231 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle.';
+  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle.';
 
 -- process_inbox_completions: last word 162, settling a recovered message's dead letter.
 -- <docs>fundamentals/work-coordinator/handler-commit</docs>
@@ -323,8 +323,8 @@ DECLARE
   v_current_status INTEGER;
   v_new_status INTEGER;
   v_stream_id UUID;
-  v_recovered_from UUID;   -- 231: the dead letter a recovered message re-entered from
-  v_is_event BOOLEAN;      -- 231
+  v_recovered_from UUID;   -- 236: the dead letter a recovered message re-entered from
+  v_is_event BOOLEAN;      -- 236
 BEGIN
   IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
 
@@ -337,7 +337,7 @@ BEGIN
     -- Get current status and stream_id
     -- 162: both columns are on the state table now (stream_id as an immutable copy), so the
     -- lookup never touches the wide row.
-    -- 231: and the recovery columns, from the same row this lookup already reads.
+    -- 236: and the recovery columns, from the same row this lookup already reads.
     SELECT ist.status, ist.stream_id, ist.recovered_from_dead_letter_id, ist.is_event
     INTO v_current_status, v_stream_id, v_recovered_from, v_is_event
     FROM __SCHEMA__.wh_inbox_state ist
@@ -350,7 +350,7 @@ BEGIN
 
     v_new_status := v_current_status | v_completion.status_flags;
 
-    -- 231 (#1664): a recovered message settles its dead letter when it completes. It was processed when the
+    -- 236 (#1664): a recovered message settles its dead letter when it completes. It was processed when the
     -- dispatch completed it as processed (EventStored), or when it is an event the inbox copy already appended
     -- (a gate after the copy declines only the receptors). Anything else is a gate completing it unprocessed.
     IF v_recovered_from IS NOT NULL THEN
@@ -399,7 +399,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_inbox_completions(JSONB, TIMESTAMPTZ, BOOLEAN) IS
-  'Applies inbox completions: deletes a row completed as EventStored, otherwise records the status (162: on wh_inbox_state). 231 (#1664): a recovered message settles the dead letter it re-entered from, Recovered when processed and HoldForReview with the outcome when a gate completed it unprocessed.';
+  'Applies inbox completions: deletes a row completed as EventStored, otherwise records the status (162: on wh_inbox_state). 236 (#1664): a recovered message settles the dead letter it re-entered from, Recovered when processed and HoldForReview with the outcome when a gate completed it unprocessed.';
 
 -- recover_dead_letter: last word 162, without the inbox and broker re-emits (they re-enter through store_inbox_messages).
 -- <docs>messaging/dead-letters</docs>
@@ -420,10 +420,10 @@ DECLARE
   v_event_data     JSONB;
   v_partition      INTEGER;
 BEGIN
-  -- 231 (#1664): an inbox or broker dead letter does not re-enter here. Recovery re-enters it through
+  -- 236 (#1664): an inbox or broker dead letter does not re-enter here. Recovery re-enters it through
   -- store_inbox_messages, as one more arrival built the way a delivery of the same envelope is built, so this
   -- function no longer has inbox INSERTs of its own to drift from that path. Such a row is left untouched (a
-  -- caller from before 231 sees "not recovered" and the row stays due for a recovery that re-enters it).
+  -- caller from before 236 sees "not recovered" and the row stays due for a recovery that re-enters it).
   IF EXISTS (
     SELECT 1 FROM __SCHEMA__.wh_dead_letters dl
     WHERE dl.dead_letter_id = p_dead_letter_id AND dl.source_table IN ('wh_inbox', 'broker')
@@ -499,7 +499,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.recover_dead_letter(UUID) IS
-  'Re-emits an outbox or perspective dead letter into its source table with attempts reset and marks it Recovered (051; 151: at background priority; 162). 231 (#1664): an inbox or broker dead letter is declined here and left due: recovery re-enters it through store_inbox_messages, and its completion settles it.';
+  'Re-emits an outbox or perspective dead letter into its source table with attempts reset and marks it Recovered (051; 151: at background priority; 162). 236 (#1664): an inbox or broker dead letter is declined here and left due: recovery re-enters it through store_inbox_messages, and its completion settles it.';
 
 -- <docs>operations/dead-letter-queue/transport-recovery</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredBrokerDeadLetterEventStoreTests.cs:ARecoveredEvent_RefusedByTheInboxCopy_LeavesItsDeadLetterNotRecovered_WithTheOutcomeRecordedAsync</tests>
@@ -507,7 +507,7 @@ COMMENT ON FUNCTION __SCHEMA__.recover_dead_letter(UUID) IS
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_settle_superseded_recovery() RETURNS TRIGGER AS $$
 BEGIN
   -- A recovered message the inbox dead-letters again: NEW holds its custody now, so the row it was recovered from
-  -- (Recovering while the message is in flight, or Recovered by a recovery from before 231) is settled for review
+  -- (Recovering while the message is in flight, or Recovered by a recovery from before 236) is settled for review
   -- with the outcome recorded. The operator hold keeps a cohort release from re-driving the message a second time
   -- while NEW holds it.
   UPDATE __SCHEMA__.wh_dead_letters prior
@@ -527,7 +527,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_settle_superseded_recovery() IS
-  'AFTER INSERT trigger fn on wh_dead_letters for an inbox source (231, #1664): a recovered message the inbox dead-letters again settles the row it was recovered from as HoldForReview under an operator hold, naming the new dead letter in operator_notes, so Recovered never reads true of a message whose recovery did not complete.';
+  'AFTER INSERT trigger fn on wh_dead_letters for an inbox source (236, #1664): a recovered message the inbox dead-letters again settles the row it was recovered from as HoldForReview under an operator hold, naming the new dead letter in operator_notes, so Recovered never reads true of a message whose recovery did not complete.';
 
 DROP TRIGGER IF EXISTS trg_wh_dead_letters_settle_superseded_recovery ON __SCHEMA__.wh_dead_letters;
 CREATE TRIGGER trg_wh_dead_letters_settle_superseded_recovery

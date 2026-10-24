@@ -523,7 +523,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into
   the event store never took it, so the row was dispatched, completed and deleted with nothing appended, its id
   recorded as seen, and its dead letter already marked Recovered. Recovery now builds the row with the transport
-  receive path's own builder and classification and stores it with `store_inbox_messages` (migration 231), so
+  receive path's own builder and classification and stores it with `store_inbox_messages` (migration 236), so
   `is_event`, the stream, flags, scope, priority and the producer's identity are a delivery's. A recovered row differs
   only in that it claims its dead letter, is not dropped as a duplicate (its observation is still counted), and names
   the dead letter on its work-state row (`InboxMessage.RecoveredFromDeadLetterId`). The dead letter stays Recovering

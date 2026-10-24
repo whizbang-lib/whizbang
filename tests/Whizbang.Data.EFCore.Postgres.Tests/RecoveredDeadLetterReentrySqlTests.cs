@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// its row names the dead letter), that everything else is the delivery's, and how the completion settles it.
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/231_RecoveredEventsReachTheEventStore.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/236_RecoveredEventsReachTheEventStore.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreDeadLetterRecoveryService.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
