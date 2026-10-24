@@ -131,11 +131,17 @@ a table saying which tier each class got and why every higher tier was skipped.
 
 | Class | Pool labels | Jobs | Notes |
 |---|---|---|---|
-| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | GitHub-hosted on every push: a push run's build is what is packed, published and attested |
-| `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Linux-only steps (bash, `find`, `sha256sum`); the suites run the Linux x64 build, whose test hosts are x64 executables |
+| `any-os` | `self-hosted`, `whizbang` | Build · Check formatting, Build · No-op rebuild does no work, Test · Unit, Test · Component, Test · Pipeline scripts | Any OS and architecture. The suites run the build with `dotnet test --test-modules` on the framework-dependent `.dll` (no RID, nothing native beyond what NuGet ships per RID), so the Linux build runs on Windows X64 and ARM64 and on macOS. Every step is pwsh or an action |
+| `compile` | `self-hosted`, `whizbang`, `Linux`, `X64` | Build · Compile | Its determinism manifest is compared byte for byte with the GitHub-hosted verify-rebuild, and its build is what the suites and pack consume. GitHub-hosted on every push: a push run's build is what is packed, published and attested |
+| `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` need a Linux Docker host; their steps are still bash |
 | `analyze` | none: never the pool | Analyze · Quality | Waits up to hours for the suites' coverage; on a pool machine it would hold the machine the suites need |
-| `linux-docker` | `self-hosted`, `whizbang`, `Linux`, `X64`, `docker` | every integration suite (PostgreSQL, InMemory, RabbitMQ, Service Bus, Azure Blob, Integration) | Testcontainers and `docker run` |
-| `any-os` | `self-hosted`, `whizbang` | none yet | For a job whose steps are portable (pwsh only, no Linux paths) and that does not run the Linux build |
+| `linux` | `self-hosted`, `whizbang`, `Linux`, `X64` | none today | For a Linux-only job with no containers |
+
+**Coverage from another checkout.** The build's coverage source-root mappings name the build machine's
+checkout. A suite that checks out anywhere else (a team machine, Windows, macOS) rewrites them first
+with `.github/scripts/Update-CoverageSourceRoots.ps1`, or the collector writes empty reports while every
+test passes; `.github/scripts/Test-CoverageCollected.ps1` fails such a suite. Reports from Windows carry
+Windows paths; the quality gate's merge normalizes them to repository-relative paths.
 
 Not routed, always `ubuntu-latest`: the planning and gate jobs (small, and the gate must not depend on a
 machine), `Build · Generator and analyzer timing` (its thresholds were measured on GitHub-hosted runners),
@@ -183,8 +189,12 @@ X64 class not an `-arm` one. A label that does not fit skips the tier for that c
   caches and anything written outside the workspace stay.
 - Several runner instances on one machine each get their own work directory, and the container ports
   the suites publish must not collide between them.
-- Install PowerShell 7, Git and, for `docker`, Docker with the runner account allowed to use it. The
-  `linux` and `linux-docker` jobs also use bash and GNU coreutils.
+- Install PowerShell 7 and Git and, for `docker`, Docker with the runner account allowed to use it. The
+  `linux-docker` and `compile` jobs also use bash and GNU coreutils. Pester 5 is installed by the job
+  when the machine lacks it. On Windows, enable long paths (`LongPathsEnabled` in the registry, and
+  `git config --system core.longpaths true`): the test output paths are deep.
+- A machine that is not wiped between jobs is fine for the `any-os` jobs: the checkout's clean removes
+  the previous job's build and test results, and `dotnet-coverage` is installed with `update`.
 - Register it in the runner group, then add `whizbang` (and `docker` where it applies). Watch one run's
   Pick runners summary to confirm the class it serves.
 

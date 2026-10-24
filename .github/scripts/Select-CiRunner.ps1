@@ -109,9 +109,11 @@ $script:BlacksmithVariables = @('CI_BLACKSMITH_RUNNER', 'CI_BLACKSMITH_RUNNER_AN
   'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_ANALYZE', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER', 'CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED')
 
 <#
-    The job classes, in output order. Labels pick pool machines; a machine is never named. Linux classes
-    carry X64 because their jobs run, or produce, the Linux x64 build (its test hosts are x64 executables).
-    Os and X64 are what a Blacksmith label must fit. HostedOn lists the events whose jobs of the class skip
+    The job classes, in output order. Labels pick pool machines; a machine is never named. any-os jobs
+    run the framework-dependent build (dotnet test --test-modules on the .dll) or build from source, so
+    any OS and architecture serves them. compile is Linux X64 because its determinism manifest is
+    compared byte for byte with the GitHub-hosted x64 rebuild; linux and linux-docker are kept to X64, the
+    architecture their bash steps and service images are verified on. Os and X64 are what a Blacksmith label must fit. HostedOn lists the events whose jobs of the class skip
     tiers 1 and 2. Pool is false for a class whose job waits on other jobs of the run (the analysis waits
     up to hours for the suites' coverage): on a pool machine it would hold the machine those jobs need.
 #>
