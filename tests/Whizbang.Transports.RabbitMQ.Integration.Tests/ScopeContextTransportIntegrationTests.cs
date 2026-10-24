@@ -102,10 +102,9 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     var envelope = _createEnvelopeWithScope("user-123", "tenant-456");
     var destination = _createUniqueDestination();
 
-    // Use MessageAwaiter to capture the full envelope
+    // Accept ONLY the envelope this test published, so a stray message cannot satisfy the wait.
     var awaiter = new MessageAwaiter<IMessageEnvelope>(
-      e => e // Capture the entire envelope
-    );
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       destination,
@@ -113,14 +112,15 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
+      // SubscribeAsync returns once the queue is declared, bound and consuming, so the message
+      // published next is queued for this subscriber; no settle wait.
 
       // Act
       await _transport.PublishAsync(envelope, _toPublishDestination(destination), cancellationToken: cancellationToken);
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
-      await Assert.That(received).IsNotNull();
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
 
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNotNull()
@@ -156,13 +156,15 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
+      // SubscribeAsync returns once the queue is declared, bound and consuming, so the message
+      // published next is queued for this subscriber; no settle wait.
 
       // Act
       await _transport.PublishAsync(envelope, _toPublishDestination(destination), cancellationToken: cancellationToken);
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNotNull()
         .Because("SYSTEM scope should survive RabbitMQ round-trip");
@@ -208,13 +210,15 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
+      // SubscribeAsync returns once the queue is declared, bound and consuming, so the message
+      // published next is queued for this subscriber; no settle wait.
 
       // Act
       await _transport.PublishAsync(envelope, _toPublishDestination(destination), cancellationToken: cancellationToken);
 
       // Assert
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
       var scope = received.GetCurrentScope();
       await Assert.That(scope).IsNull()
         .Because("Envelope without ScopeDelta should have null scope after round-trip");
@@ -255,6 +259,7 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
       await _transport.PublishAsync(envelope, _toPublishDestination(destination), cancellationToken: cancellationToken);
 
       var received = await awaiter.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+      await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId);
       await Assert.That(received.DispatchContext.Mode).IsEqualTo(mode)
         .Because("whether the sender already handled the copy must survive the broker");
       await Assert.That(received.DispatchContext.LocalDeferred).IsEqualTo(localDeferred)

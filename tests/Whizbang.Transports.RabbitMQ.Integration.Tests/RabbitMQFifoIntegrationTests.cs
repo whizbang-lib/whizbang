@@ -108,8 +108,8 @@ public class RabbitMQFifoIntegrationTests {
     );
 
     try {
-      // Brief delay for queue binding to propagate
-      await Task.Delay(500, cancellationToken);
+      // No settle wait: SubscribeAsync returns only after the durable queue is declared and bound
+      // (noWait: false), so every message published from here on is queued for this consumer.
 
       // Act — publish 50 messages
       for (var i = 0; i < 50; i++) {
@@ -154,7 +154,8 @@ public class RabbitMQFifoIntegrationTests {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
+      // SubscribeAsync has already declared and bound the durable queue, so nothing published
+      // from here on can be lost; no settle wait is needed.
 
       // Build batch items
       var bulkItems = new List<BulkPublishItem>(50);
