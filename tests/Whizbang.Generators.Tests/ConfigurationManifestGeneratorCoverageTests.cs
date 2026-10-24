@@ -171,7 +171,7 @@ public class ConfigurationManifestGeneratorCoverageTests {
     var (manifest, errors) = Run(source);
 
     await Assert.That(errors).IsEmpty();
-    await Assert.That(manifest).Contains(Requirement("broker", "delayed_exchange", "Delayed delivery", "Whizbang:Attrs:Delay", null))
+    await Assert.That(manifest).Contains(Requirement("broker", "delayed_exchange", "Delayed delivery", "Whizbang:Attrs:Delay", null, null))
       .Because("any provider can be named, and a section-valued setting is required under the section's key");
     await Assert.That(manifest).Contains("\"Whizbang:Attrs:Flag\", \"Whizbang:Attrs:Mode\", \"Whizbang:Attrs:Unnamed\", \"Whizbang:Attrs:Delay:Seconds\"")
       .Because("a key name attribute without a name leaves the property's own name");
@@ -204,6 +204,71 @@ public class ConfigurationManifestGeneratorCoverageTests {
     await Assert.That(errors).IsNotEmpty().Because("each attribute is missing a required argument");
     await Assert.That(manifest).Contains(Binding("Whizbang:Editing", "global::App.Options") + " [\"Whizbang:Editing:Half\"], []")
       .Because("an attribute without its arguments renames nothing and requires nothing, and the generator still runs");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task DeclaredDefaults_AreReadFromConstantInitializersAndTypeDefaultsAsync() {
+    const string source = """
+      using Microsoft.Extensions.Configuration;
+      using Whizbang.Core.Capabilities;
+      namespace App;
+      public enum Mode {
+        None,
+        [RequiresCapability("p", "mode")]
+        Squeeze,
+      }
+      public enum Gapped {
+        [RequiresCapability("p", "gapped")]
+        First = 1,
+      }
+      public sealed class Options {
+        public const int THREE = 3;
+        public Mode Initialized { get; set; } = Mode.Squeeze;
+        public Mode Uninitialized { get; set; }
+        public Gapped NoZeroMember { get; set; }
+        public Mode NotAMember { get; set; } = (Mode)7;
+        [RequiresCapability("p", "on")]
+        public bool On { get; set; } = true;
+        [RequiresCapability("p", "nullable-bool")]
+        public bool? NullableBool { get; set; }
+        [RequiresCapability("p", "name")]
+        public string Name { get; set; } = "a\"b";
+        [RequiresCapability("p", "count")]
+        public int Count { get; set; } = THREE;
+        [RequiresCapability("p", "uncounted")]
+        public int Uncounted { get; set; }
+        [RequiresCapability("p", "delay")]
+        public System.TimeSpan Delay { get; set; } = System.TimeSpan.FromSeconds(1);
+      }
+      public static class Binding {
+        public static void Apply(IConfiguration configuration, Options options) =>
+          configuration.GetSection("D").Bind(options);
+      }
+      """;
+
+    var (manifest, errors) = Run(source);
+
+    await Assert.That(errors).IsEmpty();
+    await Assert.That(manifest).Contains(Requirement("p", "mode", "Squeeze", "D:Initialized", "Squeeze", "Squeeze"))
+      .Because("a constant enum initializer is the member it names");
+    await Assert.That(manifest).Contains(Requirement("p", "mode", "Squeeze", "D:Uninitialized", "Squeeze", "None"))
+      .Because("an enum with no initializer defaults to its zero member");
+    await Assert.That(manifest).Contains(Requirement("p", "gapped", "First", "D:NoZeroMember", "First", null))
+      .Because("an enum with no zero member has no member to default to");
+    await Assert.That(manifest).Contains(Requirement("p", "mode", "Squeeze", "D:NotAMember", "Squeeze", null))
+      .Because("an initializer naming no member has no member to default to");
+    await Assert.That(manifest).Contains(Requirement("p", "on", "On", "D:On", "true", "true"));
+    await Assert.That(manifest).Contains(Requirement("p", "nullable-bool", "NullableBool", "D:NullableBool", "true", null))
+      .Because("a nullable setting with no initializer is unset");
+    await Assert.That(manifest).Contains("\"D:Name\", null, \"a\\\"b\")")
+      .Because("a string default is emitted as an escaped literal");
+    await Assert.That(manifest).Contains(Requirement("p", "count", "Count", "D:Count", null, "3"))
+      .Because("a constant initializer, a named constant included, is its value in invariant form");
+    await Assert.That(manifest).Contains(Requirement("p", "uncounted", "Uncounted", "D:Uncounted", null, null))
+      .Because("only a bool or an enum has a default worth stating without an initializer");
+    await Assert.That(manifest).Contains(Requirement("p", "delay", "Delay", "D:Delay", null, null))
+      .Because("an initializer that is not a constant cannot be read at compile time");
   }
 
   [Test]

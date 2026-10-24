@@ -39,10 +39,10 @@ public class RequiresCapabilityAttributeTests {
 
   [Test]
   public async Task Requirement_ReadsAsItsCapabilityKeyAndValueAsync() {
-    var onValue = new CapabilityRequirement(new CapabilityId("postgres", "pg_squeeze"), "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze");
-    var onSet = new CapabilityRequirement(new CapabilityId("postgres", "pg_stat_statements"), "Advice", "Whizbang:Advisor:ReadStatements", null);
+    var onValue = new CapabilityRequirement(new CapabilityId("postgres", "pg_squeeze"), "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze", "None");
+    var onSet = new CapabilityRequirement(new CapabilityId("postgres", "pg_stat_statements"), "Advice", "Whizbang:Advisor:Endpoint", null, null);
 
     await Assert.That(onValue.ToString()).IsEqualTo("postgres/pg_squeeze: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze)");
-    await Assert.That(onSet.ToString()).IsEqualTo("postgres/pg_stat_statements: Advice (Whizbang:Advisor:ReadStatements)");
+    await Assert.That(onSet.ToString()).IsEqualTo("postgres/pg_stat_statements: Advice (Whizbang:Advisor:Endpoint)");
   }
 }

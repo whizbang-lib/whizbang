@@ -3,6 +3,8 @@
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -74,6 +76,22 @@ public class CapabilityServiceCollectionExtensionsTests {
     await Assert.That(provider.GetServices<IStartupStep>().OfType<CapabilitiesStartupStep>().Count()).IsEqualTo(1);
     await Assert.That(((CapabilityRegistry)registry).Metrics).IsNotNull()
       .Because("registration creates the gauge with the registry");
+  }
+
+  [Test]
+  public async Task Registers_TheManifestSource_TheEnforcer_AndOneHealthEntry_HoweverOftenCalledAsync() {
+    var services = _services();
+    services.AddWhizbangCapabilities();
+    services.AddWhizbangCapabilities();
+
+    await using var provider = services.BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<ICapabilityRequirementSource>().OfType<ConfigurationManifestRequirementSource>().Count()).IsEqualTo(1);
+    await Assert.That(services.Count(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
+      && d.Lifetime == ServiceLifetime.Singleton)).IsEqualTo(1).Because("one enforcer, however often capabilities are added");
+    var registrations = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<HealthCheckServiceOptions>>().Value.Registrations;
+    var entry = registrations.Single(r => r.Name == CapabilityHealthCheck.NAME);
+    await Assert.That(entry.Factory(provider)).IsTypeOf<CapabilityHealthCheck>();
   }
 
   [Test]

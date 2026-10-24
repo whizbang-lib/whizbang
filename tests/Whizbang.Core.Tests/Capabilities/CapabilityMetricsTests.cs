@@ -28,8 +28,11 @@ public class CapabilityMetricsTests {
   private sealed class FixedRegistry(IReadOnlyList<CapabilityStatus> statuses) : ICapabilityRegistry {
     public IReadOnlyList<ICapabilityProvider> Providers => [];
     public IReadOnlyList<CapabilityStatus> Statuses { get; set; } = statuses;
+    public CapabilityVerdict Verdict { get; private set; } = CapabilityVerdict.Empty;
     public CapabilityState GetState(CapabilityId id, string scope) => CapabilityState.Unknown;
     public Task RefreshAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public void PublishVerdict(CapabilityVerdict verdict) => Verdict = verdict;
+    public Task<CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken) => Task.FromResult(Verdict);
   }
 
   private static WhizbangMetrics _whizbangMetrics(ServiceProvider provider) =>
@@ -50,6 +53,25 @@ public class CapabilityMetricsTests {
     await Assert.That(series.All(s => s.Value == 1)).IsTrue();
     await Assert.That(series.Select(s => $"{s.Tags["provider"]}/{s.Tags["capability"]}/{s.Tags["scope"]}/{s.Tags["state"]}").ToArray())
       .IsEquivalentTo(_series);
+    await Assert.That(series.All(s => (string?)s.Tags["required"] == "none"))
+      .IsTrue().Because("before the verdict, nothing is known to require anything");
+  }
+
+  [Test]
+  public async Task Gauge_TagsEachSeriesWithHowTheVerdictRequiresItAsync() {
+    await using var provider = new ServiceCollection().AddMetrics().BuildServiceProvider();
+    var squeeze = new CapabilityStatus(FakeCapabilityProvider.Describe("postgres", "pg_squeeze"), "orders-db", CapabilityState.Ready, null, null, null);
+    var vector = new CapabilityStatus(FakeCapabilityProvider.Describe("postgres", "vector"), "orders-db", CapabilityState.Ready, null, null, null);
+    var registry = new FixedRegistry([squeeze, vector]);
+    var requirement = new CapabilityRequirement(squeeze.Descriptor.Id, "Online table rewrite", "W:Strategy", "PgSqueeze", "None");
+    registry.PublishVerdict(CapabilityVerdict.Evaluate(registry.Statuses,
+      [new ActiveCapabilityRequirement(requirement, "W:Strategy", "PgSqueeze", CapabilityActivation.Explicit)]));
+    var metrics = new CapabilityMetrics(_whizbangMetrics(provider), registry);
+
+    var series = GaugeRecorder.Collect(metrics.CapabilityState);
+
+    await Assert.That(series.Select(s => $"{s.Tags["capability"]}={s.Tags["required"]}").ToArray())
+      .IsEquivalentTo(["pg_squeeze=explicit", "vector=none"]);
   }
 
   [Test]

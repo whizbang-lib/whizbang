@@ -48,8 +48,8 @@ public class ConfigurationManifestGeneratorTests {
     await Assert.That(errors).IsEmpty().Because("the generated manifest must compile in the assembly that binds the section");
     await Assert.That(manifest).Contains(Binding("Whizbang:Advisor", "global::App.AdvisorOptions"));
     await Assert.That(manifest).Contains("\"Whizbang:Advisor:ReadStatements\", \"Whizbang:Advisor:Limit\"");
-    await Assert.That(manifest).Contains(Requirement("postgres", "pg_stat_statements", "Expensive predicate advice", "Whizbang:Advisor:ReadStatements", null))
-      .Because("an attributed setting requires the capability under its own key, with no value: it is on when set");
+    await Assert.That(manifest).Contains(Requirement("postgres", "pg_stat_statements", "Expensive predicate advice", "Whizbang:Advisor:ReadStatements", "true", "false"))
+      .Because("an attributed bool setting requires the capability under its own key when it is true; with no initializer it defaults to false");
   }
 
   [Test]
@@ -79,10 +79,10 @@ public class ConfigurationManifestGeneratorTests {
 
     await Assert.That(errors).IsEmpty();
     await Assert.That(manifest).Contains("\"Whizbang:Workers:Maintenance:TableRewriteStrategy\"");
-    await Assert.That(manifest).Contains(Requirement("postgres", "pg_squeeze", "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze"))
+    await Assert.That(manifest).Contains(Requirement("postgres", "pg_squeeze", "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze", null))
       .Because("an attributed enum member requires the capability when its key is set to that member");
-    await Assert.That(manifest).Contains(Requirement("postgres", "pg_repack", "PgRepack", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgRepack"))
-      .Because("a requirement with no feature named is named after the member that declares it");
+    await Assert.That(manifest).Contains(Requirement("postgres", "pg_repack", "PgRepack", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgRepack", null))
+      .Because("a requirement with no feature named is named after the member that declares it; a nullable setting with no initializer has no default");
   }
 
   [Test]
@@ -118,7 +118,7 @@ public class ConfigurationManifestGeneratorTests {
       .Because("a chain of GetSection calls with constant keys, literal or const, is one section path");
     await Assert.That(manifest).Contains("\"Whizbang:Ledger:Partitioning:Managed\", \"Whizbang:Ledger:Retention:Age\"")
       .Because("a nested options object is a nested section; a renamed property is read under its configured name; a TimeSpan is a value, not a section");
-    await Assert.That(manifest).Contains(Requirement("postgres", "pg_partman", "Partition management", "Whizbang:Ledger:Partitioning:Managed", null));
+    await Assert.That(manifest).Contains(Requirement("postgres", "pg_partman", "Partition management", "Whizbang:Ledger:Partitioning:Managed", "true", "false"));
   }
 
   [Test]
@@ -152,7 +152,7 @@ public class ConfigurationManifestGeneratorTests {
     await Assert.That(manifest).Contains(
       "\"Whizbang:Storage:Databases:*:Vectors\", \"Whizbang:Storage:Limits:*\", \"Whizbang:Storage:Names:*\", \"Whizbang:Storage:Tags:*\"")
       .Because("a dictionary entry or list item is a name the consumer chooses, recorded as '*'");
-    await Assert.That(manifest).Contains(Requirement("postgres", "vector", "Vector fields", "Whizbang:Storage:Databases:*:Vectors", null));
+    await Assert.That(manifest).Contains(Requirement("postgres", "vector", "Vector fields", "Whizbang:Storage:Databases:*:Vectors", "true", "false"));
   }
 
   [Test]
@@ -225,11 +225,12 @@ public class ConfigurationManifestGeneratorTests {
     await Assert.That(consumerErrors).IsEmpty()
       .Because("both assemblies carry a generated manifest class, and the consumer must still compile against the library");
     await Assert.That(libraryManifest).Contains("\"ThirdParty.Storage\"");
-    await Assert.That(libraryManifest).Contains(Requirement("postgres", "pg_squeeze", "Online rewrite", "ThirdParty:Rewrite:Mode", "Squeeze"));
+    await Assert.That(libraryManifest).Contains(Requirement("postgres", "pg_squeeze", "Online rewrite", "ThirdParty:Rewrite:Mode", "Squeeze", "Off"))
+      .Because("an enum setting with no initializer defaults to its zero member");
     await Assert.That(consumerManifest).Contains("\"Consumer.App\"");
     await Assert.That(consumerManifest).Contains(Binding("Consumer:Rewrite", "global::ThirdParty.Storage.RewriteOptions"));
-    await Assert.That(consumerManifest).Contains(Requirement("postgres", "pg_squeeze", "Online rewrite", "Consumer:Rewrite:Mode", "Squeeze"))
-      .Because("an options type from a referenced assembly carries its attributes in metadata");
+    await Assert.That(consumerManifest).Contains(Requirement("postgres", "pg_squeeze", "Online rewrite", "Consumer:Rewrite:Mode", "Squeeze", null))
+      .Because("an options type from a referenced assembly carries its attributes in metadata, but not its initializers, so its default is unknown");
     await Assert.That(consumerManifest).DoesNotContain("ThirdParty:Rewrite")
       .Because("each assembly registers only the sections it binds itself");
   }
@@ -261,8 +262,10 @@ public class ConfigurationManifestGeneratorTests {
     $"new global::Whizbang.Core.Configuration.ConfigurationBinding(\"{section}\", typeof({optionsType}),";
 
   /// <summary>The generated text of one requirement.</summary>
-  internal static string Requirement(string provider, string name, string feature, string key, string? value) =>
+  internal static string Requirement(string provider, string name, string feature, string key, string? value, string? @default) =>
     "new global::Whizbang.Core.Capabilities.CapabilityRequirement("
     + $"new global::Whizbang.Core.Capabilities.CapabilityId(\"{provider}\", \"{name}\"), \"{feature}\", \"{key}\", "
-    + (value is null ? "null" : $"\"{value}\"") + ")";
+    + _literal(value) + ", " + _literal(@default) + ")";
+
+  private static string _literal(string? value) => value is null ? "null" : $"\"{value}\"";
 }

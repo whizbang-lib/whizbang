@@ -26,10 +26,10 @@ namespace Whizbang.Core.Tests.Configuration;
 /// <docs>operations/infrastructure/capabilities#declaring-a-requirement</docs>
 public sealed class ConfigurationManifestRegistryTests {
   private static readonly CapabilityRequirement _squeeze =
-    new(new CapabilityId("postgres", "pg_squeeze"), "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze");
+    new(new CapabilityId("postgres", "pg_squeeze"), "Online table rewrite", "Whizbang:Workers:Maintenance:TableRewriteStrategy", "PgSqueeze", "None");
 
   private static readonly CapabilityRequirement _partman =
-    new(new CapabilityId("postgres", "pg_partman"), "Partition management", "Whizbang:Ledger:Partitioning:Managed", null);
+    new(new CapabilityId("postgres", "pg_partman"), "Partition management", "Whizbang:Ledger:Partitioning:Managed", "true", "false");
 
   private static ConfigurationManifest _manifest(string assembly, params CapabilityRequirement[] requirements) =>
     new(assembly, [new ConfigurationBinding("Whizbang:Section", typeof(ConfigurationManifestRegistryTests), ["Whizbang:Section:Key"], requirements)]);
@@ -72,7 +72,7 @@ public sealed class ConfigurationManifestRegistryTests {
 
   [Test]
   public async Task Requirements_AreEveryBindingsRequirementsOnceAcrossManifestsAsync() {
-    var shared = new CapabilityRequirement(new CapabilityId("broker", "tests_shared"), "Shared feature", "Tests:Shared", null);
+    var shared = new CapabilityRequirement(new CapabilityId("broker", "tests_shared"), "Shared feature", "Tests:Shared", null, null);
     ConfigurationManifestRegistry.Register(_manifest("Tests.Registry.Requirements.One", shared, _squeeze));
     ConfigurationManifestRegistry.Register(_manifest("Tests.Registry.Requirements.Two", shared));
 
@@ -108,9 +108,9 @@ public sealed class ConfigurationManifestRegistryTests {
 
     await Assert.That(options.Search).IsTrue();
     await Assert.That(manifest.Bindings.Single(b => b.Section == "Tests:ManifestFixture").Requirements).Contains(
-      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Fixture search", "Tests:ManifestFixture:Search", null));
+      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Fixture search", "Tests:ManifestFixture:Search", "true", "false"));
     await Assert.That(ConfigurationManifestRegistry.Requirements).Contains(
-      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Fixture search", "Tests:ManifestFixture:Search", null));
+      new CapabilityRequirement(new CapabilityId("postgres", "pg_trgm"), "Fixture search", "Tests:ManifestFixture:Search", "true", "false"));
   }
 }
 
