@@ -3885,6 +3885,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var messageId = reader.GetGuid(0);
       var envelope = JsonSerializer.Deserialize(reader.GetString(5), envelopeTypeInfo) as IMessageEnvelope<JsonElement>
         ?? throw new InvalidOperationException($"Failed to deserialize envelope for coalesce-pending message {messageId}.");
+      MessageParseDiagnostics.Record(messageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
       EnvelopeMetadata metadata;
       try {
         metadata = JsonSerializer.Deserialize(reader.GetString(6), metadataTypeInfo) as EnvelopeMetadata
@@ -4465,6 +4466,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // (e.g., IEvent instead of JsonElement). Bypass with direct parse (AOT-safe).
       payload = JsonElement.Parse(row.EventData);
     }
+    MessageParseDiagnostics.Record(row.EventId, MessageParseSource.EventStoreRead, MessageParseKind.Envelope);
 
     // Restore security context from scope column so _establishSecurityContextAsync can extract tenant/user.
     // Scope uses PerspectiveScope short keys: "t" = tenant, "u" = user.

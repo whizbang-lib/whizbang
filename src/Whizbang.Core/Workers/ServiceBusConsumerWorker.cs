@@ -359,6 +359,7 @@ public partial class ServiceBusConsumerWorker(
       // Type to ask about. Loss is bounded: PostInbox below already deserializes
       // unconditionally, so worst-case we go from 1 to 2 parses per message.
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
       // Slice 4-symmetry gate: skip PreInbox firing when neither stage has receptors —
@@ -428,6 +429,7 @@ public partial class ServiceBusConsumerWorker(
 
     foreach (var work in myWork) {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = LifecycleStage.PostInboxDetached,

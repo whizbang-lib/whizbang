@@ -175,6 +175,9 @@ public sealed partial class MultiStreamCommandWorker : BackgroundService, INotif
     var previous = ScopeContextAccessor.CurrentContext;
     var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     // The command's scope, and only it: a run sent with none is worked with none, not under the worker's own.
+    if (!string.IsNullOrEmpty(item.Scope)) {
+      MessageParseDiagnostics.Record(item.RunId, MessageParseSource.MultiStreamRun, MessageParseKind.Scope);
+    }
     ScopeContextAccessor.CurrentContext = MultiStreamScope.Restore(item.Scope);
     ScopeContextAccessor.CurrentInitiatingContext = null;
     try {
