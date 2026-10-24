@@ -276,7 +276,8 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
-      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>()));
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>(),
+      sp.GetRequiredService<TimeProvider>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
     // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on

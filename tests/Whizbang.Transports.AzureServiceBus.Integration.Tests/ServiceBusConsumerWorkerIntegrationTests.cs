@@ -160,7 +160,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var state = new Whizbang.Core.Startup.StartupPipelineState();
     await new Whizbang.Core.Startup.StartupPipelineRunner(steps: [], observers: [state], dutyElector: NullDutyElector.Instance).RunAsync(CancellationToken.None);
     var signal = new Whizbang.Core.Startup.StartupReadySignal();
-    var readyService = new Whizbang.Core.Startup.StartupReadyService(pipelineState: state, signal: signal, contributors: [worker], logger: NullLogger<StartupReadyService>.Instance);
+    var readyService = new Whizbang.Core.Startup.StartupReadyService(pipelineState: state, signal: signal, contributors: [worker], logger: NullLogger<StartupReadyService>.Instance, timeProvider: TimeProvider.System);
 
     var startedTask = readyService.StartedAsync(CancellationToken.None);
     await Task.Delay(TimeSpan.FromSeconds(2));
