@@ -279,7 +279,7 @@ public class StartupReadyCompositeTests {
 
   [Test]
   public async Task TransportConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
-    var gate = new SchemaReadyGate();
+    var gate = new EnteredSchemaGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
@@ -308,8 +308,10 @@ public class StartupReadyCompositeTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // The worker is provably parked at the schema gate. Readiness is read after that point, so a
+    // contribution already settled comes back completed and fails this every time.
+    await gate.Entered;
     var waiting = contributor.WaitForContributorReadyAsync(cts.Token);
-    await Task.Delay(200);
     await Assert.That(waiting.IsCompleted).IsFalse()
       .Because("the worker is held at the schema gate, so its contribution must be too");
 
@@ -346,6 +348,24 @@ public class StartupReadyCompositeTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>A real schema gate that also says when a worker has started waiting on it.</summary>
+  private sealed class EnteredSchemaGate : ISchemaReadyGate {
+    private readonly SchemaReadyGate _inner = new();
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once a worker has reached the gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _inner.IsReady;
+
+    public void MarkReady() => _inner.MarkReady();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _inner.WaitForReadyAsync(cancellationToken);
+    }
   }
 
   private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {

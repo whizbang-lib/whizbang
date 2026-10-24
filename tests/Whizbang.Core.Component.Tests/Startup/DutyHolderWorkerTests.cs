@@ -496,10 +496,15 @@ public class DutyHolderWorkerTests {
     time.Advance(new RoleAssignmentOptions().RenewInterval);
     await Assert.That(await elector.Attempted.Task).IsEqualTo(2);
 
-    // A release of some other role is not ours to act on; a release of ours re-votes at once.
+    // A release of some other role is not ours to act on; a release of ours re-votes at once. The
+    // wake request is raised on the notifying thread, so whether a release woke the loop is known
+    // the moment OnNotification returns: no wait, and a wrong wake fails here every time.
     elector.Attempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    var wakes = 0;
+    worker.OnWakeRequested += () => Interlocked.Increment(ref wakes);
     notify.Subscription!.OnNotification("some-other-role");
-    await Assert.That(elector.Attempts).IsEqualTo(2);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(0)
+      .Because("a release of a role this worker holds no work for must not wake a pass");
     await Assert.That(notify.Subscription.ChannelName).IsEqualTo(DutyHolderWorker.RELEASE_CHANNEL);
     // The grant is held back between the attempt and its processing, which is the window #1707 raced:
     // "an attempt was made" is not "the role is held". Only the held-role signal proves the latter.
@@ -508,6 +513,7 @@ public class DutyHolderWorkerTests {
     worker.OnBecameHolder += role => becameHolder.TrySetResult(role);
     elector.Proceed = proceed.Task;
     notify.Subscription.OnNotification(ROLE);
+    await Assert.That(Volatile.Read(ref wakes)).IsEqualTo(1).Because("a release of our role wakes the next pass");
     await Assert.That(await elector.Attempted.Task).IsEqualTo(3);
     await Assert.That(becameHolder.Task.IsCompleted).IsFalse()
       .Because("the vote's answer has not reached the worker yet, so nothing is held");
