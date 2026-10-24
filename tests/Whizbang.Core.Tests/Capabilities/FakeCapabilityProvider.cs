@@ -18,6 +18,9 @@ internal sealed class FakeCapabilityProvider(string name, IReadOnlyList<string> 
   /// <summary>The state each capability reads, by name; anything absent reads Ready.</summary>
   public Dictionary<string, CapabilityState> States { get; } = new(StringComparer.Ordinal);
 
+  /// <summary>The version each capability could be upgraded to, by name; anything absent has none.</summary>
+  public Dictionary<string, string> AvailableVersions { get; } = new(StringComparer.Ordinal);
+
   /// <summary>When set, every probe throws this.</summary>
   public Exception? Failure { get; set; }
 
@@ -29,11 +32,13 @@ internal sealed class FakeCapabilityProvider(string name, IReadOnlyList<string> 
       throw Failure;
     }
     IReadOnlyList<CapabilityStatus> statuses = [.. Descriptors.Select(d => new CapabilityStatus(
-      d, scope, States.GetValueOrDefault(d.Id.Name, CapabilityState.Ready), Version: "1.0", Detail: null, Reason: null))];
+      d, scope, States.GetValueOrDefault(d.Id.Name, CapabilityState.Ready), Version: "1.0", Detail: null, Reason: null) {
+      AvailableVersion = AvailableVersions.GetValueOrDefault(d.Id.Name),
+    })];
     return Task.FromResult(statuses);
   }
 
-  public static CapabilityDescriptor Describe(string provider, string name, string purpose = "a purpose") =>
-    new(new CapabilityId(provider, name), purpose, ["A feature"], Provisionable: true, ["enabled on the server"],
+  public static CapabilityDescriptor Describe(string provider, string name, string purpose = "a purpose", bool provisionable = true) =>
+    new(new CapabilityId(provider, name), purpose, ["A feature"], provisionable, ["enabled on the server"],
       new Dictionary<CapabilityState, string>());
 }
