@@ -26,6 +26,10 @@ public class LifecycleCompletionPartitionConversionTests : EFCoreTestBase {
   private const string CONVERT = "SELECT wh_partition_convert('wh_lifecycle_completions', 'event_id', '1 day')";
   private const string CONVERTED = "converted";
   private const string SWEEP_RELATION = "SELECT wh_partition_sweep_relation(@table)";
+  private const string DEFAULT_PARTITION = TABLE + "_default";
+  // The ledger's autovacuum settings, as migration 222 set them on the plain table and pg_class.reloptions stores them.
+  private const string LEDGER_SETTINGS = "autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=10000";
+  private const string MAINTAIN = "SELECT action || ' ' || partition_name FROM wh_partition_maintain('wh_lifecycle_completions', '1 day', 3, NULL)";
 
   // A version-4 id: its first 48 bits read as a moment thousands of years out, so no daily partition covers it.
   private static readonly Guid _version4 = Guid.Parse("f47ac10b-58cc-4372-a567-0e02b2c3d479");
@@ -52,6 +56,15 @@ public class LifecycleCompletionPartitionConversionTests : EFCoreTestBase {
     connection.ExecuteAsync(
       "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('partition_maintenance_enabled', @value, 'boolean') " +
       "ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value", new { value });
+
+  private static Task<List<string>> _partitionSettingsAsync(NpgsqlConnection connection) =>
+    connection.QueryAsync<string>(
+      "SELECT c.relname || ' ' || COALESCE(array_to_string(c.reloptions, ','), '') FROM pg_inherits i " +
+      "JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'wh_lifecycle_completions'::regclass ORDER BY c.relname");
+
+  private static Task<string> _settingsOfAsync(NpgsqlConnection connection, string relation) =>
+    connection.ExecuteScalarAsync<string>(
+      "SELECT COALESCE(array_to_string(reloptions, ','), '') FROM pg_class WHERE oid = @relation::regclass", new { relation });
 
   [Test]
   public async Task Conversion_KeepsEveryCompletion_AndAVersion4IdMovesToTheDefaultPartitionAsync() {
@@ -134,5 +147,70 @@ public class LifecycleCompletionPartitionConversionTests : EFCoreTestBase {
     await Assert.That(dropped).Contains(TABLE + "_legacy");
     await Assert.That(await connection.QueryAsync<Guid>("SELECT event_id FROM wh_lifecycle_completions")).IsEquivalentTo([_version4])
       .Because("the default partition is never dropped; the row sweep clears it by completed_at");
+  }
+
+  [Test]
+  public async Task PartitionsTheManagerCreates_CarryTheLedgersAutovacuumSettingsAsync() {
+    await using var connection = await _openAsync();
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    // Without the conversion's default partition, the cycle creates every partition but the legacy one itself.
+    await connection.ExecuteAsync("DROP TABLE wh_lifecycle_completions_default");
+
+    var cycle = await connection.QueryAsync<string>(MAINTAIN);
+    var partitions = await _partitionSettingsAsync(connection);
+
+    await Assert.That(cycle.Count).IsEqualTo(4)
+      .Because("the legacy partition covers today, so the default partition and the three days after today are created");
+    await Assert.That(cycle.All(row => row.StartsWith("created ", StringComparison.Ordinal))).IsTrue()
+      .Because("each partition is created with the settings, so none has to be tuned afterward");
+    await Assert.That(partitions.Count).IsEqualTo(5);
+    await Assert.That(partitions.All(row => row.EndsWith(" " + LEDGER_SETTINGS, StringComparison.Ordinal))).IsTrue()
+      .Because("a partitioned parent cannot hold autovacuum settings, so every partition must carry the ledger's own");
+  }
+
+  [Test]
+  public async Task TheConversionsDefaultPartition_GetsTheSettingsOnTheNextCycleAsync() {
+    await using var connection = await _openAsync();
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    var before = await _settingsOfAsync(connection, DEFAULT_PARTITION);
+
+    var cycle = await connection.QueryAsync<string>(MAINTAIN);
+
+    await Assert.That(before).IsEqualTo(string.Empty);
+    await Assert.That(cycle).Contains("tuned " + DEFAULT_PARTITION);
+    await Assert.That(await _settingsOfAsync(connection, DEFAULT_PARTITION)).IsEqualTo(LEDGER_SETTINGS);
+  }
+
+  [Test]
+  public async Task APartitionAnOperatorTuned_KeepsItsOwnSettingsAsync() {
+    await using var connection = await _openAsync();
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    await connection.ExecuteAsync("ALTER TABLE wh_lifecycle_completions_default SET (autovacuum_vacuum_threshold = 500)");
+
+    var cycle = await connection.QueryAsync<string>(MAINTAIN);
+
+    await Assert.That(cycle).DoesNotContain("tuned " + DEFAULT_PARTITION);
+    await Assert.That(await _settingsOfAsync(connection, DEFAULT_PARTITION)).IsEqualTo("autovacuum_vacuum_threshold=500")
+      .Because("a partition that already sets any of the ledger's settings was tuned by hand, and the manager leaves it");
+  }
+
+  [Test]
+  public async Task APartitionInUse_IsTunedOnALaterCycle_WithoutWaitingAsync() {
+    await using var connection = await _openAsync();
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    await using var other = await _openAsync();
+    await using var holding = await other.BeginTransactionAsync();
+    // The lock a vacuum or an analyze takes, which changing a table's settings has to wait for.
+    await other.ExecuteAsync("LOCK TABLE wh_lifecycle_completions_default IN SHARE UPDATE EXCLUSIVE MODE");
+
+    var busy = await connection.QueryAsync<string>(MAINTAIN);
+    var settingsWhileBusy = await _settingsOfAsync(connection, DEFAULT_PARTITION);
+    await holding.RollbackAsync();
+    var later = await connection.QueryAsync<string>(MAINTAIN);
+
+    await Assert.That(busy).Contains("deferred " + DEFAULT_PARTITION);
+    await Assert.That(settingsWhileBusy).IsEqualTo(string.Empty);
+    await Assert.That(later).Contains("tuned " + DEFAULT_PARTITION);
+    await Assert.That(await _settingsOfAsync(connection, DEFAULT_PARTITION)).IsEqualTo(LEDGER_SETTINGS);
   }
 }

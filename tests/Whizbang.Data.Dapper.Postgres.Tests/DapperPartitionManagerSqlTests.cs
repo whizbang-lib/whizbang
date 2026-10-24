@@ -99,4 +99,24 @@ public class DapperPartitionManagerSqlTests : PostgresTestBase {
       .Because("the legacy partition ends at the first id of tomorrow, which is past the window thirty days on");
     await Assert.That(await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM wh_lifecycle_completions")).IsEqualTo(0L);
   }
+
+  [Test]
+  public async Task TheLifecycleCompletionsPartitions_CarryTheLedgersAutovacuumSettingsAsync() {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_lifecycle_completions', 'event_id', '1 day')");
+
+    var cycle = (await connection.QueryAsync<string>(
+      "SELECT action || ' ' || partition_name FROM wh_partition_maintain('wh_lifecycle_completions', '1 day', 3, NULL)")).ToList();
+    var settings = (await connection.QueryAsync<string>(
+      "SELECT COALESCE(array_to_string(c.reloptions, ','), '') FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid " +
+      "WHERE i.inhparent = 'wh_lifecycle_completions'::regclass")).ToList();
+
+    await Assert.That(cycle).Contains("tuned wh_lifecycle_completions_default")
+      .Because("the conversion's default partition was made without the settings, so the next cycle gives it them");
+    await Assert.That(settings.Count).IsEqualTo(5);
+    await Assert.That(settings.Distinct().ToList())
+      .IsEquivalentTo(["autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=10000"]);
+  }
+
 }
