@@ -1415,7 +1415,7 @@ public interface IWorkCoordinator {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   Task<int> FoldStreamApplyPathsAsync(
     IReadOnlyCollection<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
@@ -1946,13 +1946,14 @@ public interface IWorkCoordinator {
     Task.FromResult(true);
 
   /// <summary>
-  /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
-  /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
-  /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing
-  /// event / new origin). Discard-only in increment 1 (cold-storage archive is a later increment). The domain
-  /// appends its closing event BEFORE calling this. Default: unsupported no-op (engines without the primitive).
+  /// A1 (Archival &amp; Compaction) — the gated prefix truncate of a durable Sourced stream: remove the detail at
+  /// or below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
+  /// every event at/below the truncate point) AND a CARRY-FORWARD event survives above it (the domain's closing
+  /// event / new origin). The domain appends its carry-forward event BEFORE calling this. Named for what it does
+  /// since #1731 (it was <c>CloseStreamAsync</c>), which leaves "close" to closing the books. Default:
+  /// unsupported no-op (engines without the primitive).
   /// </summary>
-  /// <param name="streamId">The stream to close.</param>
+  /// <param name="streamId">The stream whose prefix to truncate.</param>
   /// <param name="throughVersion">The inclusive per-stream version below which detail is truncated.</param>
   /// <param name="archive">
   /// When <see langword="true"/>, the detail is copied to the cold-storage archive (<c>wh_event_archive</c>,
@@ -1961,36 +1962,38 @@ public interface IWorkCoordinator {
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
-  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
-  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>closed</c>, every
+  /// A status (<c>truncated</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
+  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>truncated</c>, every
   /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
   /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
-  Task<StreamCloseResult> CloseStreamAsync(
+  /// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_ConsumptionGate_BlocksThenTruncatesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync</tests>
+  Task<StreamTruncateResult> TruncateStreamPrefixAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
-    Task.FromResult(new StreamCloseResult("unsupported", 0));
+    Task.FromResult(new StreamTruncateResult("unsupported", 0));
 
   /// <summary>
-  /// The events a period close of <paramref name="streamId"/> through <paramref name="throughVersion"/> would
-  /// truncate: every stored event of the stream at or below that version, in version order. The stream closer
-  /// reads them before the truncate so the destruction-stage receptors (#1504) can be handed the events the close
-  /// removes, the way the ephemeral reap hands them the bodies it deletes. Default: empty (engines without the
-  /// close primitive).
+  /// The events a prefix truncate of <paramref name="streamId"/> through <paramref name="throughVersion"/> would
+  /// remove: every stored event of the stream at or below that version, in version order. The prefix truncator
+  /// reads them before the truncate so the destruction-stage receptors (#1504) can be handed the events the
+  /// truncate removes, the way the ephemeral reap hands them the bodies it deletes. Default: empty (engines
+  /// without the truncate primitive).
   /// </summary>
-  /// <param name="streamId">The stream about to be closed.</param>
-  /// <param name="throughVersion">The inclusive per-stream version the close truncates through.</param>
+  /// <param name="streamId">The stream about to be truncated.</param>
+  /// <param name="throughVersion">The inclusive per-stream version the truncate removes through.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>The (event, stream, type) of each event at or below the close point.</returns>
+  /// <returns>The (event, stream, type) of each event at or below the truncate point.</returns>
   /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetStreamCloseTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync</tests>
-  Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamCloseTargetsAsync(
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetStreamTruncateTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync</tests>
+  Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
     Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
     Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
 
   /// <summary>
-  /// A1 — read the archived detail of a closed stream from cold storage (<c>wh_event_archive</c>), ordered by
-  /// version. This is the retrieval side of an archiving close (<see cref="CloseStreamAsync"/> with
+  /// A1 — read the archived detail of a truncated stream prefix from cold storage (<c>wh_event_archive</c>), ordered
+  /// by version. This is the retrieval side of an archiving truncate (<see cref="TruncateStreamPrefixAsync"/> with
   /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.
   /// Default: empty (engines without the archive store).
   /// </summary>
@@ -2005,10 +2008,10 @@ public interface IWorkCoordinator {
   /// <summary>
   /// A1 — the distinct perspective names that consume any event in <paramref name="streamId"/> at or below
   /// <paramref name="throughVersion"/> (via the message associations of those events' types). Used by
-  /// <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> to decide whether a discard-close would strand a
+  /// <see cref="Whizbang.Core.Lifecycle.IStreamPrefixTruncator"/> to decide whether a discarding truncate would strand a
   /// <see cref="Whizbang.Core.Attributes.FullHistoryAttribute"/> projection. Default: empty.
   /// </summary>
-  /// <param name="streamId">The stream being closed.</param>
+  /// <param name="streamId">The stream being truncated.</param>
   /// <param name="throughVersion">The inclusive per-stream version below which detail would be truncated.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The distinct consuming perspective names.</returns>
@@ -2019,8 +2022,8 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// E3 — the per-stream version of the event with id <paramref name="eventId"/>, or <c>null</c> if unknown.
-  /// A Tier-2 compaction closes an ephemeral stream through the version of the snapshot's anchor event, so this
-  /// maps that anchor event id to the close point. Default: <c>null</c>.
+  /// A Tier-2 compaction truncates an ephemeral stream through the version of the snapshot's anchor event, so this
+  /// maps that anchor event id to the truncate point. Default: <c>null</c>.
   /// </summary>
   /// <param name="eventId">The event id to look up.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -2753,19 +2756,20 @@ public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveNa
 public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
 
 /// <summary>
-/// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
-/// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
-/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>held</c> = an
+/// Result of an A1 gated prefix truncate (<see cref="IWorkCoordinator.TruncateStreamPrefixAsync"/>): the
+/// <see cref="Status"/> (<c>truncated</c> = detail removed | <c>blocked</c> = a perspective has not consumed
+/// past the truncate point | <c>no_carry_forward</c> = no surviving event above the truncate point | <c>held</c> = an
 /// active destruction hold covers an event in the range | <c>cursor_behind</c> = a perspective whose cursor is in
 /// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
-/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
+/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>truncated</c>). Named
+/// <c>StreamCloseResult</c> until #1731.
 /// </summary>
-/// <docs>fundamentals/events/event-streams#closing-a-stream</docs>
-public sealed record StreamCloseResult(string Status, long EventsTruncated);
+/// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
+public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 
 /// <summary>
 /// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
-/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a closed stream. Carries
+/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a truncated stream prefix. Carries
 /// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>

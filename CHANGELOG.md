@@ -337,6 +337,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
+  Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
+  `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
+  is `truncate_status` (was `close_status`) and its success status `truncated` (was `closed`). The C# API follows:
+  `IWorkCoordinator.CloseStreamAsync` is `TruncateStreamPrefixAsync`, `GetStreamCloseTargetsAsync` is
+  `GetStreamTruncateTargetsAsync`, `StreamCloseResult` is `StreamTruncateResult`, and `IStreamCloser` /
+  `StreamCloser` with `CloseAsync` are `IStreamPrefixTruncator` / `StreamPrefixTruncator` with `TruncateAsync`
+  (registered by `AddWhizbangWorkers()` as before). The refusal statuses are unchanged. No forwarding alias is kept.
+  The scheduled close types (`ScheduledStreamClose`, `StreamCloseSchedule`) keep their names, so stored schedules
+  still dispatch. **Upgrade:** rename the calls and types above; compare a result's `Status` with `"truncated"`
+  instead of `"closed"`; and change SQL that calls `close_stream(...)` or reads `close_status` to
+  `wh_truncate_stream_prefix(...)` and `truncate_status`. A custom `IWorkCoordinator` that overrode `CloseStreamAsync`
+  overrides `TruncateStreamPrefixAsync` instead, or the default (`unsupported`) answers.
 - **Transport test warmup waits on the subscriber's signal only (#1657).** `SubscriptionWarmup.WarmupAsync` in the
   testing library publishes one warmup message and completes when the subscriber signals that it arrived. The 5-second
   initial delay and the 2-second resend loop are gone, and so are the `retryInterval` and `initialDelay` parameters

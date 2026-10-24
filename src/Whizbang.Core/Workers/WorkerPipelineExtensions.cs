@@ -398,23 +398,23 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
       sp.GetRequiredService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
-    // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
+    // A1 prefix truncate (StreamPrefixTruncator): fires the E2 destruction hook around a Sourced-stream truncate.
     // The hook is required; the shipped default proceeds and observes nothing, which is what an
     // unregistered hook used to do. TryAdd lets an application's own hook win.
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IDestructionHook,
       Whizbang.Core.Lifecycle.NoOpDestructionHook>();
-    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>(sp => new Whizbang.Core.Lifecycle.StreamPrefixTruncator(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
-      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamPrefixTruncator>>(),
       sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>(),
       sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
-    // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
+    // reusing the snapshot store + event store + the A1 prefix truncator. On-demand, like IStreamPrefixTruncator.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
       sp.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveSnapshotStore>(),
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Whizbang.Core.Messaging.IEventStore>(),
-      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamCloser>(),
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Perspectives.StreamCompactor>>()));
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();

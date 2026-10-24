@@ -14,10 +14,10 @@ The framework already has most of the parts, but they are disconnected:
 
 | Part | Where | State |
 |---|---|---|
-| Gated prefix truncate | `close_stream`, latest in `src/Whizbang.Data.Postgres/Migrations/093_OriginGeneration.sql:116` | works; consumption gate, carry-forward guard, digest subtraction, origin-generation bump |
-| Cold copy table | `wh_event_archive`, `085_EventArchive.sql:14` | written only by `close_stream(p_archive => TRUE)` |
+| Gated prefix truncate | `wh_truncate_stream_prefix` (`close_stream` until S2), latest in `src/Whizbang.Data.Postgres/Migrations/240_TruncateStreamPrefix.sql` | works; consumption gate, carry-forward guard, digest subtraction, origin-generation bump |
+| Cold copy table | `wh_event_archive`, `085_EventArchive.sql:14` | written only by `wh_truncate_stream_prefix(p_archive => TRUE)` |
 | Archive read-back | `IWorkCoordinator.GetArchivedEventsAsync`, `src/Whizbang.Core/Messaging/IWorkCoordinator.cs:1917` | explicit call only; no load, rewind or rebuild reads it |
-| Hooked closer | `IStreamCloser` / `StreamCloser`, `src/Whizbang.Core/Lifecycle/StreamCloser.cs:16,35` | fires `PreDestruction`/`PostDestruction` around the truncate |
+| Hooked truncator | `IStreamPrefixTruncator` / `StreamPrefixTruncator` (`IStreamCloser` until S2), `src/Whizbang.Core/Lifecycle/StreamPrefixTruncator.cs` | fires `PreDestruction`/`PostDestruction` around the truncate |
 | Disposition vocabulary | `Disposition` enum, `src/Whizbang.Core/Lifecycle/Destruction.cs:57` | declared, never acted on |
 | Whole-stream purge | `wh_purge_streams`, `180_StreamPurge.sql:76`; `IStreamPurger`, `src/Whizbang.Core/Messaging/IStreamPurger.cs:30` | works; deletes every companion row |
 | Destruction holds | `wh_event_destruction_hold`, `079_EventDestructionHold.sql:12` | honored by the ephemeral reaper only |
@@ -79,9 +79,18 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 - **Tests.** `StreamCloseSqlTests` (EF Core, with the RESTRICT key) and `DapperStreamCloseCompanionTests`.
 - **Docs (pending, docs repo).** `v1.0.0/fundamentals/events/event-streams.md` (truncation section).
 
-### S2. Rename the prefix truncate to free "close"
+### S2. Rename the prefix truncate to free "close" (done, #1731)
 
-- **Change.** `close_stream` becomes `truncate_stream_prefix` (`drop_all_overloads('close_stream')`
+- **Landed.** Migration `240_TruncateStreamPrefix.sql` drops every `close_stream` overload and creates
+  `wh_truncate_stream_prefix` from the 214 definition; its result column is `truncate_status` and its success
+  status `truncated` (was `closed`), so no "close" is left in the primitive's contract. The C# renames below
+  landed as planned, with `IStreamPrefixTruncator.TruncateAsync` (was `IStreamCloser.CloseAsync`) and
+  `IWorkCoordinator.GetStreamTruncateTargetsAsync` (was `GetStreamCloseTargetsAsync`). Kept: the SQL test
+  classes `StreamCloseSqlTests` and `DapperStreamCloseCompanionTests` and their `CloseStream_` methods, because
+  migrations 212 and 214 link to them by name and the migration lint validates those links; and the scheduled
+  close types (`ScheduledStreamClose`, `StreamCloseSchedule`, `ScheduledStreamCloseReceptor`), whose name is the
+  schedule's stored event type and which belong to closing the books (S12).
+- **Change.** `close_stream` becomes `wh_truncate_stream_prefix` (`drop_all_overloads('close_stream')`
   first, per README rule 5). `IWorkCoordinator.CloseStreamAsync` (`IWorkCoordinator.cs:1903`)
   becomes `TruncateStreamPrefixAsync`; `StreamCloseResult` (`IWorkCoordinator.cs:2629`) becomes
   `StreamTruncateResult`; `IStreamCloser`/`StreamCloser` become `IStreamPrefixTruncator`/
