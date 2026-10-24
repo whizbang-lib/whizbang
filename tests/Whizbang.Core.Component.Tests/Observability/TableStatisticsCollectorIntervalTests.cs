@@ -1,11 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -116,25 +114,5 @@ public class TableStatisticsCollectorIntervalTests {
 
     public Task<IReadOnlyDictionary<string, long>> GetQueueDepthsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyDictionary<string, long>>(new Dictionary<string, long>());
-  }
-
-  /// <summary>A fake clock that reports each timer armed on it, so a test can wait for the collector to start waiting.</summary>
-  private sealed class ArmedTimerClock() : FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)) {
-    private readonly Channel<TimeSpan> _armed = Channel.CreateUnbounded<TimeSpan>();
-
-    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
-      var timer = base.CreateTimer(callback, state, dueTime, period);
-      _armed.Writer.TryWrite(dueTime);
-      return timer;
-    }
-
-    /// <summary>Completes once a timer with <paramref name="due"/> has been armed.</summary>
-    public async Task WaitForArmedAsync(TimeSpan due, TimeSpan timeout) {
-      using var cts = new CancellationTokenSource(timeout);
-      TimeSpan armed;
-      do {
-        armed = await _armed.Reader.ReadAsync(cts.Token);
-      } while (armed != due);
-    }
   }
 }
