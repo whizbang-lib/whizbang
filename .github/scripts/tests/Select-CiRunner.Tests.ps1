@@ -108,24 +108,24 @@ BeforeAll {
     $r
   }
 
-  # Invoke-SelectCiRunner for a trusted push with both tokens, writing to TestDrive files.
+  # Invoke-SelectCiRunner for a trusted merge-queue run with both tokens, writing to TestDrive files.
   function Invoke-Entry {
-    param([scriptblock]$Api, [string]$EventName = 'push', [string]$HeadRepository = '', [string]$Actor = 'someone',
+    param([scriptblock]$Api, [string]$EventName = 'merge_group', [string]$HeadRepository = '', [string]$Actor = 'someone',
       [string]$PrAuthor = '', [string]$PoolToken = 'pool-token', [string]$RepoToken = 'repo-token',
       [string]$Disabled = '', [string]$Organization = 'whizbang-lib', [string]$RunId = '1000', [int]$BudgetSeconds = 60,
       [hashtable]$Variables = @{})
-    $script:OutputFile = Join-Path $TestDrive "out-$([guid]::NewGuid().ToString('N')).txt"
-    $script:SummaryFile = Join-Path $TestDrive "summary-$([guid]::NewGuid().ToString('N')).md"
+    $script:OutPath = Join-Path $TestDrive "out-$([guid]::NewGuid().ToString('N')).txt"
+    $script:SummaryPath = Join-Path $TestDrive "summary-$([guid]::NewGuid().ToString('N')).md"
     Invoke-SelectCiRunner -EventName $EventName -Repository $script:Repo -HeadRepository $HeadRepository -Actor $Actor `
       -PrAuthor $PrAuthor -RepositoryPrivate 'false' -Organization $Organization -GroupName 'Default' -RunId $RunId `
       -PoolToken $PoolToken -RepoToken $RepoToken -Disabled $Disabled -QueueThreshold 0 -BudgetSeconds $BudgetSeconds `
-      -Variables $Variables -OutputFile $script:OutputFile -SummaryFile $script:SummaryFile -InvokeApi $Api
+      -Variables $Variables -OutputFile $script:OutPath -SummaryFile $script:SummaryPath -InvokeApi $Api
   }
 
   # The outputs the entry point wrote, as a name -> value table.
   function Read-Output {
     $table = @{}
-    foreach ($line in (Get-Content -LiteralPath $script:OutputFile)) {
+    foreach ($line in (Get-Content -LiteralPath $script:OutPath)) {
       $name, $value = $line -split '=', 2
       $table[$name] = $value
     }
@@ -631,6 +631,7 @@ Describe 'Get-QueuedJob' {
       })
     $jobs = @(Get-QueuedJob -InvokeApi $api -Repository $Repo -RunId '1000' -RepoToken 'repo')
     $jobs.Count | Should -Be 2
+    @($jobs | Where-Object { $_.status -ne 'queued' }).Count | Should -Be 0
     $ApiCalls | Should -Contain "repo /repos/$Repo/actions/runs/11/jobs?filter=latest&per_page=100"
     $ApiCalls | Where-Object { $_ -like '*runs/1000/*' } | Should -BeNullOrEmpty
   }
@@ -653,7 +654,7 @@ Describe 'Invoke-SelectCiRunner' {
     $out['any-os'] | Should -Be $AnyOs
     $out['linux-docker'] | Should -Be $LinuxDocker
     $decisions['linux'].Tier | Should -Be 'self-hosted'
-    Get-Content -Raw -LiteralPath $SummaryFile | Should -BeLike '*linux*self-hosted pool*'
+    Get-Content -Raw -LiteralPath $SummaryPath | Should -BeLike '*linux*self-hosted pool*'
   }
 
   It 'skips the pool on <Case> without calling the API, and falls back' -ForEach @(
@@ -672,7 +673,7 @@ Describe 'Invoke-SelectCiRunner' {
       $out[$class] | Should -Be $Hosted
       $decisions[$class].Reason | Should -BeLike $Why
     }
-    Get-Content -Raw -LiteralPath $SummaryFile | Should -BeLike $Why
+    Get-Content -Raw -LiteralPath $SummaryPath | Should -BeLike $Why
   }
 
   It 'falls back when the API call for <Failing> fails' -ForEach @(
@@ -689,7 +690,7 @@ Describe 'Invoke-SelectCiRunner' {
     $out = Read-Output
     foreach ($class in $decisions.Keys) { $out[$class] | Should -Be $Hosted }
     $decisions['linux'].Reason | Should -BeLike '*simulated failure*'
-    Get-Content -Raw -LiteralPath $SummaryFile | Should -BeLike '*GitHub-hosted*simulated failure*'
+    Get-Content -Raw -LiteralPath $SummaryPath | Should -BeLike '*GitHub-hosted*simulated failure*'
   }
 
   It 'still takes Blacksmith when the pool API fails' {
@@ -706,6 +707,14 @@ Describe 'Invoke-SelectCiRunner' {
     $null = Invoke-Entry -Api (New-FakeApi (Get-PoolResponse)) @fork -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true'; CI_BLACKSMITH_MAX_QUEUED = '3' }
     $ApiCalls | Should -Be @("repo-token /repos/$Repo/actions/runs?status=queued&per_page=20", "repo-token /repos/$Repo/actions/runs?status=in_progress&per_page=20")
     (Read-Output)['linux'] | Should -Be $BsJson
+  }
+
+  It 'skips Blacksmith under a queue limit when there is no repository token to read the queue' {
+    $decisions = Invoke-Entry -Api (New-FakeApi @{}) -EventName 'pull_request' -HeadRepository 'someone/whizbang' -PrAuthor 'someone' `
+      -RepoToken '' -Variables @{ CI_BLACKSMITH_RUNNER = $Bs; CI_BLACKSMITH_FORKS = 'true'; CI_BLACKSMITH_MAX_QUEUED = '3' }
+    $ApiCalls.Count | Should -Be 0
+    $decisions['linux'].RunsOn | Should -Be $Hosted
+    $decisions['linux'].Reason | Should -BeLike '*Blacksmith skipped: the queue could not be read: no repository token*'
   }
 
   It 'falls back on a response it cannot read (<Case>)' -ForEach @(
@@ -765,6 +774,21 @@ Describe 'Invoke-SelectCiRunner' {
   It 'writes nothing to files it was not given' {
     { Invoke-SelectCiRunner -EventName 'push' -Repository $Repo -Organization 'whizbang-lib' -PoolToken '' -InvokeApi (New-FakeApi @{}) } |
       Should -Not -Throw
+  }
+}
+
+Describe 'Get-EnvironmentVariables' {
+  It 'reads every CI_BLACKSMITH_ variable from the environment, and only those' {
+    $saved = [Environment]::GetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX')
+    try {
+      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', 'blacksmith-2vcpu-ubuntu-2404')
+      $vars = Get-EnvironmentVariables
+      @($vars.Keys | Sort-Object) | Should -Be @('CI_BLACKSMITH_FORKS', 'CI_BLACKSMITH_MAX_QUEUED', 'CI_BLACKSMITH_RUNNER',
+        'CI_BLACKSMITH_RUNNER_ANY_OS', 'CI_BLACKSMITH_RUNNER_COMPILE', 'CI_BLACKSMITH_RUNNER_LINUX', 'CI_BLACKSMITH_RUNNER_LINUX_DOCKER')
+      $vars['CI_BLACKSMITH_RUNNER_LINUX'] | Should -Be 'blacksmith-2vcpu-ubuntu-2404'
+    } finally {
+      [Environment]::SetEnvironmentVariable('CI_BLACKSMITH_RUNNER_LINUX', $saved)
+    }
   }
 }
 
