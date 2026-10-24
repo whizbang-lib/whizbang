@@ -123,6 +123,20 @@ public sealed class DecisionFile {
   private static string _jsonDate(DateTimeOffset? value)
     => value is null ? "null" : $"\"{value.Value:O}\"";
 
+  // The usage comment repeats the project path as a command to copy, so it stays unescaped; only
+  // a character that would end the comment early (a line break, which STJ also takes U+2028 and
+  // U+2029 to be) or that has no business in a command line is blanked, so the rest of the path
+  // cannot spill out of the comment and into the document.
+  private static string _commentText(string value) {
+    var chars = value.ToCharArray();
+    for (var i = 0; i < chars.Length; i++) {
+      if (char.IsControl(chars[i]) || chars[i] is '\u2028' or '\u2029') {
+        chars[i] = ' ';
+      }
+    }
+    return new string(chars);
+  }
+
   private static string _jsonList(List<string> items)
     => items.Count == 0
       ? "[]"
@@ -134,17 +148,15 @@ public sealed class DecisionFile {
       : "{ " + string.Join(", ", overrides.Select(kv => $"{_jsonText(kv.Key)}: \"{kv.Value}\"")) + " }";
 
   public string ToJsonWithComments() {
-    var timestamp = GeneratedAt.ToString("O");
-
     return $$"""
 {
   // Whizbang Migration Decision File
   // Edit this file to control migration behavior, then run:
-  //   whizbang-migrate apply -p {{ProjectPath}} -d <this-file>
+  //   whizbang-migrate apply -p {{_commentText(ProjectPath)}} -d <this-file>
 
-  "version": "{{Version}}",
-  "project_path": "{{ProjectPath}}",
-  "generated_at": "{{timestamp}}",
+  "version": {{_jsonText(Version)}},
+  "project_path": {{_jsonText(ProjectPath)}},
+  "generated_at": {{_jsonDate(GeneratedAt)}},
 
   // Current migration state (managed by the tool)
   "state": {
@@ -152,9 +164,9 @@ public sealed class DecisionFile {
     "started_at": {{_jsonDate(State.StartedAt)}},
     "last_updated_at": {{_jsonDate(State.LastUpdatedAt)}},
     "completed_at": {{_jsonDate(State.CompletedAt)}},
-    "git_commit_before": {{_jsonText(State.GitCommitBefore)}},
+    "git_commit_before": "{{State.GitCommitBefore}}",
     "completed_categories": {{_jsonList(State.CompletedCategories)}},
-    "current_category": {{_jsonText(State.CurrentCategory)}},
+    "current_category": "{{State.CurrentCategory}}",
     "current_item": {{State.CurrentItem}}
   },
 
@@ -185,10 +197,10 @@ public sealed class DecisionFile {
     // Transforms Marten projections to Whizbang perspectives.
     "projections": {
       // Interface to use for single-stream projections (aggregates)
-      "single_stream": "{{Decisions.Projections.SingleStream}}",
+      "single_stream": {{_jsonText(Decisions.Projections.SingleStream)}},
 
       // Interface to use for multi-stream projections (cross-aggregate views)
-      "multi_stream": "{{Decisions.Projections.MultiStream}}",
+      "multi_stream": {{_jsonText(Decisions.Projections.MultiStream)}},
 
       "default": "{{Decisions.Projections.Default}}",
       "overrides": {{_jsonOverrides(Decisions.Projections.Overrides)}}
@@ -248,11 +260,11 @@ public sealed class DecisionFile {
       "strategy": "{{Decisions.Schema.Strategy}}",
 
       // Schema name (when using SameDbDifferentSchema)
-      "schema_name": "{{Decisions.Schema.SchemaName}}",
+      "schema_name": {{_jsonText(Decisions.Schema.SchemaName)}},
 
       // Table prefixes
-      "infrastructure_prefix": "{{Decisions.Schema.InfrastructurePrefix}}",
-      "perspective_prefix": "{{Decisions.Schema.PerspectivePrefix}}",
+      "infrastructure_prefix": {{_jsonText(Decisions.Schema.InfrastructurePrefix)}},
+      "perspective_prefix": {{_jsonText(Decisions.Schema.PerspectivePrefix)}},
 
       // Connection string name (when using different database)
       "connection_string_name": null
@@ -343,7 +355,7 @@ public sealed class DecisionFile {
       "auto_manage": {{Decisions.Packages.AutoManage.ToString().ToLowerInvariant()}},
 
       // Version of Whizbang packages to use
-      "whizbang_version": "{{Decisions.Packages.WhizbangVersion}}",
+      "whizbang_version": {{_jsonText(Decisions.Packages.WhizbangVersion)}},
 
       // Whether to remove old Marten/Wolverine packages. Default: true
       "remove_old_packages": {{Decisions.Packages.RemoveOldPackages.ToString().ToLowerInvariant()}},

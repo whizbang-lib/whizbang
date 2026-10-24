@@ -373,6 +373,32 @@ public class ProgramCliTests {
   }
 
 
+  [Test]
+  public async Task Apply_GeneratedDecisionFile_WithABackslashInTheProjectPath_LoadsBackAndIsUsableAsync() {
+    // A Windows project path is full of backslashes, and the generated file wrote them into a
+    // JSON string unescaped, so the tool could not read back the file it had just written
+    // (#1764). A backslash is an ordinary file-name character on Linux and macOS, so the same
+    // path reproduces it on every platform; on Windows it is a separator and the path is nested.
+    var parent = Path.Combine(Path.GetTempPath(), $"whizbang-cli-{Guid.NewGuid():N}");
+    var dir = Path.Combine(parent, "Work\\App");
+    Directory.CreateDirectory(dir);
+    await File.WriteAllTextAsync(Path.Combine(dir, "Handler.cs"), WOLVERINE_HANDLER);
+    var decisionPath = Path.Combine(parent, "decisions.jsonc");
+    try {
+      var generated = await Program.Main(["apply", "-p", dir, "--generate-decision-file", decisionPath]);
+      await Assert.That(generated).IsEqualTo(0);
+
+      var loaded = await DecisionFile.LoadAsync(decisionPath);
+      await Assert.That(loaded.ProjectPath).IsEqualTo(dir);
+
+      var applied = await Program.Main(["apply", "-p", dir, "-d", decisionPath]);
+      await Assert.That(applied).IsEqualTo(0)
+        .Because("the tool prints generate-then-apply as its own next step, so the file it generates has to load");
+    } finally {
+      Directory.Delete(parent, recursive: true);
+    }
+  }
+
   private const string FULL_MARTEN_WOLVERINE_PROJECT = """
     using Marten;
     using Marten.Events.Aggregation;
