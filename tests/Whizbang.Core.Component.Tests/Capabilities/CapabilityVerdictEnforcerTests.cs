@@ -47,7 +47,7 @@ public class CapabilityVerdictEnforcerTests {
     var lifetime = new RecordingHostLifetime();
     var exitCodes = new List<int>();
     var logger = new FakeLogger<CapabilityVerdictEnforcer>();
-    return (new CapabilityVerdictEnforcer(registry, lifetime, logger, exitCodes.Add), registry, lifetime, exitCodes, logger);
+    return (new CapabilityVerdictEnforcer(registry, lifetime.StopApplication, logger, exitCodes.Add), registry, lifetime, exitCodes, logger);
   }
 
   [Test]
@@ -119,9 +119,9 @@ public class CapabilityVerdictEnforcerTests {
     var logger = NullLogger<CapabilityVerdictEnforcer>.Instance;
     Action<int> exit = _ => { };
 
-    await Assert.That(() => new CapabilityVerdictEnforcer(null!, lifetime, logger, exit)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilityVerdictEnforcer(null!, lifetime.StopApplication, logger, exit)).Throws<ArgumentNullException>();
     await Assert.That(() => new CapabilityVerdictEnforcer(registry, null!, logger, exit)).Throws<ArgumentNullException>();
-    await Assert.That(() => new CapabilityVerdictEnforcer(registry, lifetime, null!, exit)).Throws<ArgumentNullException>();
-    await Assert.That(() => new CapabilityVerdictEnforcer(registry, lifetime, logger, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilityVerdictEnforcer(registry, lifetime.StopApplication, null!, exit)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilityVerdictEnforcer(registry, lifetime.StopApplication, logger, null!)).Throws<ArgumentNullException>();
   }
 }

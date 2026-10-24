@@ -97,6 +97,27 @@ public class CapabilityServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task HostedServices_ResolveInAContainerWithoutAHostAsync() {
+    await using var provider = _services().AddWhizbangCapabilities().BuildServiceProvider();
+
+    await Assert.That(provider.GetServices<IHostedService>().OfType<CapabilityVerdictEnforcer>().Count()).IsEqualTo(1)
+      .Because("a composition resolved without a host (a tool, a test fixture) has no application lifetime until it must stop");
+  }
+
+  [Test]
+  public async Task StopApplication_StopsTheHostsLifetime_WhenCalledAsync() {
+    var lifetime = new Microsoft.Extensions.Hosting.Internal.ApplicationLifetime(
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<Microsoft.Extensions.Hosting.Internal.ApplicationLifetime>.Instance);
+    var services = _services();
+    services.AddSingleton<IHostApplicationLifetime>(lifetime);
+    await using var provider = services.BuildServiceProvider();
+
+    CapabilityVerdictEnforcer.StopApplicationOf(provider)();
+
+    await Assert.That(lifetime.ApplicationStopping.IsCancellationRequested).IsTrue();
+  }
+
+  [Test]
   public async Task Arguments_AreValidatedAsync() {
     await Assert.That(() => CapabilityServiceCollectionExtensions.AddWhizbangCapabilities(null!))
       .Throws<ArgumentNullException>();
