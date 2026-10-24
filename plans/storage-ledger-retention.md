@@ -72,6 +72,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S1. Companion cleanup for evicted perspective rows (defect 1)
 
+**Status (2026-10-24):** done. #1483, closed by PR #1507. The Dapper driver followed in PR #1560 (#1505) and
+PR #1570 (#1548). `v1.0.0/fundamentals/perspectives/row-retention.md` is published (docs repo).
+
 - **Change.** The journal drain at `MaintenanceWorker.cs:618` already hands back each evicted
   `(table, row_id)`. For each, resolve the perspective through `wh_perspective_registry` and delete
   `wh_perspective_cursors` and `wh_perspective_snapshots` rows for `(stream_id = row_id,
@@ -86,6 +89,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
   Update `v1.0.0/fundamentals/perspectives/snapshots.md`.
 
 ### S2. Retention settings get a configuration path (defect 5)
+
+**Status (2026-10-24):** done. #1487, closed by PR #1509 (`RetentionSettingsBridge`,
+`SyncRetentionSettingsAsync` on both coordinators).
 
 - **Change.** Generalize the debug bridge: a `RetentionSettingsBridge` with a static table of
   `(setting key, value type, option accessor)` and one `IWorkCoordinator.SyncRetentionSettingsAsync`
@@ -126,9 +132,8 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S3. Retention for unbounded ledgers
 
-**Status (2026-10-21):** the durable-signal window (`WhizbangNotificationOptions.SignalRetention`) and batched
-signal sweep ship in #1574; the four SQL ledgers ship in #1572.
-
+**Status (2026-10-24):** done. The four SQL ledgers are #1572 (PR #1573). The durable-signal window
+(`WhizbangNotificationOptions.SignalRetention`) and the batched signal sweep are #1574 (PR #1575).
 
 - **Change.** Batched deletes in `perform_maintenance` (edit the latest definition in place;
   `debug_mode`-guarded) for `wh_log` (`log_retention_days`, default 14) and `wh_schedule_runs`

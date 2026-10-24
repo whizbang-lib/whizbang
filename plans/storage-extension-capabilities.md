@@ -156,12 +156,12 @@ Feature keys that activate a capability live with their feature:
 
 Each slice is one red-then-green increment and its own commit.
 
-1. **Pattern core, Postgres provider, probe, report, gauge.** DONE in PR #1510 (issue #1511):
+1. **Pattern core, Postgres provider, probe, report, gauge.** Shipped:
    `src/Whizbang.Core/Capabilities/` (id, descriptor, generic states, provider and registry,
    `Capabilities` startup step after `Migrate`, `Whizbang.Capabilities` meter), the Postgres catalog
    and probe in `src/Whizbang.Data.Postgres/`, `Whizbang:Capabilities:ProbeOnStartup`. Docs:
    `operations/infrastructure/capabilities.md` and the Postgres provider page.
-2. **Requirement attribute, manifest generator, registry.** DONE on branch `feat/1703-ws8s2` (issue #1703):
+2. **Requirement attribute, manifest generator, registry.** DONE in #1723 (issue #1703):
    the two attributes in `src/Whizbang.Core/Capabilities/`, `CapabilityRequirement`, the
    `ConfigurationManifestGenerator` (template `ConfigurationManifestTemplate.cs`), and
    `ConfigurationManifestRegistry` / `ConfigurationManifest` in `src/Whizbang.Core/Configuration/`. Recognized
@@ -178,7 +178,7 @@ Each slice is one red-then-green increment and its own commit.
    property or enum member, registered through `[ModuleInitializer]`. RED: generator tests for an
    attributed property, an enum member, a nested section, a dictionary wildcard, a private type
    (skipped) and a second assembly. Docs: "Declaring a requirement" on the capabilities page.
-3. **Activation and the verdict.** DONE on branch `feat/1703-ws8s2` (issue #1704): `CapabilityActivationResolver`
+3. **Activation and the verdict.** DONE in #1723 (issue #1704): `CapabilityActivationResolver`
    (explicit = key set to a value that turns the feature on, wildcard keys per configured entry; implicit = key
    absent and the generator-recorded declared default turns it on), `CapabilityVerdict` (satisfied means Ready;
    Provisionable fails an explicit requirement until slice 4 provisions), published on `ICapabilityRegistry` by
@@ -207,14 +207,14 @@ Each slice is one red-then-green increment and its own commit.
    created / present / upgraded. RED: provisioning off still detects an operator-created extension;
    per-capability `false` overrides global `true`; an upgrade is recorded; NoPrivilege is reported,
    never thrown, on an implicit requirement. Docs: configuration reference (`Whizbang:Capabilities`).
-5. **pg_trgm onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1705): `OptionalExtensionBlocks`
+5. **pg_trgm onto the pattern.** DONE in #1723 (issue #1705): `OptionalExtensionBlocks`
    reads the extension's state with the probe's query first (installed: used without CREATE; known refusal:
    skipped without trying, warning names state and fix; otherwise created, with the refusal classification as the
    fallback), and each perspective with an optional-extension block is an implicit requirement read from its
    schema SQL (`PostgresSchemaRequirements`). Original scope: `OptionalExtensionBlocks.ApplyAsync` consults the capability before
    `CREATE EXTENSION`; the refusal classification stays as the fallback. RED: extend
    `OptionalExtensionBlocksTests.cs`. Docs: `fundamentals/perspectives/perspective-indexes.md`.
-6. **pgvector onto the pattern.** DONE on branch `feat/1703-ws8s2` (issue #1706): `PostgresRequiredExtension.EnsureAsync`
+6. **pgvector onto the pattern.** DONE in #1723 (issue #1706): `PostgresRequiredExtension.EnsureAsync`
    at all three sites; a refusal fails start with the verdict line naming each vector column and the fix; every
    context registers its schema requirements as a `FixedCapabilityRequirementSource` (explicit pgvector per vector
    column). The data source creates pgvector before it is built and the probe connects through it, so an
@@ -224,22 +224,29 @@ Each slice is one red-then-green increment and its own commit.
    columns become a runtime requirement source (always explicit: the column cannot exist without
    the extension). RED: generator snapshot tests for the emitted call; integration test for the
    verdict on refusal. Docs: `fundamentals/perspectives/vector-fields.md`.
+   **Status (2026-10-24):** done in #1723 (#1706).
 7. **pg_squeeze managed.** Requirement on `TableRewriteStrategy.PgSqueeze`; provisioning; the
    rewriter strategy itself is `storage-bloat.md` slice 3. RED: explicit PgSqueeze on a server
    without preload fails start with the preload fix text.
+   **Status (2026-10-24):** open. Depends on slice 4; the rewriter itself is `storage-bloat.md` slice 3.
 8. **pg_partman managed.** Requirement on `PartitionManagementStrategy.PgPartman`; `create_parent`
    on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
    `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back
    to the built-in manager and says so in the verdict.
+   **Status (2026-10-24):** open. Depends on slice 4; it also closes the last piece of
+   `storage-ledger-retention.md` S4.
 9. **pg_repack managed, both run modes.** The client program becomes a probed prerequisite (found on
    `PATH` or at `ClientPath`, version read with `--version`). `InProcess` runs it from the maintainer
    duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
    no client fails an explicit requirement and degrades an implicit one; external mode never starts a
    process; credentials never appear in the process arguments. Docs: the storage-maintenance page.
+   **Status (2026-10-24):** open. Depends on slice 4; pairs with `storage-bloat.md` slice 5.
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
-11. **Unknown keys (defect 8).** DONE on branch `feat/1490-unknown-config-keys` (issue #1490): the recorded
+    **Status (2026-10-24):** open. `GetExpensivePredicatesAsync` still catches every `PostgresException`
+    (`PostgresTableStatisticsProvider.cs:536` on #1723's branch). Depends on slice 3 (done in #1723).
+11. **Unknown keys (defect 8).** Shipped: the recorded
     manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
     start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry
     `[RemovedConfigurationKey]`. Original scope: startup warning from the manifest; `[RemovedConfigurationKey]` for
@@ -247,6 +254,9 @@ Each slice is one red-then-green increment and its own commit.
     `Whizbang:Workers:Maintenance:IntervalMinutes`. RED: a removed key warns with its replacement; a
     typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
     configuration reference.
+    **Status (2026-10-24):** done. #1490, closed by PR #1541. Removed keys are still a hand-kept table
+    (`src/Whizbang.Core/Configuration/RemovedConfigurationKeys.cs`), not `[RemovedConfigurationKey]` through
+    slice 2's generator.
 
 ## Engineering standards
 

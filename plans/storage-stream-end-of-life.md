@@ -65,6 +65,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S1. Fix defect 4 in the truncate primitive (done, #1486)
 
+**Status (2026-10-24):** done. #1486, closed by PR #1522 (migration 212). The truncation section of
+`v1.0.0/fundamentals/events/event-streams.md` is published (docs repo).
+
 - **Change (landed).** Migration `212_CloseStreamReanchorsCursorsAndSnapshots.sql` redefines `close_stream`
   whole (editing `093` in place is no longer allowed; CI refuses edits to shipped migrations). Decisions:
   - A cursor inside the range moves onto the boundary event (the first survivor above the close point).
@@ -77,7 +80,7 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
     go with the events. Processed `wh_perspective_events` rows of the truncated events are removed.
     `wh_message_deduplication` rows are kept (they turn a redelivered copy of a truncated event away).
 - **Tests.** `StreamCloseSqlTests` (EF Core, with the RESTRICT key) and `DapperStreamCloseCompanionTests`.
-- **Docs (pending, docs repo).** `v1.0.0/fundamentals/events/event-streams.md` (truncation section).
+- **Docs (published, docs repo).** `v1.0.0/fundamentals/events/event-streams.md` (truncation section).
 
 ### S2. Rename the prefix truncate to free "close" (done, #1731)
 
@@ -104,6 +107,8 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S3. Stream lifecycle ledger (candidate discovery without scanning the event store)
 
+**Status (2026-10-24):** open. No `wh_stream_lifecycle` table in any migration. S4, S5, S7 and S11 build on it.
+
 - **Change.** New migration with `wh_stream_lifecycle` (stream_id PK, stream_type, tenant,
   first_appended_at, last_appended_bucket, last_version, approx_bytes, state, sealed_at,
   disposition_due_at, archive_locator, origin_generation). The emit chain
@@ -119,6 +124,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S4. P1: developer-driven finalization and sealing
 
+**Status (2026-10-24):** open. `src/` has no `IStreamFinalizer`, `[TerminalEvent]` or `StreamSealedException`.
+Depends on S3.
+
 - **Change.** `IStreamFinalizer.FinalizeAsync(streamId, reason)` and a declarative
   `[TerminalEvent]` attribute on an event type (generator-registered, no reflection). Finalizing
   sets `state = Sealed`. `IEventStore.AppendAsync` (`src/Whizbang.Core/Messaging/IEventStore.cs:47,75`)
@@ -130,6 +138,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 - **Docs.** `stream-end-of-life.md`; `v1.0.0/fundamentals/events/event-streams.md`.
 
 ### S5. P1: final snapshot and scheduled disposition
+
+**Status (2026-10-24):** open. No disposition step and no `Whizbang:StreamLifecycle` options. Depends on S3 and
+S4.
 
 - **Change.** On seal, request a final snapshot for each consuming snapshotting perspective
   (`IPerspectiveSnapshotStore`, `src/Whizbang.Core/Perspectives/IPerspectiveSnapshotStore.cs:16`) and
@@ -143,6 +154,10 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
   default `7.00:00:00`); `Whizbang:StreamLifecycle:SweepBatchSize` (default `500`).
 
 ### S6. Wire `Disposition`
+
+**Status (2026-10-24):** open. No code routes on `DestructionResult.Disposition`; `Destruction.OnCompaction` and
+`Archived` are still documented as planned and inert (`src/Whizbang.Core/Attributes/Destruction.cs:10`). The
+ephemeral events page this slice was to promote is already published. Depends on S7 for `Archive`.
 
 - **Change.** The reaper (`MaintenanceWorker.cs:805`) and the stream disposition step route on
   `DestructionResult.Disposition`: `Delete` as today, `Archive` through `IArchiveStore` (S7) before
@@ -159,6 +174,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S7. B3: `IArchiveStore` and the Postgres-table store
 
+**Status (2026-10-24):** open. `wh_event_archive` and `GetArchivedEventsAsync` exist (migration 085), but there
+is no `IArchiveStore` type.
+
 - **Change.** `IArchiveStore` in Core: `WriteAsync(ArchiveBatch)`, `ReadAsync(streamId, fromVersion)`,
   `RestoreAsync(streamId)`, `DeleteAsync(streamId)`. `PostgresTableArchiveStore` wraps
   `wh_event_archive` and keeps today's single-transaction copy-then-truncate. Every archive bumps the
@@ -170,6 +188,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 - **Docs.** New `v1.0.0/fundamentals/events/archive-store.md`.
 
 ### S8. B3: Azure Blob archive store (production default)
+
+**Status (2026-10-24):** open. No `Whizbang.Archive.AzureBlob` package. Depends on S7. Decision 3 (#1673) puts
+Brotli first, not zstd as written below.
 
 - **Change.** New package `Whizbang.Archive.AzureBlob` (reusing `Azure.Storage.Blobs`, already pinned
   in `Directory.Packages.props`). One blob per archive chunk: JSONL, zstd-compressed, with a manifest
@@ -186,6 +207,8 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S9. Read-through, restore, and the append-to-archived policy
 
+**Status (2026-10-24):** open. Nothing is built. Depends on S7.
+
 - **Change.** `IEventStore.ReadAsync` (`IEventStore.cs:177,189`), rewind and
   `PerspectiveRebuilder` consult the tombstone and stream from the archive when the requested range
   is archived. `RestoreAsync` re-inserts detail, bumps the generation and returns the stream to
@@ -200,6 +223,9 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 
 ### S10. Per-perspective policy for rows of archived streams
 
+**Status (2026-10-24):** open. No `[ArchivedStreamRows]`. Depends on S7; reuses the WS-5 S1 companion cleanup,
+which is done.
+
 - **Change.** `[ArchivedStreamRows(Keep | Drop | Archive)]` on a perspective, with a config override.
   `Drop` deletes the row and its cursor and snapshots (shares the companion cleanup from WS-5);
   `Archive` moves the row JSON into the archive store beside the events and restores it on restore.
@@ -208,6 +234,8 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 - **Docs.** `archive-store.md#perspective-rows`; `v1.0.0/fundamentals/perspectives/perspectives.md`.
 
 ### S11. B1: policy-driven end-of-life
+
+**Status (2026-10-24):** open. Nothing is built. Depends on S3 and S5.
 
 - **Change.** A stream type declares a lifecycle policy (attribute plus a registration builder,
   source-generated), overridable from config. Triggers: sliding idle TTL, absolute age,
@@ -224,6 +252,8 @@ Each slice is one TDD increment (RED tests first, docs in the same PR). Docs pat
 - **Docs.** `stream-end-of-life.md#policies`; `v1.0.0/operations/configuration/configuration-reference.md`.
 
 ### S12. B6: close the books
+
+**Status (2026-10-24):** open. `src/` has no `IBookCloser`. Depends on S4 and S11.
 
 - **Change.** `IBookCloser.CloseBooksAsync(streamId, closingSummary, openingBalance)`: (1) append the
   closing summary as a durable event, (2) seal (S4), (3) open a successor stream whose first event is
