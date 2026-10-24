@@ -51,6 +51,9 @@ public sealed partial class TableStatisticsCollector(
   /// <summary>The unused indexes last seen, so the log line is written when the set changes rather than every cycle.</summary>
   private HashSet<string> _lastUnusedIndexes = new(StringComparer.Ordinal);
 
+  /// <summary>The database the provider reads, kept once it has answered, since it does not change.</summary>
+  private string? _database;
+
   private readonly TimeSpan _interval = options.Value.CollectionInterval;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
@@ -89,6 +92,11 @@ public sealed partial class TableStatisticsCollector(
           LogProviderNotRegistered(_logger);
           return;
         }
+
+        // The database tags every gauge, so the same table in two databases is two series. Asked until the provider
+        // names it, then kept.
+        _database ??= await provider.GetDatabaseNameAsync(stoppingToken);
+        metrics.UpdateDatabase(_database);
 
         // One reading for the tables: sizes, their split, rows and bloat together, so a cycle reads the
         // catalog once for every table rather than once per kind of figure.

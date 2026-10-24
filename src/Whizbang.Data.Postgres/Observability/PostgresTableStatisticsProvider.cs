@@ -219,6 +219,14 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   }
 
   /// <inheritdoc />
+  /// <remarks><c>current_database()</c> on a connection the provider opens: the database every other reading reads.</remarks>
+  public async Task<string?> GetDatabaseNameAsync(CancellationToken ct = default) {
+    await using var connection = await _openConnectionAsync(ct).ConfigureAwait(false);
+    await using var cmd = new NpgsqlCommand("SELECT current_database()", connection);
+    return await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyDictionary<string, TableStorageStatistics>> GetTableStorageAsync(CancellationToken ct = default) {
     var results = new Dictionary<string, TableStorageStatistics>(StringComparer.Ordinal);
 

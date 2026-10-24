@@ -13,6 +13,25 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorBranchTests.cs:ProviderThrows_LogsAndContinuesLoopAsync</tests>
 public interface ITableStatisticsProvider {
   /// <summary>
+  /// Returns the name of the database the readings come from, which every table-statistics gauge carries as its
+  /// <c>database</c> tag.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Services on different databases report the same <c>wh_</c> tables, so without the name, two databases'
+  /// <c>wh_outbox</c> would be one series each overwrote. A provider's database does not change, so the collector
+  /// asks until it has an answer and keeps it.
+  /// </para>
+  /// <para>Defaults to null, so a provider written before the tag existed reports its gauges without it.</para>
+  /// </remarks>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The database name, or null where the provider cannot name it.</returns>
+  /// <docs>operations/observability/metrics#table-statistics-database</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderThatCannotNameItsDatabase_AnswersNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetDatabaseNameAsync_IsTheDatabaseTheConnectionReadsAsync</tests>
+  Task<string?> GetDatabaseNameAsync(CancellationToken ct = default) => Task.FromResult<string?>(null);
+
+  /// <summary>
   /// Returns estimated disk size in bytes per table name.
   /// Uses database catalog statistics — no table scans.
   /// </summary>
