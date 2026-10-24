@@ -37,6 +37,14 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "whizbang-lib contributors"
 SPDX-License-Identifier = "MIT"
 
+# Package-manager lock files: pnpm rewrites the whole file on every install and update (Dependabot
+# included) and drops any header, so the header lives here instead.
+[[annotations]]
+path = ["**/pnpm-lock.yaml"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"
+
 # Retired test files kept in the tree but not compiled.
 [[annotations]]
 path = ["**/*.bak", "**/*.bak2", "**/*.bak3", "**/*.needs-rewrite", "samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests/kill"]
