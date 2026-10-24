@@ -40,7 +40,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
@@ -56,7 +57,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: null!);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: null!,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
@@ -79,7 +81,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: metrics,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -109,7 +112,8 @@ public class TableStatisticsCollectorBranchTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: _newMetrics(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(), logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

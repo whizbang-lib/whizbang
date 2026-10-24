@@ -128,6 +128,8 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
   /// is parked on that lock. That is the "a sweep is in flight right now" signal the loop itself
   /// does not emit — without it, cancelling mid-sweep is a guess against how fast the database is.
   /// </summary>
+  // The sweep deletes from the relation wh_partition_sweep_relation names, schema-qualified (#1646), so the probe
+  // matches the table with or without its schema.
   private async Task<bool> _waitForBlockedSweepAsync(TimeSpan timeout) {
     var deadline = DateTimeOffset.UtcNow + timeout;
     while (DateTimeOffset.UtcNow < deadline) {
@@ -138,7 +140,7 @@ public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
         WHERE datname = current_database()
           AND pid <> pg_backend_pid()
           AND wait_event_type = 'Lock'
-          AND query LIKE '%DELETE FROM wh_signals%'", conn);
+          AND query LIKE '%DELETE FROM %wh_signals%'", conn);
       var blocked = Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
       if (blocked > 0) {
         return true;

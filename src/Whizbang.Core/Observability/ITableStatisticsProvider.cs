@@ -97,6 +97,30 @@ public interface ITableStatisticsProvider {
     Task.FromResult<IReadOnlyDictionary<string, EventTypeBytes>?>(null);
 
   /// <summary>
+  /// Returns the indexes on the framework's tables that nothing has scanned since the statistics were last reset, by
+  /// index name, with their table and size.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every index costs on every write to its table and holds space on disk, so one nothing reads is worth knowing
+  /// about. This is a report and nothing more: an index with no scans may serve a rare path, so nothing acts on it.
+  /// </para>
+  /// <para>
+  /// An index that enforces a constraint (unique, primary key, exclusion) is never reported, because it does its work
+  /// whether or not a query reads it. The number answered is bounded the same way as the tables: past the cap, the
+  /// smallest are summed under <see cref="TableStatisticsOptions.OTHER_TABLES"/>.
+  /// </para>
+  /// <para>Defaults to empty, so an engine that does not count index scans reports nothing rather than every index.</para>
+  /// </remarks>
+  /// <param name="ct">Cancels the read.</param>
+  /// <returns>The unused indexes by name, or empty where the provider does not count index scans.</returns>
+  /// <docs>operations/observability/metrics#unused-indexes</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsContractTests.cs:AProviderWithoutIndexStatistics_ReportsNoUnusedIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs:GetUnusedIndexesAsync_ReportsTheIndexesNothingScanned_WithTheirSizeAsync</tests>
+  Task<IReadOnlyDictionary<string, UnusedIndex>> GetUnusedIndexesAsync(CancellationToken ct = default) =>
+    Task.FromResult<IReadOnlyDictionary<string, UnusedIndex>>(new Dictionary<string, UnusedIndex>());
+
+  /// <summary>
   /// Returns, per table, how much reading has been done by sequential scan rather than by index.
   /// </summary>
   /// <remarks>
@@ -197,6 +221,13 @@ public readonly record struct TableStorageStatistics(
   /// <summary>The table's whole size on disk: heap, TOAST and indexes together.</summary>
   public long TotalBytes => HeapBytes + ToastBytes + IndexBytes;
 }
+
+/// <summary>An index nothing has scanned since the statistics were last reset, and what it costs on disk.</summary>
+/// <param name="TableName">The table the index is on; a partitioned table's own name for an index on its partitions.</param>
+/// <param name="Bytes">The index's size on disk, its partitions' sizes summed for an index on a partitioned table.</param>
+/// <docs>operations/observability/metrics#unused-indexes</docs>
+/// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsUnusedIndexTests.cs</tests>
+public readonly record struct UnusedIndex(string TableName, long Bytes);
 
 /// <summary>What one sample of the event store by event type reads.</summary>
 /// <param name="ClaimKey">The window's claim; the instance that takes it samples, the others do not.</param>

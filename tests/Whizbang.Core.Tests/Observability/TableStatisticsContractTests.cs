@@ -49,6 +49,14 @@ public class TableStatisticsContractTests {
   }
 
   [Test]
+  public async Task AProviderWithoutIndexStatistics_ReportsNoUnusedIndexesAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetUnusedIndexesAsync()).IsEmpty()
+      .Because("an engine that does not count index scans reports nothing, rather than every index as unused");
+  }
+
+  [Test]
   public async Task AProviderThatDoesNotSample_AnswersNullAsync() {
     ITableStatisticsProvider provider = new SizesOnlyProvider();
 

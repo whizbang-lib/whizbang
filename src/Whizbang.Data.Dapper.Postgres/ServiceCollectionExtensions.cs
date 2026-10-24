@@ -489,10 +489,11 @@ public static class ServiceCollectionExtensions {
     return connection;
   }
 
-  // TURNKEY: the partition manager (#1611). It converts wh_log once and keeps the framework's time-partitioned tables
-  // while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and is idle otherwise.
+  // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once (#1646)
+  // and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and
+  // is idle otherwise.
   private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
-    services.AddPartitionedTable(PartitionedTables.Log);
+    services.AddFrameworkPartitionedTables();
     services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
       new DapperPartitionMaintenanceStep(
         connectionString,

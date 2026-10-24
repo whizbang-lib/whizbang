@@ -4454,10 +4454,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var tableName = BuildSchemaQualifiedName(schema, "wh_lifecycle_completions");
+    var sweepRelation = BuildSchemaQualifiedName(schema, "wh_partition_sweep_relation");
     var cutoff = DateTimeOffset.UtcNow - retentionPeriod;
 
+    // The whole table, or only its default partition once the partition manager keeps it: expired partitions are then
+    // dropped whole, and the default holds the rows no partition covers (#1646). Nothing when there is no default.
 #pragma warning disable S2077
+    var relationSql = $"SELECT {sweepRelation}('wh_lifecycle_completions') AS \"Value\"";
+    var relations = await _dbContext.Database.SqlQueryRaw<string?>(relationSql).ToListAsync(cancellationToken);
+    if (relations[0] is not { } tableName) {
+      return 0;
+    }
     var sql = $"DELETE FROM {tableName} WHERE completed_at < {{0}}";
 #pragma warning restore S2077
 

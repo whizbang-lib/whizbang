@@ -39,8 +39,25 @@ public sealed class TableStatisticsOptions {
   public const double DEFAULT_EVENT_TYPE_SAMPLE_PERCENT = 1;
 #pragma warning restore CA1707
 
+  /// <summary>The default for <see cref="CollectionInterval"/>: thirty seconds.</summary>
+  public static readonly TimeSpan DefaultCollectionInterval = TimeSpan.FromSeconds(30);
+
   /// <summary>The default for <see cref="EventTypeSampleInterval"/>: fifteen minutes.</summary>
   public static readonly TimeSpan DefaultEventTypeSampleInterval = TimeSpan.FromMinutes(15);
+
+  /// <summary>
+  /// How often each instance reads the tables' sizes, rows, bloat, unused indexes and queue depths into the gauges.
+  /// Each reading is one catalog statement for every table, so it costs the same however much the tables hold. Must be
+  /// greater than zero.
+  /// </summary>
+  /// <remarks>
+  /// Configuration key <c>Whizbang:TableStatistics:CollectionInterval</c>, environment variable
+  /// <c>Whizbang__TableStatistics__CollectionInterval</c>. Default <c>00:00:30</c>.
+  /// </remarks>
+  /// <docs>operations/configuration/configuration-reference#tablestatisticsoptions</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsRegistrationTests.cs:TheCollectionInterval_BindsFromTheTableStatisticsSectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Observability/TableStatisticsCollectorIntervalTests.cs:TheConfiguredInterval_IsTheWaitBetweenCyclesAsync</tests>
+  public TimeSpan CollectionInterval { get; set; } = DefaultCollectionInterval;
 
   /// <summary>
   /// The most tables reported by name. Past this, the smallest tables are summed under

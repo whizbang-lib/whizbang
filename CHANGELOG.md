@@ -21,6 +21,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   partition, and drops partitions wholly past `log_retention_days` instead of deleting rows. Only the maintainer-duty
   holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
   table and detached later. Migration 226.
+  table and detached later. Migration 226.
+
+- **`wh_signals` and `wh_lifecycle_completions` are partitioned by the partition manager (#1646).** While
+  partitioning is enabled, `wh_signals` converts once to daily partitions by `created_at` (primary key
+  `(id, created_at)`; publishing and the tail are unchanged) and `wh_lifecycle_completions` to daily `event_id` ranges
+  (event ids are UUIDv7, so a day is the range from its first id to the next day's; the key stays `event_id`). Their
+  partitions are dropped past `SignalRetention` and `LifecycleCompletionRetentionDays` (`0` keeps every partition).
+  The manager now accepts a time-ordered `uuid` key as well as a `timestamptz` one, and the conversion moves a row
+  whose key is past the oldest partition's bound (a version-4 id, a clock running ahead) into the default partition
+  instead of failing. Once a table is partitioned and maintained, its row sweep clears only the default partition;
+  switched off, it sweeps the whole table again. Migration 233.
+
+- **The applied-event ledger vacuums after a fixed number of changes (#1666).** Migration 234 sets scale factor 0
+  with a threshold of 10000 for both dead rows and inserts on `wh_perspective_applied`, which takes a row for every
+  completed apply and prunes it an hour later. A scale factor made its vacuum wait on a share of a window that grows
+  with the traffic.
 
 - **A perspective table can declare when autovacuum runs (#1584).** `[PerspectiveTableStorage]` gains
   `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold`,
@@ -257,6 +273,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and call site; with no observer subscribed a parse site costs one volatile read. `MessageParseRecorder` counts and
   summarizes the parses of chosen messages. Regression tests pin today's counts per flow (a locally published event
   feeding two perspectives is parsed 17 times), and `plans/message-cache.md` proposes the cache that lowers them.
+- **Unused-index report (#1669).** Each table-statistics cycle reports the indexes on `wh_` tables that nothing has
+  scanned since the statistics were last reset, with their size, on the new gauge
+  `whizbang.table.unused_index_bytes` (tags `table_name`, `index_name`), and logs the set at Information when it
+  changes. Unique, primary-key and exclusion indexes are left out; an index on a partitioned table is one series with
+  its partitions summed; past `MaxTrackedTables` the smallest are summed under `other`. Nothing is ever dropped.
+  `ITableStatisticsProvider.GetUnusedIndexesAsync` defaults to empty.
+- **The table-statistics collection interval is a setting (#1668).** `Whizbang:TableStatistics:CollectionInterval`
+  (default `00:00:30`, the interval the collector always used) sets how often each instance reads the tables into the
+  `Whizbang.TableStatistics` gauges. Zero or negative fails host start naming the key.
 - **Two more ephemeral build rules (#1544, #1545).** WHIZ131 (Error) reports a call site that asks to rebuild or
   rewind a perspective whose every applied event is ephemeral: constructing `RebuildPerspectiveCommand` for it, an
   `IPerspectiveRebuilder` rebuild, or `IPerspectiveRunner.RewindAndRunAsync`. The perspective is resolved when it is
@@ -327,6 +352,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records the normalized bootstrap closure hash beside the old one, so nothing is applied again and the bootstrap does
   not re-run; a row matching neither form belongs to a file that really changed and is applied as before. Later starts
   find nothing to rewrite.
+- **The unread `table_rewrite_policy` setting is retired (#1667).** Migration 089 seeded it in `wh_settings` and
+  nothing ever read it: table rewrites are governed by `AllowTableRewrite` alone. Migration 235 deletes the row, so
+  behavior is the same whatever it held. `table_rewrite_bloat_threshold`, `table_rewrite_min_rows` and
+  `pending_table_rewrites` stay.
 - **System events are stored by default wherever an event store is registered (#1621). Behavior change.**
   `AddWhizbang` (and `AddSystemEvents`) now register the real `SystemEventEmitter` with TryAdd in place of
   `NullSystemEventEmitter`, so the `SystemEventOptions` defaults decide what is stored: denials and permission changes

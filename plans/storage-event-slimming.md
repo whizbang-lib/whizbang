@@ -387,17 +387,19 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
   falling by the share the evidence attributes to bodies, ephemeral churn types leaving durable
   history after S2.
 
-## Open questions
+## Decisions (formerly open questions)
 
 1. ~~Default for `WriteForm`.~~ Decided 2026-10-21: `Linked` (S9, S9b). `AuditBodyDefault = Omit`
    shipped in #1588.
-2. Audited ephemeral types: when the origin reaps the event, the audit pointer dangles. Keep the
-   body for audited ephemeral types, or exclude ephemeral types from audit by default?
-3. `OriginalStreamPosition` on the outbox path: nullable, filled at emit, or dropped from the
-   record?
-4. Keep the current hop's `sc` although it duplicates `wh_event_store.scope`, or rebuild scope from
-   the column on read?
-5. K1 key: latest-wins per (stream, type) only, or per (stream, type, key) with a key column stamped
-   at emit?
-6. K1 across services: a subscriber reaps on its own schedule, so origin and subscriber digests can
-   disagree for a window. Accept and document, or reap only after the subscriber acknowledges?
+
+Questions 2 to 6 were decided on 2026-10-22 in #1674 (the owner accepted the recommendations).
+
+2. **Audited ephemeral types** are excluded from audit by default, with an opt-in that keeps the
+   body, so no audit pointer dangles once the origin reaps the event.
+3. **`OriginalStreamPosition` on the outbox path** is filled at emit.
+4. **The current hop's `sc`** is dropped from stored metadata, and scope is rebuilt from
+   `wh_event_store.scope` on read. This saves about 100 B per event.
+5. **The K1 key** is latest-wins per (stream, type, key), with a key column stamped at emit.
+   Embeddings need a per-entity key.
+6. **K1 across services:** origin and subscriber digests may disagree for a window. This is accepted
+   and documented; reaping does not wait for the subscriber to acknowledge.

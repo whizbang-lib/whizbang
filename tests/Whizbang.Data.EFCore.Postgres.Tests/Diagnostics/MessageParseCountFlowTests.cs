@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -99,15 +100,11 @@ public class MessageParseCountFlowTests {
       .Because("a local event is stored and drained; it never leaves on the wire in this topology");
     await Assert.That(_count(summary, MessageParseSource.LifecycleStage, MessageParseKind.Payload)).IsEqualTo(5)
       .Because("each of the five distribute stages parses the payload again (plans/message-cache.md, migration step 1)");
-    // The drain parses one row per perspective (2). Its refetch reads the stream again and parses both applied rows
-    // again (2) only when it runs before the completion flush deletes them; the flush is asynchronous, so either
-    // order is a correct run (plans/message-cache.md, step 2 removes the refetch parses).
-    var storeReads = _count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload);
-    await Assert.That(storeReads is 2 or 4).IsTrue()
-      .Because($"the drain parses 2 rows, and the refetch 2 more or none; parsed {storeReads}");
-    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(storeReads);
-    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(storeReads);
-    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(5 + (3 * storeReads));
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload)).IsEqualTo(2)
+      .Because("the one drain session parses the event once per row, and there is one row per perspective (step 2)");
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(2);
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(2);
+    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
   }
 
   private static int _count(IReadOnlyList<MessageParseSiteCount> summary, MessageParseSource source, MessageParseKind kind) =>
@@ -166,12 +163,39 @@ public class MessageParseCountFlowTests {
       .WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres
       .AddTransportConsumer();
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
+    // One drain session per stream. The claim re-emits every stream it still leases on every poll, by design, and
+    // the worker runs several drain consumers, so how many sessions fetch the stream before its rows are flushed
+    // depends on poll timing. Each one parses every row again. Pinning one session makes the count the cost of a
+    // drain, which is what the pin measures.
+    builder.Services.Replace(ServiceDescriptor.Singleton<IPerspectiveDrainChannel>(
+      new FirstEmissionPerStreamDrainChannel(new PerspectiveDrainChannel())));
     return builder.Build();
   }
 
   private static async Task _startAsync(IHost host, CancellationToken cancellationToken) {
     await host.StartAsync(cancellationToken);
     await host.Services.GetRequiredService<IStartupReadySignal>().WaitForReadyAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// The drain channel, passing on only the first emission of each stream, so each stream is drained by exactly one
+  /// session. Every later emission of the stream is a re-emission of rows the first session already fetched.
+  /// </summary>
+  private sealed class FirstEmissionPerStreamDrainChannel(IPerspectiveDrainChannel inner) : IPerspectiveDrainChannel {
+    private readonly ConcurrentDictionary<Guid, byte> _emitted = new();
+
+    public ChannelReader<Guid> Reader => inner.Reader;
+
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      _emitted.TryAdd(streamId, 0) ? inner.WriteAsync(streamId, cancellationToken) : ValueTask.CompletedTask;
+
+    public bool TryWrite(Guid streamId) => !_emitted.TryAdd(streamId, 0) || inner.TryWrite(streamId);
+
+    public bool IsInFlight(Guid streamId) => inner.IsInFlight(streamId);
+
+    public void MarkDraining(Guid streamId) => inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) => inner.MarkDrained(streamId);
   }
 
   /// <summary>The wire, with a record of what the host subscribed to and published.</summary>

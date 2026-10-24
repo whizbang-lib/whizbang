@@ -101,6 +101,8 @@ Each slice is one red-then-green increment and its own commit.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
+   **Status (2026-10-23):** done in #1667, migration 235. Nothing in `src/` read the key, so behavior is
+   unchanged for any value it held.
 5. **PgRepack strategy.** A fifth `TableRewriteStrategy` value, `PgRepack`, carrying
    `[RequiresPostgresExtension("pg_repack")]`. The extension is provisioned and the client program
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
@@ -118,6 +120,8 @@ Each slice is one red-then-green increment and its own commit.
    Update 088's comment about the event store, whose reason (dead tuples) does not cover the insert
    threshold. RED: a migration test reading `pg_class.reloptions` and the TOAST relation's
    reloptions per table; idempotence on re-run. Docs: storage-maintenance page.
+   **Status (2026-10-23):** shipped in 222 (#1582). `wh_perspective_applied`, which stays unpartitioned
+   (#1577), gets the same shape for deletes and inserts in migration 234 (#1666).
 7. **Perspective tables, by attribute.** Extend `[PerspectiveTableStorage]` with
    `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold` and
    matching TOAST properties. `TableStorageInfo.From` reads them; `ColumnStorageSql.ForTable` emits
@@ -182,6 +186,9 @@ Each slice is one red-then-green increment and its own commit.
     index (`EXPLAIN` uses it for the range query).
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
+    **Status (2026-10-23):** done in #1669: `whizbang.table.unused_index_bytes` on the table-statistics meter
+    and an Information log line when the set changes. Constraint indexes are left out; partition indexes roll
+    up to their parent; capped by `MaxTrackedTables`.
 13. **`REINDEX CONCURRENTLY` task.** For queue tables that churn to empty (`wh_outbox`, `wh_inbox`,
     `wh_inbox_state`, `wh_perspective_events`): when an index's size over its expected size exceeds
     `ReindexBloatThreshold`, rebuild it concurrently on its own connection (it cannot run in a
@@ -227,12 +234,17 @@ Each slice is one red-then-green increment and its own commit.
 - `whizbang.housekeeping.decisions` by verdict: forced passes arrive at `MaxDeferral` after the
   first deferral.
 
-## Open questions
+## Decisions (formerly open questions)
 
-- Should `Auto` enable online rewrites as soon as pg_squeeze becomes usable, or require an opt-in
-  even for the online strategy?
-- Slice 10: side table, or keep `commit_sequence` on the row and accept one non-HOT update? The side
-  table adds a join to every ordered read.
-- Should the schema pass `RESET` an autovacuum or fillfactor setting when its attribute property is
-  removed? `SetToastTupleTarget` never resets today.
-- Confirm `squeeze.squeeze_table` privilege needs on managed servers (superuser or REPLICATION).
+All decided on 2026-10-22 in #1671 (the owner accepted the recommendations).
+
+1. **Auto and online rewrites.** `Auto` does not start online rewrites. Online rewrites need an
+   explicit opt-in (`TableRewriteStrategy = PgSqueeze`); `Auto` detects which tables need a rewrite
+   and reports them only.
+2. **Event-store churn (slice 10).** `commit_sequence` stays on the event row, and one non-HOT update
+   per event is accepted. #1519 measured one update per event, and a side table would add a join to
+   every ordered read.
+3. **Removed storage attributes.** The schema pass resets (`RESET`) an autovacuum or fillfactor
+   setting when the attribute property that set it is removed, so the database matches the code.
+4. **pg_squeeze privileges** on managed servers (superuser or REPLICATION) is an investigation, not a
+   decision. It moves into C1.3 as a prerequisite to verify.
