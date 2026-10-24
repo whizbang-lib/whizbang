@@ -26,6 +26,7 @@ public class LogPartitionConversionTests : EFCoreTestBase {
   private const string CONVERTED = "converted";
   private const string RELKIND = "SELECT relkind::text FROM pg_class WHERE oid = 'wh_log'::regclass";
   private const string MARKER = "SELECT setting_value FROM wh_settings WHERE setting_key = 'wh_log_partition_version'";
+  private const string MANAGED_STATUS = "ok (partitioned: the default partition only; expired partitions are dropped)";
 
   private async Task<NpgsqlConnection> _openAsync() {
     var connection = new NpgsqlConnection(ConnectionString);
@@ -38,6 +39,11 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     connection.ExecuteAsync(
       "INSERT INTO wh_log (logged_at, log_level, source, error_message) VALUES (NOW() - make_interval(days => @ageDays), 2, 'test', @message)",
       new { message, ageDays });
+
+  private static Task _logAtAsync(NpgsqlConnection connection, DateTime now, string message, int ageDays) =>
+    connection.ExecuteAsync(
+      "INSERT INTO wh_log (logged_at, log_level, source, error_message) VALUES (@now::timestamptz - make_interval(days => @ageDays), 2, 'test', @message)",
+      new { now, message, ageDays });
 
   private static Task<List<string>> _messagesAsync(NpgsqlConnection connection) =>
     connection.QueryAsync<string>("SELECT error_message FROM wh_log WHERE source = 'test' ORDER BY log_id");
@@ -285,7 +291,7 @@ public class LogPartitionConversionTests : EFCoreTestBase {
     var (rows, status) = await _purgeLogAsync(connection);
 
     await Assert.That(rows).IsEqualTo(0L);
-    await Assert.That(status).IsEqualTo("skipped (partitioned: expired partitions are dropped)");
+    await Assert.That(status).IsEqualTo(MANAGED_STATUS);
     await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["old"])
       .Because("no row is deleted from a partitioned log; the partition holding it goes when it ends past the window");
 
@@ -308,5 +314,50 @@ public class LogPartitionConversionTests : EFCoreTestBase {
 
     await Assert.That(status).IsEqualTo("ok");
     await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["young"]);
+  }
+
+  [Test]
+  public async Task OnceManaged_TheRowDeleteSweepsOnlyTheDefaultPartition_AndLeavesPartitionsToTheDropAsync() {
+    await using var connection = await _openAsync();
+    // One moment read from the database, so every partition and row below is placed against the same instant.
+    var now = await connection.ExecuteScalarAsync<DateTime>("SELECT NOW()");
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    await _enablePartitionMaintenanceAsync(connection);
+    // Thirty days on, the legacy partition has ended past the 14-day window and is dropped, so nothing covers the
+    // weeks before then; a partition is then made for the week 20 days back, and nothing else covers the past.
+    await connection.ExecuteAsync(
+      "SELECT * FROM wh_partition_maintain('wh_log', '7 days', 0, '14 days', @now::timestamptz + INTERVAL '30 days')", new { now });
+    await connection.ExecuteAsync(
+      "SELECT * FROM wh_partition_maintain('wh_log', '7 days', 0, NULL, @now::timestamptz - INTERVAL '20 days')", new { now });
+    await _logAtAsync(connection, now, "old-in-a-partition", 20);
+    await _logAtAsync(connection, now, "old-in-the-default", 40);
+    await _logAtAsync(connection, now, "young-in-the-default", 1);
+    var placedIn = await connection.QueryAsync<string>(
+      "SELECT error_message || CASE WHEN tableoid = 'wh_log_default'::regclass THEN ' default' ELSE ' partition' END " +
+      "FROM wh_log WHERE source = 'test' ORDER BY error_message");
+
+    var (rows, status) = await _purgeLogAsync(connection);
+
+    await Assert.That(placedIn).IsEquivalentTo(
+      ["old-in-a-partition partition", "old-in-the-default default", "young-in-the-default default"]);
+    await Assert.That(rows).IsEqualTo(1L);
+    await Assert.That(status).IsEqualTo(MANAGED_STATUS);
+    await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["old-in-a-partition", "young-in-the-default"])
+      .Because("an expired partition goes whole when the manager drops it; only the default partition, which no drop reaches, is swept by row");
+  }
+
+  [Test]
+  public async Task OnceManaged_WithoutADefaultPartition_TheRowDeleteSkipsAsync() {
+    await using var connection = await _openAsync();
+    await _logAsync(connection, "old", 20);
+    await connection.ExecuteScalarAsync<string>(CONVERT);
+    await _enablePartitionMaintenanceAsync(connection);
+    await connection.ExecuteAsync("DROP TABLE wh_log_default");
+
+    var (rows, status) = await _purgeLogAsync(connection);
+
+    await Assert.That(rows).IsEqualTo(0L);
+    await Assert.That(status).IsEqualTo("skipped (partitioned: no default partition)");
+    await Assert.That(await _messagesAsync(connection)).IsEquivalentTo(["old"]);
   }
 }

@@ -19,6 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <docs>operations/infrastructure/partitioned-ledgers</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/226_PartitionManager.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/237_PartitionsCarryTheLedgersAutovacuumSettings.sql</code-under-test>
 [NotInParallel("PostgreSQL")]
 [Category("Integration")]
 public class DapperPartitionManagerSqlTests : PostgresTestBase {
@@ -119,4 +120,33 @@ public class DapperPartitionManagerSqlTests : PostgresTestBase {
       .IsEquivalentTo(["autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=10000"]);
   }
 
+  [Test]
+  public async Task TheLog_OnceManaged_IsSweptInItsDefaultPartitionOnlyAsync() {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    var now = await connection.ExecuteScalarAsync<DateTime>("SELECT NOW()");
+    await connection.ExecuteScalarAsync<string>("SELECT wh_partition_convert('wh_log', 'logged_at', '7 days')");
+    await connection.ExecuteAsync(
+      "INSERT INTO wh_settings (setting_key, setting_value, value_type) VALUES ('partition_maintenance_enabled', 'true', 'boolean') " +
+      "ON CONFLICT (setting_key) DO UPDATE SET setting_value = 'true'");
+    // The legacy partition is dropped as seen from 30 days on; then only the week 20 days back has a partition.
+    await connection.ExecuteAsync(
+      "SELECT * FROM wh_partition_maintain('wh_log', '7 days', 0, '14 days', @now::timestamptz + INTERVAL '30 days')", new { now });
+    await connection.ExecuteAsync(
+      "SELECT * FROM wh_partition_maintain('wh_log', '7 days', 0, NULL, @now::timestamptz - INTERVAL '20 days')", new { now });
+    await connection.ExecuteAsync(
+      "INSERT INTO wh_log (logged_at, log_level, source, error_message) VALUES " +
+      "(@now::timestamptz - INTERVAL '20 days', 2, 'test', 'old-in-a-partition'), " +
+      "(@now::timestamptz - INTERVAL '40 days', 2, 'test', 'old-in-the-default'), " +
+      "(@now::timestamptz - INTERVAL '1 day', 2, 'test', 'young-in-the-default')",
+      new { now });
+
+    var status = await connection.ExecuteScalarAsync<string>(
+      "SELECT status FROM perform_maintenance() WHERE task_name = 'purge_old_log_entries'");
+    var left = (await connection.QueryAsync<string>("SELECT error_message FROM wh_log WHERE source = 'test'")).ToList();
+
+    await Assert.That(status).IsEqualTo("ok (partitioned: the default partition only; expired partitions are dropped)");
+    await Assert.That(left).IsEquivalentTo(["old-in-a-partition", "young-in-the-default"])
+      .Because("a partition is left to the partition drop; only the default partition is swept by row");
+  }
 }
