@@ -446,7 +446,9 @@ public partial class ServiceBusConsumerWorker(
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
 
-      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+      // Not for an event something in this service applies later: the collective sink fires these for a
+      // collective event once its apply commits (#1676).
+      if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
         await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
       }
     }
@@ -566,33 +568,6 @@ public partial class ServiceBusConsumerWorker(
     Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
-
-  /// <summary>
-  /// Checks if the given message type is an event type that has NO associated perspectives.
-  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
-  /// Events without perspectives need PostLifecycle fired here immediately.
-  /// </summary>
-  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      // No perspectives registered at all - all events are "without perspectives"
-      return true;
-    }
-
-    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-
-    var perspectives = registry.GetRegisteredPerspectives();
-    foreach (var perspective in perspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
-        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
-          return false; // This event type has at least one perspective
-        }
-      }
-    }
-
-    return true; // No perspectives handle this event type
-  }
 
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.

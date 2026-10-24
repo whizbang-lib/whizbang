@@ -337,6 +337,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Transport test warmup waits on the subscriber's signal only (#1657).** `SubscriptionWarmup.WarmupAsync` in the
+  testing library publishes one warmup message and completes when the subscriber signals that it arrived. The 5-second
+  initial delay and the 2-second resend loop are gone, and so are the `retryInterval` and `initialDelay` parameters
+  and `DefaultRetryInterval` / `DefaultInitialDelay`: a transport's subscription is durable once its subscribe call
+  returns, so the one warmup message waits on the broker until the subscriber takes it.
+
 - **The generators package writes no generated source to disk and embeds no message registry by default (#1609).
   Behavior change.** The package's props no longer turn `EmitCompilerGeneratedFiles` on, and
   `WhizbangEmitMessageRegistry` now defaults to `false`: the generator embeds no registry JSON in the assembly and the
@@ -590,6 +596,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IDeadLetterRecoveryService` gains `ReadRedeliveryAsync` (a default implementation returns `null`, which falls back to
   `RecoverAsync`). Recovered inbox and broker messages now take the priority a delivery takes rather than background.
   Events already lost this way are not restored by this change; see the issue for the repair.
+- **A perspective that declines every event of a stream no longer leaves a blank row for it (#1677).** When every
+  `Apply` returned `ApplyResult<TModel>.None()` for a stream's events, a rewind of that stream (a late event behind
+  the cursor, events of one stream split across concurrent claims, a startup rewind or a resurrection) wrote the
+  empty default model the runner builds as `Apply` input, so the table gained a row of defaults (empty strings, zero
+  counts, `DateTime.MinValue`) that read as a real one, and a rewind with snapshots on could snapshot it too. A
+  rewind now writes, and snapshots, only a model an `Apply` produced or a snapshot it restored, as the live drain
+  already did. A soft delete (`ApplyResult.Delete()`) that returns no model on a stream with no row no longer
+  creates one either. Every generated row write now asks `PerspectiveRowWriteGuard`, which refuses a model no
+  `Apply` produced and logs a `[diag.write.unproduced]` warning. Blank rows already written are left in place;
+  this change does not remove them.
+- **A received collective event no longer fires its post-perspective lifecycle stages twice (#1676).** In a service
+  that runs the collective sink, a collective event received from another service ran through `PostAllPerspectives`
+  and `PostLifecycle` as soon as it was received, because no per-stream perspective lists a collective event type,
+  and again when the sink's set-based apply completed, so a hook at either stage (for example a
+  `PostAllPerspectivesDetached` notification hook) ran twice for every such event. The inbox and Service Bus
+  receive paths now leave those stages to the sink, which fires each of them once per event however many
+  collective handlers apply it and however many batches the run spans. A service without the collective sink
+  registered still fires them on receipt, as before.
 - **A schema pass continued part way through no longer records the files it already applied as skipped (#1687).**
   When a retry, or a second instance that took the schema lock between two of the first one's steps, continued a pass
   of the same build, its plan recorded `status 3`, `Skipped (hash unchanged)`, over every migration file and

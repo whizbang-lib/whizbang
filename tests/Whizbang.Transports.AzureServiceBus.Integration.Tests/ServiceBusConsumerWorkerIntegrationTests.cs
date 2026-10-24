@@ -95,9 +95,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     await worker.StartAsync(CancellationToken.None);
 
     try {
+      // The subscription exists once SubscriptionsReady completes, so a message published from
+      // here on waits on the broker for this worker; no settle wait.
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
-      // Give broker-side routing time to warm up
-      await Task.Delay(TimeSpan.FromSeconds(5));
 
       var envelope = _createTestEnvelopeWithAggregateId(Guid.NewGuid());
       var destination = new TransportDestination("topic-00");
@@ -105,17 +105,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
       // Wait for OUR message specifically. The shared emulator subscription is at-least-once
       // and the pre-test drain is best-effort, so a straggler from a prior test can land
-      // first — asserting on .First() flaked exactly that way in CI. Correlate by own id
-      // (the DistinctMessageIdAwaiter lesson applied at this seam). Snapshot before
-      // enumerating: the worker appends concurrently.
-      var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
-        TimeSpan.FromSeconds(30));
+      // first; asserting on .First() flaked exactly that way in CI. The strategy signals the
+      // moment the worker hands it this message id.
+      var inbox = await strategy.WaitForInboxMessageAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 
       // Assert
-      await Assert.That(processed).IsTrue();
-
-      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
+      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
       // TestMessage does not implement IEvent, so isEvent is false
       await Assert.That(inbox.IsEvent).IsFalse();
     } finally {
@@ -160,13 +155,18 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var state = new Whizbang.Core.Startup.StartupPipelineState();
     await new Whizbang.Core.Startup.StartupPipelineRunner(steps: [], observers: [state], dutyElector: NullDutyElector.Instance).RunAsync(CancellationToken.None);
     var signal = new Whizbang.Core.Startup.StartupReadySignal();
-    var readyService = new Whizbang.Core.Startup.StartupReadyService(pipelineState: state, signal: signal, contributors: [worker], logger: NullLogger<StartupReadyService>.Instance, timeProvider: TimeProvider.System); // review-checks:allow end-to-end against a real broker
+    var workerContributor = new ObservedContributor(worker);
+    var readyService = new Whizbang.Core.Startup.StartupReadyService(pipelineState: state, signal: signal, contributors: [workerContributor], logger: NullLogger<StartupReadyService>.Instance, timeProvider: TimeProvider.System); // review-checks:allow end-to-end against a real broker
 
     var startedTask = readyService.StartedAsync(CancellationToken.None);
-    await Task.Delay(TimeSpan.FromSeconds(2));
+    // The composite has drained the pipeline and is now waiting on the worker: the exact moment
+    // it would flip if it did not wait on the real subscription.
+    await workerContributor.Asked.WaitAsync(TimeSpan.FromSeconds(30));
     await Assert.That(signal.IsReady).IsFalse()
       .Because("the composite must wait on the real subscription, not on the passage of time — "
              + "\"started\" is not \"subscribed\"");
+    await Assert.That(startedTask.IsCompleted).IsFalse()
+      .Because("the worker has not started, so its subscription cannot be ready");
 
     await worker.StartAsync(CancellationToken.None);
     try {
@@ -229,22 +229,20 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     try {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
-      await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish message with security context in hop
       var envelope = _createTestEnvelopeWithScope("test-user-id", "test-tenant-id");
       var destination = new TransportDestination("topic-01");
       await transport.PublishAsync(envelope, destination);
 
-      var processed = await _waitForConditionAsync(
-        () => !capturedInboxMessages.IsEmpty,
-        TimeSpan.FromSeconds(30));
+      // Wait for THIS message: any other message on the shared subscription would also reach
+      // the strategy, and counting "at least one" would pass on it.
+      var inbox = await strategy.WaitForInboxMessageAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 
-      await Assert.That(processed).IsTrue();
       // Security context should have been established during handling
       // Note: Context may not be captured if strategy doesn't have scope access,
-      // but the test verifies the full pipeline runs without errors
-      await Assert.That(capturedInboxMessages.Count).IsGreaterThanOrEqualTo(1);
+      // but the test verifies the full pipeline runs this message without errors
+      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -258,9 +256,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     _disposables.Add(transport);
     await transport.InitializeAsync();
 
-    var processedMessageIds = new List<Guid>();
-    var flushCount = 0;
-    var strategy = new DuplicateDetectingStrategy(processedMessageIds, () => flushCount++);
+    var strategy = new DuplicateDetectingStrategy();
 
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
@@ -295,20 +291,17 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     try {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
-      await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Publish a message
       var envelope = _createTestEnvelopeWithAggregateId(Guid.NewGuid());
       var destination = new TransportDestination("topic-01");
       await transport.PublishAsync(envelope, destination);
 
-      // Wait for first processing
-      var firstProcessed = await _waitForConditionAsync(
-        () => processedMessageIds.Count > 0,
-        TimeSpan.FromSeconds(30));
+      // Wait for the first processing of THIS message (a stray on the shared subscription would
+      // have satisfied the old "any message processed" wait).
+      await strategy.WaitForFirstProcessingAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 
-      await Assert.That(firstProcessed).IsTrue();
-      await Assert.That(processedMessageIds.Count).IsEqualTo(1);
+      await Assert.That(strategy.TimesProcessed(envelope.MessageId.Value)).IsEqualTo(1);
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -511,7 +504,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     try {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
-      await Task.Delay(TimeSpan.FromSeconds(5));
 
       var expectedStreamId = Guid.NewGuid();
       var envelope = _createTestEnvelopeWithAggregateId(expectedStreamId);
@@ -522,13 +514,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       // shared across classes, and a prior test's message abandoned while still LOCKED is
       // invisible to this test's drain — it redelivers into this capture window later and
       // First() picks up the stale message instead of ours.
-      var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
-        TimeSpan.FromSeconds(30));
+      var inbox = await strategy.WaitForInboxMessageAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 
       // Assert: StreamId extracted from AggregateId in hop metadata
-      await Assert.That(processed).IsTrue();
-      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
+      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
       await Assert.That(inbox.StreamId).IsEqualTo(expectedStreamId);
     } finally {
       await worker.StopAsync(CancellationToken.None);
@@ -580,7 +569,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     try {
       await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
-      await Task.Delay(TimeSpan.FromSeconds(5));
 
       // Envelope with no AggregateId metadata
       var envelope = _createTestEnvelopeWithoutAggregateId();
@@ -593,14 +581,11 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       // First() picks up the stale message (whose hop-stamped StreamId differs from its
       // MessageId) instead of ours. Observed on CI as expected/found ids minted in the same
       // millisecond — the stale message's own MessageId + adjacent hop AggregateId.
-      var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
-        TimeSpan.FromSeconds(30));
+      var inbox = await strategy.WaitForInboxMessageAsync(envelope.MessageId.Value, TimeSpan.FromSeconds(30));
 
       // Assert: StreamId falls back to MessageId
-      await Assert.That(processed).IsTrue();
-      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
-      await Assert.That(inbox.StreamId).IsEqualTo(inbox.MessageId);
+      await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
+      await Assert.That(inbox.StreamId).IsEqualTo(envelope.MessageId.Value);
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -683,17 +668,6 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     }
   }
 
-  private static async Task<bool> _waitForConditionAsync(Func<bool> condition, TimeSpan timeout) {
-    var deadline = DateTime.UtcNow + timeout;
-    while (DateTime.UtcNow < deadline) {
-      if (condition()) {
-        return true;
-      }
-      await Task.Delay(100);
-    }
-    return condition();
-  }
-
   #endregion
 
   #region Test Doubles
@@ -706,13 +680,22 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       Action<IServiceProvider?>? onFlush = null) : IWorkCoordinatorStrategy {
     private readonly System.Collections.Concurrent.ConcurrentQueue<InboxMessage> _capturedMessages = capturedMessages;
     private readonly Action<IServiceProvider?>? _onFlush = onFlush;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, TaskCompletionSource<InboxMessage>> _arrivals = new();
     private InboxMessage? _pendingMessage;
+
+    /// <summary>Completes when the worker hands this strategy the inbox message with <paramref name="messageId"/>.</summary>
+    public Task<InboxMessage> WaitForInboxMessageAsync(Guid messageId, TimeSpan timeout) =>
+      _arrival(messageId).Task.WaitAsync(timeout);
+
+    private TaskCompletionSource<InboxMessage> _arrival(Guid messageId) =>
+      _arrivals.GetOrAdd(messageId, _ => new TaskCompletionSource<InboxMessage>(TaskCreationOptions.RunContinuationsAsynchronously));
 
     public void QueueOutboxMessage(OutboxMessage message) { }
 
     public void QueueInboxMessage(InboxMessage message) {
       _pendingMessage = message;
       _capturedMessages.Enqueue(message);
+      _arrival(message.MessageId).TrySetResult(message);
     }
 
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
@@ -757,10 +740,21 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   /// <summary>
   /// Strategy that tracks processed message IDs and returns empty for duplicates.
   /// </summary>
-  private sealed class DuplicateDetectingStrategy(List<Guid> processedIds, Action onFlush) : IWorkCoordinatorStrategy {
-    private readonly List<Guid> _processedIds = processedIds;
-    private readonly Action _onFlush = onFlush;
+  private sealed class DuplicateDetectingStrategy : IWorkCoordinatorStrategy {
+    // The worker flushes from the processor's threads while the test reads, so both maps are concurrent.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, int> _processCounts = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, TaskCompletionSource> _firstProcessings = new();
     private InboxMessage? _pendingMessage;
+
+    /// <summary>Completes when the message with <paramref name="messageId"/> is processed for the first time.</summary>
+    public Task WaitForFirstProcessingAsync(Guid messageId, TimeSpan timeout) =>
+      _firstProcessing(messageId).Task.WaitAsync(timeout);
+
+    /// <summary>How many times the message with <paramref name="messageId"/> was returned as work.</summary>
+    public int TimesProcessed(Guid messageId) => _processCounts.GetValueOrDefault(messageId);
+
+    private TaskCompletionSource _firstProcessing(Guid messageId) =>
+      _firstProcessings.GetOrAdd(messageId, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 
     public void QueueOutboxMessage(OutboxMessage message) { }
 
@@ -778,14 +772,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     }
 
     public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      _onFlush();
-
       if (_pendingMessage != null) {
         var msg = _pendingMessage;
         _pendingMessage = null;
 
         // Check for duplicate
-        if (_processedIds.Contains(msg.MessageId)) {
+        if (_processCounts.ContainsKey(msg.MessageId)) {
           // Return empty work - duplicate
           return Task.FromResult(new WorkBatch {
             InboxWork = [],
@@ -794,7 +786,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
           });
         }
 
-        _processedIds.Add(msg.MessageId);
+        _processCounts.AddOrUpdate(msg.MessageId, 1, (_, n) => n + 1);
+        _firstProcessing(msg.MessageId).TrySetResult();
 
         var inboxWork = new InboxWork {
           MessageId = msg.MessageId,
@@ -862,6 +855,25 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     public bool HasMessage(string substring) =>
       _messages.Any(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
+  }
+
+  /// <summary>
+  /// Wraps a readiness contributor and signals when the composite asks it for readiness, which it
+  /// does only after the pipeline's blocking steps have drained.
+  /// </summary>
+  private sealed class ObservedContributor(IStartupReadinessContributor inner) : IStartupReadinessContributor {
+    private readonly TaskCompletionSource _asked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes when the composite starts waiting on the wrapped contributor.</summary>
+    public Task Asked => _asked.Task;
+
+    public string ContributorName => inner.ContributorName;
+
+    public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) {
+      var ready = inner.WaitForContributorReadyAsync(cancellationToken);
+      _asked.TrySetResult();
+      return ready;
+    }
   }
 
   #endregion
