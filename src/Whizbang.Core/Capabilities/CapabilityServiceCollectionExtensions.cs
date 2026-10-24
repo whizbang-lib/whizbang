@@ -54,7 +54,7 @@ public static class CapabilityServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, CapabilityVerdictEnforcer>(sp =>
       new CapabilityVerdictEnforcer(
         sp.GetRequiredService<ICapabilityRegistry>(),
-        sp.GetRequiredService<IHostApplicationLifetime>(),
+        CapabilityVerdictEnforcer.StopApplicationOf(sp),
         sp.GetRequiredService<ILogger<CapabilityVerdictEnforcer>>(),
         CapabilityVerdictEnforcer.SetProcessExitCode)));
     // A health entry is registered by name and a second one by the same name fails at run time, so it is added

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -25,33 +26,42 @@ namespace Whizbang.Core.Capabilities;
 /// <tests>tests/Whizbang.Core.Component.Tests/Capabilities/CapabilityVerdictEnforcerTests.cs</tests>
 internal sealed partial class CapabilityVerdictEnforcer : IHostedService, IDisposable {
   private readonly ICapabilityRegistry _registry;
-  private readonly IHostApplicationLifetime _lifetime;
+  private readonly Action _stopApplication;
   private readonly ILogger<CapabilityVerdictEnforcer> _logger;
   private readonly Action<int> _setExitCode;
   private readonly CancellationTokenSource _stopping = new();
 
   /// <summary>Creates the enforcer.</summary>
   /// <param name="registry">The registry the verdict is published on.</param>
-  /// <param name="lifetime">The application it stops.</param>
+  /// <param name="stopApplication">
+  /// Stops the application; <see cref="StopApplicationOf"/> in a host, which resolves the host's lifetime only when it
+  /// is called, so a container without a host still resolves this service.
+  /// </param>
   /// <param name="logger">Where the failing lines go.</param>
   /// <param name="setExitCode">Sets the process exit code; <see cref="SetProcessExitCode"/> in a host.</param>
   public CapabilityVerdictEnforcer(
       ICapabilityRegistry registry,
-      IHostApplicationLifetime lifetime,
+      Action stopApplication,
       ILogger<CapabilityVerdictEnforcer> logger,
       Action<int> setExitCode) {
     ArgumentNullException.ThrowIfNull(registry);
-    ArgumentNullException.ThrowIfNull(lifetime);
+    ArgumentNullException.ThrowIfNull(stopApplication);
     ArgumentNullException.ThrowIfNull(logger);
     ArgumentNullException.ThrowIfNull(setExitCode);
     _registry = registry;
-    _lifetime = lifetime;
+    _stopApplication = stopApplication;
     _logger = logger;
     _setExitCode = setExitCode;
   }
 
   /// <summary>The background wait for the verdict and what it did about it; completed before start.</summary>
   internal Task Watching { get; private set; } = Task.CompletedTask;
+
+  /// <summary>Stops the host's application, resolving its lifetime from <paramref name="services"/> when called.</summary>
+  /// <param name="services">The host's services.</param>
+  /// <returns>The stop action.</returns>
+  internal static Action StopApplicationOf(IServiceProvider services) =>
+    () => services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
 
   /// <summary>Sets <see cref="Environment.ExitCode"/>.</summary>
   /// <param name="code">The exit code.</param>
@@ -85,7 +95,7 @@ internal sealed partial class CapabilityVerdictEnforcer : IHostedService, IDispo
     }
     LogStopping(_logger, failures.Count, string.Join('\n', failures.Select(entry => "  " + entry.Line)));
     _setExitCode(1);
-    _lifetime.StopApplication();
+    _stopApplication();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Critical,
