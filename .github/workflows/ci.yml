@@ -758,7 +758,7 @@ jobs:
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.linux || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     permissions:
       contents: read
     steps:
@@ -771,6 +771,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore Dependencies
+        shell: pwsh
         run: dotnet restore --locked-mode
 
       # Whitespace and style only. The analyzers pass would run the third-party analyzers too, and
@@ -778,10 +779,15 @@ jobs:
       # are not on disk yet, so the semantic model is incomplete and those analyzers report
       # findings that do not exist in a real build. The build job enforces them, with warnings
       # as errors, in every project.
+      # pwsh, so the job runs on any runner OS; each exit code is checked, because a pwsh step fails
+      # only on its last command's.
       - name: Verify Code Formatting
+        shell: pwsh
         run: |
           dotnet format whitespace --verify-no-changes --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet format style --verify-no-changes --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # Fails on NEW unqualified service-schema table refs inside migration function bodies
       # (the multi-schema search_path bug class). Existing debt is baselined; see
@@ -805,7 +811,7 @@ jobs:
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.linux || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -917,7 +923,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
-      runs-on: ${{ needs.pick-runner.outputs.linux }}
+      runs-on: ${{ needs.pick-runner.outputs.any-os }}
       # Run the pre-built output; each test module collects its own line and branch coverage
       artifact-name: build-${{ github.run_id }}
 
@@ -1051,7 +1057,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-component.yml
     with:
       artifact-name: build-component-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
-      runs-on: ${{ needs.pick-runner.outputs.linux }}
+      runs-on: ${{ needs.pick-runner.outputs.any-os }}
 
   quality:
     name: Analyze · Quality
@@ -1208,9 +1214,10 @@ jobs:
     # The gate's decision logic is code that decides what merges, so it has tests of its own. Cheap
     # (seconds, no build) and run on every event, so a broken rule can never reach a protected branch.
     needs: [pick-runner]
-    # !cancelled(): the picker never decides whether this runs, only where.
+    # !cancelled(): the picker never decides whether this runs, only where. any-os: every step is pwsh
+    # or an action; the few tests that drive a POSIX shell skip themselves on Windows.
     if: ${{ !cancelled() }}
-    runs-on: ${{ fromJSON(needs.pick-runner.outputs.linux || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1227,11 +1234,20 @@ jobs:
         uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: '10.0.x'
+      # update, not install: on a team machine the tool may already be there from an earlier job, and
+      # update installs it when it is not.
       - name: Install dotnet-coverage
-        run: dotnet tool install --global dotnet-coverage --version 18.12.0
+        shell: pwsh
+        run: dotnet tool update --global dotnet-coverage --version 18.12.0
+      # GitHub-hosted images carry Pester 5; a team machine may have only the Pester 3 that ships with
+      # Windows PowerShell, which pwsh can also see. Install 5 for this user when it is missing.
       - name: Run the pipeline script tests
         shell: pwsh
         run: |
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -ge ([version]'5.5'))) {
+            Install-Module Pester -MinimumVersion 5.5 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -MinimumVersion 5.5
           $c = New-PesterConfiguration
           $c.Run.Path = '.github/scripts/tests'
           $c.Run.Exit = $true
