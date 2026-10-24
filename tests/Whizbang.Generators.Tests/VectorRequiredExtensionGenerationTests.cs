@@ -65,6 +65,8 @@ public class VectorRequiredExtensionGenerationTests {
     await Assert.That(code).Contains("await " + ENSURE + "connection, \"vector\", ")
       .Because("the whole-script schema path creates it through the same helper");
     await Assert.That(code).Contains("GetCapabilityRequirements()");
+    await Assert.That(code).Contains("PostgresSchemaRequirements.From(new string[] { ")
+      .Because("the vector columns are passed as a literal array");
     await Assert.That(code).Contains(".embedding\"")
       .Because("the requirement names each vector column, so the verdict says which column needs pgvector");
   }
@@ -85,5 +87,7 @@ public class VectorRequiredExtensionGenerationTests {
     await Assert.That(code).DoesNotContain(ENSURE);
     await Assert.That(code).DoesNotContain("CREATE EXTENSION vector");
     await Assert.That(code).Contains(SOURCE).Because("the context still declares its schema's other requirements");
+    await Assert.That(code).Contains("PostgresSchemaRequirements.From(System.Array.Empty<string>(), GetPerspectiveEntries())")
+      .Because("the perspectives' optional-extension blocks are read from the very SQL the schema pass runs (pg_trgm, implicitly)");
   }
 }

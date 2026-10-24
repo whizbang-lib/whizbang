@@ -32,7 +32,7 @@ public class RequiredVectorExtensionTests : IAsyncDisposable {
   private string? _role;
 
   private static readonly IReadOnlyList<ActiveCapabilityRequirement> _requirements =
-    PostgresSchemaRequirements.From(["wh_per_product.embedding"]);
+    PostgresSchemaRequirements.From(["wh_per_product.embedding"], []);
 
   [Before(Test)]
   public async Task SetupAsync() {

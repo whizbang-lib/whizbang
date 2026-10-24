@@ -258,6 +258,122 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
     await Assert.That(() => OptionalExtensionBlocks.Split(null!)).Throws<ArgumentNullException>();
   }
 
+  private string? _role;
+
+  /// <summary>A role that owns <c>optional_thing</c>, may connect, and may create in the database only when asked.</summary>
+  private async Task<string> _roleAsync(bool canCreate) {
+    _role = $"wh_optext_{Guid.NewGuid():N}";
+    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await admin.OpenAsync();
+      await using var create = new NpgsqlCommand($"CREATE ROLE {_role} LOGIN PASSWORD 'limited'", admin);
+      await create.ExecuteNonQueryAsync();
+      await using var grant = new NpgsqlCommand(
+        $"GRANT CONNECT{(canCreate ? ", CREATE" : "")} ON DATABASE {_databaseName} TO {_role}", admin);
+      await grant.ExecuteNonQueryAsync();
+    }
+    await _scalarAsync($"CREATE TABLE optional_thing (a text, b text); ALTER TABLE optional_thing OWNER TO {_role}; SELECT 1");
+    return new NpgsqlConnectionStringBuilder(_connectionString) { Username = _role, Password = "limited", Pooling = false }.ConnectionString;
+  }
+
+  [After(Test)]
+  public async Task DropRoleAsync() {
+    if (_role is null) {
+      return;
+    }
+    await PerTestDatabaseFactory.DropAsync(_databaseName);
+    _databaseName = null!;
+    await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+    await admin.OpenAsync();
+    await using var drop = new NpgsqlCommand($"DROP ROLE IF EXISTS {_role}", admin);
+    await drop.ExecuteNonQueryAsync();
+    _role = null;
+  }
+
+  private static string _blockOnly(string extension) =>
+    OptionalExtensionBlocks.BEGIN_MARKER + extension + "\n"
+    + $"CREATE EXTENSION IF NOT EXISTS {extension};\n"
+    + "CREATE INDEX IF NOT EXISTS idx_optional_thing_a_trgm ON optional_thing USING gin (a gin_trgm_ops);\n"
+    + OptionalExtensionBlocks.END_MARKER + "\n";
+
+  /// <summary>
+  /// The capability is consulted first: an extension the server is known not to offer (no control files here) is
+  /// skipped without a CREATE EXTENSION, with one warning naming its state and the fix.
+  /// </summary>
+  [Test]
+  public async Task AnExtensionTheServerLacks_IsSkippedWithoutTrying_NamingItsStateAndTheFixAsync() {
+    var log = new ListLogger();
+    await using (var connection = new NpgsqlConnection(_connectionString)) {
+      await connection.OpenAsync();
+      await using var transaction = await connection.BeginTransactionAsync();
+      var skipped = await OptionalExtensionBlocks.ApplyAsync(connection, transaction, _script(MISSING), 30, log);
+      await Assert.That(skipped).IsEquivalentTo([MISSING]);
+      await transaction.CommitAsync();
+    }
+
+    var warning = log.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains($"Extension {MISSING} is Missing on this server, so it was not created", StringComparison.Ordinal);
+    await Assert.That(warning).Contains($"Fix: install the {MISSING} package on the database server", StringComparison.Ordinal);
+    await Assert.That(warning).Contains("idx_optional_thing_a_trgm", StringComparison.Ordinal);
+  }
+
+  /// <summary>A role that cannot create in the database is skipped without trying, and told how to get the index.</summary>
+  [Test]
+  public async Task ARoleThatCannotCreateIt_IsSkippedWithoutTrying_NamingTheFixAsync() {
+    var limited = await _roleAsync(canCreate: false);
+    var log = new ListLogger();
+    await using (var connection = new NpgsqlConnection(limited)) {
+      await connection.OpenAsync();
+      await using var transaction = await connection.BeginTransactionAsync();
+      var skipped = await OptionalExtensionBlocks.ApplyAsync(connection, transaction, _blockOnly("pg_trgm"), 30, log);
+      await Assert.That(skipped).IsEquivalentTo(["pg_trgm"]);
+      await transaction.CommitAsync();
+    }
+
+    var warning = log.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains("Extension pg_trgm is NoPrivilege on this server, so it was not created", StringComparison.Ordinal);
+    await Assert.That(warning).Contains("grant this role CREATE on the database", StringComparison.Ordinal);
+  }
+
+  /// <summary>An installed extension is used as it is, by a role that could never have created it.</summary>
+  [Test]
+  public async Task AnInstalledExtension_AppliesItsBlockWithoutCreatingItAsync() {
+    await _scalarAsync("CREATE EXTENSION IF NOT EXISTS pg_trgm; SELECT 1");
+    var limited = await _roleAsync(canCreate: false);
+    var log = new ListLogger();
+    await using (var connection = new NpgsqlConnection(limited)) {
+      await connection.OpenAsync();
+      var skipped = await OptionalExtensionBlocks.ApplyAsync(connection, null, _blockOnly("pg_trgm"), 30, log);
+      await Assert.That(skipped).IsEmpty();
+    }
+
+    await Assert.That(await _indexesAsync()).IsEqualTo("idx_optional_thing_a_trgm");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Warning)).IsFalse();
+  }
+
+  /// <summary>
+  /// The refusal classification stays as the fallback: an extension the probe cannot rule out (one that needs
+  /// preloading, to a role that cannot read the preload list) is tried, and the server's refusal skips the block.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task ARefusalOnlyCreateRevealsIsStillCaughtAsync(bool inTransaction) {
+    var limited = await _roleAsync(canCreate: true);
+    var log = new ListLogger();
+    await using (var connection = new NpgsqlConnection(limited)) {
+      await connection.OpenAsync();
+      await using var transaction = inTransaction ? await connection.BeginTransactionAsync() : null;
+      var skipped = await OptionalExtensionBlocks.ApplyAsync(connection, transaction, _blockOnly("pg_stat_statements"), 30, log);
+      await Assert.That(skipped).IsEquivalentTo(["pg_stat_statements"]);
+      if (transaction is not null) {
+        await transaction.CommitAsync();
+      }
+    }
+
+    var warning = log.Entries.Single(e => e.Level == LogLevel.Warning).Message;
+    await Assert.That(warning).Contains("Extension pg_stat_statements is unavailable on this server (42501", StringComparison.Ordinal);
+  }
+
   /// <summary>Keeps every entry, so a test can ask what was said and at what level.</summary>
   private sealed class ListLogger : ILogger {
     public List<(LogLevel Level, string Message)> Entries { get; } = [];

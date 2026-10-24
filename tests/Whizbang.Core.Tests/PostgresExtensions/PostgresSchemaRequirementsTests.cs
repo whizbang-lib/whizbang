@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.PostgresExtensions;
 public class PostgresSchemaRequirementsTests {
   [Test]
   public async Task EachVectorColumn_RequiresPgvectorExplicitlyAsync() {
-    var requirements = PostgresSchemaRequirements.From(["wh_per_product.embedding", "wh_per_order.summary_vector"]);
+    var requirements = PostgresSchemaRequirements.From(["wh_per_product.embedding", "wh_per_order.summary_vector"], []);
 
     await Assert.That(requirements.Select(r => r.ToString())).IsEquivalentTo([
       "Vector fields on perspectives (wh_per_product.embedding, explicit)",
@@ -32,8 +32,28 @@ public class PostgresSchemaRequirementsTests {
 
   [Test]
   public async Task NoVectorColumns_RequireNothingAsync() {
-    await Assert.That(PostgresSchemaRequirements.From([])).IsEmpty();
-    await Assert.That(() => PostgresSchemaRequirements.From(null!)).Throws<ArgumentNullException>();
+    await Assert.That(PostgresSchemaRequirements.From([], [])).IsEmpty();
+    await Assert.That(() => PostgresSchemaRequirements.From(null!, [])).Throws<ArgumentNullException>();
+    await Assert.That(() => PostgresSchemaRequirements.From([], null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task EachPerspectiveWithAnOptionalExtensionBlock_RequiresItsExtensionImplicitlyAsync() {
+    (string Name, string Sql)[] perspectives = [
+      ("wh_per_product", "CREATE TABLE x (a text);\n" + OptionalExtensionBlocks.BEGIN_MARKER + "pg_trgm\n"
+        + "CREATE INDEX IF NOT EXISTS idx_a ON x USING gin (a gin_trgm_ops);\n" + OptionalExtensionBlocks.END_MARKER + "\n"
+        + OptionalExtensionBlocks.BEGIN_MARKER + "pg_trgm\nCREATE INDEX IF NOT EXISTS idx_b ON x USING gin (b gin_trgm_ops);\n"
+        + OptionalExtensionBlocks.END_MARKER + "\n"),
+      ("wh_per_plain", "CREATE TABLE y (a text);"),
+      ("wh_per_custom", OptionalExtensionBlocks.BEGIN_MARKER + "wh_custom_ext\nCREATE INDEX i ON z (a);\n" + OptionalExtensionBlocks.END_MARKER),
+    ];
+
+    var requirements = PostgresSchemaRequirements.From([], perspectives);
+
+    await Assert.That(requirements.Select(r => $"{r.Requirement.Capability}: {r}")).IsEquivalentTo([
+      "postgres/pg_trgm: Substring indexes on perspective fields (wh_per_product, default)",
+      "postgres/wh_custom_ext: Indexes that need wh_custom_ext (wh_per_custom, default)",
+    ]).Because("a skipped block degrades the perspective's queries, so its extension is an implicit requirement, once per perspective");
   }
 
   [Test]
