@@ -11,6 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// <summary>
 /// Issue #1611: <c>wh_partition_convert</c> turns <c>wh_log</c> into a table partitioned weekly by <c>logged_at</c>,
 /// once, keeping every row and every writer working, and retention then drops partitions instead of deleting rows.
+/// Issue #1694: once managed, the row delete still clears the default partition, which no drop reaches.
 /// </summary>
 /// <remarks>
 /// The conversion is called with the database's own clock (its <c>p_now</c> default), the clock the writers stamp
@@ -19,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Partitioning;
 /// </remarks>
 /// <docs>operations/infrastructure/partitioned-ledgers#converting-an-existing-table</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/226_PartitionManager.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/238_LogSweepClearsTheDefaultPartition.sql</code-under-test>
 [Category("Integration")]
 [Category("Shard5")]
 public class LogPartitionConversionTests : EFCoreTestBase {

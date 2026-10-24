@@ -20,6 +20,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/226_PartitionManager.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/233_PartitionSignalsAndLifecycleCompletions.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/237_PartitionsCarryTheLedgersAutovacuumSettings.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/238_LogSweepClearsTheDefaultPartition.sql</code-under-test>
 [NotInParallel("PostgreSQL")]
 [Category("Integration")]
 public class DapperPartitionManagerSqlTests : PostgresTestBase {
