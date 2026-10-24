@@ -103,6 +103,23 @@ Describe 'Get-ReviewChecks.ps1' {
     $ids | Should -Contain 'pr.changelog'
   }
 
+  # PowerShell names are case-insensitive: a local $labels for the closing issues once overwrote the
+  # -Labels parameter, so the rules saw the issue's labels and docs:not-needed never cleared pr.docs-link (#1767).
+  It 'honors the pull request''s own labels when the closing issue has labels too' {
+    $labelOut = Join-Path $TestDrive 'label-comment.md'
+    Push-Location $Repo
+    try {
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef fix/x -PullRequest 11 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 1 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $labelOut -Title 'fix(lib): a change' `
+        -ClosingIssueLabels 'bug' -Labels 'issue:accepted,docs:not-needed'
+      $LASTEXITCODE | Should -Be 0
+    } finally { Pop-Location }
+    $ids = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $labelOut -Raw))[0].Findings.Id)
+    $ids | Should -Not -Contain 'pr.docs-link'
+    $ids | Should -Not -Contain 'pr.fix-bug-issue' -Because 'the closing issue''s bug label still reaches its own rule'
+  }
+
   It 'reports how many findings it wrote, for the gate step' {
     $outputs = Join-Path $TestDrive 'github-output.txt'
     $countOut = Join-Path $TestDrive 'count-comment.md'
