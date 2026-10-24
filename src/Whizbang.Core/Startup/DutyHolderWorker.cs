@@ -137,8 +137,20 @@ public sealed partial class DutyHolderWorker : BackgroundService {
   /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
   public event Action<string>? OnBecameHolder;
 
+  /// <summary>
+  /// Raised, on the caller's thread, each time the next pass is asked to run at once instead of at
+  /// the next interval: a release of a role this worker holds work for was announced, or
+  /// <see cref="Wake"/> was called. A release of any other role does not raise it. Must not block.
+  /// </summary>
+  /// <docs>proposals/duty-role-assignment</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Startup/DutyHolderWorkerTests.cs:TheHostedLoop_PassesOnItsInterval_WakesOnARelease_AndReleasesOnStopAsync</tests>
+  public event Action? OnWakeRequested;
+
   /// <summary>Runs the next pass at once instead of at the next interval.</summary>
-  public void Wake() => Volatile.Read(ref _wake).TrySetResult();
+  public void Wake() {
+    Volatile.Read(ref _wake).TrySetResult();
+    OnWakeRequested?.Invoke();
+  }
 
   /// <summary>
   /// One pass over every role: keep or win it, then run its owed work. Public as the deterministic

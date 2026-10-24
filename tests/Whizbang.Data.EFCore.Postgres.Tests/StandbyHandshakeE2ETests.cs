@@ -117,6 +117,7 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
       versionProvider: versionProvider,
       assessor: assessor,
       logger: NullLogger<StandbyWatcher>.Instance,
+      timeProvider: TimeProvider.System,
       pipelineRunner: new StartupPipelineRunner(steps: [reviveProbe], observers: [], dutyElector: NullDutyElector.Instance),
       options: _fastOptions());
     return new PodRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);

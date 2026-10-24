@@ -296,6 +296,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
+      sp.GetRequiredService<TimeProvider>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
 
