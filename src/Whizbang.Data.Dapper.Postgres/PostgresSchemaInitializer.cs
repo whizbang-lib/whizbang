@@ -205,9 +205,12 @@ public sealed class PostgresSchemaInitializer {
     await _executeApplicationObjectsAsync(
       connection, _applicationObjects?.BeforePerspectives, "before", cancellationToken);
 
+    // A model whose table name changed has its table renamed before the pass below creates the new name (#1719).
+    var renames = await _followPerspectiveTableRenamesAsync(connection, schema, cancellationToken);
+
     // Execute perspective schema — per-perspective hash tracking if entries provided, else legacy single-string
     if (_perspectiveEntries is { Length: > 0 }) {
-      await _executePerspectiveMigrationsAsync(connection, cancellationToken);
+      await _executePerspectiveMigrationsAsync(connection, renames, cancellationToken);
     } else if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       await using var perspectiveCommand = connection.CreateCommand();
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
@@ -229,6 +232,39 @@ public sealed class PostgresSchemaInitializer {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
         () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
     }
+  }
+
+  /// <summary>
+  /// Renames each perspective table whose model the registry maps to a different name, before the perspective pass
+  /// creates the new name as an empty table (#1719). A model with a table under both names keeps both, with a warning.
+  /// </summary>
+  /// <returns>The tables renamed, old name by new name.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs</tests>
+  private async Task<Dictionary<string, string>> _followPerspectiveTableRenamesAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    var renamed = new Dictionary<string, string>(StringComparer.Ordinal);
+    var logger = Logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    foreach (var payload in PerspectiveRegistry ?? []) {
+      await using var follow = connection.CreateCommand();
+#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
+      follow.CommandText =
+        $"SELECT o_action, o_clr_type_name, o_old_table_name, o_new_table_name FROM {PgIdentifier.Qualify(schema, "wh_follow_perspective_table_renames")}(@p_perspectives::jsonb, @p_service_name)";
+#pragma warning restore S2077
+      follow.Parameters.AddWithValue("p_perspectives", payload.Json);
+      follow.Parameters.AddWithValue("p_service_name", payload.ServiceName);
+      follow.CommandTimeout = 30;
+      await using var reader = await follow.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var (action, model, oldTable, newTable) = (reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3));
+        if (action == "renamed") {
+          renamed[newTable] = oldTable;
+          _logTableRenamed(logger, model, oldTable, newTable, null);
+        } else {
+          _logBothTablesExist(logger, model, oldTable, newTable, null);
+        }
+      }
+    }
+    return renamed;
   }
 
   /// <summary>
@@ -711,19 +747,22 @@ public sealed class PostgresSchemaInitializer {
   /// Each perspective is individually hash-checked and wrapped in its own transaction.
   /// Hash matches → skip (status 3). Hash differs or missing → execute DDL → record hash (status 1 or 2).
   /// </summary>
-  private async Task _executePerspectiveMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+  private async Task _executePerspectiveMigrationsAsync(
+      NpgsqlConnection connection, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
     foreach (var entry in _perspectiveEntries!) {
-      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, cancellationToken);
+      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, renames, cancellationToken);
     }
   }
 
+  private static string _sha256(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
   private static async Task _executeSinglePerspectiveMigrationAsync(
       NpgsqlConnection connection, KeyValuePair<string, string> entry,
-      int versionId, CancellationToken cancellationToken) {
+      int versionId, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
     var perspectiveName = $"perspective:{entry.Key}";
-    var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+    var hash = _sha256(entry.Value);
     var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
 
     if (existingHash == hash) {
@@ -735,8 +774,17 @@ public sealed class PostgresSchemaInitializer {
     var tableName = _extractTableName(entry.Value);
     var strategy = MigrationStrategy.DirectDdl;
 
+    string? renamedFrom = null;
+
     if (isUpdate && tableName != null) {
-      strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+      // A table renamed in place this start whose DDL differs only by its name is not changed DDL (#1719): the
+      // statements are re-run as they are, with no strategy that copies or replays its rows.
+      if (renames.TryGetValue(tableName, out var previous)
+          && existingHash == _sha256(entry.Value.Replace(tableName, previous, StringComparison.Ordinal))) {
+        renamedFrom = previous;
+      } else {
+        strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+      }
     }
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -758,9 +806,11 @@ public sealed class PostgresSchemaInitializer {
 
       var eventReplay = strategy == MigrationStrategy.EventReplay;
       var appliedStatus = isUpdate ? 2 : 1;
-      var appliedDesc = isUpdate
-        ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
-        : "First apply";
+      var appliedDesc = (isUpdate, renamedFrom) switch {
+        (_, not null) => $"Renamed from {renamedFrom}",
+        (true, _) => $"Updated from hash {existingHash![..8]}... (strategy: {strategy})",
+        _ => "First apply",
+      };
       var status = eventReplay ? 4 : appliedStatus;
       var desc = eventReplay
         ? $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"
@@ -1144,6 +1194,14 @@ public sealed class PostgresSchemaInitializer {
   private static bool _isSafeIdentifier(string identifier) {
     return !string.IsNullOrEmpty(identifier) && identifier.All(c => char.IsLetterOrDigit(c) || c == '_');
   }
+
+  private static readonly Action<ILogger, string, string, string, Exception?> _logTableRenamed = LoggerMessage.Define<string, string, string>(
+    LogLevel.Information, new EventId(1719, "PerspectiveTableRenamed"),
+    "Renamed the perspective table of {Model} from {OldTable} to {NewTable}, keeping its rows");
+
+  private static readonly Action<ILogger, string, string, string, Exception?> _logBothTablesExist = LoggerMessage.Define<string, string, string>(
+    LogLevel.Warning, new EventId(1720, "PerspectiveTableRenameBlocked"),
+    "The perspective table of {Model} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it");
 
   private static readonly Action<ILogger, Exception?> _logReconcileFailed = LoggerMessage.Define(
     LogLevel.Warning, new EventId(1252, "ManagedObjectReconcileFailed"),
