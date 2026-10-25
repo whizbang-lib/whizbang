@@ -63,6 +63,37 @@ public class PathResolverTests {
   }
 
   /// <summary>
+  /// Blank means unset all the way down: a whitespace input is never handed to the file system (#1764). On Windows a
+  /// whitespace path is not a path, and the walk up from it threw "The path is empty"; on Linux and macOS it became a
+  /// relative name resolved against the current directory, so the result depended on where the build ran.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  [Arguments("\t \r\n")]
+  public async Task FindDocsRepositoryPath_WithBlankInputs_NeverProbesTheFileSystemAsync(string blank) {
+    var probed = new List<string>();
+    bool directoryExists(string path) {
+      probed.Add(path);
+      return true;
+    }
+    string? findGitRoot(string path) {
+      probed.Add(path);
+      return path;
+    }
+
+    var configuredOnly = PathResolver.FindDocsRepositoryPath(blank, projectDirectory: null, directoryExists, findGitRoot);
+    var projectOnly = PathResolver.FindDocsRepositoryPath(configuredPath: null, blank, directoryExists, findGitRoot);
+    var both = PathResolver.FindDocsRepositoryPath(blank, blank, directoryExists, findGitRoot);
+
+    await Assert.That(configuredOnly).IsNull();
+    await Assert.That(projectOnly).IsNull();
+    await Assert.That(both).IsNull();
+    await Assert.That(probed).IsEmpty()
+      .Because("a blank configured path or project directory is the same as none, so nothing is looked up for it");
+  }
+
+  /// <summary>
   /// Sibling discovery starts by walking up for a <c>.git</c> directory. When the walk reaches the filesystem root
   /// without finding one, the shape a generator sees when it runs from a NuGet package inside a build directory that is
   /// not in a working tree, there is no library root to hang a sibling off, and the answer is "no docs repository".
