@@ -350,6 +350,46 @@ public class DecisionFileTests {
   }
 
   [Test]
+  public async Task ToJsonWithComments_EscapesEveryStringValue_Async() {
+    // The commented form is written by interpolation, so every string it carries has to be
+    // JSON-escaped on the way in (#1764). A Windows project path is the common case: its
+    // backslashes are not valid escapes, and the file the tool just wrote could not be read back.
+    // A quote or a control character breaks it on every platform, and a line break in the path
+    // would also end the comment that repeats it and spill the rest of the line into the JSON.
+    const string awkward = "C:\\Users\\me\\Work \"Q\"\tTab\r\nNext\u2028Line\u2029Para";
+    var original = _fullyDecided();
+    original.ProjectPath = awkward;
+    original.Version = "1.0 " + awkward;
+    original.Decisions.Projections.SingleStream = "Single" + awkward;
+    original.Decisions.Projections.MultiStream = "Multi" + awkward;
+    original.Decisions.Schema.SchemaName = "schema" + awkward;
+    original.Decisions.Schema.InfrastructurePrefix = "infra" + awkward;
+    original.Decisions.Schema.PerspectivePrefix = "persp" + awkward;
+    original.Decisions.Packages.WhizbangVersion = "ver" + awkward;
+
+    var restored = DecisionFile.FromJson(original.ToJsonWithComments());
+
+    await Assert.That(restored.ProjectPath).IsEqualTo(awkward);
+    await Assert.That(restored.Version).IsEqualTo(original.Version);
+    await Assert.That(restored.Decisions.Projections.SingleStream).IsEqualTo(original.Decisions.Projections.SingleStream);
+    await Assert.That(restored.Decisions.Projections.MultiStream).IsEqualTo(original.Decisions.Projections.MultiStream);
+    await Assert.That(restored.Decisions.Schema.SchemaName).IsEqualTo(original.Decisions.Schema.SchemaName);
+    await Assert.That(restored.Decisions.Schema.InfrastructurePrefix).IsEqualTo(original.Decisions.Schema.InfrastructurePrefix);
+    await Assert.That(restored.Decisions.Schema.PerspectivePrefix).IsEqualTo(original.Decisions.Schema.PerspectivePrefix);
+    await Assert.That(restored.Decisions.Packages.WhizbangVersion).IsEqualTo(original.Decisions.Packages.WhizbangVersion);
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_WithAPlainPath_WritesItVerbatim_Async() {
+    // Escaping must not change a path that needs none: the usage comment is a command the
+    // operator copies, and the value is what they read when they open the file.
+    var json = DecisionFile.Create("/src/My-Project_1.0").ToJsonWithComments();
+
+    await Assert.That(json).Contains("//   whizbang-migrate apply -p /src/My-Project_1.0 -d <this-file>");
+    await Assert.That(json).Contains("\"project_path\": \"/src/My-Project_1.0\"");
+  }
+
+  [Test]
   public async Task SaveAsync_WithComments_IsReadableByLoadAsync_Async() {
     // End to end on disk: the commented file is the one a user edits, so a save it cannot load
     // back would strand the migration.
