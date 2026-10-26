@@ -18,7 +18,8 @@ namespace Whizbang.Generators.Tests;
 public partial class PerspectiveTableNameGoldenTests {
   /// <summary>
   /// One model per default suffix (ReadModel, Model, Projection, Dto, View), a multi-word name, a name at the 63-byte
-  /// identifier limit, nested types (merged and de-duplicated) and a closed generic model.
+  /// identifier limit, nested types (merged and de-duplicated), a closed generic model, and a model named with
+  /// <c>[PerspectiveTable]</c>.
   /// </summary>
   private const string PROJECT = """
     using System;
@@ -80,6 +81,12 @@ public partial class PerspectiveTableNameGoldenTests {
       }
     }
 
+    [PerspectiveTable("wh_per_fulfillment_backlog")]
+    public record BacklogSnapshotModel(Guid Id);
+    public class BacklogPerspective : IPerspectiveFor<BacklogSnapshotModel, StockChanged> {
+      public BacklogSnapshotModel Apply(BacklogSnapshotModel currentData, StockChanged @event) => currentData;
+    }
+
     public record LineItem(string Sku);
     public record PagedSnapshotModel<TItem>(Guid Id);
     public class LineItemSnapshotPerspective : IPerspectiveFor<PagedSnapshotModel<LineItem>, StockChanged> {
@@ -87,11 +94,15 @@ public partial class PerspectiveTableNameGoldenTests {
     }
     """;
 
-  /// <summary>The names the EF Core driver maps (ToTable), from the model type as the table-naming page documents.</summary>
-  private static readonly string[] _efCoreGolden = [
+  /// <summary>
+  /// The names both drivers use: the EF Core driver maps them (ToTable) and the schema generator (the Dapper driver's
+  /// DDL and registry payload) creates them, from the model type as the table-naming page documents (#1719).
+  /// </summary>
+  private static readonly string[] _goldenNames = [
     "wh_per_active_account",
     "wh_per_customer",
     "wh_per_customer_loyalty_tier_summary",
+    "wh_per_fulfillment_backlog",
     "wh_per_order",
     "wh_per_paged_snapshot",
     "wh_per_picking",
@@ -101,25 +112,6 @@ public partial class PerspectiveTableNameGoldenTests {
     "wh_per_warehouse_replenishment_forecast_accuracy_by_region_tier",
   ];
 
-  /// <summary>
-  /// The names the schema generator (the Dapper driver's DDL and registry payload) creates today. They come from the
-  /// PERSPECTIVE class, not the model type the EF Core driver and the table-naming page use, so the two drivers name the
-  /// same perspective differently, and the longest name here passes PostgreSQL's 63-byte limit with no diagnostic.
-  /// Pinned as they are: changing them renames Dapper tables, and that divergence is tracked separately.
-  /// </summary>
-  private static readonly string[] _schemaGolden = [
-    "wh_per_active_account_active_account",
-    "wh_per_customer_loyalty_tier_summary_perspective",
-    "wh_per_customer_perspective",
-    "wh_per_line_item_snapshot_perspective",
-    "wh_per_order_perspective",
-    "wh_per_picking",
-    "wh_per_product_catalog",
-    "wh_per_shipment_perspective",
-    "wh_per_stock_level_perspective",
-    "wh_per_warehouse_replenishment_forecast_accuracy_by_region_tier_perspective",
-  ];
-
   [Test]
   [RequiresAssemblyFiles]
   public async Task EFCoreDriver_WithDefaultSettings_MapsTheGoldenTableNamesAsync() {
@@ -127,7 +119,7 @@ public partial class PerspectiveTableNameGoldenTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangModelBuilderExtensions.g.cs") ?? "";
 
-    await Assert.That(_golden(_toTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _efCoreGolden));
+    await Assert.That(_golden(_toTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _goldenNames));
     await Assert.That(result.Diagnostics.Select(d => d.Id)).DoesNotContain("WHIZ820")
       .Because("an unset WhizbangMaxIdentifierLength keeps PostgreSQL's 63-byte limit, which the longest name meets exactly");
   }
@@ -139,7 +131,65 @@ public partial class PerspectiveTableNameGoldenTests {
 
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? "";
 
-    await Assert.That(_golden(_createTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _schemaGolden));
+    await Assert.That(_golden(_createTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _goldenNames));
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task BothDrivers_WithDefaultSettings_NameEveryModelTheSameAsync() {
+    var efCore = GeneratorTestHelper.GetGeneratedSource(
+      GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(PROJECT, MSBuildGlobalOptions.For()),
+      "WhizbangModelBuilderExtensions.g.cs") ?? "";
+    var schema = GeneratorTestHelper.GetGeneratedSource(
+      GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(PROJECT, MSBuildGlobalOptions.For()),
+      "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(_golden(_createTable(), schema)).IsEqualTo(_golden(_toTable(), efCore))
+      .Because("one model has one table whichever driver builds it");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task BothDrivers_WithSuffixStrippingOff_KeepTheManualNameAsync() {
+    var options = MSBuildGlobalOptions.For(new Dictionary<string, string> { ["WhizbangStripTableNameSuffixes"] = "false" });
+
+    var efCore = GeneratorTestHelper.GetGeneratedSource(
+      GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(PROJECT, options),
+      "WhizbangModelBuilderExtensions.g.cs") ?? "";
+    var schema = GeneratorTestHelper.GetGeneratedSource(
+      GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(PROJECT, options), "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(_golden(_toTable(), efCore)).Contains("wh_per_fulfillment_backlog");
+    await Assert.That(_golden(_createTable(), schema)).Contains("wh_per_fulfillment_backlog");
+    await Assert.That(_golden(_toTable(), efCore)).Contains("wh_per_order_model")
+      .Because("the setting still applies to the generated names");
+  }
+
+  /// <summary>
+  /// The names a released Dapper build gave these tables, from the perspective class, as PostgreSQL stored them: the
+  /// registry payload carries each one that differs from the model's table, so the driver can follow a table no
+  /// registry row names (#1719). The longest is the one PostgreSQL truncated to the model's name, so it has none.
+  /// </summary>
+  private static readonly string[] _goldenFormerNames = [
+    "wh_per_active_account_active_account",
+    "wh_per_backlog_perspective",
+    "wh_per_customer_loyalty_tier_summary_perspective",
+    "wh_per_customer_perspective",
+    "wh_per_line_item_snapshot_perspective",
+    "wh_per_order_perspective",
+    "wh_per_product_catalog",
+    "wh_per_shipment_perspective",
+    "wh_per_stock_level_perspective",
+  ];
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SchemaGenerator_RegistryPayload_NamesTheTableEachPerspectiveHadBeforeAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(PROJECT, MSBuildGlobalOptions.For());
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(_golden(_formerTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _goldenFormerNames));
   }
 
   // One name per line, sorted, so a failure prints the whole list it found next to the golden one.
@@ -149,6 +199,9 @@ public partial class PerspectiveTableNameGoldenTests {
 
   [GeneratedRegex("ToTable\\(\"(?<name>[a-z0-9_]+)\"")]
   private static partial Regex _toTable();
+
+  [GeneratedRegex("FormerTableName\\\\\":\\\\\"(?<name>[a-z0-9_]+)")]
+  private static partial Regex _formerTable();
 
   [GeneratedRegex("CREATE TABLE IF NOT EXISTS (?<name>[a-z0-9_]+) \\(")]
   private static partial Regex _createTable();

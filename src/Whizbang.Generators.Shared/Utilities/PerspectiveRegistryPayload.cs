@@ -18,13 +18,16 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// <param name="PhysicalFields">The physical columns the table carries.</param>
 /// <param name="BuildsDataIndex">Whether the table carries the index over its whole document.</param>
 /// <param name="BuildsMetadataIndex">Whether the table carries the index over its metadata.</param>
+/// <param name="FormerTableName">The name an earlier build gave this perspective's table, when it differs from
+/// <paramref name="TableName"/>: the driver renames a table still under it before it creates the new one (#1719).</param>
 public sealed record PerspectiveRegistryEntry(
     string ClrTypeName,
     string TableName,
     string PerspectiveName,
     IReadOnlyList<PhysicalFieldInfo> PhysicalFields,
     bool BuildsDataIndex,
-    bool BuildsMetadataIndex);
+    bool BuildsMetadataIndex,
+    string? FormerTableName = null);
 
 /// <summary>
 /// The JSON payload <c>reconcile_perspective_registry</c> reads: one entry per perspective, keyed by the model's
@@ -77,6 +80,11 @@ public static class PerspectiveRegistryPayload {
     // (TypeNameUtilities.BuildClrTypeName at discovery). One entry per perspective, so a model folded by
     // two perspectives names both; the reconcile records them for the row-eviction cleanup (issue #1483).
     sb.Append($"\"PerspectiveName\":\"{EscapeJsonString(entry.PerspectiveName)}\"");
+    // The table name an earlier build gave this perspective, which wh_follow_perspective_table_renames follows when
+    // no registry row names it (#1719). The reconcile ignores it.
+    if (entry.FormerTableName is not null) {
+      sb.Append($",\"FormerTableName\":\"{EscapeJsonString(entry.FormerTableName)}\"");
+    }
     sb.Append('}');
   }
 

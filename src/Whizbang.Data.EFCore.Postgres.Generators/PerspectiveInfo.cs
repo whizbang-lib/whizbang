@@ -4,6 +4,7 @@
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Whizbang.Generators.Shared.Models;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -27,13 +28,15 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
 /// <param name="ModelLocation">The model's declaration; the identifier-limit errors are reported there so they can be suppressed there (#1429)</param>
+/// <param name="IsManualTableName">Whether <c>[PerspectiveTable]</c> on the model set <paramref name="TableName"/> (#1719)</param>
 internal sealed record PerspectiveInfo(
     string ModelTypeName,
     string TableName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
     bool BuildsDataIndex = false,
-    Location? ModelLocation = null
+    Location? ModelLocation = null,
+    bool IsManualTableName = false
 );
 
 /// <summary>
@@ -41,14 +44,14 @@ internal sealed record PerspectiveInfo(
 /// Separates syntax/semantic extraction from configuration-dependent table name generation.
 /// </summary>
 /// <param name="ModelTypeName">Fully qualified model type name (e.g., "global::MyApp.Orders.OrderSummary")</param>
-/// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
+/// <param name="TableSource">Where the model's table name comes from: its base name, or its <c>[PerspectiveTable]</c> name (#1719)</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 /// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
 /// <param name="ModelLocation">The model's declaration; the identifier-limit errors are reported there so they can be suppressed there (#1429)</param>
 internal sealed record PerspectiveCandidate(
     string ModelTypeName,
-    string TableBaseName,
+    PerspectiveTableSource TableSource,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
     bool BuildsDataIndex = false,

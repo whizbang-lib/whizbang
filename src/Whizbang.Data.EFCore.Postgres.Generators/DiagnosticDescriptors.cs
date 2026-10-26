@@ -154,14 +154,15 @@ internal static class DiagnosticDescriptors {
   /// </summary>
   /// <docs>operations/diagnostics/whiz820</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongTableName_EmitsWHIZ820ErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveTableNamingDiagnosticsTests.cs:EFCoreGenerator_WithAManualNameOverTheLimit_ReportsWHIZ820NamingTheAttributeAsync</tests>
   public static readonly DiagnosticDescriptor TableNameExceedsLimit = new(
       id: "WHIZ820",
       title: "Table name exceeds database limit",
-      messageFormat: "Perspective model '{0}' generates table name '{1}' ({2} bytes) which exceeds {3} limit of {4} bytes. Shorten the model name or configure suffix stripping.",
+      messageFormat: "Perspective model '{0}' generates table name '{1}' ({2} bytes) which exceeds {3} limit of {4} bytes. Shorten the model name, configure suffix stripping, or name the table with [PerspectiveTable].",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "The generated table name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Consider shortening the model name, enabling suffix stripping, or using a custom table name."
+      description: "The table name, generated or set with [PerspectiveTable], exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Shorten the model name, enable suffix stripping, or name the table with [PerspectiveTable(\"wh_per_...\")]."
   );
 
   /// <summary>

@@ -217,8 +217,8 @@ public class ColumnStorageSqlTests {
     var efSql = registration.GeneratedSources.First(s => s.HintName.Contains("SchemaExtensions", StringComparison.Ordinal)).SourceText.ToString();
     var schema = GeneratorTestHelper.GetGeneratedSource(GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source), "PerspectiveSchemas.g.sql.cs") ?? "";
 
-    // Each generator names the table its own way; the request names whichever table the statement altered.
-    foreach (var (sql, table) in new[] { (efSql, "wh_per_filter"), (schema, "wh_per_filter_perspective") }) {
+    // Both generators name the table from the model (#1719); the request names the table the statement altered.
+    foreach (var (sql, table) in new[] { (efSql, "wh_per_filter"), (schema, "wh_per_filter") }) {
       await Assert.That(sql).Contains($"{table} SET (fillfactor = 90);");
       await Assert.That(sql).Contains($"wh_request_table_rewrite('{table}');")
         .Because("the rewrite request names the bare table, as the rewriter lists the tables it measures.");

@@ -134,8 +134,8 @@ public partial class MigrationStepTransactionTests {
     await Assert.That(retry.Migration).DoesNotContain(l => l.Contains($"Started : {plan.Before[^1]}", StringComparison.Ordinal));
     await Assert.That(retry.Migration[^1]).StartsWith($"Information Migration complete: {total} of {total} succeeded (");
     await Assert.That(total).IsEqualTo(MigrationFiles().Length + (int)await _scalarAsync<long>(
-        "SELECT count(*) FROM public.wh_schema_migrations WHERE file_name LIKE 'perspective:%'") + 4)
-      .Because("Y counts every file, every perspective table, and the core-table, constraint, association and registry steps");
+        "SELECT count(*) FROM public.wh_schema_migrations WHERE file_name LIKE 'perspective:%'") + 5)
+      .Because("Y counts every file, every perspective table, and the core-table, perspective-rename, constraint, association and registry steps");
     await Assert.That(await _loggedAsync("whizbang")).IsEquivalentTo(plan.FromN)
       .Because("the retry resumes at N: each file before it is current, and N's failure record does not make it look so");
     await Assert.That(await _loggedAsync("step")).DoesNotContain(s => s.EndsWith(":core-infrastructure", StringComparison.Ordinal))
