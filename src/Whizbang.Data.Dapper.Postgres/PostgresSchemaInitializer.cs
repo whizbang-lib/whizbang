@@ -235,8 +235,10 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Renames each perspective table whose model the registry maps to a different name, before the perspective pass
-  /// creates the new name as an empty table (#1719). A model with a table under both names keeps both, with a warning.
+  /// Renames each perspective table whose model the registry maps to a different name, or that is still under the name
+  /// a released build gave it (the payload's former name; that build never wrote the registry), before the
+  /// perspective pass creates the new name as an empty table (#1719). A model with a table under both names keeps
+  /// both, with a warning.
   /// </summary>
   /// <returns>The tables renamed, old name by new name.</returns>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs</tests>

@@ -242,6 +242,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         TableName: tableName,
         IsManualTableName: candidate.TableSource.IsManual,
         ModelLocation: candidate.ModelLocation,
+        FormerTableName: PerspectiveTableNaming.FormerDapperTableName(candidate.PerspectiveClrTypeName, tableName, config),
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
         StorageMode: candidate.StorageMode,
@@ -601,7 +602,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       StringBuilder schemaBuilder, ImmutableArray<PerspectiveSchemaInfo> perspectives, string serviceName) {
     var entries = perspectives.Select(p => new PerspectiveRegistryEntry(
       p.ModelClrTypeName, p.TableName, p.PerspectiveClrTypeName, p.PhysicalFields,
-      p.BuildsDataIndex, p.BuildsMetadataIndex)).ToList();
+      p.BuildsDataIndex, p.BuildsMetadataIndex, p.FormerTableName)).ToList();
     var json = PerspectiveRegistryPayload.ToJson(entries, serviceName, _mapToPostgresType);
 
     schemaBuilder.AppendLine("    /// <summary>The service this assembly's perspectives are registered under.</summary>");
@@ -930,6 +931,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="TableName">The model's PostgreSQL table name (e.g., "wh_per_order_summary")</param>
 /// <param name="IsManualTableName">Whether <c>[PerspectiveTable]</c> on the model set <paramref name="TableName"/></param>
 /// <param name="ModelLocation">The model's declaration, where a table-name error is reported</param>
+/// <param name="FormerTableName">The name a released Dapper build gave this perspective's table, when it differs (#1719)</param>
 /// <param name="PropertyCount">Number of properties for size estimation</param>
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
@@ -946,6 +948,7 @@ internal sealed record PerspectiveSchemaInfo(
     string TableName,
     bool IsManualTableName,
     Location ModelLocation,
+    string? FormerTableName,
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,

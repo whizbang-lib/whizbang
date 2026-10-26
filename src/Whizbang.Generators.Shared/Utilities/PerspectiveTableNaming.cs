@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Whizbang.Generators.Shared.Models;
 
@@ -68,6 +69,37 @@ public static class PerspectiveTableNaming {
     name.Length > PREFIX.Length
     && name.StartsWith(PREFIX, StringComparison.Ordinal)
     && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_');
+
+  /// <summary>
+  /// The name a released Dapper build gave the perspective's table, as PostgreSQL stored it, or null when it is the
+  /// model's table name already. That build named the table from the perspective class (the CLR name past its
+  /// namespace, nested names merged) under the same suffix settings, and never wrote the perspective registry, so
+  /// this name is the only way to find the table on upgrade (#1719).
+  /// </summary>
+  /// <param name="perspectiveClrTypeName">The perspective's CLR type name (<c>Outer+Perspective</c> when nested).</param>
+  /// <param name="tableName">The model's table name now.</param>
+  /// <param name="config">The build's suffix settings.</param>
+  /// <returns>The former name, or null.</returns>
+  public static string? FormerDapperTableName(string perspectiveClrTypeName, string tableName, TableNameConfig config) {
+    var baseName = perspectiveClrTypeName[(perspectiveClrTypeName.LastIndexOf('.') + 1)..].Replace("+", "");
+    var former = AsStored(NamingConventionUtilities.GenerateTableName(baseName, config));
+    return former == tableName ? null : former;
+  }
+
+  /// <summary>
+  /// <paramref name="name"/> as PostgreSQL stores it: clipped to <see cref="POSTGRES_MAX_IDENTIFIER_BYTES"/> UTF-8
+  /// bytes, on a character boundary, which is what PostgreSQL does with a longer identifier instead of refusing it.
+  /// </summary>
+  /// <param name="name">The identifier as written.</param>
+  /// <returns>The identifier as stored.</returns>
+  public static string AsStored(string name) {
+    var end = Math.Min(name.Length, POSTGRES_MAX_IDENTIFIER_BYTES);
+    while (Encoding.UTF8.GetByteCount(name[..end]) > POSTGRES_MAX_IDENTIFIER_BYTES
+        || (end < name.Length && char.IsLowSurrogate(name[end]))) {
+      end--;
+    }
+    return name[..end];
+  }
 
   /// <summary>
   /// One WHIZ825 per table that more than one model resolves to, at the second model's declaration, naming them all.
