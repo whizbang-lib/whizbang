@@ -349,12 +349,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through one shared helper, so one model has one table on either driver. Two perspectives of one model now share that
   table on the Dapper driver too. **Existing tables are renamed in place at the next start, keeping their rows:**
   migration 241 adds `wh_follow_perspective_table_renames`, which both drivers call before they create the perspective
-  tables. It renames the table the registry recorded for the model to the new name, and with it every index on it
-  whose name carries the old table name or the part of it past `wh_per_` (when the new index name is free and fits). When a table already exists under both names, nothing is dropped or merged, and a
-  warning names the model and both tables. This also fixes a rename the registry reconcile could never complete on
-  either driver: it ran after the new name had been created as an empty table, and left the rows under the old name.
-  A perspective whose model is folded by a second perspective on the Dapper driver previously had a table per
-  perspective; the second one's table is left in place, unread. The new `[PerspectiveTable("wh_per_...")]` on a model
+  tables. It renames the table the registry recorded for the model, or on the Dapper driver the table still under the
+  name a released build gave it (that build never wrote the registry, so the generated registry payload now carries
+  each perspective's former name), to the new name, and with it every index on it whose name carries the old table
+  name or the part of it past `wh_per_` (when the new index name is free and fits). When a table already exists under
+  both names, nothing is dropped or merged, and a warning names the model and both tables. This also fixes a rename
+  the registry reconcile could never complete on either driver: it ran after the new name had been created as an
+  empty table, and left the rows under the old name. A model folded by two perspectives had a table per perspective on
+  the Dapper driver: the first is renamed and the second is left in place, unread, with that warning; move its rows by
+  hand if they differ, then drop it. The new `[PerspectiveTable("wh_per_...")]` on a model
   sets the name exactly as written (the suffix-stripping properties do not alter it). The schema generator now
   reports a name past the identifier limit as an error (WHIZ823, the EF Core generator's WHIZ820), a manual name that
   is not `wh_per_` followed by lowercase letters, digits and underscores (WHIZ824), and two models on one table
