@@ -165,6 +165,33 @@ public partial class PerspectiveTableNameGoldenTests {
       .Because("the setting still applies to the generated names");
   }
 
+  /// <summary>
+  /// The names a released Dapper build gave these tables, from the perspective class, as PostgreSQL stored them: the
+  /// registry payload carries each one that differs from the model's table, so the driver can follow a table no
+  /// registry row names (#1719). The longest is the one PostgreSQL truncated to the model's name, so it has none.
+  /// </summary>
+  private static readonly string[] _goldenFormerNames = [
+    "wh_per_active_account_active_account",
+    "wh_per_backlog_perspective",
+    "wh_per_customer_loyalty_tier_summary_perspective",
+    "wh_per_customer_perspective",
+    "wh_per_line_item_snapshot_perspective",
+    "wh_per_order_perspective",
+    "wh_per_product_catalog",
+    "wh_per_shipment_perspective",
+    "wh_per_stock_level_perspective",
+  ];
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SchemaGenerator_RegistryPayload_NamesTheTableEachPerspectiveHadBeforeAsync() {
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(PROJECT, MSBuildGlobalOptions.For());
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs") ?? "";
+
+    await Assert.That(_golden(_formerTable(), generated)).IsEqualTo(string.Join(Environment.NewLine, _goldenFormerNames));
+  }
+
   // One name per line, sorted, so a failure prints the whole list it found next to the golden one.
   private static string _golden(Regex pattern, string generated) =>
     string.Join(Environment.NewLine, pattern.Matches(generated)
@@ -172,6 +199,9 @@ public partial class PerspectiveTableNameGoldenTests {
 
   [GeneratedRegex("ToTable\\(\"(?<name>[a-z0-9_]+)\"")]
   private static partial Regex _toTable();
+
+  [GeneratedRegex("FormerTableName\\\\\":\\\\\"(?<name>[a-z0-9_]+)")]
+  private static partial Regex _formerTable();
 
   [GeneratedRegex("CREATE TABLE IF NOT EXISTS (?<name>[a-z0-9_]+) \\(")]
   private static partial Regex _createTable();

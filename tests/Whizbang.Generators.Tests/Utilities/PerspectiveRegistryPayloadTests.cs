@@ -32,6 +32,19 @@ public class PerspectiveRegistryPayloadTests {
   }
 
   [Test]
+  public async Task ToJson_WithAFormerTableName_CarriesIt_AndWithoutOne_WritesNoFieldAsync() {
+    var json = PerspectiveRegistryPayload.ToJson([
+      new PerspectiveRegistryEntry("A.Model", "wh_per_a", "A.APerspective", [], false, false, "wh_per_a_perspective"),
+      new PerspectiveRegistryEntry("B.Model", "wh_per_b", "B.BPerspective", [], false, false),
+    ], "svc", _columnType);
+
+    await Assert.That(json).Contains("\"PerspectiveName\":\"A.APerspective\",\"FormerTableName\":\"wh_per_a_perspective\"}")
+      .Because("the Dapper driver follows a table from the name a released build gave it (#1719)");
+    await Assert.That(json).EndsWith("\"PerspectiveName\":\"B.BPerspective\"}]")
+      .Because("an entry with no former name carries no field for one");
+  }
+
+  [Test]
   public async Task Indexes_FollowTheDocumentIndexDecisionsAsync() {
     var none = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], false, false)).ConvertAll(i => i.Name);
     var both = PerspectiveRegistryPayload.Indexes(new("M", "wh_per_m", "P", [], true, true)).ConvertAll(i => i.Name);

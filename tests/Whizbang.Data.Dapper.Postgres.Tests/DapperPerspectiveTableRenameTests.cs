@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// table created under the old perspective-derived name must be followed to the new name by the perspective registry
 /// reconcile (keyed by the model's CLR type), keeping its rows.
 /// </summary>
-/// <docs>extending/source-generators/configuration#table-names</docs>
+/// <docs>fundamentals/perspectives/table-naming#renaming-perspectives</docs>
 /// <code-under-test>src/Whizbang.Data.Dapper.Postgres/PostgresSchemaInitializer.cs</code-under-test>
 [NotInParallel(nameof(PerspectiveRegistryPayloads))]
 public class DapperPerspectiveTableRenameTests {
@@ -147,6 +147,77 @@ public class DapperPerspectiveTableRenameTests {
     await Assert.That(warning).IsNotNull().Because("an operator is told which model has two tables");
     await Assert.That(warning!).Contains(OLD_TABLE);
     await Assert.That(warning!).Contains(NEW_TABLE);
+  }
+
+  // A released Dapper build: the table named from the perspective class, and no registry row at all (that build never
+  // reconciled the registry, #1548).
+  private async Task _releasedBuildAsync(string table, string key = "OrderSummaryPerspective") =>
+    await new PostgresSchemaInitializer(_database.ConnectionString, [new(key, _entry(table))])
+      .InitializeSchemaAsync();
+
+  private static string _entryJson(string table, string perspective, string? former, string model = MODEL) =>
+    $$"""{"ClrTypeName":"{{model}}","TableName":"{{table}}","SchemaJson":{},"SchemaHash":"probe-hash","ServiceName":"{{SERVICE}}","PerspectiveName":"{{perspective}}"{{(former is null ? "" : $",\"FormerTableName\":\"{former}\"")}}}""";
+
+  private PostgresSchemaInitializer _upgraded(string json, ILogger? logger = null) =>
+    new(_database.ConnectionString, [new("OrderSummaryPerspective", _entry(NEW_TABLE))]) {
+      PerspectiveRegistry = [new PerspectiveRegistryPayload(SERVICE, json)],
+      Logger = logger,
+    };
+
+  [Test]
+  public async Task Initializer_WhenAReleasedBuildLeftTheTableUnderItsPerspectiveName_FollowsItWithNoRegistryRowAsync() {
+    await _releasedBuildAsync(OLD_TABLE);
+    var id = await _seedAsync(OLD_TABLE, "9");
+
+    await _upgraded($"[{_entryJson(NEW_TABLE, PERSPECTIVE, OLD_TABLE)}]").InitializeSchemaAsync();
+
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<int>($"SELECT count(*) FROM {NEW_TABLE} WHERE id = @id", new { id }))
+      .IsEqualTo(1).Because("the payload names the table the released build created, and no registry row has to");
+    await Assert.That(await db.ExecuteScalarAsync<string?>("SELECT to_regclass(@t)::text", new { t = OLD_TABLE }))
+      .IsNull().Because("the table was renamed, not copied");
+    await Assert.That(await db.ExecuteScalarAsync<int>(
+      "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE @old",
+      new { old = $"%{OLD_TABLE[7..]}%" })).IsEqualTo(0)
+      .Because("its indexes follow it");
+  }
+
+  [Test]
+  public async Task Initializer_WhenTwoPerspectivesOfOneModelLeftTwoTables_RenamesTheRegisteredOneAndWarnsAboutTheOtherAsync() {
+    const string OTHER_TABLE = "wh_per_order_audit_perspective";
+    await _releasedBuildAsync(OTHER_TABLE, "OrderAuditPerspective");
+    var otherId = await _seedAsync(OTHER_TABLE, "3");
+    await _initializer(OLD_TABLE).InitializeSchemaAsync();
+    var id = await _seedAsync(OLD_TABLE, "4");
+    var logger = new RecordingLogger();
+
+    await _upgraded(
+      $"[{_entryJson(NEW_TABLE, "Probe.Perspectives.OrderAuditPerspective", OTHER_TABLE)},{_entryJson(NEW_TABLE, PERSPECTIVE, OLD_TABLE)}]",
+      logger).InitializeSchemaAsync();
+
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<int>($"SELECT count(*) FROM {NEW_TABLE} WHERE id = @id", new { id }))
+      .IsEqualTo(1).Because("the table the registry names for the model is the one renamed");
+    await Assert.That(await db.ExecuteScalarAsync<int>($"SELECT count(*) FROM {OTHER_TABLE} WHERE id = @otherId", new { otherId }))
+      .IsEqualTo(1).Because("the second perspective's table is neither dropped nor merged");
+    var warning = logger.Warnings.SingleOrDefault(m => m.Contains(OTHER_TABLE, StringComparison.Ordinal));
+    await Assert.That(warning).IsNotNull().Because("an operator is told the second table was left, and where its model now lives");
+    await Assert.That(warning!).Contains(NEW_TABLE);
+  }
+
+  [Test]
+  public async Task Initializer_WhenAFormerNameIsAnotherModelsTable_LeavesItToThatModelAsync() {
+    const string OTHER_MODEL = "Probe.Contracts.OrderSummaryPerspectiveModel";
+    await _releasedBuildAsync(OLD_TABLE);
+    var id = await _seedAsync(OLD_TABLE, "5");
+
+    await _upgraded(
+      $"[{_entryJson(NEW_TABLE, PERSPECTIVE, OLD_TABLE)},{_entryJson(OLD_TABLE, "Probe.Perspectives.Other", null, OTHER_MODEL)}]")
+      .InitializeSchemaAsync();
+
+    await using var db = new NpgsqlConnection(_database.ConnectionString);
+    await Assert.That(await db.ExecuteScalarAsync<int>($"SELECT count(*) FROM {OLD_TABLE} WHERE id = @id", new { id }))
+      .IsEqualTo(1).Because("a name the build now gives another model is that model's table, not a former one to take");
   }
 
   [Test]
