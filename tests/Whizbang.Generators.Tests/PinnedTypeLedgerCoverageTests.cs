@@ -286,4 +286,27 @@ public class PinnedTypeLedgerCoverageTests {
     await Assert.That(knows).IsFalse()
       .Because("CLR type names are case-sensitive, so KnowsName is Ordinal — unlike the pinned-id lookup, which is OrdinalIgnoreCase because guid text has no canonical case");
   }
+
+  /// <summary>
+  /// The ledger is a committed lockfile, and the build rewrites the on-disk file whenever its bytes differ from
+  /// the JSON this method produced. Indented System.Text.Json breaks lines with <c>Environment.NewLine</c> unless
+  /// told otherwise, so a Windows build produced CRLF, never matched the LF file a checkout writes under an
+  /// <c>eol=lf</c> attribute, and rewrote every ledger once per checkout as a change with no content. The line
+  /// break is fixed at LF so the bytes are the same on every operating system. Red only where
+  /// <c>Environment.NewLine</c> is CRLF, which is where the defect lived.
+  /// </summary>
+  [Test]
+  public async Task ToJson_BreaksLinesWithLineFeedOnEveryOperatingSystemAsync() {
+    var ledger = _newLedgerWithEntries(_newEntry(
+      "77777777-7777-7777-7777-777777777777",
+      "MyApp.Orders.OrderPlaced",
+      "MyApp.Orders.OrderSubmitted"));
+
+    var json = (string)_ledgerType.GetMethod("ToJson")!.Invoke(ledger, null)!;
+
+    await Assert.That(json).Contains("\n")
+      .Because("the ledger is written indented, one property per line, so it diffs as a reviewed lockfile");
+    await Assert.That(json).DoesNotContain("\r")
+      .Because("a carriage return makes the bytes depend on the operating system that built them, and the build rewrites a ledger whose bytes differ");
+  }
 }

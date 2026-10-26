@@ -120,12 +120,23 @@ public class BuildTargetsEmbeddedJsonTests {
     await Assert.That(problem).Contains("matching close brace");
   }
 
+  /// <summary>
+  /// The on-disk file is left alone when it differs from the extracted JSON only by carriage returns: a checkout
+  /// under <c>text=auto</c> with <c>core.autocrlf=true</c> holds CRLF where the generator writes LF, and rewriting
+  /// it changes no content, only bytes that version control then reports as modified on every build. A raw carriage
+  /// return cannot occur inside a JSON string (it is escaped), so only line breaks are ignored; every other byte,
+  /// and a line break present on one side only, still counts.
+  /// </summary>
   [Test]
   [Arguments(new byte[] { 1, 2, 3 }, new byte[] { 1, 2, 3 }, true)]
   [Arguments(new byte[] { 1, 2, 3 }, new byte[] { 1, 2, 4 }, false)]
   [Arguments(new byte[] { 1, 2 }, new byte[] { 1, 2, 3 }, false)]
-  public async Task SameBytes_ComparesLengthAndEveryByteAsync(byte[] left, byte[] right, bool expected) {
-    await Assert.That(Scanner.SameBytes(left, right)).IsEqualTo(expected);
+  [Arguments(new byte[] { 97, 13, 10, 98 }, new byte[] { 97, 10, 98 }, true)]
+  [Arguments(new byte[] { 97, 10, 98 }, new byte[] { 97, 13, 10, 98 }, true)]
+  [Arguments(new byte[] { 97, 13, 10, 98, 13, 10 }, new byte[] { 97, 10, 98 }, false)]
+  [Arguments(new byte[] { 97, 13, 10, 98 }, new byte[] { 97, 10, 99 }, false)]
+  public async Task SameIgnoringCarriageReturns_ComparesEveryByteButLineEndingsAsync(byte[] onDisk, byte[] extracted, bool expected) {
+    await Assert.That(Scanner.SameIgnoringCarriageReturns(onDisk, extracted)).IsEqualTo(expected);
   }
 
   // ---- the generators' side
@@ -158,8 +169,8 @@ public class BuildTargetsEmbeddedJsonTests {
       return ((string?)type.GetField("Json")!.GetValue(result), (string?)type.GetField("Problem")!.GetValue(result));
     }
 
-    public static bool SameBytes(byte[] left, byte[] right) =>
-        (bool)_scannerType.Value.GetMethod("SameBytes")!.Invoke(null, [left, right])!;
+    public static bool SameIgnoringCarriageReturns(byte[] onDisk, byte[] extracted) =>
+        (bool)_scannerType.Value.GetMethod("SameIgnoringCarriageReturns")!.Invoke(null, [onDisk, extracted])!;
   }
 
   private static Type _compileScanner() {

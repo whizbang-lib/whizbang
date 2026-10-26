@@ -146,6 +146,9 @@ internal sealed class PinnedTypeLedger {
     // encoder. The default HTML-safe encoder escapes '+' (and angle brackets and ampersand) to a 6-char unicode
     // escape, which would render every nested-type name's '+' separator as an unreadable escape and wreck diffs.
     Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    // Indented output breaks lines with Environment.NewLine unless told otherwise, which made a Windows build's
+    // ledger CRLF and a Linux build's LF. A committed lockfile must be the same bytes on every build machine.
+    NewLine = "\n",
   };
 
   /// <summary>Serializes the ledger to committable JSON (camelCase, indented, entries sorted by CLR name for stable diffs).</summary>

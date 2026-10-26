@@ -573,6 +573,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
 
 ### Fixed
+- **A Windows build no longer rewrites a committed pinned-type ledger whose content did not change (#1769).** The
+  extraction step compared `.whizbang/pinned-type-ledger.json` with the extracted JSON byte for byte, and the ledger
+  was serialized with `Environment.NewLine`, so a Windows build rewrote a ledger checked out with LF as CRLF: version
+  control reported it modified with no content changed, and the next build recompiled the project, because the ledger
+  is a compiler input. The extraction now leaves a file that differs only in line endings alone, for the ledger and
+  the message registry alike, and the ledger is written with LF on every operating system. In a repository with no
+  line-ending normalization whose ledger was committed with CRLF, the first content change rewrites it with LF.
 - **The migration tool reads back the decision file it generates for a Windows project path, and a blank docs
   path no longer throws on Windows (#1764).** `whizbang-migrate apply --generate-decision-file` wrote the commented
   decision file by interpolating values into a JSON template, so the backslashes of a path such as `C:\Users\me\App`
