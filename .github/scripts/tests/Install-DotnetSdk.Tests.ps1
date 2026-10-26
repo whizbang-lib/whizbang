@@ -9,9 +9,14 @@ BeforeAll {
   # A stand-in for dotnet-install.sh: exits with $ExitCode, and on success leaves a dotnet that prints a version
   # and exits with $DotnetExitCode. Written with LF so bash runs it on every platform.
   function New-FakeInstaller {
-    param([int]$ExitCode = 0, [switch]$NoDotnet, [int]$DotnetExitCode = 0)
+    param([int]$ExitCode = 0, [switch]$NoDotnet, [int]$DotnetExitCode = 0, [switch]$Chatty)
     $path = Join-Path $TestDrive "dotnet-install-$([guid]::NewGuid().ToString('N')).sh"
     $lines = @('#!/usr/bin/env bash', 'while [ $# -gt 0 ]; do case "$1" in --install-dir) dir="$2"; shift 2;; *) shift;; esac; done')
+    if ($Chatty) {
+      # The real dotnet-install.sh prints its progress to stdout.
+      $lines += 'echo "dotnet-install: Attempting to download using aka.ms link"'
+      $lines += 'echo "dotnet-install: Installed version is 10.0.999"'
+    }
     if ($ExitCode -ne 0) {
       $lines += 'echo "dotnet-install: Failed to download: 409" >&2'
       $lines += "exit $ExitCode"
@@ -49,6 +54,14 @@ Describe 'Invoke-SdkInstall' {
   It 'reports success with the installed version when the installer and dotnet both succeed' {
     $dir = Join-Path $TestDrive 'ok'
     $r = Invoke-SdkInstall -InstallerPath (New-FakeInstaller) -Channel '10.0.1xx' -InstallDir $dir
+    $r.Ok | Should -BeTrue
+    $r.Version | Should -Be '10.0.999'
+  }
+
+  It 'returns one result, not the installer''s progress lines, when the installer writes to stdout' {
+    $dir = Join-Path $TestDrive 'chatty'
+    $r = Invoke-SdkInstall -InstallerPath (New-FakeInstaller -Chatty) -Channel '10.0.1xx' -InstallDir $dir
+    @($r).Count | Should -Be 1
     $r.Ok | Should -BeTrue
     $r.Version | Should -Be '10.0.999'
   }
