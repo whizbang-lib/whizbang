@@ -70,8 +70,8 @@ public sealed partial class StartupMigrationStepsTests {
     var total = _totalOf(lines);
     await Assert.That(total).IsEqualTo(
       MigrationStepTransactionTests.MigrationFiles().Length + (int)await _scalarAsync<long>(
-        "SELECT count(*) FROM wh_schema_migrations WHERE file_name LIKE 'perspective:%'") + 4)
-      .Because("Y counts the migration files, the perspective tables, and the core-table, constraint, association and registry steps");
+        "SELECT count(*) FROM wh_schema_migrations WHERE file_name LIKE 'perspective:%'") + 5)
+      .Because("Y counts the migration files, the perspective tables, and the core-table, perspective-rename, constraint, association and registry steps");
     await Assert.That(lines.Count).IsEqualTo((2 * total) + 1);
     for (var x = 1; x <= total; x++) {
       await Assert.That(lines[(2 * x) - 2]).StartsWith($"Information Migration {x} of {total} - Started : ");

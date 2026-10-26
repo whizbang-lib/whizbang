@@ -756,6 +756,21 @@ public sealed class PostgresSchemaInitializer {
     }
   }
 
+  /// <summary>
+  /// The DDL as it read under the table's previous name: every use of the table's name, and of the part of it past
+  /// <c>wh_per_</c> that some index names carry, written with the previous one (#1719).
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs:AsNamed_RewritesTheNameAndThePartPastThePrefix_OnlyWhenBothCarryItAsync</tests>
+  internal static string AsNamed(string ddl, string tableName, string previous) {
+    const string PREFIX = "wh_per_";
+    const string MARK = "\u0000";
+    var marked = ddl.Replace(tableName, MARK, StringComparison.Ordinal);
+    if (tableName.StartsWith(PREFIX, StringComparison.Ordinal) && previous.StartsWith(PREFIX, StringComparison.Ordinal)) {
+      marked = marked.Replace(tableName[PREFIX.Length..], previous[PREFIX.Length..], StringComparison.Ordinal);
+    }
+    return marked.Replace(MARK, previous, StringComparison.Ordinal);
+  }
+
   private static string _sha256(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
   private static async Task _executeSinglePerspectiveMigrationAsync(
@@ -780,7 +795,7 @@ public sealed class PostgresSchemaInitializer {
       // A table renamed in place this start whose DDL differs only by its name is not changed DDL (#1719): the
       // statements are re-run as they are, with no strategy that copies or replays its rows.
       if (renames.TryGetValue(tableName, out var previous)
-          && existingHash == _sha256(entry.Value.Replace(tableName, previous, StringComparison.Ordinal))) {
+          && existingHash == _sha256(AsNamed(entry.Value, tableName, previous))) {
         renamedFrom = previous;
       } else {
         strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);

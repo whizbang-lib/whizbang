@@ -49,6 +49,7 @@ public class DapperPerspectiveTableRenameTests {
       version BIGINT NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS ix_{table}_created_at ON {table} (created_at);
+    CREATE INDEX IF NOT EXISTS idx_{table[7..]}_updated_at ON {table} (updated_at);
     {extra}
     """;
 
@@ -95,12 +96,12 @@ public class DapperPerspectiveTableRenameTests {
       .IsEqualTo($"Renamed from {OLD_TABLE}");
     await Assert.That(await db.ExecuteScalarAsync<int>(
       "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE @old",
-      new { old = $"%{OLD_TABLE}%" })).IsEqualTo(0)
-      .Because("the table's indexes, its primary key included, are renamed with it");
+      new { old = $"%{OLD_TABLE[7..]}%" })).IsEqualTo(0)
+      .Because("the table's indexes, its primary key and those named after the part past wh_per_ included, are renamed with it");
     await Assert.That(await db.ExecuteScalarAsync<int>(
       "SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = @NEW_TABLE",
-      new { NEW_TABLE })).IsEqualTo(2)
-      .Because("the primary key and the created_at index, each once, under the new name");
+      new { NEW_TABLE })).IsEqualTo(3)
+      .Because("the primary key and the two indexes, each once, under the new name");
   }
 
   [Test]
@@ -146,6 +147,21 @@ public class DapperPerspectiveTableRenameTests {
     await Assert.That(warning).IsNotNull().Because("an operator is told which model has two tables");
     await Assert.That(warning!).Contains(OLD_TABLE);
     await Assert.That(warning!).Contains(NEW_TABLE);
+  }
+
+  [Test]
+  [Arguments("wh_per_order_summary", "wh_per_order_summary_perspective",
+    "CREATE INDEX idx_order_summary_x ON wh_per_order_summary (id);",
+    "CREATE INDEX idx_order_summary_perspective_x ON wh_per_order_summary_perspective (id);")]
+  [Arguments("wh_per_order_summary", "legacy_orders",
+    "CREATE INDEX idx_order_summary_x ON wh_per_order_summary (id);",
+    "CREATE INDEX idx_order_summary_x ON legacy_orders (id);")]
+  [Arguments("orders", "wh_per_orders_old",
+    "CREATE INDEX idx_order_summary_x ON orders (id);",
+    "CREATE INDEX idx_order_summary_x ON wh_per_orders_old (id);")]
+  public async Task AsNamed_RewritesTheNameAndThePartPastThePrefix_OnlyWhenBothCarryItAsync(
+      string table, string previous, string ddl, string expected) {
+    await Assert.That(PostgresSchemaInitializer.AsNamed(ddl, table, previous)).IsEqualTo(expected);
   }
 
   private sealed class RecordingLogger : ILogger {

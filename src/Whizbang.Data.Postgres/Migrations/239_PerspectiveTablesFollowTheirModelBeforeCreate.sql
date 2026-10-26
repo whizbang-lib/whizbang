@@ -16,8 +16,9 @@
 --              each model the registry already maps (by its CLR type and service) to a different table:
 --
 --                old table exists, new does not   the table is renamed, and so is every index on it whose name
---                                                 carries the old table name (its primary key included), when the
---                                                 new index name is free and within 63 bytes: 'renamed'
+--                                                 carries the old table name (its primary key included) or the part
+--                                                 of it past wh_per_, when the new index name is free and within 63
+--                                                 bytes: 'renamed'
 --                both exist                       nothing is dropped, merged or moved: 'both_exist', which the
 --                                                 drivers log as a warning naming the model and both tables
 --                otherwise                        nothing to do, and no row is returned
@@ -37,6 +38,7 @@ SELECT __SCHEMA__.drop_all_overloads('wh_follow_perspective_table_renames');
 -- <docs>fundamentals/perspectives/table-naming#renaming-perspectives</docs>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs:Initializer_WhenTheModelsTableNameChanges_RenamesTheExistingTableInPlaceAndKeepsItsRowsAsync</tests>
 -- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs:Initializer_WhenBothTablesExist_LeavesBothAndWarnsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/PerspectiveTableRenameTests.cs:Initialize_WhenTheModelsTableNameChanged_RenamesTheTableInPlaceAndKeepsItsRowsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.wh_follow_perspective_table_renames(
   p_perspectives JSONB,
   p_service_name VARCHAR DEFAULT NULL
@@ -53,6 +55,8 @@ DECLARE
   v_old_oid OID;
   v_index RECORD;
   v_new_index TEXT;
+  v_old_short TEXT;
+  v_new_short TEXT;
 BEGIN
   FOR v_entry IN
     SELECT DISTINCT
@@ -76,17 +80,26 @@ BEGIN
     ELSE
       EXECUTE format('ALTER TABLE __SCHEMA__.%I RENAME TO %I', v_old_table, v_entry.table_name);
 
-      -- The table's own indexes, found by its oid, which the rename keeps.
+      -- The table's own indexes, found by its oid, which the rename keeps. An index is named after the whole table
+      -- (ix_wh_per_order_..., wh_per_order_pkey) or after the part past the prefix (idx_order_...).
+      v_old_short := CASE WHEN v_old_table LIKE 'wh\_per\_%' THEN substr(v_old_table, 8) END;
+      v_new_short := CASE WHEN v_entry.table_name LIKE 'wh\_per\_%' THEN substr(v_entry.table_name, 8) END;
       FOR v_index IN
         SELECT ic.relname AS name
         FROM pg_index i
         JOIN pg_class ic ON ic.oid = i.indexrelid
         WHERE i.indrelid = v_old_oid
-          AND position(v_old_table IN ic.relname) > 0
       LOOP
-        v_new_index := overlay(v_index.name PLACING v_entry.table_name
-                               FROM position(v_old_table IN v_index.name) FOR length(v_old_table));
-        IF octet_length(v_new_index) <= 63
+        v_new_index := CASE
+          WHEN position(v_old_table IN v_index.name) > 0 THEN
+            overlay(v_index.name PLACING v_entry.table_name
+                    FROM position(v_old_table IN v_index.name) FOR length(v_old_table))
+          WHEN v_old_short IS NOT NULL AND v_new_short IS NOT NULL AND position(v_old_short IN v_index.name) > 0 THEN
+            overlay(v_index.name PLACING v_new_short
+                    FROM position(v_old_short IN v_index.name) FOR length(v_old_short))
+        END;
+        IF v_new_index IS NOT NULL
+           AND octet_length(v_new_index) <= 63
            AND to_regclass('__SCHEMA__.' || quote_ident(v_new_index)) IS NULL THEN
           EXECUTE format('ALTER INDEX __SCHEMA__.%I RENAME TO %I', v_index.name, v_new_index);
         END IF;

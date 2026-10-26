@@ -3,8 +3,8 @@
 
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
-using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Shared.Models;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
