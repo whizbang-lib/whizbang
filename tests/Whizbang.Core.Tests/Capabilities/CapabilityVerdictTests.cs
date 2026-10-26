@@ -54,6 +54,18 @@ public class CapabilityVerdictTests {
   }
 
   [Test]
+  [Arguments(CapabilityProvisioningOutcome.Created, "1.7.0", "Ready, created 1.7.0.")]
+  [Arguments(CapabilityProvisioningOutcome.Present, "1.7.0", "Ready, already present 1.7.0.")]
+  [Arguments(CapabilityProvisioningOutcome.Upgraded, "1.8.0", "Ready, upgraded 1.8.0.")]
+  [Arguments(CapabilityProvisioningOutcome.Created, null, "Ready, created.")]
+  public async Task Line_SaysWhatProvisioningDid_BeforeTheVersionAsync(
+      CapabilityProvisioningOutcome outcome, string? version, string expected) {
+    var entry = _only(_status(CapabilityState.Ready, version) with { Provisioning = outcome }, _explicit(_rewrite));
+
+    await Assert.That(entry.Line).StartsWith($"capability postgres/pg_squeeze on 'orders': {expected} Required by:");
+  }
+
+  [Test]
   public async Task Explicit_KnownAndNotReady_FailsStartWithTheFixAsync() {
     var entry = _only(_status(CapabilityState.NotPermitted, detail: "NotAllowlisted"), _explicit(_rewrite));
 

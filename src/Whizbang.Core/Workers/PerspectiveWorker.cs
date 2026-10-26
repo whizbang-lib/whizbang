@@ -105,7 +105,11 @@ public partial class PerspectiveWorker(
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag that only tests ever drained.
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
     storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);
@@ -328,7 +332,8 @@ public partial class PerspectiveWorker(
   }
 
   /// <inheritdoc />
-  public override Task StopAsync(CancellationToken cancellationToken) {
+  /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
     if (_perspectiveSignalSubscribed) {
       _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
       _perspectiveSignalSubscribed = false;
@@ -337,7 +342,8 @@ public partial class PerspectiveWorker(
       wake.Timer.Dispose();
     }
     _collectiveHoldWakes.Clear();
-    return base.StopAsync(cancellationToken);
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
@@ -1426,7 +1432,7 @@ public partial class PerspectiveWorker(
             _metrics?.Errors.Add(1);
             if (upcomingEvents is { Count: > 0 }) {
               var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
-              _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+              _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)failedEventIds, perspectiveName);
             }
             var failure = new PerspectiveCursorFailure {
               StreamId = streamId,
@@ -1872,7 +1878,7 @@ public partial class PerspectiveWorker(
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      scope, workCoordinator, streamIds, cancellationToken);
+      scope, workCoordinator, streamIds, lifecycleCoordinator, cancellationToken);
     if (fetchResult is null) {
       return;
     }
@@ -1904,6 +1910,7 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       List<Guid> streamIds,
+      ILifecycleCoordinator? lifecycleCoordinator,
       CancellationToken cancellationToken) {
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
 
@@ -1959,11 +1966,19 @@ public partial class PerspectiveWorker(
       return null;
     }
 
+    // #1759: a row in the cooldown cache was applied by an earlier session of its stream and is only waiting for its
+    // completion to delete it; the cooldown partition below would discard it after parsing. Parse only the rest. Every
+    // row stays in the lookup, so a perspective whose own row is cooled still sees it as cooled.
+    var rowsToParse = _rowsOutsideCooldown(rawEvents, _recentlyProcessedEventCache, lifecycleCoordinator);
+    if (rowsToParse.Count == 0) {
+      return null;
+    }
+
     // Deserialize raw events into typed envelopes (AOT-safe).
     var eventTypes = _eventTypeProvider.GetEventTypes();
     List<MessageEnvelope<IEvent>> typedEvents;
     try {
-      typedEvents = eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
+      typedEvents = eventStore.DeserializeStreamEvents(rowsToParse, eventTypes);
     } catch (Exception ex) {
 #pragma warning disable CA1848
       _logger.LogError(ex, "Drain mode: DeserializeStreamEvents threw {ExceptionType}: {Message}", ex.GetType().Name, ex.Message);
@@ -1973,7 +1988,7 @@ public partial class PerspectiveWorker(
 
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
-      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rawEvents.Count);
+      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
 #pragma warning restore CA1848
       return null;
     }
@@ -1983,6 +1998,39 @@ public partial class PerspectiveWorker(
     // (get_stream_events joins perspective_events × event_store). Each row has a unique EventWorkId
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
+  }
+
+  /// <summary>
+  /// #1759: the fetched rows a drain session still has to parse: every row whose event_work_id is not in the cooldown
+  /// cache, or every row when cooldown is off. A cached row was applied by an earlier session of its stream (ClaimWorker
+  /// re-sends every stream it still leases, and the refetch loop re-reads a stream) and only waits for its completion.
+  /// </summary>
+  /// <remarks>
+  /// A skipped row's perspective completion is signaled again on the lifecycle coordinator, as the cooldown path
+  /// after parsing did (<see cref="_signalCooldownSkippedEvents"/>), so the WhenAll gate's bookkeeping never depends
+  /// on whether the event was parsed. The signal needs only the row's event id and perspective name.
+  /// </remarks>
+  /// <param name="rawEvents">The rows the session fetched.</param>
+  /// <param name="cache">The cooldown cache, or <see langword="null"/> when cooldown is off.</param>
+  /// <param name="lifecycleCoordinator">The batch's lifecycle coordinator, when one is registered.</param>
+  /// <returns>The rows to parse, in fetch order.</returns>
+  /// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs:LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync</tests>
+  internal static List<StreamEventData> _rowsOutsideCooldown(
+      List<StreamEventData> rawEvents, RecentlyProcessedEventCache? cache, ILifecycleCoordinator? lifecycleCoordinator) {
+    if (cache is null) {
+      return rawEvents;
+    }
+    var rowsToParse = new List<StreamEventData>(rawEvents.Count);
+    foreach (var raw in rawEvents) {
+      if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
+        rowsToParse.Add(raw);
+      } else if (raw.PerspectiveName is { } perspectiveName) {
+        lifecycleCoordinator?.SignalPerspectiveComplete(raw.EventId, perspectiveName);
+      }
+    }
+    return rowsToParse;
   }
 
   /// <summary>
@@ -2261,7 +2309,7 @@ public partial class PerspectiveWorker(
     await using var refetchScope = _scopeFactory.CreateAsyncScope();
     var refetchWorkCoordinator = refetchScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      refetchScope, refetchWorkCoordinator, [streamId], ct);
+      refetchScope, refetchWorkCoordinator, [streamId], sharedContext.LifecycleCoordinator, ct);
     if (fetchResult is null) {
       return null;
     }
@@ -2601,9 +2649,9 @@ public partial class PerspectiveWorker(
           // reads this as "the read model has it", which a failure must never claim (#959). Marked before
           // the processed release, so anything that observes the release has seen the mark decided.
           if (result.Status == PerspectiveProcessingStatus.Completed) {
-            _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
+            _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
           }
-          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+          _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
         }
 
         // Belt-and-suspenders sweep — when the runner short-circuits its batch
@@ -3020,6 +3068,7 @@ public partial class PerspectiveWorker(
   /// rows are cached.
   /// </para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerPartlyCooledEventDrainTests.cs:Drain_EventWithCooledRowForOnePerspectiveAndFreshRowForAnother_AppliesOnlyTheFreshOneAndLogsTheCooledRowAsync</tests>
   internal static (List<MessageEnvelope<IEvent>> cooled, List<MessageEnvelope<IEvent>> fresh) _partitionByCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,
@@ -4626,8 +4675,8 @@ public partial class PerspectiveWorker(
       // Marked applied before the processed release (#959; see the drain-mode site). Only a committed apply
       // reaches here with events: they are loaded for a Completed result alone, and the collective sink, which
       // marks under its own name, reports only an apply that committed.
-      _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
-      _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+      _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
+      _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
       _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}",
@@ -4768,7 +4817,7 @@ public partial class PerspectiveWorker(
         batchProcessedEvents, lifecycleCoordinator, groupedWork, scopedProvider, cancellationToken);
     } else if (receptorInvoker is not null) {
       await _firePostLifecycleFallbackAsync(
-        batchProcessedEvents, receptorInvoker, scopedProvider, _detachedTasks.Add, batchIsNewByEventId, cancellationToken);
+        batchProcessedEvents, receptorInvoker, scopedProvider, DetachedWork.Track, batchIsNewByEventId, cancellationToken);
     }
   }
 
@@ -4916,7 +4965,7 @@ public partial class PerspectiveWorker(
         LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
-    _detachedTasks.Add(task);
+    DetachedWork.Track(task);
   }
 
   /// <summary>
@@ -4924,7 +4973,7 @@ public partial class PerspectiveWorker(
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>

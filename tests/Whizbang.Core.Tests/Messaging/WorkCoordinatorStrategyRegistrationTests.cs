@@ -496,6 +496,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: new InboxChannelWriter(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
@@ -513,6 +514,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );

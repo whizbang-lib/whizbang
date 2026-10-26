@@ -26,7 +26,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/DestructionStageReceptorComponentTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamCloserDestructionStageComponentTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
 public static partial class DestructionStageReceptors {
   private static readonly LifecycleStage[] _stages = [
     LifecycleStage.PreDestructionDetached, LifecycleStage.PreDestructionInline,
@@ -111,13 +111,16 @@ public static partial class DestructionStageReceptors {
     }
     var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
     var invoker = services.GetService<IReceptorInvoker>();
+    // The host's record of detached work, so it waits for these stages before disposing the provider (#1721)
+    var detachedWork = services.GetService<DetachedLifecycleWork>();
     foreach (var envelope in envelopes) {
       var context = new LifecycleExecutionContext {
         CurrentStage = inline,
         EventId = envelope.MessageId.Value,
         MessageSource = MessageSource.Local,
       };
-      _ = _fireDetachedAsync(scopeFactory, envelope, detached, context with { CurrentStage = detached });
+      var stage = _fireDetachedAsync(scopeFactory, envelope, detached, context with { CurrentStage = detached });
+      detachedWork?.Track(stage);
       if (invoker is not null) {
         await invoker.InvokeAsync(envelope, inline, context, cancellationToken).ConfigureAwait(false);
       }

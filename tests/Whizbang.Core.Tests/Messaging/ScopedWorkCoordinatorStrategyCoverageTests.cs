@@ -53,7 +53,7 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
       // IWorkChannelWriter — not needed for this test
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: inboxChannelWriter);
+      inboxChannelWriter: inboxChannelWriter, detachedWork: new DetachedLifecycleWork());
 
     sut.QueueInboxMessage(_inboxMessage());
 
@@ -136,7 +136,7 @@ public class ScopedWorkCoordinatorStrategyCoverageTests {
       workChannelWriter: null,
       options: new WorkCoordinatorOptions { PartitionCount = 10_000 },
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: writer);
+      inboxChannelWriter: writer, detachedWork: new DetachedLifecycleWork());
 
     try {
       sut.RouteClaimedInboxWorkToChannel(new WorkBatch {

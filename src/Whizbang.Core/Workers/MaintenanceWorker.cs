@@ -1019,7 +1019,7 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
-    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; the post-ready Rewrite step performs it on the next boot as Whizbang:Workers:Maintenance:TableRewriteStrategy and AllowTableRewrite decide (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
@@ -1128,6 +1128,15 @@ public sealed class MaintenanceWorkerOptions {
   /// call time, so enabling this cannot trigger a rewrite of a table that is already lean.
   /// </remarks>
   public bool AllowTableRewrite { get; set; }
+
+  /// <summary>
+  /// How the post-ready <c>Rewrite</c> step reclaims the space of recorded tables
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteStrategy</c>). Default <see cref="Workers.TableRewriteStrategy.Auto"/>:
+  /// <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, otherwise detect and report, and
+  /// never an online rewrite. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
+  public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
 
   /// <summary>
   /// Whether an instance that takes the maintainer duty over from another instance (a hand-off, or a

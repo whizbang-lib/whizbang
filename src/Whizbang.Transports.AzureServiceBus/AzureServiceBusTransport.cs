@@ -1967,6 +1967,21 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   private readonly AsbThrottleBackoffPolicy _throttlePolicy =
     new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(5));
 
+  // The throttle pause in progress, and what ends it when the transport is disposed: left running, it restarted the
+  // processor of a disposed transport once the pause ran out, after the host had disposed the container (#1721).
+  // The token is read once, here: a processor error raised after disposal still reads it, already canceled.
+  private readonly (CancellationTokenSource Source, CancellationToken Stopped) _throttlePauseStop = _newThrottlePauseStop();
+  private Task _throttlePause = Task.CompletedTask;
+
+  private static (CancellationTokenSource Source, CancellationToken Stopped) _newThrottlePauseStop() {
+    var source = new CancellationTokenSource();
+    return (source, source.Token);
+  }
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Throttle pause for {TopicName}/{SubscriptionName} ended by transport disposal; the processor stays stopped")]
+  private static partial void LogThrottlePauseEndedByDisposal(ILogger logger, Exception ended, string topicName, string subscriptionName);
+
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
     TransportDestination destination,
@@ -2005,14 +2020,15 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
           _subscriptionOf(destination),
           pause.TotalSeconds);
       }
-      // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
-      // is signaled when the processor stops — which is exactly what the pause DOES first, so
-      // flowing it here would cancel our own delay/resume and strand the processor stopped.
+      // Not args.CancellationToken: it is signaled when the processor stops, which is exactly what the pause DOES
+      // first, so flowing it here would cancel our own delay/resume and strand the processor stopped. Only disposing
+      // the transport ends the pause early, and then the processor is not restarted (#1721).
       // The pause runs on the transport's clock, like every other time this transport measures.
-      _ = Task.Run(async () => {
+      var pauseStopped = _throttlePauseStop.Stopped;
+      Volatile.Write(ref _throttlePause, Task.Run(async () => {
         try {
           await stopProcessingAsync();
-          await Task.Delay(pause, _timeProvider, CancellationToken.None);
+          await Task.Delay(pause, _timeProvider, pauseStopped);
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(
@@ -2020,6 +2036,9 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
               destination.Address,
               _subscriptionOf(destination));
           }
+        } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
+          var subscription = _subscriptionOf(destination);
+          LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, subscription);
         } catch (Exception ex) {
           _logger.LogError(ex,
             "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
@@ -2028,7 +2047,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         } finally {
           _throttlePolicy.EndPause();
         }
-      }, CancellationToken.None);
+      }, CancellationToken.None));
     }
   }
 
@@ -2552,6 +2571,11 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
 
     // Clear recovery handler to prevent memory leak
     _recoveryHandler = null;
+
+    // End a throttle pause still waiting, and wait for it, so it never restarts a processor of this transport (#1721)
+    await _throttlePauseStop.Source.CancelAsync();
+    await Volatile.Read(ref _throttlePause);
+    _throttlePauseStop.Source.Dispose();
 
     // Stop the receive-liveness loop before tearing anything else down
     if (LivenessWatchdog is not null) {

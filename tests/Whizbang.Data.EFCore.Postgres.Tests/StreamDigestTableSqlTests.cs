@@ -206,9 +206,9 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
       .Because("only the at-least-once event was folded on emit.");
 
     await using (var close = connection.CreateCommand()) {
-      close.CommandText = "SELECT close_status FROM close_stream(@sid, 1, FALSE)";
+      close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, 1, FALSE)";
       close.Parameters.AddWithValue("sid", streamId);
-      await Assert.That((string?)await close.ExecuteScalarAsync()).IsEqualTo("closed");
+      await Assert.That((string?)await close.ExecuteScalarAsync()).IsEqualTo("truncated");
     }
 
     var after = await _digestRowAsync(connection, streamId);
@@ -404,10 +404,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     }
 
     await using (var close = connection.CreateCommand()) {
-      close.CommandText = "SELECT close_status FROM close_stream(@sid, 2, FALSE)";
+      close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, 2, FALSE)";
       close.Parameters.AddWithValue("sid", streamId);
       var status = (string?)await close.ExecuteScalarAsync();
-      await Assert.That(status).IsEqualTo("closed").Because("No unprocessed work + a carry-forward above the close point.");
+      await Assert.That(status).IsEqualTo("truncated").Because("No unprocessed work + a carry-forward above the close point.");
     }
 
     var after = await _digestRowAsync(connection, streamId);
@@ -465,10 +465,10 @@ public class StreamDigestTableSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), messages);
 
     await using (var close = connection.CreateCommand()) {
-      close.CommandText = "SELECT close_status FROM close_stream(@sid, 1, FALSE)";
+      close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, 1, FALSE)";
       close.Parameters.AddWithValue("sid", closedStream);
       var status = (string?)await close.ExecuteScalarAsync();
-      await Assert.That(status).IsEqualTo("closed");
+      await Assert.That(status).IsEqualTo("truncated");
     }
 
     // The incremental table must EXACTLY match the recompute (ComputeStreamDigestsAsync's query,

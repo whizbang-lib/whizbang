@@ -145,6 +145,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **`Whizbang:Workers:Maintenance:TableRewriteStrategy`** (#1742): `Auto` (default), `PgSqueeze`, `VacuumFull` or
+  `None`, resolved against `AllowTableRewrite` by the post-ready `Rewrite` step. `Auto` rewrites with `VACUUM FULL`
+  when `AllowTableRewrite` permits it (the behavior earlier releases had) and otherwise only detects and reports; it
+  never starts an online rewrite, and names the opt-in when pg_squeeze is usable. `PgSqueeze` requires the pg_squeeze
+  extension, so an explicit choice on a server that does not allow it stops start with the fix; it never falls back
+  to `VACUUM FULL`, and this version has no pg_squeeze rewriter yet, which the step reports. `None` rewrites nothing.
+- **Required capabilities are provisioned before the verdict** (#1750): between the probe and the verdict, the
+  `Capabilities` step creates every capability a requirement in force names that is Provisionable, and upgrades
+  every one that is Ready with a newer version available, so an explicit requirement on a capability the library
+  may create passes. The verdict line says `created`, `already present` or `upgraded` before the version. A
+  capability nothing requires is only detected. `Whizbang:Capabilities:AutoProvision` (default `true`), overridden
+  per provider (`Whizbang:Capabilities:<provider>:AutoProvision`) and per capability
+  (`Whizbang:Capabilities:<provider>:<name>:AutoProvision`), turns it off; detection is unchanged, so an
+  operator-created extension is still used. A refusal is reported by the verdict line, never thrown, and a refused
+  upgrade leaves the installed version working. The Postgres provider runs `CREATE EXTENSION` and
+  `ALTER EXTENSION ... UPDATE` each in one transaction holding the schema lock. `ICapabilityProvisioner` is the
+  extension point for any provider.
 - **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
   so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
   the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the
@@ -337,11 +354,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
+  Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
+  `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
+  is `truncate_status` (was `close_status`) and its success status `truncated` (was `closed`). The C# API follows:
+  `IWorkCoordinator.CloseStreamAsync` is `TruncateStreamPrefixAsync`, `GetStreamCloseTargetsAsync` is
+  `GetStreamTruncateTargetsAsync`, `StreamCloseResult` is `StreamTruncateResult`, and `IStreamCloser` /
+  `StreamCloser` with `CloseAsync` are `IStreamPrefixTruncator` / `StreamPrefixTruncator` with `TruncateAsync`
+  (registered by `AddWhizbangWorkers()` as before). The refusal statuses are unchanged. No forwarding alias is kept.
+  The scheduled close types (`ScheduledStreamClose`, `StreamCloseSchedule`) keep their names, so stored schedules
+  still dispatch. **Upgrade:** rename the calls and types above; compare a result's `Status` with `"truncated"`
+  instead of `"closed"`; and change SQL that calls `close_stream(...)` or reads `close_status` to
+  `wh_truncate_stream_prefix(...)` and `truncate_status`. A custom `IWorkCoordinator` that overrode `CloseStreamAsync`
+  overrides `TruncateStreamPrefixAsync` instead, or the default (`unsupported`) answers.
 - **Transport test warmup waits on the subscriber's signal only (#1657).** `SubscriptionWarmup.WarmupAsync` in the
   testing library publishes one warmup message and completes when the subscriber signals that it arrived. The 5-second
   initial delay and the 2-second resend loop are gone, and so are the `retryInterval` and `initialDelay` parameters
   and `DefaultRetryInterval` / `DefaultInitialDelay`: a transport's subscription is durable once its subscribe call
   returns, so the one warmup message waits on the broker until the subscriber takes it.
+- **The Dapper driver names a perspective's table from its model, as the EF Core driver does, and a model can name its
+  table with `[PerspectiveTable]` (#1719). Behavior change.** The schema generator took the table name from the
+  perspective class (`OrderSummaryPerspective` became `wh_per_order_summary_perspective`); it now uses the model type
+  and the same suffix-stripping rule as the EF Core generator (`OrderSummaryModel` becomes `wh_per_order_summary`),
+  through one shared helper, so one model has one table on either driver. Two perspectives of one model now share that
+  table on the Dapper driver too. **Existing tables are renamed in place at the next start, keeping their rows:**
+  migration 243 adds `wh_follow_perspective_table_renames`, which both drivers call before they create the perspective
+  tables. It renames the table the registry recorded for the model, or on the Dapper driver the table still under the
+  name a released build gave it (that build never wrote the registry, so the generated registry payload now carries
+  each perspective's former name), to the new name, and with it every index on it whose name carries the old table
+  name or the part of it past `wh_per_` (when the new index name is free and fits). When a table already exists under
+  both names, nothing is dropped or merged, and a warning names the model and both tables. This also fixes a rename
+  the registry reconcile could never complete on either driver: it ran after the new name had been created as an
+  empty table, and left the rows under the old name. A model folded by two perspectives had a table per perspective on
+  the Dapper driver: the first is renamed and the second is left in place, unread, with that warning; move its rows by
+  hand if they differ, then drop it. The new `[PerspectiveTable("wh_per_...")]` on a model
+  sets the name exactly as written (the suffix-stripping properties do not alter it). The schema generator now
+  reports a name past the identifier limit as an error (WHIZ823, the EF Core generator's WHIZ820), a manual name that
+  is not `wh_per_` followed by lowercase letters, digits and underscores (WHIZ824), and two models on one table
+  (WHIZ825), on both generators. WHIZ820's message names `[PerspectiveTable]` as a remedy.
 
 - **The generators package writes no generated source to disk and embeds no message registry by default (#1609).
   Behavior change.** The package's props no longer turn `EmitCompilerGeneratedFiles` on, and
@@ -599,6 +649,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   character that would end the comment early. Values with no special characters are written exactly as before. The
   source generators' documentation path resolver now treats a whitespace-only `WhizbangDocsPath` or project directory
   as unset, as it already did an empty one, instead of passing it to the file system, where Windows rejected it.
+- **A stopping host waits for all of the framework's background work before it disposes the service provider
+  (#1721).** Only the outbox batcher's detached stages were waited for. The work coordinator strategies' flush stages,
+  the dispatcher's ImmediateDetached stages, the receptor invoker's tag handlers, the destruction stages, and the
+  inbox dispatch, outbox drain, perspective and Service Bus consumer workers' detached stages all ran on after the
+  container was disposed, failing with `ObjectDisposedException` or losing their work or failure record. The shared
+  `DetachedLifecycleWork` now records them, and every entry point registers it with the stop-time flush
+  (`TryAddWhizbangDefaults`), so a host without the worker pipeline waits too. The hosted workers wait for their own
+  detached stages in their stop, before the failure flush registered ahead of them stops. The interval and batch
+  strategies register with the host and are stopped and flushed while it stops: before, the timer, batch-size and
+  debounce flushes were not awaited, and disposal returned at once on the in-progress guard when one was running,
+  dropping the work queued after that flush's snapshot. The idle sweeps of the sliding-window batchers and the
+  per-stream serializer are waited for by their stop (an evicted stream's last flush was not), the transport batch
+  collector's disposal waits for its flushes (other than one it is called from, as an in-process reply disposing
+  its own subscription is), the transport consumer's active body cleanup is waited for by its stop,
+  and disposing the Service Bus transport ends a throttle pause instead of letting it restart a processor later.
+  `DetachedLifecycleWork` gains `Waiting`, `RegisterProducer` and `StopProducersAsync`, and the four work coordinator
+  strategies take it as a required constructor argument.
 - **A stopping host no longer logs "Error invoking PostDistributeDetached lifecycle receptors ... Cannot access a
   disposed object".** The outbox batcher's flush runs its detached lifecycle stages (`PreDistributeDetached`,
   `DistributeDetached`, `PostDistributeDetached`) in the background, and nothing waited for them: one still running

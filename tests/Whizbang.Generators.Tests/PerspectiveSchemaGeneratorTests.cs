@@ -149,7 +149,7 @@ public class PerspectiveSchemaGeneratorTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource).Contains("CREATE TABLE");
-    await Assert.That(generatedSource).Contains("order_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_order");
   }
 
   [Test]
@@ -230,8 +230,8 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate schemas for both perspectives
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("order_perspective");
-    await Assert.That(generatedSource).Contains("customer_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_order");
+    await Assert.That(generatedSource).Contains("wh_per_customer");
   }
 
   [Test]
@@ -414,7 +414,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should convert to snake_case
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("customer_order_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_customer_order");
   }
 
   [Test]
@@ -476,7 +476,7 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("mixed_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_mixed");
   }
 
   [Test]
@@ -513,7 +513,7 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("static_only_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_static_only");
   }
 
   [Test]
@@ -554,7 +554,7 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("multi_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_multi");
   }
 
   [Test]
@@ -587,15 +587,15 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should generate "order_perspective" (no underscore before first char in table name)
+    // Assert - Should generate "wh_per_order" (no underscore before first char in table name)
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
 
     // Check table creation uses correct name with wh_per_ prefix
-    // orderPerspective → wh_per_order_perspective ("Perspective" is NOT in default suffix list)
+    // The model orderModel → order (the Model suffix is stripped) → wh_per_order (#1719: named from the model)
     // The test verifies lowercase class names don't get leading underscores
-    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_order_perspective (");
+    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_order (");
   }
 
   [Test]
@@ -897,14 +897,14 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Both the Sql const and the Entries[] should reference the same table
-    await Assert.That(generatedSource).Contains("order_perspective");
+    await Assert.That(generatedSource).Contains("wh_per_order");
 
     // The Entries array entry should contain CREATE TABLE for that perspective
     // Extract the portion after "Entries" declaration
     var entriesIdx = generatedSource.IndexOf("Entries", StringComparison.Ordinal);
     var entriesSection = generatedSource[entriesIdx..];
     await Assert.That(entriesSection).Contains("CREATE TABLE IF NOT EXISTS");
-    await Assert.That(entriesSection).Contains("order_perspective");
+    await Assert.That(entriesSection).Contains("wh_per_order");
   }
 
   [Test]
@@ -941,12 +941,12 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should generate table name with wh_per_ prefix, all nesting levels, and suffix stripped
-    // Sessions.Active.Projection → SessionsActiveProjection → wh_per_sessions_active
+    // Assert - Named from the MODEL as the EF Core driver names it (#1719): its containing type and its own name,
+    // suffix stripped. Sessions.Active.Model → ActiveModel → wh_per_active
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource).Contains("wh_per_sessions_active")
-      .Because("deeply nested perspective should include all parent classes with wh_per_ prefix");
+    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_active (")
+      .Because("a nested model is named from its containing type and itself, with the wh_per_ prefix");
   }
 
   [Test]
@@ -982,8 +982,8 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource).Contains("CREATE TABLE")
       .Because("IPerspectiveWithActionsFor perspectives must generate DB schema");
-    await Assert.That(generatedSource).Contains("order_purge")
-      .Because("Table name should derive from perspective class name");
+    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_order (")
+      .Because("the table name derives from the model type, not the perspective class (#1719)");
   }
 
   [Test]
@@ -1032,7 +1032,7 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).Contains("(scope->>'c')")
       .Because("Customer filter uses JSON key 'c' per PerspectiveScope.CustomerId — index must match");
 
-    await Assert.That(generatedSource).DoesNotContain("CREATE INDEX IF NOT EXISTS ix_wh_per_order_perspective_tenant ON wh_per_order_perspective((scope->>'tenant_id'))")
+    await Assert.That(generatedSource).DoesNotContain("CREATE INDEX IF NOT EXISTS ix_wh_per_order_tenant ON wh_per_order((scope->>'tenant_id'))")
       .Because("The historical broken tenant index expression must not be present in newly-generated schemas");
   }
 
@@ -1072,7 +1072,7 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
 
     await Assert.That(generatedSource).Contains("indexdef LIKE '%scope->>''tenant_id''%'")
       .Because("Retrofit must only drop when the indexdef shows the broken expression — not unconditionally");
-    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_perspective_tenant")
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_tenant")
       .Because("Retrofit must drop the historical broken index by name");
   }
 
@@ -1112,18 +1112,18 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(generatedSource).IsNotNull();
 
     // OrderPerspective table: all four scope indexes + retrofit DROP
-    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_tenant ON wh_per_order_perspective((scope->>'t'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_user ON wh_per_order_perspective((scope->>'u'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_organization ON wh_per_order_perspective((scope->>'o'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_order_perspective_customer ON wh_per_order_perspective((scope->>'c'))");
-    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_perspective_tenant");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_tenant ON wh_per_order((scope->>'t'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_user ON wh_per_order((scope->>'u'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_organization ON wh_per_order((scope->>'o'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_order_customer ON wh_per_order((scope->>'c'))");
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_order_tenant");
 
     // CustomerPerspective table: same four scope indexes + retrofit DROP
-    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_tenant ON wh_per_customer_perspective((scope->>'t'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_user ON wh_per_customer_perspective((scope->>'u'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_organization ON wh_per_customer_perspective((scope->>'o'))");
-    await Assert.That(generatedSource).Contains("ix_wh_per_customer_perspective_customer ON wh_per_customer_perspective((scope->>'c'))");
-    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_customer_perspective_tenant");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_tenant ON wh_per_customer((scope->>'t'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_user ON wh_per_customer((scope->>'u'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_organization ON wh_per_customer((scope->>'o'))");
+    await Assert.That(generatedSource).Contains("ix_wh_per_customer_customer ON wh_per_customer((scope->>'c'))");
+    await Assert.That(generatedSource).Contains("DROP INDEX IF EXISTS ix_wh_per_customer_tenant");
   }
 
   /// <summary>A perspective whose model declares the given document-matching stance.</summary>
@@ -1164,7 +1164,7 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     await Assert.That(sql).IsNotNull();
     await Assert.That(sql).DoesNotContain("_metadata_gin");
     await Assert.That(sql).DoesNotContain("GIN (metadata");
-    await Assert.That(sql).Contains("ix_wh_per_audit_perspective_tenant")
+    await Assert.That(sql).Contains("ix_wh_per_audit_tenant")
       .Because("the scope indexes serve tenant isolation, which this declaration is not about");
   }
 
@@ -1177,6 +1177,6 @@ public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, Orde
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
     await Assert.That(sql).Contains(
-      "CREATE INDEX IF NOT EXISTS ix_wh_per_audit_perspective_metadata_gin ON wh_per_audit_perspective USING GIN (metadata jsonb_path_ops);");
+      "CREATE INDEX IF NOT EXISTS ix_wh_per_audit_metadata_gin ON wh_per_audit USING GIN (metadata jsonb_path_ops);");
   }
 }

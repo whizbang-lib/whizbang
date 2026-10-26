@@ -40,6 +40,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IOptions<SystemEventOptions> systemEventOptions,
   IWorkChannelWriter workChannelWriter,
   IAuditDecisionHook? auditDecisionHook,
+  DetachedLifecycleWork detachedWork,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
@@ -55,6 +56,9 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly IOptionsMonitor<TracingOptions> _tracingOptions = tracingOptions;
   private readonly IDeferredOutboxChannel _deferredChannel = deferredChannel;
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork = ArgumentGuard.NotNull(detachedWork);
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
@@ -179,7 +183,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
           // #1546: this flush's caller awaits it, so a mixed-stream refusal is raised to it.
-          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true, DetachedWork: _detachedWork),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {

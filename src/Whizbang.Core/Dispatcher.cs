@@ -754,6 +754,10 @@ public abstract partial class Dispatcher(
     return _reEmissionDiagnostic;
   }
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+  // Where the detached stages this dispatcher starts are recorded, so a stopping host waits for them before it disposes
+  // the provider they resolve their receptors from (#1721). A container that never ran TryAddWhizbangDefaults has no
+  // host drain, so a private record keeps the call path uniform there.
+  private readonly DetachedLifecycleWork _detachedWork = serviceProvider.GetService<DetachedLifecycleWork>() ?? new DetachedLifecycleWork();
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly ITopicRegistry? _topicRegistry = topicRegistry;
@@ -3724,8 +3728,9 @@ public abstract partial class Dispatcher(
     // This message was admitted at its entry; its stages do not refuse it again (#1419). The mark, like the
     // caller's security context, flows into the background task with the execution context.
     LocalDispatchAdmission.Mark();
-    // Not the caller's token: that call has returned by the time the stage runs, and a detached stage outlives it
-    _ = _runDetachedStagesAsync(envelope, stages);
+    // Not the caller's token: that call has returned by the time the stage runs, and a detached stage outlives it.
+    // Recorded, so the host waits for it instead of disposing the provider under it (#1721).
+    _detachedWork.Track(_runDetachedStagesAsync(envelope, stages));
     return ValueTask.CompletedTask;
   }
 

@@ -193,6 +193,7 @@ public class AuditDecisionHookCallSiteTests {
       options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = _auditOptions(),
         AuditDecisionHook = hook
@@ -210,7 +211,8 @@ public class AuditDecisionHookCallSiteTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(_auditOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: hook);
+      auditDecisionHook: hook,
+      detachedWork: new DetachedLifecycleWork());
 
   private static ServiceCollection _container(IWorkCoordinator coordinator, IAuditDecisionHook hook) {
     var services = new ServiceCollection();

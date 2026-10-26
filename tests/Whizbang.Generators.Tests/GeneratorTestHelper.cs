@@ -210,6 +210,19 @@ public static class GeneratorTestHelper {
     return driver.GetRunResult();
   }
 
+  /// <summary>
+  /// Runs a source generator over a compilation the test built itself (for one that references an assembly the
+  /// standard helpers do not), with the given global options.
+  /// </summary>
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      CSharpCompilation compilation, Dictionary<string, string> globalOptions)
+      where TGenerator : IIncrementalGenerator, new() =>
+    CSharpGeneratorDriver.Create(
+        generators: [new TGenerator().AsSourceGenerator()],
+        optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions))
+      .RunGenerators(compilation)
+      .GetRunResult();
+
   /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
   private sealed class TestAdditionalText(string path, string? content) : AdditionalText {
     public override string Path { get; } = path;

@@ -335,7 +335,7 @@ public class OutboxCascadeIdentityPersistenceIntegrationTests : EFCoreTestBase {
         workChannelWriter: null,
         options: options,
         logger: logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-        inboxChannelWriter: new InboxChannelWriter()
+        inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
       );
     });
 

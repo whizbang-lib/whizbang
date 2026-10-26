@@ -1,7 +1,9 @@
 # Runtime message cache: parse once, rehydrate once, carry ephemeral facts
 
-Issue: #1526. Status: phase 1 (measurement and design) done; no cache implemented. Scope: 1.0
-(decided 2026-10-20).
+Issue: #1526. Status: phase 1 (measurement and design) done; no cache implemented. Step 2 in part
+(2026-10-24, #1759 from #1712): a drain session skips the rows already in the cooldown cache before parsing them, so a
+second session on a stream still being applied parses nothing for them; deduplicating rows by event id is still to
+do. Scope: 1.0 (decided 2026-10-20).
 
 This file is the design proposal. It records what was measured, where every parse happens today,
 the shape of the cache, the order the existing ad hoc caches move onto it, and the decisions the
@@ -255,13 +257,15 @@ Each step lowers one pinned count and changes the pin in the same pull request.
 | Step | Change | Pin | Today | Target |
 |---|---|---|---|---|
 | 1 | Parse once per flush for the distribute stages (no cache needed, but uses the record's lazy payload) | flow 2.1 LifecycleStage | 5 | 1 |
-| 2 | Deduplicate drain rows by event id before parsing; refetch and re-emitted sessions skip rows in the cooldown cache before parsing | flow 2.1 EventStoreRead x3 kinds | 6 (= 3N per session) | 3 (once per event) |
+| 2 | Deduplicate drain rows by event id before parsing; refetch and re-emitted sessions skip rows in the cooldown cache before parsing (the cooldown half done, #1759: a second session parses 0, pinned by `LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync`) | flow 2.1 EventStoreRead x3 kinds | 6 (= 3N per session) | 3 (once per event) |
 | 3 | `MessageRecord` store with the byte budget, idle cooldown and hooks; event store drain and typed reads use it | standard-path pin (to add) | up to 6N | 1 |
 | 4 | Multi-stream binding onto the store, keyed by run id and payload hash; scope parsed once per run | multi-stream pins | 4 per run interleaved, K scope | 1 per run, 1 scope |
 | 5 | `InboxDeserializeCache` onto the store (adds hash identity, scope check, byte bound, copy-on-write views) | inbound pin (to finish, 2.6) | 1 per handler row | 1 per message |
 | 6 | Receive inserts; inbox writes the received bytes | inbound pin | wire 1 + drain 1 per row | 1 |
 | 7 | Redelivery and offload paths insert on parse | redelivery and offload pins | 1 per event, then inbound | unchanged at origin; consumer hits |
 | 8 | Facts consumers: processed-event caches read facts from the record | existing dedup tests | | |
+
+Step 2 decided 2026-10-24 (#1712, option 2): a second drain session skips rows already in the cooldown cache before parsing them, and claim and lease behavior is unchanged. Tracked in #1759.
 
 `EnvelopeRegistry` stays as is: it maps live objects to envelopes during a local dispatch and never
 parses.

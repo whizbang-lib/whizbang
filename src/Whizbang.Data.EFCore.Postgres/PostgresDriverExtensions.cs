@@ -211,7 +211,7 @@ public static class PostgresDriverExtensions {
         selector.Services.AddHostedService<RebuildBackgroundWorker>();
 
         // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
-        // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
+        // "close the books" schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above.
         selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
 
         // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received

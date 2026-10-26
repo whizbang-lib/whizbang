@@ -384,7 +384,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.WaitForStreamEventsCallsAsync(laps, TimeSpan.FromSeconds(20));
+    // Rows redelivered under new work ids are fetched and parsed on every lap. The same rows again are in the
+    // cooldown cache after the rewind, so the second lap parses nothing and ends the drain loop (#1759).
+    await coordinator.WaitForStreamEventsCallsAsync(redeliveredAsNewRows ? laps : 2, TimeSpan.FromSeconds(20));
     await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }

@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
@@ -66,9 +67,12 @@ public class TwoDatabaseHostRequirementTests : IAsyncDisposable {
     await command.ExecuteNonQueryAsync();
   }
 
-  private async Task<CapabilityVerdict> _verdictAsync() {
+  private async Task<CapabilityVerdict> _verdictAsync(params (string Key, string Value)[] settings) {
     var services = new ServiceCollection();
     services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
+      .AddInMemoryCollection(settings.Select(s => new KeyValuePair<string, string?>(s.Key, s.Value)))
+      .Build());
     services.AddWhizbangPostgresCapabilities(VECTORS, async (_, ct) => {
       var connection = new NpgsqlConnection(_vectorConnection);
       await connection.OpenAsync(ct);
@@ -105,8 +109,29 @@ public class TwoDatabaseHostRequirementTests : IAsyncDisposable {
   }
 
   [Test]
-  public async Task TheVectorDatabaseWithoutTheExtension_FailsStartNamingItAsync() {
+  public async Task TheVectorDatabaseWithoutTheExtension_IsProvisionedThere_AndNowhereElseAsync() {
     var verdict = await _verdictAsync();
+
+    var entry = verdict.Entries.Single();
+    await Assert.That(entry.Status.Scope).IsEqualTo(VECTORS);
+    await Assert.That(entry.Outcome).IsEqualTo(CapabilityVerdictOutcome.Proceed)
+      .Because("provisioning creates a required extension the server offers before the verdict judges it");
+    await Assert.That(entry.Status.Provisioning).IsEqualTo(CapabilityProvisioningOutcome.Created);
+    await Assert.That(await _hasVectorAsync(_vectorConnection)).IsTrue();
+    await Assert.That(await _hasVectorAsync(_plainConnection)).IsFalse()
+      .Because("a requirement scoped to one database is provisioned on that database only");
+  }
+
+  private static async Task<bool> _hasVectorAsync(string connectionString) {
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync();
+    await using var command = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')", connection);
+    return await command.ExecuteScalarAsync() is true;
+  }
+
+  [Test]
+  public async Task TheVectorDatabaseWithoutTheExtension_AndProvisioningOff_FailsStartNamingItAsync() {
+    var verdict = await _verdictAsync(("Whizbang:Capabilities:postgres:vector:AutoProvision", "false"));
 
     var failure = verdict.Failures.Single();
     await Assert.That(failure.Status.Scope).IsEqualTo(VECTORS);

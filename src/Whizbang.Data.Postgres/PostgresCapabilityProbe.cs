@@ -32,7 +32,13 @@ public readonly record struct PostgresExtensionProbeRow(
   string? Allowlist,
   string? SharedPreloadLibraries,
   bool CanCreateInDatabase,
-  bool IsSuperuser);
+  bool IsSuperuser) {
+  /// <summary>
+  /// The version <c>CREATE EXTENSION</c> installs and <c>ALTER EXTENSION ... UPDATE</c> moves to
+  /// (<c>pg_available_extensions.default_version</c>), or null when the server has no files for it.
+  /// </summary>
+  public string? DefaultVersion { get; init; }
+}
 
 /// <summary>
 /// Reads which catalog extensions a database can use, in one query, and derives each one's state.
@@ -41,7 +47,8 @@ public readonly record struct PostgresExtensionProbeRow(
 /// <para>
 /// One query per database: extensions are per database, while the allowlist and the preload list are
 /// per server. It reads <c>pg_extension</c>, <c>pg_available_extensions</c>,
-/// <c>pg_available_extension_versions</c> (the trusted flag), the managed-server allowlist setting,
+/// <c>pg_available_extension_versions</c> (the trusted flag), the default version an install or update reaches, the
+/// managed-server allowlist setting,
 /// <c>shared_preload_libraries</c>, and this role's superuser flag and <c>CREATE</c> privilege. It is
 /// a plain catalog read: nothing is created and no migration is involved.
 /// </para>
@@ -72,7 +79,8 @@ public static class PostgresCapabilityProbe {
            current_setting('azure.extensions', true) AS allowlist,
            (SELECT s.setting FROM pg_catalog.pg_settings s WHERE s.name = 'shared_preload_libraries') AS preload,
            has_database_privilege(current_database(), 'CREATE') AS can_create,
-           current_setting('is_superuser') = 'on' AS is_superuser
+           current_setting('is_superuser') = 'on' AS is_superuser,
+           a.default_version
     FROM unnest(@names::text[]) WITH ORDINALITY AS n(name, ord)
     LEFT JOIN pg_catalog.pg_extension e ON e.extname = n.name
     LEFT JOIN pg_catalog.pg_available_extensions a ON a.name = n.name
@@ -163,7 +171,9 @@ public static class PostgresCapabilityProbe {
         Allowlist: _nullableString(reader, 4),
         SharedPreloadLibraries: _nullableString(reader, 5),
         CanCreateInDatabase: reader.GetBoolean(6),
-        IsSuperuser: reader.GetBoolean(7));
+        IsSuperuser: reader.GetBoolean(7)) {
+        DefaultVersion = _nullableString(reader, 8),
+      };
       rows[row.Name] = row;
     }
     return rows;

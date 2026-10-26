@@ -120,6 +120,12 @@ public class ConfigurationKeyManifestTests {
       return null;
     }, nameof(TagPolicyStartupValidator));
 
+    // The capability provisioning switch is read per provider and per capability when the Capabilities step runs;
+    // a placeholder provider and capability record both levels as consumer-chosen names.
+    _tryResolve(() => CapabilityAutoProvision.Resolve(
+      new CapabilityId(ConfigurationKeyRecorder.PLACEHOLDER, ConfigurationKeyRecorder.PLACEHOLDER), new CapabilityOptions(), configuration),
+      nameof(CapabilityAutoProvision));
+
     // The managed-object reconcile reads its settings by hand at schema initialization and in its maintenance step.
     _tryResolve(() => Whizbang.Data.Postgres.Schema.ManagedSchemaSettings.Read(configuration), "ManagedSchemaSettings");
 

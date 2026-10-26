@@ -8,7 +8,7 @@ namespace Whizbang.Core.Archival;
 /// <summary>
 /// A1 (Archival &amp; Compaction) — the occurrence event a "close the books" schedule (F2 temporal engine)
 /// fires. The built-in <see cref="ScheduledStreamCloseReceptor"/> reacts to it by calling
-/// <see cref="Whizbang.Core.Lifecycle.IStreamCloser.CloseAsync"/> with these parameters. The close-point
+/// <see cref="Whizbang.Core.Lifecycle.IStreamPrefixTruncator.TruncateAsync"/> with these parameters. The close-point
 /// (<see cref="ThroughVersion"/>) is <strong>domain-owned</strong> — set when the schedule is created and
 /// updated per period (e.g. "close the month" advances it each cycle), since the close-point is domain
 /// knowledge, like the carry-forward itself.

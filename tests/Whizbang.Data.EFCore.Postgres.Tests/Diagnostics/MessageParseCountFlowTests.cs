@@ -107,6 +107,47 @@ public class MessageParseCountFlowTests {
     await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
   }
 
+  /// <summary>
+  /// Issue #1759: a second drain session on a stream whose rows the first session applied, while the completions
+  /// that delete those rows are still pending, skips the rows in the cooldown cache before parsing them. ClaimWorker
+  /// re-sends every stream it still leases, by design, so this second session is the one #1712 measured.
+  /// </summary>
+  [Test]
+  [Timeout(180000)]
+  public async Task LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync(CancellationToken cancellationToken) {
+    var wire = new RecordingWire(new InMemoryWireTransport(JsonContextRegistry.CreateCombinedOptions()));
+    using var recorder = new MessageParseRecorder();
+    var streamId = TrackedGuid.New().Value;
+    var drain = new CuedDrainChannel(new PerspectiveDrainChannel(), streamId);
+    Guid messageId;
+
+    using (var host = _buildHost(wire, drain, holdCompletions: true)) {
+      await _startAsync(host, cancellationToken);
+      var perspectives = host.Services.GetServices<IHostedService>().OfType<PerspectiveWorker>().Single();
+      var done = _awaitFlow(host, streamId);
+      var firstSession = drain.AwaitNextSessionAsync(perspectives, cue: false);
+
+      var receipt = await host.Services.GetRequiredService<IDispatcher>().PublishAsync(_event(streamId));
+      messageId = receipt.MessageId.Value;
+      await Task.WhenAll(done, firstSession).WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+      var parsedByTheFirstSession = recorder.CountFor(messageId);
+
+      // The rows are still there (their completions are held) and every one is in the cooldown cache.
+      await drain.AwaitNextSessionAsync(perspectives, cue: true).WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+      await host.StopAsync(cancellationToken);
+
+      await Assert.That(parsedByTheFirstSession).IsEqualTo(11);
+    }
+
+    _report("second drain session", messageId, recorder, wire);
+    var summary = recorder.Summarize(messageId);
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Payload)).IsEqualTo(2)
+      .Because("the second session finds both rows in the cooldown cache and parses neither (#1759)");
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Metadata)).IsEqualTo(2);
+    await Assert.That(_count(summary, MessageParseSource.EventStoreRead, MessageParseKind.Scope)).IsEqualTo(2);
+    await Assert.That(recorder.CountFor(messageId)).IsEqualTo(11);
+  }
+
   private static int _count(IReadOnlyList<MessageParseSiteCount> summary, MessageParseSource source, MessageParseKind kind) =>
     summary.Where(s => s.Source == source && s.Kind == kind).Sum(s => s.Count);
 
@@ -147,7 +188,14 @@ public class MessageParseCountFlowTests {
     return Task.WhenAll(bothApplied.Task, lastStage.WaitAsync(TimeSpan.FromSeconds(60)));
   }
 
-  private IHost _buildHost(ITransport transport) {
+  private IHost _buildHost(ITransport transport) =>
+    // One drain session per stream. The claim re-emits every stream it still leases on every poll, by design, and
+    // the worker runs several drain consumers, so how many sessions fetch the stream before its rows are flushed
+    // depends on poll timing. Each one used to parse every row again. Pinning one session makes the count the cost
+    // of a drain, which is what the pin measures.
+    _buildHost(transport, new FirstEmissionPerStreamDrainChannel(new PerspectiveDrainChannel()), holdCompletions: false);
+
+  private IHost _buildHost(ITransport transport, IPerspectiveDrainChannel drainChannel, bool holdCompletions) {
     var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { EnvironmentName = Environments.Production });
     builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:db"] = _database.ConnectionString });
     builder.Logging.ClearProviders();
@@ -163,12 +211,11 @@ public class MessageParseCountFlowTests {
       .WithEFCore<WorkCoordinationDbContext>().WithDriver.Postgres
       .AddTransportConsumer();
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
-    // One drain session per stream. The claim re-emits every stream it still leases on every poll, by design, and
-    // the worker runs several drain consumers, so how many sessions fetch the stream before its rows are flushed
-    // depends on poll timing. Each one parses every row again. Pinning one session makes the count the cost of a
-    // drain, which is what the pin measures.
-    builder.Services.Replace(ServiceDescriptor.Singleton<IPerspectiveDrainChannel>(
-      new FirstEmissionPerStreamDrainChannel(new PerspectiveDrainChannel())));
+    builder.Services.Replace(ServiceDescriptor.Singleton(drainChannel));
+    if (holdCompletions) {
+      builder.Services.Replace(ServiceDescriptor.Singleton<IPerspectiveCompletionChannel>(
+        sp => new HeldRowCompletionChannel(sp.GetRequiredService<PerspectiveCompletionFlushWorker>())));
+    }
     return builder.Build();
   }
 
@@ -196,6 +243,93 @@ public class MessageParseCountFlowTests {
     public void MarkDraining(Guid streamId) => inner.MarkDraining(streamId);
 
     public void MarkDrained(Guid streamId) => inner.MarkDrained(streamId);
+  }
+
+  /// <summary>
+  /// The drain channel for one measured stream: it passes on the stream's first emission and drops every other
+  /// emission, so the stream is drained once, until the test cues a second session. The reader it hands the worker
+  /// stamps the consumer loop that takes the stream with the current session number, so the test waits for exactly
+  /// that session's batch and never for another batch the same loop runs.
+  /// </summary>
+  private sealed class CuedDrainChannel : IPerspectiveDrainChannel {
+    private static readonly AsyncLocal<int> _sessionTaken = new();
+    private readonly PerspectiveDrainChannel _inner;
+    private readonly Guid _streamId;
+    private int _passed;
+    private int _session;
+
+    public CuedDrainChannel(PerspectiveDrainChannel inner, Guid streamId) {
+      _inner = inner;
+      _streamId = streamId;
+      Reader = new StampingReader(this);
+    }
+
+    public ChannelReader<Guid> Reader { get; }
+
+    public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      _passesFirst(streamId) ? _inner.WriteAsync(streamId, cancellationToken) : ValueTask.CompletedTask;
+
+    public bool TryWrite(Guid streamId) => !_passesFirst(streamId) || _inner.TryWrite(streamId);
+
+    public bool IsInFlight(Guid streamId) => _inner.IsInFlight(streamId);
+
+    public void MarkDraining(Guid streamId) => _inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) => _inner.MarkDrained(streamId);
+
+    private bool _passesFirst(Guid streamId) => streamId == _streamId && Interlocked.Exchange(ref _passed, 1) == 0;
+
+    /// <summary>
+    /// Completes when the batch of the next session on the measured stream ends: the first session, or, when
+    /// <paramref name="cue"/> is set, a second one, started by writing the stream to the channel now.
+    /// </summary>
+    public Task AwaitNextSessionAsync(PerspectiveWorker worker, bool cue) {
+      var session = Interlocked.Increment(ref _session);
+      var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      void onBatchCycleComplete() {
+        if (_sessionTaken.Value == session) {
+          ended.TrySetResult();
+        }
+      }
+      worker.OnBatchCycleComplete += onBatchCycleComplete;
+      _ = ended.Task.ContinueWith(_ => worker.OnBatchCycleComplete -= onBatchCycleComplete, TaskScheduler.Default);
+      if (cue) {
+        _ = _inner.TryWrite(_streamId);
+      }
+      return ended.Task;
+    }
+
+    /// <summary>
+    /// Reads the inner channel and stamps the consumer loop that takes the measured stream with the session number.
+    /// The loop takes it in a synchronous call, so the stamp stays on the loop's execution context through the batch.
+    /// </summary>
+    private sealed class StampingReader(CuedDrainChannel owner) : ChannelReader<Guid> {
+      public override bool TryRead(out Guid item) {
+        if (!owner._inner.Reader.TryRead(out item)) {
+          return false;
+        }
+        if (item == owner._streamId) {
+          _sessionTaken.Value = Volatile.Read(ref owner._session);
+        }
+        return true;
+      }
+
+      public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) =>
+        owner._inner.Reader.WaitToReadAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// The perspective completion channel with every row completion held back, so the drained rows stay in the table
+  /// for a second session to fetch, as they do in the window before a real flush deletes them. Cursors pass through.
+  /// </summary>
+  private sealed class HeldRowCompletionChannel(IPerspectiveCompletionChannel inner) : IPerspectiveCompletionChannel {
+    // Held: the row stays leased and unprocessed, which is the state a second drain session finds it in.
+    public ValueTask EnqueueEventWorkIdAsync(Guid eventWorkId, CancellationToken cancellationToken = default) =>
+      ValueTask.CompletedTask;
+
+    public ValueTask EnqueueCursorAsync(PerspectiveCursorCompletion cursor, CancellationToken cancellationToken = default) =>
+      inner.EnqueueCursorAsync(cursor, cancellationToken);
   }
 
   /// <summary>The wire, with a record of what the host subscribed to and published.</summary>

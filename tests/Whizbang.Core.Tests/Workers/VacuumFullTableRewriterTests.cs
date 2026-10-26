@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Startup;
 using Whizbang.Core.Workers;
@@ -127,8 +128,29 @@ public sealed class VacuumFullTableRewriterTests {
     var report = await step.ExecuteAsync(CancellationToken.None);
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
-    await Assert.That(report.Reason).IsEqualTo("table rewrites not permitted (MaintenanceWorkerOptions.AllowTableRewrite)")
-      .Because("by default the step selects VacuumFull, whose permission is off; any other reason means it "
-             + "selected nothing or another strategy");
+    await Assert.That(report.Reason)
+      .IsEqualTo("Auto detects and reports only: VACUUM FULL is not permitted (Whizbang:Workers:Maintenance:AllowTableRewrite = false)")
+      .Because("by default the step resolves Auto, which rewrites with VacuumFull only when permitted; any other reason "
+             + "means it resolved another strategy");
+    await Assert.That(step.Descriptor.DependsOn).IsEquivalentTo([FrameworkStartupSteps.MIGRATE]);
+  }
+
+  [Test]
+  public async Task AddWhizbangWorkers_WithCapabilities_TheRewriteStepRunsAfterTheCapabilitiesStepAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:Workers:Maintenance:AllowTableRewrite"] = "true",
+    }).Build());
+    services.AddLogging();
+    services.AddWhizbangWorkers();
+    services.AddWhizbangCapabilities();
+    await using var provider = services.BuildServiceProvider();
+
+    var step = provider.GetServices<IStartupStep>().Single(s => s.Descriptor.Name == FrameworkStartupSteps.REWRITE);
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(step.Descriptor.DependsOn).Contains(CapabilitiesStartupStep.STEP_NAME);
+    await Assert.That(report.Reason).IsEqualTo("no work coordinator registered")
+      .Because("Auto with AllowTableRewrite resolves VacuumFull, which runs and finds no coordinator in this container");
   }
 }

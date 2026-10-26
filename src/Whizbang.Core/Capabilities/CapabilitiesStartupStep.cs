@@ -12,8 +12,8 @@ namespace Whizbang.Core.Capabilities;
 /// Settings for capability detection, bound from <c>Whizbang:Capabilities</c>.
 /// </summary>
 /// <remarks>
-/// A key present in configuration overrides what code set; an absent key leaves it. Later slices add
-/// <c>AutoProvision</c>, globally, per provider and per capability.
+/// A key present in configuration overrides what code set; an absent key leaves it. Provisioning is also switched
+/// per provider and per capability, by keys read where they apply (<see cref="CapabilityAutoProvision"/>).
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Capabilities/CapabilityServiceCollectionExtensionsTests.cs</tests>
@@ -24,11 +24,21 @@ public sealed class CapabilityOptions {
   /// reads <see cref="CapabilityState.Unknown"/> until something calls <see cref="ICapabilityRegistry.RefreshAsync"/>.
   /// </summary>
   public bool ProbeOnStartup { get; set; } = true;
+
+  /// <summary>
+  /// Whether the library creates a required capability that is absent and upgrades one with a newer version
+  /// available (<c>Whizbang:Capabilities:AutoProvision</c>). Default <see langword="true"/>. The global level of a
+  /// three-level switch: <c>Whizbang:Capabilities:&lt;provider&gt;:AutoProvision</c> and
+  /// <c>Whizbang:Capabilities:&lt;provider&gt;:&lt;name&gt;:AutoProvision</c> override it. Turned off, a capability an
+  /// operator provisioned is still detected and used.
+  /// </summary>
+  public bool AutoProvision { get; set; } = true;
 }
 
 /// <summary>
-/// The <c>Capabilities</c> startup step: after <c>Migrate</c>, on every instance, probes every provider,
-/// judges every requirement in force against the result, publishes the verdict on the registry and writes it.
+/// The <c>Capabilities</c> startup step: after <c>Migrate</c>, on every instance, probes every provider, provisions
+/// every required capability the switch allows, judges every requirement in force against the result, publishes
+/// the verdict on the registry and writes it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -38,8 +48,12 @@ public sealed class CapabilityOptions {
 /// pipeline.
 /// </para>
 /// <para>
+/// Provisioning runs between the probe and the verdict, so a required capability the library creates is Ready
+/// when it is judged. Only what a requirement in force names is provisioned; everything else is only detected.
+/// </para>
+/// <para>
 /// With the probe turned off the verdict is still published, every capability Unknown, so an explicit
-/// requirement warns rather than passing unseen.
+/// requirement warns rather than passing unseen. Nothing is provisioned on a guess.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#verdict</docs>
@@ -53,6 +67,7 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
   private readonly ICapabilityRegistry _registry;
   private readonly CapabilityOptions _options;
   private readonly IReadOnlyList<ICapabilityRequirementSource> _sources;
+  private readonly IReadOnlyList<ICapabilityProvisioner> _provisioners;
   private readonly IConfiguration? _configuration;
   private readonly ILogger<CapabilitiesStartupStep> _logger;
 
@@ -60,21 +75,25 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
   /// <param name="registry">The registry it refreshes and publishes the verdict on.</param>
   /// <param name="options">Whether to probe at all.</param>
   /// <param name="sources">Every source of declared requirements.</param>
+  /// <param name="provisioners">Every provider's provisioner; a provider without one is only detected.</param>
   /// <param name="configuration">The host's configuration, which decides which requirements are in force; null when it has none.</param>
   /// <param name="logger">Where the verdict goes.</param>
   public CapabilitiesStartupStep(
       ICapabilityRegistry registry,
       IOptions<CapabilityOptions> options,
       IEnumerable<ICapabilityRequirementSource> sources,
+      IEnumerable<ICapabilityProvisioner> provisioners,
       IConfiguration? configuration,
       ILogger<CapabilitiesStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(registry);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(sources);
+    ArgumentNullException.ThrowIfNull(provisioners);
     ArgumentNullException.ThrowIfNull(logger);
     _registry = registry;
     _options = options.Value;
     _sources = [.. sources];
+    _provisioners = [.. provisioners];
     _configuration = configuration;
     _logger = logger;
   }
@@ -88,11 +107,13 @@ public sealed class CapabilitiesStartupStep : IStartupStep {
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+    var inForce = _sources.SelectMany(source => source.Resolve(_configuration)).Distinct().ToList();
     if (_options.ProbeOnStartup) {
       await _registry.RefreshAsync(cancellationToken).ConfigureAwait(false);
+      _registry.Record(await CapabilityProvisioningRunner.RunAsync(
+        _registry.Statuses, inForce, _provisioners, _options, _configuration, _logger, cancellationToken).ConfigureAwait(false));
     }
     var statuses = _registry.Statuses;
-    var inForce = _sources.SelectMany(source => source.Resolve(_configuration)).Distinct().ToList();
     var verdict = CapabilityVerdict.Evaluate(statuses, inForce);
     _registry.PublishVerdict(verdict);
     CapabilityReport.LogVerdict(_logger, verdict);

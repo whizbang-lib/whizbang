@@ -1749,17 +1749,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<StreamCloseResult> CloseStreamAsync(
+  public async Task<StreamTruncateResult> TruncateStreamPrefixAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    var fn = BuildSchemaQualifiedName(schema, "close_stream");
+    var fn = BuildSchemaQualifiedName(schema, "wh_truncate_stream_prefix");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    cmd.CommandText = $"SELECT close_status, events_truncated FROM {fn}(@sid, @through, @archive)";
+    cmd.CommandText = $"SELECT truncate_status, events_truncated FROM {fn}(@sid, @through, @archive)";
 #pragma warning restore S2077
     var pStream = cmd.CreateParameter();
     pStream.ParameterName = "sid";
@@ -1775,11 +1775,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(pArchive);
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
     await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    return new StreamCloseResult(reader.GetString(0), reader.GetInt64(1));
+    return new StreamTruncateResult(reader.GetString(0), reader.GetInt64(1));
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamCloseTargetsAsync(
+  public async Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
     Guid streamId, long throughVersion, CancellationToken cancellationToken = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
@@ -1788,7 +1788,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-    // close_stream's own range (084): this stream, at or below the close point
+    // wh_truncate_stream_prefix's own range (084, 240): this stream, at or below the truncate point
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     cmd.CommandText =
       $"SELECT event_id, stream_id, event_type FROM {store} WHERE stream_id = @sid AND version <= @through ORDER BY version";

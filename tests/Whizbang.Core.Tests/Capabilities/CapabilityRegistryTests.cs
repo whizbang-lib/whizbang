@@ -160,4 +160,23 @@ public class CapabilityRegistryTests {
     await Assert.That(pendingBefore).IsTrue();
     await Assert.That(await waiting).IsSameReferenceAs(verdict);
   }
+
+  [Test]
+  public async Task Record_ReplacesTheStatusOfEachCapabilityAndScopeItNames_AndNothingElseAsync() {
+    var registry = new CapabilityRegistry([_database()], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    var squeeze = registry.Statuses.First(s => s.Descriptor.Id.Name == "pg_squeeze" && s.Scope == "audit-db");
+    var stranger = squeeze with { Descriptor = FakeCapabilityProvider.Describe("broker", "delayed_exchange") };
+
+    registry.Record([squeeze with { Version = "2.0", Provisioning = CapabilityProvisioningOutcome.Upgraded }, stranger]);
+
+    await Assert.That(registry.Statuses.Count).IsEqualTo(4)
+      .Because("a status the registry does not hold is not added");
+    var recorded = registry.Statuses.Single(s => s.Descriptor.Id.Name == "pg_squeeze" && s.Scope == "audit-db");
+    await Assert.That(recorded.Provisioning).IsEqualTo(CapabilityProvisioningOutcome.Upgraded);
+    await Assert.That(recorded.Version).IsEqualTo("2.0");
+    await Assert.That(registry.Statuses.Count(s => s.Provisioning is not null)).IsEqualTo(1)
+      .Because("the same capability in another scope is another status");
+    await Assert.That(() => registry.Record(null!)).Throws<ArgumentNullException>();
+  }
 }

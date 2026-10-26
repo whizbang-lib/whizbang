@@ -40,6 +40,12 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PoisonOutboxLoopSqlTests.cs</tests>
 public sealed partial class OutboxDrainWorker : BackgroundService {
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish,
+  /// and report a failure, while the services they resolve are still alive (#1721).
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IOutboxDrainChannel _drainChannel;
@@ -1230,6 +1236,16 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   }
 
   /// <summary>
+  /// Stops the worker, then waits for the detached lifecycle stages it started: the host stops the services registered
+  /// before this one (the failure flush among them) and disposes the container only after this returns (#1721).
+  /// </summary>
+  /// <param name="cancellationToken">The host's stop deadline.</param>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
   /// Fire a Pre/PostOutbox lifecycle stage pair (Detached fire-and-forget + Inline awaited).
   /// Mirrors <see cref="InboxDispatchWorker.InvokeInboxLifecycleStageAsync"/>. Wrapped in
   /// try/catch so a misbehaving receptor cannot block publish or completion.
@@ -1273,7 +1289,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       };
 
       if (hasDetached) {
-        _ = Task.Run(async () => {
+        DetachedWork.Track(Task.Run(async () => {
           try {
             await using var detachedScope = _scopeFactory.CreateAsyncScope();
             await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, ct);
@@ -1299,7 +1315,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               Reason = MessageFailureReason.Unknown,
             }, ct);
           }
-        }, ct);
+        }, ct));
       }
 
       if (hasInline) {

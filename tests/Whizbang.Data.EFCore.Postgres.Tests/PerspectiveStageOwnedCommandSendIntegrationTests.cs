@@ -179,7 +179,7 @@ public class PerspectiveStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
         workChannelWriter: null,
         options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
         logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
-        inboxChannelWriter: new InboxChannelWriter()));
+        inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()));
     services.AddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
     services.AddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
     services.Configure<RoutingOptions>(options => options.OwnDomains(OWNED_DOMAIN));

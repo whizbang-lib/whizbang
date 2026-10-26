@@ -72,7 +72,11 @@ public partial class ServiceBusConsumerWorker(
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag that only tests ever drained.
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly ILogger<ServiceBusConsumerWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly OrderedStreamProcessor _orderedProcessor = ArgumentGuard.NotNull(orderedProcessor);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
@@ -449,7 +453,7 @@ public partial class ServiceBusConsumerWorker(
       // Not for an event something in this service applies later: the collective sink fires these for a
       // collective event once its apply commits (#1676).
       if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
       }
     }
   }
@@ -519,7 +523,7 @@ public partial class ServiceBusConsumerWorker(
         LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
-    _detachedTasks.Add(task);
+    DetachedWork.Track(task);
   }
 
   /// <summary>
@@ -527,7 +531,7 @@ public partial class ServiceBusConsumerWorker(
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   private static Task _fireDetachedStageStaticAsync(
@@ -688,6 +692,9 @@ public partial class ServiceBusConsumerWorker(
     await _streamSerializer.FlushAndStopAsync(cancellationToken).ConfigureAwait(false);
 
     await base.StopAsync(cancellationToken);
+
+    // The detached lifecycle stages still running finish before the host disposes the container (#1721)
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   // ========================================

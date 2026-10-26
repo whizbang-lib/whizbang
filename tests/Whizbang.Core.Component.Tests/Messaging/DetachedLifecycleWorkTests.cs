@@ -32,6 +32,63 @@ public class DetachedLifecycleWorkTests {
   }
 
   [Test]
+  [Arguments("succeeded")]
+  [Arguments("failed")]
+  [Arguments("canceled")]
+  public async Task AnInvocationThatFinishes_WithNoDrainRunning_IsForgottenAsync(string outcome) {
+    var work = new DetachedLifecycleWork();
+    var invocation = new TaskCompletionSource();
+    work.Track(invocation.Task);
+
+    switch (outcome) {
+      case "succeeded":
+        invocation.SetResult();
+        break;
+      case "failed":
+        invocation.SetException(new InvalidOperationException("receptor failed"));
+        break;
+      default:
+        invocation.SetCanceled();
+        break;
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("a running host forgets each invocation as it finishes, so the record holds only what is still running");
+  }
+
+  [Test]
+  public async Task AnInvocationThatHadAlreadyFinished_WhenTracked_IsNotKeptAsync() {
+    var work = new DetachedLifecycleWork();
+
+    work.Track(Task.CompletedTask);
+    work.Track(Task.FromException(new InvalidOperationException("receptor failed")));
+    work.Track(Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("an invocation that finished before it was tracked has nothing left to wait for");
+  }
+
+  [Test]
+  public async Task ManyInvocations_FinishingWhileTheHostRuns_LeaveNothingTrackedAsync() {
+    var work = new DetachedLifecycleWork();
+    var invocations = new List<TaskCompletionSource>();
+    for (var i = 0; i < 1_000; i++) {
+      var invocation = new TaskCompletionSource();
+      invocations.Add(invocation);
+      work.Track(invocation.Task);
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(1_000);
+
+    foreach (var invocation in invocations) {
+      invocation.SetResult();
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("the record does not grow with the number of invocations a host has run, only with those still running");
+  }
+
+  [Test]
   public async Task Drain_WaitsForEveryTrackedInvocation_AndForgetsThemOnceFinishedAsync() {
     var work = new DetachedLifecycleWork();
     var first = new TaskCompletionSource();
@@ -106,6 +163,81 @@ public class DetachedLifecycleWorkTests {
     await Assert.That(work.InFlightCount).IsEqualTo(1)
       .Because("the invocation is still running");
     stuck.SetResult();
+  }
+
+  [Test]
+  public async Task ADrain_AnnouncesOnceThatItIsWaiting_WithHowManyAreInFlightAsync() {
+    var work = new DetachedLifecycleWork();
+    var first = new TaskCompletionSource();
+    var second = new TaskCompletionSource();
+    work.Track(first.Task);
+    work.Track(second.Task);
+    var announced = new List<int>();
+    work.Waiting += announced.Add;
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    first.SetResult();
+    second.SetResult();
+    await drain;
+    await work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(announced).IsEquivalentTo([2])
+      .Because("a drain says once, when it starts waiting, how many invocations it waits for; one with none says nothing");
+  }
+
+  [Test]
+  public async Task StopProducers_StopsEachRegisteredProducer_WithTheHostsTokenAsync() {
+    var work = new DetachedLifecycleWork();
+    using var deadline = new CancellationTokenSource();
+    var stoppedWith = new List<CancellationToken>();
+    using var first = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+    using var second = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+
+    await work.StopProducersAsync(deadline.Token);
+
+    await Assert.That(stoppedWith).IsEquivalentTo([deadline.Token, deadline.Token]);
+  }
+
+  [Test]
+  public async Task AProducerThatUnregistered_IsNotStoppedAsync() {
+    var work = new DetachedLifecycleWork();
+    var stopped = false;
+    var registration = work.RegisterProducer(_ => { stopped = true; return Task.CompletedTask; });
+
+    registration.Dispose();
+    await work.StopProducersAsync(CancellationToken.None);
+
+    await Assert.That(stopped).IsFalse()
+      .Because("a producer disposed on its own has already stopped and flushed");
+  }
+
+  [Test]
+  public async Task AProducerThatFailsToStop_DoesNotKeepTheOthersFromStopping_AndIsRaisedAsync() {
+    var work = new DetachedLifecycleWork();
+    var secondStopped = false;
+    using var first = work.RegisterProducer(_ => Task.FromException(new InvalidOperationException("store unavailable")));
+    using var second = work.RegisterProducer(_ => { secondStopped = true; return Task.CompletedTask; });
+
+    var failure = await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<AggregateException>();
+
+    await Assert.That(secondStopped).IsTrue();
+    await Assert.That(failure!.InnerExceptions.Single().Message).IsEqualTo("store unavailable");
+  }
+
+  [Test]
+  public async Task AProducerCanceledByTheDeadline_EndsTheStop_WithTheCancellationAsync() {
+    var work = new DetachedLifecycleWork();
+    using var registration = work.RegisterProducer(_ => Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<OperationCanceledException>()
+      .Because("a stop that ran out of time is the host's to see, not a producer failure");
+  }
+
+  [Test]
+  public async Task RegisterProducer_WithoutAStop_IsRefusedAsync() {
+    var work = new DetachedLifecycleWork();
+
+    await Assert.That(() => work.RegisterProducer(null!)).Throws<ArgumentNullException>();
   }
 
   [Test]

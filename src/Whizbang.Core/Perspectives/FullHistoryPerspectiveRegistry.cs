@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives;
 /// projections that cannot resume from a carry-forward / closing event. Populated at startup by generated
 /// <c>[ModuleInitializer]</c> code (the perspective-runner generator emits a registration for each
 /// <c>[FullHistory]</c> perspective, keyed by the same name its message associations / cursors use). A1's
-/// <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> consults it to refuse a discard-close of a stream any
+/// <see cref="Whizbang.Core.Lifecycle.IStreamPrefixTruncator"/> consults it to refuse a discarding truncate of a stream any
 /// full-history projection consumes.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>

@@ -241,7 +241,8 @@ __PHYSICAL_FIELD_CONFIGS__
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
         workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
-        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>()
+        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>(),
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -259,7 +260,8 @@ __PHYSICAL_FIELD_CONFIGS__
         tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
       );
     });
 

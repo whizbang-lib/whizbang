@@ -26,8 +26,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// <docs>fundamentals/perspectives/physical-fields#storage-moves</docs>
 [NotInParallel("PostgreSQL")]
 public class DapperPhysicalFieldMoveTests : PostgresTestBase {
-  private const string PROMOTED = "wh_per_dapper_promoted_perspective";
-  private const string SPLIT = "wh_per_dapper_split_moved_perspective";
+  private const string PROMOTED = "wh_per_dapper_promoted";
+  private const string SPLIT = "wh_per_dapper_split_moved";
   private static readonly Guid _watcher = Guid.Parse("4d2a7b10-0000-4000-8000-000000000001");
   private static readonly Guid _row = Guid.Parse("4d2a7b10-0000-4000-8000-0000000000cc");
   private static readonly DateTimeOffset _now = new(2026, 10, 1, 12, 3, 0, TimeSpan.Zero);

@@ -31,7 +31,7 @@ public class CapabilitiesStartupStepTests {
       ICapabilityRegistry registry, bool probe, ILogger<CapabilitiesStartupStep>? logger = null,
       IConfiguration? configuration = null, params CapabilityRequirement[] requirements) =>
     new(registry, Options.Create(new CapabilityOptions { ProbeOnStartup = probe }),
-      [new FixedRequirements(requirements)], configuration,
+      [new FixedRequirements(requirements)], [], configuration,
       logger ?? NullLogger<CapabilitiesStartupStep>.Instance);
 
   private static readonly CapabilityRequirement _delayed =
@@ -118,7 +118,7 @@ public class CapabilitiesStartupStepTests {
     await _step(_registry(provider), probe: true, logger, _set("W:Delay:Mode", "Delayed"), _delayed).ExecuteAsync(CancellationToken.None);
 
     await Assert.That(logger.Collector.GetSnapshot().Where(r => r.Level == LogLevel.Information).Select(r => r.Message))
-      .Contains("capability broker/x on 'vhost-a': Ready, 1.0. Required by: Delayed delivery (W:Delay:Mode = Delayed, explicit)");
+      .Contains("capability broker/x on 'vhost-a': Ready, already present 1.0. Required by: Delayed delivery (W:Delay:Mode = Delayed, explicit)");
   }
 
   [Test]
@@ -141,9 +141,10 @@ public class CapabilitiesStartupStepTests {
     var options = Options.Create(new CapabilityOptions());
     var logger = NullLogger<CapabilitiesStartupStep>.Instance;
 
-    await Assert.That(() => new CapabilitiesStartupStep(null!, options, [], null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new CapabilitiesStartupStep(registry, null!, [], null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new CapabilitiesStartupStep(registry, options, null!, null, logger)).Throws<ArgumentNullException>();
-    await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], null, null!)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(null!, options, [], [], null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(registry, null!, [], [], null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(registry, options, null!, [], null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], null!, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new CapabilitiesStartupStep(registry, options, [], [], null, null!)).Throws<ArgumentNullException>();
   }
 }

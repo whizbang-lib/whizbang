@@ -32,6 +32,9 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S1. Defect 2: `deliveryGuarantee` reaches stored metadata
 
+**Status (2026-10-24):** done. #1484, closed by PR #1532 (migration 214): the guarantee is
+`EventFlags.AtMostOnce`, and every integrity filter reads the flag.
+
 - **Changes.** The emit chain builds stored metadata as `{MessageId, Hops}` plus
   `ephemeral_expires_at` only (`src/Whizbang.Data.Postgres/Migrations/149_MessagePriority.sql:546-555`
   outbox, `162_InboxWorkStateSideTable.sql:2016-2027` inbox). Schedule occurrences put
@@ -55,6 +58,10 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S2. A1: ephemeral classification guidance and reconcile
 
+**Status (2026-10-24):** done. #1578, closed by PR #1579: every boot with `ReconcileHistoricalOnStartup` on
+reclassifies each ephemeral type's history. The classification guide is published at
+`v1.0.0/fundamentals/events/ephemeral-events.md#which-events` (docs repo).
+
 - **Changes.** The mechanism ships (`[Ephemeral]`, `src/Whizbang.Core/Attributes/EphemeralAttribute.cs:40`;
   reclassification, `src/Whizbang.Core/Fingerprint/TypeDefinitionReconciler.cs:172-182`). Two gaps:
   1. No published page tells a developer which events should be ephemeral. The attribute's
@@ -75,6 +82,10 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S3. A2a: `EventAudited` field defects (defect 3, part 1)
 
+**Status (2026-10-24):** done. #1485, closed by PR #1553: all three writers set `OriginalEventId` and
+`CausationId`, and migration 216 fills `OriginalStreamPosition` on the outbox path from the stored version
+(decision 3).
+
 - **Changes.** Three writers build `EventAudited`:
   `AuditOutboxMessageBuilder.cs:73-87`, `AuditingEventStoreDecorator.cs:160-176`,
   `SystemEventEmitter.cs:83-96` (all in `src/Whizbang.Core/SystemEvents/`). The last two never set
@@ -90,6 +101,9 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S4. A2b: the outbox path consults `IAuditDecisionHook` (defect 3, part 2)
 
+**Status (2026-10-24):** done. #1485, closed by PR #1553: `IAuditDecisionHook` applies in the three work
+coordinator strategies, the event store decorator and the emitter.
+
 - **Changes.** `TryBuildAuditMessage` accepts a hook (`AuditOutboxMessageBuilder.cs:30`), but both
   callers omit it (`src/Whizbang.Core/Messaging/WorkCoordinatorQueues.cs:46`,
   `StreamAffinityWorkCoordinatorStrategy.cs:73`). Inject the registered hook into both.
@@ -100,8 +114,8 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S5. A2c: pointer + scope by default, body opt-in
 
-**Status (2026-10-21):** the registry half ships in #1580; the body opt-in (`IncludeBody`,
-`AuditBodyDefault`, nullable `OriginalBody`, all three writers) ships in #1588.
+**Status (2026-10-24):** done. The registry is #1580 (PR #1581). The body opt-in (`IncludeBody`,
+`AuditBodyDefault`, nullable `OriginalBody`, all three writers) is #1588 (PR #1589).
 
 - **Changes.** Add `IncludeBody` to `AuditEventAttribute`
   (`src/Whizbang.Core/Attributes/AuditEventAttribute.cs:39`, beside `Exclude` at :82). The three
@@ -124,6 +138,9 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S6. A2d: one audit ledger stream per tenant (defect 3, part 3)
 
+**Status (2026-10-24):** done. PR #1553 added `AuditLedger.StreamFor(tenant)` on a new `NameBasedGuid` helper,
+and a coalesced bundle rides the ledger; PR #1598 (#1555) finished the per-tenant ledger with one write path.
+
 - **Changes.** Decided earlier and never shipped. Each single is minted on its own stream
   (`AuditOutboxMessageBuilder.cs:140`, `StreamId = auditEvent.Id`) and each folded composite on
   another fresh one (`src/Whizbang.Core/Workers/CoalesceShipWorker.cs:259`). Stamp
@@ -137,6 +154,11 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 - **Config.** None.
 
 ### S7. A2e: audit is excluded from digests (defect 10) and re-derivable
+
+**Status (2026-10-24):** partly done. The digest half is done: #1492 in PR #1553 (both emit chains, sealed
+epochs and the sweeps skip `EventAudited` and `CommandAudited`; migration 216) and #1554 in PR #1568 (checkpoint
+counts). Still open: the audit backfill (a redelivery filtered by audit eligibility) and name-based audit ids on
+`OriginalEventId`. All three writers still mint `TrackedGuid.New()`.
 
 - **Changes.** Audit is a pure function of the origin event plus scope, so audit rows never need
   digest sync. On the subscriber a composite-fanned `EventAudited` folds into the origin's digest
@@ -153,6 +175,9 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
 
 ### S8. A3a: a slim stored-metadata form readers accept
 
+**Status (2026-10-24):** done. #1586, closed by PR #1587, as `EnvelopeMetadata.ToSlim()`; see the correction at
+the end of this slice.
+
 - **Changes.** Define the slim form. **Must keep:** a non-null object; `MessageId`
   (`required`, `src/Whizbang.Core/Observability/EnvelopeMetadata.cs:17`); the current hop's `Scope`;
   `CorrelationId` and `CausationId`; the last hop's `Timestamp`; `ephemeral_expires_at`;
@@ -166,13 +191,16 @@ Ordered. Each slice is one red/green increment and one PR unless noted.
   causation as over the full one; a document missing `MessageId` still fails loudly.
 - **Docs.** `v1.0.0/messaging/message-envelopes.md` (stored versus wire form).
 - **Config.** None.
-- **Status (2026-10-21):** ships in #1586 as `EnvelopeMetadata.ToSlim()`. Correction to the list above:
-  readers take the message timestamp, correlation and causation from the **first** hop
+- **Correction to the list above (2026-10-21).** Readers take the message timestamp, correlation and causation from the **first** hop
   (`MessageEnvelope.GetMessageTimestamp`, `GetCorrelationId`, `GetCausationId`), so the slim hop copies
   them from there, not from the last hop. The scope is folded over every Current hop into one delta.
   `ServiceInstance` stays `required`; a missing `si` reads as `ServiceInstanceInfo.Unknown`.
 
 ### S9. A3b: slim at write time, full metadata staged, route hash stamped
+
+**Status (2026-10-24):** open. Nothing is built: `src/` has no `wh_event_metadata_staging`,
+`EventStoreMetadataOptions` or `[StoredMetadata]`. Its prerequisite, the WS-5 S4 partition manager, is done
+(PR #1623).
 
 Decided 2026-10-21 (#1493). Stored metadata is split the way bodies are split from pointers: the event
 row keeps a slim form for good, and the full form is kept for a short staging window in a separate,
@@ -248,6 +276,9 @@ stops growing; only traces and counters grow.
 
 ### S9b. Routes and traces: distill staged metadata, and the persistent trace store
 
+**Status (2026-10-24):** open. `src/` has no `wh_routes`, `wh_traces` or `IRouteStore`. Depends on S9. The
+related defect #1601 (unbounded default trace store) is done in PR #1610.
+
 - **Tables.**
   - `wh_routes`: one row per route id. The normalized hop sequence (service names, receptor class and
     member, topics, strategies, policy decisions), `first_seen`, `last_seen`, `occurrences`, and
@@ -322,6 +353,8 @@ stops growing; only traces and counters grow.
 
 ### S10. A3c: history
 
+**Status (2026-10-24):** open. Nothing is built. Depends on S9 and S9b.
+
 Existing rows written full before S9 are converted once by a batched maintenance task:
 
 - staged-form distillation into routes and traces;
@@ -336,6 +369,9 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
   `Linked` or `Slim`).
 
 ### S11. A6: `toast_tuple_target` on `wh_event_body`, measured first
+
+**Status (2026-10-24):** open. No migration sets `toast_tuple_target` on `wh_event_body` (the only uses in
+`src/` are the perspective-table storage attributes), and no measurement is recorded.
 
 - **Changes.** `toast_tuple_target` is per table, not per column, and lz4 is often already the
   server default. Lowering it on `wh_event_body` (created at `072_EphemeralBodyOffload.sql:19`,
@@ -354,6 +390,10 @@ metadata it touches, so it runs idle-gated in batches and WS-4 reclaims the spac
   win to K3 (WS-7).
 
 ### S12. K1: superseding (latest-wins) event types
+
+**Status (2026-10-24):** open. `src/` has no `[Superseding]` attribute or flag. Decision 5 (#1674) sets the key:
+latest-wins per (stream, type, key), with the key stamped at emit. The flag value below is stale: S1 took bit 5
+for `EventFlags.AtMostOnce`, so the next free bit is `1 << 6`.
 
 - **Changes.** An event type declares `[Superseding]` (new, `src/Whizbang.Core/Attributes/`); the
   generator discovers it as `EphemeralResolver` does (`src/Whizbang.Generators/Utilities/EphemeralResolver.cs:23`);
@@ -396,6 +436,8 @@ Questions 2 to 6 were decided on 2026-10-22 in #1674 (the owner accepted the rec
 
 2. **Audited ephemeral types** are excluded from audit by default, with an opt-in that keeps the
    body, so no audit pointer dangles once the origin reaps the event.
+   **Status (2026-10-24):** not built. Nothing under `src/Whizbang.Core/SystemEvents/` checks whether an
+   audited type is ephemeral.
 3. **`OriginalStreamPosition` on the outbox path** is filled at emit.
 4. **The current hop's `sc`** is dropped from stored metadata, and scope is rebuilt from
    `wh_event_store.scope` on read. This saves about 100 B per event.

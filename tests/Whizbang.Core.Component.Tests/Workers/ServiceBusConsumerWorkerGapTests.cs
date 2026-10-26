@@ -14,6 +14,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Shutdown;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -555,6 +556,55 @@ public class ServiceBusConsumerWorkerGapTests {
   }
 
   // ========================================
+  // Shutdown (#1721)
+  // ========================================
+
+  /// <summary>
+  /// The worker kept its detached stages in a bag that only tests drained. Its stop now waits for them, so the host does
+  /// not dispose the container while one still runs.
+  /// </summary>
+  [Test]
+  public async Task ADetachedStage_InFlight_WorkerStopWaitsForItBeforeTheContainerIsDisposedAsync() {
+    var transport = new GapTransport();
+    var messageId = MessageId.New();
+    var streamId = Guid.NewGuid();
+    var inboxWork = new InboxWork {
+      MessageId = messageId.Value,
+      Envelope = _createJsonEnvelope(messageId, streamId),
+      MessageType = "Whizbang.Core.Tests.Workers.SbcGapTestEvent, Whizbang.Core.Component.Tests",
+      Status = MessageProcessingStatus.None,
+      Attempts = 0
+    };
+    var strategy = new GapStrategy(() => new WorkBatch { InboxWork = [inboxWork], OutboxWork = [], PerspectiveWork = [] });
+    var held = new HeldWork();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
+    services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
+    services.AddSingleton<ProviderLiveness>();
+    services.AddScoped<IReceptorInvoker>(sp => new HeldStageInvoker(held, LifecycleStage.PreInboxDetached, sp));
+    var provider = services.BuildServiceProvider();
+    var worker = _createWorker(transport, provider, new GapLifecycleDeserializer());
+    await worker.StartAsync(CancellationToken.None);
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await transport.CapturedBatchHandler!(
+      [new TransportMessage(_createJsonEnvelope(messageId, streamId), JSON_ENVELOPE_TYPE)],
+      CancellationToken.None);
+    await held.Entered.Task;
+
+    // What a stopping host does: stop the hosted service, then dispose the container
+    var waited = await HostShutdown.StopWaitsForAsync(async () => {
+      await worker.StopAsync(CancellationToken.None);
+      await provider.DisposeAsync();
+    }, worker.DetachedWork, held);
+
+    await Assert.That(waited).IsTrue()
+      .Because("the detached stage resolves its receptor from a scope of the container the host disposes after the stop");
+    await Assert.That(await held.Finished.Task).IsTrue();
+  }
+
+  // ========================================
   // Helper Methods
   // ========================================
 
@@ -569,7 +619,15 @@ public class ServiceBusConsumerWorkerGapTests {
       services.AddWhizbangMessageSecurity();
       services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     }
-    var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    return _createWorker(transport, services.BuildServiceProvider(), lifecycleMessageDeserializer, receptorRegistry);
+  }
+
+  private static ServiceBusConsumerWorker _createWorker(
+    GapTransport transport,
+    IServiceProvider provider,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IReceptorRegistryQuery? receptorRegistry = null) {
+    var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
     _ = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
 
     return new ServiceBusConsumerWorker(

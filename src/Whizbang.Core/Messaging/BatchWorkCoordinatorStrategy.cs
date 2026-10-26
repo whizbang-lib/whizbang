@@ -30,6 +30,9 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
 public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  /// <summary>The batch-size and debounce flushes still running; the strategy's stop waits for them before its final flush.</summary>
+  internal DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   // Reported as the strategy dimension on every metric this type emits, and passed to the
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "batch";
@@ -44,7 +47,12 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork;
   private readonly Timer _debounceTimer;
+  // Removes the strategy from the host's producers once it is disposed on its own.
+  private readonly IDisposable _producerRegistration;
 
   // Queues for batching operations
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -63,7 +71,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   /// <docs>data/work-coordinator-strategies#flush-events</docs>
   public event Action<WorkBatchFlushedArgs>? OnBatchFlushed;
-  private bool _flushing;
+  // One flush at a time. A trigger or API flush that finds it taken returns at once; the stop and disposal flushes wait
+  // for it instead, so they never return while a flush is still storing, nor leave behind what was queued after its
+  // snapshot (#1721).
+  private readonly SemaphoreSlim _flushGate = new(1, 1);
 
   /// <summary>
   /// Constructs a batch work coordinator strategy with count-based and debounce-based flush triggers.
@@ -83,6 +94,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     ILifecycleMessageDeserializer lifecycleMessageDeserializer,
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
+    DetachedLifecycleWork detachedWork,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -96,6 +108,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
+    ArgumentNullException.ThrowIfNull(detachedWork);
+    _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -106,6 +120,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       dueTime: Timeout.Infinite,
       period: Timeout.Infinite
     );
+
+    // The host stops the timer and flushes what is queued while the service provider is still alive (#1721)
+    _producerRegistration = _detachedWork.RegisterProducer(ct => _stopAndFlushAsync(ct));
 
     LogStrategyStarted(_logger, _options.BatchSize, _options.IntervalMilliseconds);
   }
@@ -254,7 +271,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     return _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(FlushTrigger trigger, bool skipLifecycle, CancellationToken ct, bool waitForInFlight = false) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
@@ -266,16 +283,15 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     // Prevent concurrent flushes
-    lock (_lock) {
-      if (_flushing) {
-        LogFlushAlreadyInProgress(_logger);
-        return new WorkBatch {
-          OutboxWork = [],
-          InboxWork = [],
-          PerspectiveWork = []
-        };
-      }
-      _flushing = true;
+    if (waitForInFlight) {
+      await _flushGate.WaitAsync(ct).ConfigureAwait(false);
+    } else if (!await _flushGate.WaitAsync(0, CancellationToken.None).ConfigureAwait(false)) {
+      LogFlushAlreadyInProgress(_logger);
+      return new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      };
     }
 
     try {
@@ -329,7 +345,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle,
-          Metrics: _metrics, Strategy: STRATEGY_NAME),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
         ct
       );
 
@@ -339,9 +355,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
       return workBatch;
     } finally {
-      lock (_lock) {
-        _flushing = false;
-      }
+      _flushGate.Release();
     }
   }
 
@@ -384,13 +398,14 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // flushed. The old "background thread, no ambient context" skip was stale —
     // LifecycleInvocationHelper reconstructs each message from its envelope (trace context from
     // hops, payload deserialized, fresh scope per message) and reads no ambient state.
-    _ = Task.Run(async () => {
+    // Recorded, so the stop waits for it instead of disposing the service provider under it (#1721)
+    InFlightFlushes.Track(Task.Run(async () => {
       try {
         await _flushCoreAsync(FlushTrigger.BatchSize, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringBatchFlush(_logger, ex);
       }
-    });
+    }));
   }
 
   /// <summary>
@@ -410,13 +425,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Lifecycle stages run here too (issue #485) — see the BatchSize trigger above; a quiet-period
     // flush is the common case on low-traffic services, and skipping made stage delivery a
     // function of traffic shape.
-    _ = Task.Run(async () => {
+    InFlightFlushes.Track(Task.Run(async () => {
       try {
         await _flushCoreAsync(FlushTrigger.Debounce, skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringDebounceFlush(_logger, ex);
       }
-    });
+    }));
   }
 
   /// <summary>
@@ -429,11 +444,25 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     LogStrategyDisposing(_logger);
+    _producerRegistration.Dispose();
+    await _stopAndFlushAsync(CancellationToken.None);
 
-    // Stop the debounce timer first
+    _disposed = true;
+    _flushGate.Dispose();
+    GC.SuppressFinalize(this);
+
+    LogStrategyDisposed(_logger);
+  }
+
+  /// <summary>
+  /// Stops the debounce timer, waits for the flushes still running, then flushes what is left. The host runs it while
+  /// it stops, before the service provider the flush stores through is disposed; disposal runs it again for whatever
+  /// was queued since, so it is safe to repeat.
+  /// </summary>
+  private async Task _stopAndFlushAsync(CancellationToken cancellationToken) {
     await _debounceTimer.DisposeAsync();
+    await InFlightFlushes.DrainAsync(cancellationToken);
 
-    // Flush any remaining queued operations
     lock (_lock) {
       if (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
@@ -452,18 +481,12 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
-      // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
-      // backgrounded stage halves would race process exit, so the drain stores durably and the
-      // stages are deliberately not run.
-      await _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: true, ct: default);
-    } catch (Exception ex) {
+      // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): the stages would start after the host's
+      // drain began, so the final flush stores durably and the stages are deliberately not run.
+      await _flushCoreAsync(FlushTrigger.Manual, skipLifecycle: true, ct: cancellationToken, waitForInFlight: true);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogErrorFlushingOnDisposal(_logger, ex);
     }
-
-    _disposed = true;
-    GC.SuppressFinalize(this);
-
-    LogStrategyDisposed(_logger);
   }
 
   // LoggerMessage definitions
