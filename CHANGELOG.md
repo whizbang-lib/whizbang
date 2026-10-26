@@ -348,7 +348,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the same suffix-stripping rule as the EF Core generator (`OrderSummaryModel` becomes `wh_per_order_summary`),
   through one shared helper, so one model has one table on either driver. Two perspectives of one model now share that
   table on the Dapper driver too. **Existing tables are renamed in place at the next start, keeping their rows:**
-  migration 241 adds `wh_follow_perspective_table_renames`, which both drivers call before they create the perspective
+  migration 243 adds `wh_follow_perspective_table_renames`, which both drivers call before they create the perspective
   tables. It renames the table the registry recorded for the model, or on the Dapper driver the table still under the
   name a released build gave it (that build never wrote the registry, so the generated registry payload now carries
   each perspective's former name), to the new name, and with it every index on it whose name carries the old table

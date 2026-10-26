@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 241_PerspectiveTablesFollowTheirModelBeforeCreate.sql
+-- Migration: 243_PerspectiveTablesFollowTheirModelBeforeCreate.sql
 -- Date: 2026-10-24
 -- Description: A perspective table whose generated name changed is renamed in place before the perspective tables
 --              are created, so its rows are kept (#1719).
@@ -31,7 +31,7 @@
 --              No source table, no row. The registry row itself is left for the reconcile, which still runs after
 --              the pass and records the new name. On a fresh database nothing exists and nothing is returned.
 --
---              Number 241: 239 and 240 are taken by an open branch.
+--              Number 243: 239 to 242 are taken by open branches.
 --
 -- Dependencies: 211 (last word of reconcile_perspective_registry, which keys wh_perspective_registry the same way)
 -- Objects: wh_follow_perspective_table_renames
