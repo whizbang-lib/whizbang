@@ -55,6 +55,8 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
 public sealed partial class InboxDispatchWorker : BackgroundService {
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxChannelWriter _inboxChannelWriter;

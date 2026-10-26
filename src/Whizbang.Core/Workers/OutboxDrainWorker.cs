@@ -40,6 +40,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PoisonOutboxLoopSqlTests.cs</tests>
 public sealed partial class OutboxDrainWorker : BackgroundService {
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IOutboxDrainChannel _drainChannel;

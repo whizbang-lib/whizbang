@@ -35,6 +35,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>internals/apply-batch-strategy</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowApplyBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
+  internal DetachedLifecycleWork IdleSweeps { get; } = new();
+
   private readonly ApplyBulkFlushCallback _flush;
   private readonly SlidingWindowApplyOptions _options;
   private readonly TimeProvider _timeProvider;

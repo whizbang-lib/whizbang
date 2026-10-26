@@ -23,6 +23,9 @@ namespace Whizbang.Core.Messaging;
 public sealed class DetachedLifecycleWork {
   private readonly ConcurrentDictionary<Task, byte> _inFlight = new();
 
+  /// <summary>Raised when a drain starts waiting for invocations still running, with how many there are.</summary>
+  public event System.Action<int>? Waiting;
+
   /// <summary>The number of detached invocations started and not yet finished.</summary>
   public int InFlightCount => _inFlight.Count;
 
@@ -46,8 +49,13 @@ public sealed class DetachedLifecycleWork {
   /// <param name="cancellationToken">Stops the wait; the invocations themselves keep running.</param>
   /// <exception cref="System.OperationCanceledException">The wait was canceled before every invocation finished.</exception>
   public async Task DrainAsync(CancellationToken cancellationToken) {
+    var announced = false;
     while (!_inFlight.IsEmpty) {
       var pending = _inFlight.Keys;
+      if (!announced) {
+        announced = true;
+        Waiting?.Invoke(pending.Count);
+      }
       await Task.WhenAll(pending).WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       cancellationToken.ThrowIfCancellationRequested();
       foreach (var finished in pending) {

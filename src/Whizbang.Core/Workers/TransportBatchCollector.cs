@@ -26,6 +26,8 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer#batch-collector</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs</tests>
 public sealed class TransportBatchCollector<T> : IAsyncDisposable {
+  internal Messaging.DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   private readonly TransportBatchOptions _options;
   private readonly Func<IReadOnlyList<T>, Task> _flushCallback;
 

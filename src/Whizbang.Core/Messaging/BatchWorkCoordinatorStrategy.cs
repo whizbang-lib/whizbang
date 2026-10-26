@@ -30,6 +30,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <docs>data/work-coordinator-strategies</docs>
 public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  internal DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   // Reported as the strategy dimension on every metric this type emits, and passed to the
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "batch";

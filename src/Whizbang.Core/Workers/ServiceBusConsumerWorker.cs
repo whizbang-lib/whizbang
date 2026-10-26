@@ -73,6 +73,7 @@ public partial class ServiceBusConsumerWorker(
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
   private readonly ConcurrentBag<Task> _detachedTasks = [];
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly ILogger<ServiceBusConsumerWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly OrderedStreamProcessor _orderedProcessor = ArgumentGuard.NotNull(orderedProcessor);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;

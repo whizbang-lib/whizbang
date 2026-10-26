@@ -48,6 +48,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>extending/internals/event-ordering-invariant</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
+  internal Messaging.DetachedLifecycleWork IdleSweeps { get; } = new();
   private static readonly Guid _defaultStreamKey = Guid.Empty;
 
   private readonly InboxBulkFlushCallback _flush;

@@ -27,6 +27,8 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
 public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  internal DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   // Reported as the strategy dimension on every metric this type emits, and passed to the
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "interval";

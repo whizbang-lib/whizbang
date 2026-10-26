@@ -18,6 +18,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Shutdown;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -32,6 +33,82 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <docs>workers/perspective-worker#security-context</docs>
 public class PerspectiveWorkerSecurityContextTests {
+
+  #region Shutdown
+
+  /// <summary>
+  /// #1721: the perspective worker kept its detached stages in a bag only tests drained. Its stop now waits for them, so
+  /// the host does not dispose the container while one still runs.
+  /// </summary>
+  [Test]
+  public async Task ADetachedStage_InFlight_WorkerStopWaitsForItBeforeTheContainerIsDisposedAsync() {
+    var streamId = Guid.CreateVersion7();
+    var eventStore = new FakeEventStore();
+    eventStore.AddEvent(streamId, Guid.CreateVersion7(), new TestEvent(Guid.CreateVersion7(), "test-data"), "user-1");
+    var held = new HeldWork();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork { StreamId = streamId, PerspectiveName = "Test.FakePerspective", LastProcessedEventId = null, PartitionNumber = 1 }
+    ];
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry());
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddSingleton<ProviderLiveness>();
+    services.AddScoped<IReceptorInvoker>(sp => new HeldStageInvoker(held, LifecycleStage.PrePerspectiveDetached, sp));
+    var serviceProvider = services.BuildServiceProvider();
+    var harness = new PerspectiveWorkerTestHarness();
+    var options = new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 };
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
+      completionStrategy: new InstantCompletionStrategy(logger: NullLogger<InstantCompletionStrategy>.Instance),
+      eventTypeProvider: new TestEventTypeProvider([typeof(TestEvent)]),
+      syncSignaler: new LocalSyncSignaler(NullLogger<LocalSyncSignaler>.Instance),
+      syncEventTracker: new SyncEventTracker(),
+      logger: NullLogger<PerspectiveWorker>.Instance,
+      snapshotStore: NullPerspectiveSnapshotStore.Instance,
+      streamLocker: NullPerspectiveStreamLocker.Instance,
+      streamLockOptions: Options.Create(new PerspectiveStreamLockOptions()),
+      streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions()),
+      processedEventCacheObserver: NullProcessedEventCacheObserver.Instance,
+      workChannelWriter: new WorkChannelWriter(),
+      rewindOptions: Options.Create(new PerspectiveRewindOptions()),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
+      perspectiveDrainChannel: harness.DrainChannel,
+      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      perspectiveNotificationListener: new NoOpWorkNotificationListener(),
+      governor: PerspectiveWorker.CreateDefaultGovernor(options));
+    await worker.StartAsync(CancellationToken.None);
+    foreach (var work in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(work, CancellationToken.None);
+    }
+    await held.Entered.Task;
+
+    // What a stopping host does: stop the hosted service, then dispose the container
+    var waited = await HostShutdown.StopWaitsForAsync(async () => {
+      await worker.StopAsync(CancellationToken.None);
+      await serviceProvider.DisposeAsync();
+    }, worker.DetachedWork, held);
+
+    await Assert.That(waited).IsTrue()
+      .Because("the detached stage resolves its receptor from a scope of the container the host disposes after the stop");
+    await Assert.That(await held.Finished.Task).IsTrue();
+  }
+
+  #endregion
 
   #region Security Context Tests for _establishSecurityContextAsync
 

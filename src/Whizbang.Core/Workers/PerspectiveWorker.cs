@@ -106,6 +106,7 @@ public partial class PerspectiveWorker(
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
   private readonly ConcurrentBag<Task> _detachedTasks = [];
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
     storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);

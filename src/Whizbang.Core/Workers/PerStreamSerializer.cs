@@ -40,6 +40,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>internals/stream-affinity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerStreamSerializerTests.cs</tests>
 public sealed class PerStreamSerializer<T> : IAsyncDisposable {
+  internal Messaging.DetachedLifecycleWork IdleSweeps { get; } = new();
   private readonly Func<T, Guid?> _streamIdSelector;
   private readonly Func<T, CancellationToken, Task> _processor;
   private readonly PerStreamSerializerOptions _options;
