@@ -29,28 +29,7 @@ runs:
         retry_wait_seconds: ${{ inputs.retry-wait-seconds }}
         shell: bash
         command: |
-          # Read SDK version from global.json to determine the correct feature band
-          # This avoids installing a broken SDK from a newer feature band
-          if [ -f "global.json" ]; then
-            SDK_VERSION=$(jq -r '.sdk.version // empty' global.json 2>/dev/null || echo "")
-          fi
-
-          if [ -n "$SDK_VERSION" ]; then
-            # Convert version (e.g., "10.0.100") to feature band channel (e.g., "10.0.1xx")
-            FEATURE_BAND="${SDK_VERSION%[0-9][0-9]}"xx
-            echo "Installing .NET SDK feature band: $FEATURE_BAND (from global.json version $SDK_VERSION)"
-            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$FEATURE_BAND" --install-dir "$HOME/.dotnet"
-          else
-            # Fall back to channel-based install from input
-            DOTNET_CHANNEL="${{ inputs.dotnet-version }}"
-            DOTNET_CHANNEL="${DOTNET_CHANNEL%.x}"  # Remove trailing .x if present
-            echo "Installing .NET SDK channel: $DOTNET_CHANNEL"
-            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
-          fi
-
-          # Add to PATH for subsequent steps
-          echo "$HOME/.dotnet" >> $GITHUB_PATH
-          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
-
-          # Verify installation
-          "$HOME/.dotnet/dotnet" --version
+          # Installs global.json's SDK feature band (or the dotnet-version input when global.json names none),
+          # checking each step: a failed download or install fails with an ::error:: naming its cause instead of
+          # surfacing later as exit 127 from a missing dotnet (#1773). Adds the SDK to PATH and sets DOTNET_ROOT.
+          pwsh -NoProfile -File "${{ github.action_path }}/../../scripts/Install-DotnetSdk.ps1" -FallbackChannel "${{ inputs.dotnet-version }}"
