@@ -584,6 +584,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A build with nothing changed no longer recompiles a project with pinned types on Windows (#1762).** The
+  generator wrote `.whizbang/pinned-type-ledger.json` with the OS line ending, so on Windows the extracted ledger
+  (CRLF) differed from the committed one (LF), was rewritten after every build, and as a compile input made the next
+  build recompile the project and everything that references it. The ledger is now written with LF on every OS.
 - **The migration tool reads back the decision file it generates for a Windows project path, and a blank docs
   path no longer throws on Windows (#1764).** `whizbang-migrate apply --generate-decision-file` wrote the commented
   decision file by interpolating values into a JSON template, so the backslashes of a path such as `C:\Users\me\App`

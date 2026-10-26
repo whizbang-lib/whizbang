@@ -141,6 +141,8 @@ internal sealed class PinnedTypeLedger {
 
   private static readonly JsonSerializerOptions _writeOptions = new() {
     WriteIndented = true,
+    // LF on every OS, as the file is committed; the OS default would rewrite it on Windows after every build.
+    NewLine = "\n",
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     // The ledger is a file-destined, human-reviewed lockfile — never embedded in HTML — so use the relaxed
     // encoder. The default HTML-safe encoder escapes '+' (and angle brackets and ampersand) to a 6-char unicode

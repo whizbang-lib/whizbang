@@ -59,6 +59,20 @@ public class PinnedTypeLedgerGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  public async Task Generator_WritesTheLedgerWithLfLineEndingsOnEveryOsAsync() {
+    // The ledger is committed with LF. Indented JSON defaults to the OS line ending, so on Windows the extracted
+    // ledger differed from the checkout, was rewritten after every build, and recompiled the project on the next
+    // no-op build (#1762). Only fails on a Windows runner, where the default line ending is CRLF.
+    var result = GeneratorTestHelper.RunGenerator<PinnedTypeLedgerGenerator>(TWO_PINNED_TYPES);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
+
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains("\n");
+    await Assert.That(generated).DoesNotContain("\r");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
   public async Task Generator_NoExistingLedger_BootstrapsAllPinnedTypesAsync() {
     var result = GeneratorTestHelper.RunGenerator<PinnedTypeLedgerGenerator>(TWO_PINNED_TYPES);
     var generated = GeneratorTestHelper.GetGeneratedSource(result, "PinnedTypeLedger.g.cs");
