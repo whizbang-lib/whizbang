@@ -547,6 +547,7 @@ Whizbang:Workers:Maintenance:SettledFoldIdleDays
 Whizbang:Workers:Maintenance:StuckRowSentinelEnabled
 Whizbang:Workers:Maintenance:StuckRowSentinelLimit
 Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
+Whizbang:Workers:Maintenance:TableRewriteStrategy
 Whizbang:Workers:OutboxBatch:IdleEvictionWindow
 Whizbang:Workers:OutboxBatch:IdleSweepInterval
 Whizbang:Workers:OutboxBatch:MaxSize

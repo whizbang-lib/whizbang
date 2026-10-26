@@ -94,6 +94,17 @@ Each slice is one red-then-green increment and its own commit.
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
    NotAllowlisted fails startup" (WS-8 slice 3). Docs:
    `operations/configuration/configuration-reference.md` (Maintenance section).
+   **Status (2026-10-25):** done on branch `feat/1742-1750-rewrite-provisioning` (#1742). `TableRewriteStrategy`
+   (`Auto`, `PgSqueeze`, `VacuumFull`, `None`; default `Auto`) on `MaintenanceWorkerOptions`, resolved each run by
+   `TableRewriteStrategyResolver` against `AllowTableRewrite` and whether pg_squeeze is usable (Ready or Provisionable
+   on every probed database), one test per cell. Per decision 1, `Auto` resolves to `VacuumFull` when permitted and
+   otherwise detects and reports; it never picks pg_squeeze, and names the opt-in when pg_squeeze is usable.
+   `PgSqueeze` is not gated by `AllowTableRewrite` (choosing it is the opt-in) and never falls back to `VacuumFull`.
+   It carries `[RequiresPostgresExtension("pg_squeeze", Feature = "Online table rewrite")]`, the library's first
+   setting-driven requirement: explicit `PgSqueeze` on a server that does not allowlist or preload it fails start with
+   the fix. No pg_squeeze rewriter exists until slice 3 (#1743): the step skips with
+   `...; no table rewriter is registered for it, so requested tables stay queued`. With a capability registry the
+   `Rewrite` step depends on the `Capabilities` step. The `PgRepack` value is slice 5.
 3. **PgSqueeze strategy, driven by maintenance.** The maintenance cycle (idle-gated by
    `HousekeepingCoordinator`) takes requested tables from `wh_tables_needing_rewrite()` largest
    ratio first and calls `squeeze.squeeze_table(schema, table)` on its own connection (see

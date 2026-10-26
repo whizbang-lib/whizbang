@@ -231,11 +231,14 @@ public static class WorkerPipelineExtensions {
     // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
       new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
+    // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
       new Whizbang.Core.Startup.TableRewriteStartupStep(
         sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetServices<ITableRewriter>(),
-        TableRewriteStrategies.VACUUM_FULL,
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
     // The work tables are vacuumed when an instance acquires the maintainer duty, never merely because
     // it started (#1351). The holder loop runs it; without role assignment nothing acquires the duty.

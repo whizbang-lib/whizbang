@@ -145,6 +145,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **`Whizbang:Workers:Maintenance:TableRewriteStrategy`** (#1742): `Auto` (default), `PgSqueeze`, `VacuumFull` or
+  `None`, resolved against `AllowTableRewrite` by the post-ready `Rewrite` step. `Auto` rewrites with `VACUUM FULL`
+  when `AllowTableRewrite` permits it (the behavior earlier releases had) and otherwise only detects and reports; it
+  never starts an online rewrite, and names the opt-in when pg_squeeze is usable. `PgSqueeze` requires the pg_squeeze
+  extension, so an explicit choice on a server that does not allow it stops start with the fix; it never falls back
+  to `VACUUM FULL`, and this version has no pg_squeeze rewriter yet, which the step reports. `None` rewrites nothing.
 - **Required capabilities are provisioned before the verdict** (#1750): between the probe and the verdict, the
   `Capabilities` step creates every capability a requirement in force names that is Provisionable, and upgrades
   every one that is Ready with a newer version available, so an explicit requirement on a capability the library
