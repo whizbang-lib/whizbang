@@ -135,6 +135,92 @@ jobs:
           fi
 
   # ============================================================================
+  # Runner selection (#1762)
+  #
+  # Chooses where the build, test and analysis jobs run, per job class: an idle machine in the team's
+  # self-hosted pool (trusted runs only), then Blacksmith when the CI_BLACKSMITH_RUNNER variable names a
+  # label, then ubuntu-latest. The rules are .github/scripts/Select-CiRunner.ps1, tested by script-tests;
+  # setup, the label convention and the variables are in .github/WORKFLOWS.md, "Runner selection".
+  #
+  # This job can never hold CI up or turn it red. Every step continues on error, the job does too, it is not
+  # in ci-result's needs, and every output defaults to "ubuntu-latest" when the step wrote nothing. Each
+  # consumer repeats that default (`|| '"ubuntu-latest"'`), so a picker that did not run at all still
+  # leaves every job on a GitHub-hosted runner. Without the app secrets and the variables, every class is
+  # GitHub-hosted, exactly as before the picker existed.
+  # ============================================================================
+
+  pick-runner:
+    name: Plan · Pick runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read   # this repository's queued jobs, counted against the pool and the Blacksmith limit
+    env:
+      HAS_POOL_APP: ${{ secrets.RUNNER_POOL_APP_ID != '' && secrets.RUNNER_POOL_APP_PRIVATE_KEY != '' }}
+    outputs:
+      any-os: ${{ steps.pick.outputs.any-os || '"ubuntu-latest"' }}
+      linux: ${{ steps.pick.outputs.linux || '"ubuntu-latest"' }}
+      compile: ${{ steps.pick.outputs.compile || '"ubuntu-latest"' }}
+      analyze: ${{ steps.pick.outputs.analyze || '"ubuntu-latest"' }}
+      linux-docker: ${{ steps.pick.outputs.linux-docker || '"ubuntu-latest"' }}
+    steps:
+      - name: Checkout the pipeline scripts
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+
+      # Reads the organization's runners. Absent secrets skip it, and the pool tier with it. owner without
+      # repositories asks for the installation's organization permission only.
+      - name: Create the runner-pool app token
+        id: app-token
+        if: env.HAS_POOL_APP == 'true'
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RUNNER_POOL_APP_ID }}
+          private-key: ${{ secrets.RUNNER_POOL_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-organization-self-hosted-runners: read
+
+      - name: Pick a runner for each job class
+        id: pick
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          RUNNER_POOL_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+          CI_BLACKSMITH_RUNNER: ${{ vars.CI_BLACKSMITH_RUNNER }}
+          CI_BLACKSMITH_RUNNER_ANY_OS: ${{ vars.CI_BLACKSMITH_RUNNER_ANY_OS }}
+          CI_BLACKSMITH_RUNNER_LINUX: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX }}
+          CI_BLACKSMITH_RUNNER_COMPILE: ${{ vars.CI_BLACKSMITH_RUNNER_COMPILE }}
+          CI_BLACKSMITH_RUNNER_ANALYZE: ${{ vars.CI_BLACKSMITH_RUNNER_ANALYZE }}
+          CI_BLACKSMITH_RUNNER_LINUX_DOCKER: ${{ vars.CI_BLACKSMITH_RUNNER_LINUX_DOCKER }}
+          CI_BLACKSMITH_FORKS: ${{ vars.CI_BLACKSMITH_FORKS }}
+          CI_BLACKSMITH_MAX_QUEUED: ${{ vars.CI_BLACKSMITH_MAX_QUEUED }}
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PRIVATE: ${{ github.event.repository.private }}
+          ORGANIZATION: ${{ github.repository_owner }}
+          GROUP: ${{ vars.RUNNER_POOL_GROUP || 'Default' }}
+          DISABLED: ${{ vars.RUNNER_POOL_DISABLED }}
+          RUN_ID: ${{ github.run_id }}
+        run: >-
+          ./.github/scripts/Select-CiRunner.ps1 -EventName "$env:EVENT" -Repository "$env:REPOSITORY"
+          -HeadRepository "$env:HEAD_REPOSITORY" -Actor "$env:ACTOR" -PrAuthor "$env:PR_AUTHOR"
+          -RepositoryPrivate "$env:PRIVATE" -Organization "$env:ORGANIZATION" -GroupName "$env:GROUP"
+          -RunId "$env:RUN_ID" -Disabled "$env:DISABLED"
+
+  # ============================================================================
   # Queue-validated push optimization
   #
   # The merge queue fast-forwards develop to the EXACT SHA it just ran the full
@@ -668,11 +754,11 @@ jobs:
     # nothing, so skipping there costs nothing, while the publish jobs on a develop push need this
     # job's own success and a skipped one is not a success. Both gates are inert on a push, which
     # is the event those publish jobs run on, so neither can strand a release.
-    needs: [ff-validated, release-pr]
+    needs: [ff-validated, release-pr, pick-runner]
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     permissions:
       contents: read
     steps:
@@ -685,6 +771,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore Dependencies
+        shell: pwsh
         run: dotnet restore --locked-mode
 
       # Whitespace and style only. The analyzers pass would run the third-party analyzers too, and
@@ -692,10 +779,15 @@ jobs:
       # are not on disk yet, so the semantic model is incomplete and those analyzers report
       # findings that do not exist in a real build. The build job enforces them, with warnings
       # as errors, in every project.
+      # pwsh, so the job runs on any runner OS; each exit code is checked, because a pwsh step fails
+      # only on its last command's.
       - name: Verify Code Formatting
+        shell: pwsh
         run: |
           dotnet format whitespace --verify-no-changes --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet format style --verify-no-changes --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       # Fails on NEW unqualified service-schema table refs inside migration function bodies
       # (the multi-schema search_path bug class). Existing debt is baselined; see
@@ -715,11 +807,11 @@ jobs:
   # names any project that compiled and the input that made it. Runs beside the build, off its critical path.
   noop-rebuild:
     name: Build · No-op rebuild does no work
-    needs: [ff-validated, release-pr]
+    needs: [ff-validated, release-pr, pick-runner]
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -760,6 +852,8 @@ jobs:
     if: >-
       ${{ !failure() && !cancelled() && needs.ff-validated.outputs.skip != 'true' &&
       needs.release-pr.outputs.skip != 'true' }}
+    # Not routed through pick-runner: its thresholds were measured on GitHub-hosted runners, and a timing
+    # taken on other hardware would compare against the wrong numbers.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -791,7 +885,7 @@ jobs:
 
   build:
     name: Build · Compile
-    needs: [version, changes, release-pr, ff-validated]
+    needs: [version, changes, release-pr, ff-validated, pick-runner]
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
@@ -811,6 +905,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
     with:
+      runs-on: ${{ needs.pick-runner.outputs.compile }}
       version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
@@ -822,18 +917,19 @@ jobs:
   # section below for the verification that replaces them on the publish path.
   unit-tests:
     name: Test · Unit
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
+      runs-on: ${{ needs.pick-runner.outputs.any-os }}
       # Run the pre-built output; each test module collects its own line and branch coverage
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
     name: Test · PostgreSQL
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -873,13 +969,14 @@ jobs:
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       artifact-name: build-postgres-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
       project-filter: ${{ matrix.projectFilter }}
       test-filter: ${{ matrix.testFilter }}
       shard-name: ${{ matrix.shard }}
 
   inmemory-integration:
     name: Test · InMemory
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -887,10 +984,11 @@ jobs:
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-inmemory-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   rabbitmq-integration:
     name: Test · RabbitMQ
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -898,13 +996,14 @@ jobs:
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-rabbitmq-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   servicebus-integration:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
     name: Test · Service Bus
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -918,12 +1017,13 @@ jobs:
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-servicebus-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
       project-filter: ${{ matrix.shard == 'whizbang' && 'Whizbang\.Transports\.AzureServiceBus' || 'ECommerce\.AzureServiceBus' }}
       shard-name: ${{ matrix.shard }}
 
   azureblob-integration:
     name: Test · Azure Blob
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -931,9 +1031,10 @@ jobs:
     uses: ./.github/workflows/reusable-test-azureblob.yml
     with:
       artifact-name: build-azureblob-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
   general-integration:
     name: Test · Integration (general)
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
@@ -941,6 +1042,7 @@ jobs:
     uses: ./.github/workflows/reusable-test-integration.yml
     with:
       artifact-name: build-integration-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.linux-docker }}
 
   component-tests:
     name: Test · Component
@@ -948,13 +1050,14 @@ jobs:
     # Like every suite it must also be in the needs of ci-result, test-results, publish-test-status and
     # notify-cancelled, in Test-CiResult.ps1's suite list, and in both publish conditions;
     # .github/scripts/Test-WhizbangTestType.ps1 (script-tests) fails on any list that misses it.
-    needs: [build, queue-validated, ff-validated, release-pr]
+    needs: [build, queue-validated, ff-validated, release-pr, pick-runner]
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' && needs.release-pr.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-component.yml
     with:
       artifact-name: build-component-${{ github.run_id }}  # this suite's slice (Get-TestSlice.ps1)
+      runs-on: ${{ needs.pick-runner.outputs.any-os }}
 
   quality:
     name: Analyze · Quality
@@ -972,7 +1075,7 @@ jobs:
     # dependabot-lockfiles.yml pushes has the GitHub App as its actor, so it gets full
     # secrets and runs quality like any other pull request.
     # release-pr is needed for its coverage-run-id only; quality is never skipped by it (see below).
-    needs: [changes, queue-validated, ff-validated, release-pr]
+    needs: [changes, queue-validated, ff-validated, release-pr, pick-runner]
     # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
     # skipped on every event but their own (push / merge_group), and a skipped need would
     # otherwise poison the implicit success() check and silently skip quality everywhere. The
@@ -1001,6 +1104,7 @@ jobs:
       pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
     with:
+      runs-on: ${{ needs.pick-runner.outputs.analyze }}
       # Set when the suites yielded to another run over the same tree (a release PR's push run, or
       # the release-branch run behind a main push): the coverage to analyze lives there.
       coverage-run-id: ${{ needs.release-pr.outputs.coverage-run-id }}
@@ -1109,7 +1213,11 @@ jobs:
     name: Test · Pipeline scripts
     # The gate's decision logic is code that decides what merges, so it has tests of its own. Cheap
     # (seconds, no build) and run on every event, so a broken rule can never reach a protected branch.
-    runs-on: ubuntu-latest
+    needs: [pick-runner]
+    # !cancelled(): the picker never decides whether this runs, only where. any-os: every step is pwsh
+    # or an action; the few tests that drive a POSIX shell skip themselves on Windows.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.pick-runner.outputs.any-os || '"ubuntu-latest"') }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1126,11 +1234,20 @@ jobs:
         uses: ./.github/actions/setup-dotnet-retry
         with:
           dotnet-version: '10.0.x'
+      # update, not install: on a team machine the tool may already be there from an earlier job, and
+      # update installs it when it is not.
       - name: Install dotnet-coverage
-        run: dotnet tool install --global dotnet-coverage --version 18.12.0
+        shell: pwsh
+        run: dotnet tool update --global dotnet-coverage --version 18.12.0
+      # GitHub-hosted images carry Pester 5; a team machine may have only the Pester 3 that ships with
+      # Windows PowerShell, which pwsh can also see. Install 5 for this user when it is missing.
       - name: Run the pipeline script tests
         shell: pwsh
         run: |
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -ge ([version]'5.5'))) {
+            Install-Module Pester -MinimumVersion 5.5 -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -MinimumVersion 5.5
           $c = New-PesterConfiguration
           $c.Run.Path = '.github/scripts/tests'
           $c.Run.Exit = $true

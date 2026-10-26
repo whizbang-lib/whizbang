@@ -7,6 +7,13 @@
 # (Test-CiImagePulls.ps1) that fails a job pulling a Docker Hub image the manifest does not list.
 
 BeforeAll {
+  # Pester mocks only a command that exists, and a runner may lack these tools (a Windows machine with no Docker
+  # or GitHub CLI). A stand-in lets the mocks below attach; it throws if a test ever reaches it unmocked.
+  foreach ($tool in 'docker') {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+      Set-Item -Path "function:global:$tool" -Value ([scriptblock]::Create("throw '$tool is not installed'"))
+    }
+  }
   $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
   $script:Scripts = Join-Path $Root '.github' 'scripts'
   Import-Module (Join-Path $Root 'scripts' 'lib' 'CiImages.psm1') -Force
@@ -56,6 +63,30 @@ Describe 'Test-CiImageHasRegistry' {
     @{ Image = 'localhost/x:1'; Expected = $true }
   ) {
     Test-CiImageHasRegistry -Image $Image | Should -Be $Expected
+  }
+}
+
+Describe 'Test-DockerAvailable' {
+  # Run-Tests.ps1 cleans up test containers after every run; on a runner with no Docker (a Windows machine
+  # in the self-hosted pool runs the unit and component suites) that cleanup must be skipped, not fail a
+  # run whose tests all passed.
+  It 'is <Expected> when docker is <Case> on PATH' -ForEach @(
+    @{ Case = 'absent'; Fake = $false; Expected = $false }
+    @{ Case = 'present'; Fake = $true; Expected = $true }
+  ) {
+    $bin = Join-Path $TestDrive "path-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $bin | Out-Null
+    if ($Fake) {
+      if ($IsWindows) { Set-Content -LiteralPath (Join-Path $bin 'docker.cmd') -Value '@exit /b 0' }
+      else { Set-Content -LiteralPath (Join-Path $bin 'docker') -Value "#!/bin/sh`nexit 0"; chmod +x (Join-Path $bin 'docker') }
+    }
+    $saved = $env:PATH
+    try {
+      $env:PATH = $bin
+      Test-DockerAvailable | Should -Be $Expected
+    } finally {
+      $env:PATH = $saved
+    }
   }
 }
 

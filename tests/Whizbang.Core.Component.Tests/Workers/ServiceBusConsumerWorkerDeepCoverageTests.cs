@@ -1222,7 +1222,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_WithValidTraceParent_CreatesActivityAsync() {
     // Arrange - envelope with a valid TraceParent in hop.
     // Without a registered listener StartActivity returns null and the whole path this test is

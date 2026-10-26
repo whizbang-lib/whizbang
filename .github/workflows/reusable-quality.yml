@@ -14,6 +14,13 @@ name: Quality (Reusable)
 on:
   workflow_call:
     inputs:
+      runs-on:
+        description: >-
+          Where the job runs, as JSON: a label ("ubuntu-latest") or a label set (["self-hosted","whizbang","Linux","X64"]).
+          CI passes the runner picker's choice (.github/scripts/Select-CiRunner.ps1); every other caller gets ubuntu-latest.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       coverage-run-id:
         description: >-
           Run whose suites produced the coverage to analyze, when this run's suites yielded to it
@@ -36,7 +43,7 @@ permissions:
 jobs:
   quality:
     name: Sonar and coverage
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     # pull-requests: write lets the uncovered-new-lines gate comment on the PR; the caller must grant it too.
     permissions:
       contents: read

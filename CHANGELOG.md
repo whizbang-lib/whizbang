@@ -621,6 +621,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The `Gate · Pipeline owner` job runs from the pull request's own `ci.yml`, so a pull request could
   delete it. PR intake now runs the same check from the base branch when a pull request enters the merge
   queue, and takes a pull request that fails it out of the queue with a comment saying why.
+- **Contributing: CI can run on team machines or Blacksmith, and falls back to GitHub-hosted runners
+  (#1762).** A new `Plan · Pick runners` job chooses, per job class, an idle machine in the organization's
+  self-hosted pool (trusted runs only), then Blacksmith when the `CI_BLACKSMITH_RUNNER` variable names a
+  label, then `ubuntu-latest`. The build, format, unit, component, integration and analysis jobs follow
+  it; pack, publish, release and gate jobs stay on GitHub-hosted runners, as does the compile of a push
+  run. Format, the no-op rebuild check, the unit, component and pipeline script tests run on any OS
+  and architecture (pwsh steps, the framework-dependent build run with `dotnet test --test-modules`,
+  each project's coverage source roots pointed at the job's own checkout); compile stays Linux X64 and
+  the container suites stay on Linux with Docker. Any missing secret, unset variable, API error or timeout falls back, and the picker can never
+  fail the gate; with nothing configured every job runs where it did before. Setup, the label
+  convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
 - **A Windows build no longer rewrites a committed pinned-type ledger whose content did not change (#1769).** The

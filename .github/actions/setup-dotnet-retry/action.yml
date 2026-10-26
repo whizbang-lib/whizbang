@@ -21,7 +21,11 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Linux and macOS install through bash and .github/scripts/Install-DotnetSdk.ps1. Windows has no bash on a
+    # team machine's runner PATH (or only the WSL stub), so it takes the pwsh step below, which chooses the
+    # channel the same way (.github/scripts/Install-DotNetSdkWindows.ps1, tested by Test · Pipeline scripts).
     - name: Setup .NET (with retry)
+      if: runner.os != 'Windows'
       uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
       with:
         timeout_minutes: 5
@@ -33,3 +37,17 @@ runs:
           # checking each step: a failed download or install fails with an ::error:: naming its cause instead of
           # surfacing later as exit 127 from a missing dotnet (#1773). Adds the SDK to PATH and sets DOTNET_ROOT.
           pwsh -NoProfile -File "${{ github.action_path }}/../../scripts/Install-DotnetSdk.ps1" -FallbackChannel "${{ inputs.dotnet-version }}"
+
+    - name: Setup .NET on Windows (with retry)
+      if: runner.os == 'Windows'
+      uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+      env:
+        DOTNET_VERSION_INPUT: ${{ inputs.dotnet-version }}
+        INSTALL_SCRIPT: ${{ github.action_path }}/../../scripts/Install-DotNetSdkWindows.ps1
+      with:
+        timeout_minutes: 5
+        max_attempts: ${{ inputs.max-attempts }}
+        retry_wait_seconds: ${{ inputs.retry-wait-seconds }}
+        shell: pwsh
+        command: |
+          & $env:INSTALL_SCRIPT -FallbackVersion $env:DOTNET_VERSION_INPUT -InstallDir (Join-Path $env:USERPROFILE '.dotnet')

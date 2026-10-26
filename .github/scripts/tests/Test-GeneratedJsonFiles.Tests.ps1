@@ -17,7 +17,8 @@ Describe 'New-ConsumerProjectXml' {
   }
 
   It 'imports the package props first and the package targets last, as a package reference does' {
-    $imports = @($Xml.Project.Import.Project)
+    # Separators normalized: Join-Path writes backslashes on Windows, which MSBuild reads the same.
+    $imports = @($Xml.Project.Import.Project | ForEach-Object { $_ -replace '\\', '/' })
     $imports[0] | Should -Be '/repo/src/Whizbang.Generators/build/SoftwareExtravaganza.Whizbang.Generators.props'
     $imports[-1] | Should -Be '/repo/src/Whizbang.Generators/build/SoftwareExtravaganza.Whizbang.Generators.targets'
     $Xml.Project.ChildNodes[0].Name | Should -Be 'Import'

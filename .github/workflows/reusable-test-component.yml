@@ -6,6 +6,13 @@ name: Component Tests (Reusable)
 on:
   workflow_call:
     inputs:
+      runs-on:
+        description: >-
+          Where the job runs, as JSON: a label ("ubuntu-latest") or a label set (["self-hosted","whizbang","Linux","X64"]).
+          CI passes the runner picker's choice (.github/scripts/Select-CiRunner.ps1); every other caller gets ubuntu-latest.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       artifact-name:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
@@ -24,12 +31,18 @@ permissions:
 jobs:
   component-tests:
     name: Run suite
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs-on || '"ubuntu-latest"') }}
     timeout-minutes: 20
 
     steps:
+      # This job may run on any OS, on a GitHub-hosted runner or a team machine that is not wiped
+      # between jobs (.github/WORKFLOWS.md, "Runner selection"). The checkout's default clean
+      # (git clean -ffdx) removes the previous job's downloaded build and TestResults first, so no
+      # earlier report can be counted or uploaded here. Every step below is pwsh or an action.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: true
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
@@ -42,29 +55,40 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
 
+      # The build's coverage source-root mappings name the build machine's checkout; a runner that
+      # checked out anywhere else would collect empty reports. Point them here.
+      - name: Point coverage at this checkout
+        if: inputs.artifact-name != ''
+        shell: pwsh
+        run: ./.github/scripts/Update-CoverageSourceRoots.ps1
+
       - name: Cache NuGet packages
         if: inputs.artifact-name == ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
           restore-keys: |
-            ${{ runner.os }}-nuget-
+            ${{ runner.os }}-${{ runner.arch }}-nuget-
 
       - name: Restore Dependencies
         if: inputs.artifact-name == ''
+        shell: pwsh
         run: dotnet restore --locked-mode
 
       - name: Build Solution
         if: inputs.artifact-name == ''
+        shell: pwsh
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Component Tests (pre-built)
         if: inputs.artifact-name != ''
+        shell: pwsh
         run: pwsh scripts/Run-Tests.ps1 -Mode Component -Configuration Release -NoBuild -ModuleCoverage -ReportTrx
 
       - name: Run Component Tests (built here)
         if: inputs.artifact-name == ''
+        shell: pwsh
         run: pwsh scripts/Run-Tests.ps1 -Mode Component -ModuleCoverage -Configuration Release -ReportTrx
 
       - name: Upload TRX Results
@@ -79,23 +103,12 @@ jobs:
           retention-days: 1
 
       # An empty report (`<packages />`) is what the collector writes when it skipped every assembly,
-      # and the tests still pass, so the upload alone cannot tell it from real coverage. Warn per
-      # empty report (a project may legitimately load no library assembly) and fail when the whole
-      # leg measured nothing.
+      # and the tests still pass, so the upload alone cannot tell it from real coverage. Warns per
+      # empty report and fails when the whole leg measured nothing (.github/scripts/Test-CoverageCollected.ps1).
       - name: Verify coverage was collected
         if: success()
-        run: |
-          set -euo pipefail
-          mapfile -t REPORTS < <(find tests samples -path "*/TestResults/*.cobertura.xml" -not -path "*/TestResults/*/*" 2>/dev/null)
-          MEASURED=0
-          for r in "${REPORTS[@]}"; do
-            if grep -q "<package " "$r"; then MEASURED=$((MEASURED+1)); else echo "::warning::empty coverage report: $r"; fi
-          done
-          echo "${MEASURED} of ${#REPORTS[@]} coverage reports measured library code"
-          if [ "$MEASURED" -eq 0 ]; then
-            echo "::error::No coverage report measured any library assembly. The collector skipped them all (see the source-roots mapping note in reusable-build.yml)."
-            exit 1
-          fi
+        shell: pwsh
+        run: ./.github/scripts/Test-CoverageCollected.ps1
 
       # Coverage: each test module collects its own with Microsoft.Testing.Platform's dynamic
       # collector (Run-Tests.ps1 -ModuleCoverage), which records branches as well as lines.

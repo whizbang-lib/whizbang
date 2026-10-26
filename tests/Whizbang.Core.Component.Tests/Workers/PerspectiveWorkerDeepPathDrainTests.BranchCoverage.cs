@@ -224,7 +224,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 5 }),
       drainChannel: drainChannel);
     var releases = new System.Collections.Concurrent.ConcurrentQueue<PerspectiveWorker.AffinityGateRelease>();
-    worker.OnStreamAffinityGateReleased += releases.Enqueue;
+    var abandonedReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStreamAffinityGateReleased += release => {
+      releases.Enqueue(release);
+      if (release.Abandoned) {
+        abandonedReleased.TrySetResult();
+      }
+    };
     var batches = 0;
     var secondBatchEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     void onBatchCycleComplete() {
@@ -253,6 +259,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       hang.TrySetResult();
     }
 
+    // The abandoned apply finishes on its own thread after the hang ends: it marks the row in the cooldown cache,
+    // then releases the gate. The second drain starts only after that release, or it can read the row first.
+    await abandonedReleased.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await drainChannel.WriteAsync(streamId, cts.Token);
     await secondBatchEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();

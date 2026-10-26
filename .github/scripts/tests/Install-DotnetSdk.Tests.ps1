@@ -50,7 +50,9 @@ Describe 'Get-SdkChannel' {
   }
 }
 
-Describe 'Invoke-SdkInstall' {
+# This script runs only on Linux and macOS (setup-dotnet-retry sends Windows to Install-DotNetSdkWindows.ps1), and these
+# cases run bash, which a Windows runner lacks or has only as the WSL stub.
+Describe 'Invoke-SdkInstall' -Skip:$IsWindows {
   It 'reports success with the installed version when the installer and dotnet both succeed' {
     $dir = Join-Path $TestDrive 'ok'
     $r = Invoke-SdkInstall -InstallerPath (New-FakeInstaller) -Channel '10.0.1xx' -InstallDir $dir

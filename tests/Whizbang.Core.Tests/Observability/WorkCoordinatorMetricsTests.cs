@@ -45,15 +45,20 @@ public class WorkCoordinatorMetricsTests {
     using var factory = new TestMeterFactory();
     _ = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
     var published = new List<string>();
+    // A listener sees every meter in the process, published from other tests' threads too, so only this factory's
+    // meters count, and the list is locked: concurrent adds to a List can leave a null slot.
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, _) => {
-        if (instrument.Meter.Name == WorkCoordinatorMetrics.METER_NAME) {
-          published.Add(instrument.Name);
+        if (instrument.Meter.Name == WorkCoordinatorMetrics.METER_NAME && factory.CreatedMeters.Contains(instrument.Meter)) {
+          lock (published) {
+            published.Add(instrument.Name);
+          }
         }
       }
     };
 
     listener.Start();
+    listener.Dispose();
 
     await Assert.That(published).IsNotEmpty();
     await Assert.That(published.Where(n =>
