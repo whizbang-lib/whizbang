@@ -32,6 +32,63 @@ public class DetachedLifecycleWorkTests {
   }
 
   [Test]
+  [Arguments("succeeded")]
+  [Arguments("failed")]
+  [Arguments("canceled")]
+  public async Task AnInvocationThatFinishes_WithNoDrainRunning_IsForgottenAsync(string outcome) {
+    var work = new DetachedLifecycleWork();
+    var invocation = new TaskCompletionSource();
+    work.Track(invocation.Task);
+
+    switch (outcome) {
+      case "succeeded":
+        invocation.SetResult();
+        break;
+      case "failed":
+        invocation.SetException(new InvalidOperationException("receptor failed"));
+        break;
+      default:
+        invocation.SetCanceled();
+        break;
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("a running host forgets each invocation as it finishes, so the record holds only what is still running");
+  }
+
+  [Test]
+  public async Task AnInvocationThatHadAlreadyFinished_WhenTracked_IsNotKeptAsync() {
+    var work = new DetachedLifecycleWork();
+
+    work.Track(Task.CompletedTask);
+    work.Track(Task.FromException(new InvalidOperationException("receptor failed")));
+    work.Track(Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("an invocation that finished before it was tracked has nothing left to wait for");
+  }
+
+  [Test]
+  public async Task ManyInvocations_FinishingWhileTheHostRuns_LeaveNothingTrackedAsync() {
+    var work = new DetachedLifecycleWork();
+    var invocations = new List<TaskCompletionSource>();
+    for (var i = 0; i < 1_000; i++) {
+      var invocation = new TaskCompletionSource();
+      invocations.Add(invocation);
+      work.Track(invocation.Task);
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(1_000);
+
+    foreach (var invocation in invocations) {
+      invocation.SetResult();
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("the record does not grow with the number of invocations a host has run, only with those still running");
+  }
+
+  [Test]
   public async Task Drain_WaitsForEveryTrackedInvocation_AndForgetsThemOnceFinishedAsync() {
     var work = new DetachedLifecycleWork();
     var first = new TaskCompletionSource();
