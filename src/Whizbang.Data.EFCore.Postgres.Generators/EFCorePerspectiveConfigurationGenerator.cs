@@ -142,7 +142,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var valid = allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits)).ToList();
     foreach (var collision in PerspectiveTableNaming.Collisions(
-        valid.Select(p => (p.TableName, p.ModelTypeName.Replace("global::", ""), p.ModelLocation)))) {
+        valid.Select(p => (p.TableName, p.ModelTypeName.Replace(GLOBAL_PREFIX, ""), p.ModelLocation)))) {
       context.ReportDiagnostic(collision);
     }
     return [.. valid];
@@ -163,7 +163,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           PerspectiveTableNaming.InvalidManualTableName,
           perspective.ModelLocation,
-          perspective.ModelTypeName.Replace("global::", ""),
+          perspective.ModelTypeName.Replace(GLOBAL_PREFIX, ""),
           perspective.TableName));
       hasError = true;
     } else if (IdentifierValidation.ValidateTableName(perspective.TableName, limits) is not null) {
@@ -417,6 +417,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         IsManualTableName: candidate.TableSource.IsManual);
   }
 
+  private const string GLOBAL_PREFIX = "global::";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
@@ -764,7 +765,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Normalize the type name
     // An enumeration is stored as its underlying number, so its column is typed from that scalar.
     var typeName = (field.EnumScalarType ?? field.TypeName)
-        .Replace("global::", "")
+        .Replace(GLOBAL_PREFIX, "")
         .TrimEnd('?');
 
     return EFCoreColumnTypeFor(typeName);
@@ -821,7 +822,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // If the model says Guid (non-nullable), the shadow property should also be Guid.
     // If the model says Guid? (nullable), the shadow property should also be Guid?.
     var typeName = field.TypeName
-        .Replace("global::", "");
+        .Replace(GLOBAL_PREFIX, "");
 
     return typeName;
   }

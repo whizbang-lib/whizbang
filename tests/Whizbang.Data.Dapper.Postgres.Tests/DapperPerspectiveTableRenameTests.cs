@@ -145,8 +145,8 @@ public class DapperPerspectiveTableRenameTests {
       .IsEqualTo(1);
     var warning = logger.Warnings.SingleOrDefault(m => m.Contains(MODEL, StringComparison.Ordinal));
     await Assert.That(warning).IsNotNull().Because("an operator is told which model has two tables");
-    await Assert.That(warning!).Contains(OLD_TABLE);
-    await Assert.That(warning!).Contains(NEW_TABLE);
+    await Assert.That(warning).Contains(OLD_TABLE);
+    await Assert.That(warning).Contains(NEW_TABLE);
   }
 
   // A released Dapper build: the table named from the perspective class, and no registry row at all (that build never
@@ -202,7 +202,7 @@ public class DapperPerspectiveTableRenameTests {
       .IsEqualTo(1).Because("the second perspective's table is neither dropped nor merged");
     var warning = logger.Warnings.SingleOrDefault(m => m.Contains(OTHER_TABLE, StringComparison.Ordinal));
     await Assert.That(warning).IsNotNull().Because("an operator is told the second table was left, and where its model now lives");
-    await Assert.That(warning!).Contains(NEW_TABLE);
+    await Assert.That(warning).Contains(NEW_TABLE);
   }
 
   [Test]
