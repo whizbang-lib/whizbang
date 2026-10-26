@@ -366,88 +366,100 @@ function ConvertTo-NormalizedSql {
   [OutputType([string])]
   param([Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Sql)
 
-  # A hashtable so the helper below can update it in place.
-  $state = @{ Out = [System.Text.StringBuilder]::new($Sql.Length); PendingSpace = $false; LineHasContent = $false; PendingNewline = $false }
-  $n = $Sql.Length
-  $i = 0
-  while ($i -lt $n) {
-    $c = $Sql[$i]
-    $next = if ($i + 1 -lt $n) { $Sql[$i + 1] } else { [char]0 }
-    if ($c -eq "`n" -or $c -eq "`r") {
-      $i++
-      if ($c -eq "`r" -and $next -eq "`n") { $i++ }
-      $state.PendingSpace = $false
-      if ($state.LineHasContent) { $state.PendingNewline = $true; $state.LineHasContent = $false }
-    } elseif ($c -eq ' ' -or $c -eq "`t" -or $c -eq "`f" -or $c -eq "`v") {
-      $state.PendingSpace = $true
-      $i++
-    } elseif ($c -eq '-' -and $next -eq '-') {
-      while ($i -lt $n -and $Sql[$i] -ne "`n" -and $Sql[$i] -ne "`r") { $i++ }
-    } elseif ($c -eq '/' -and $next -eq '*') {
-      $depth = 0
-      while ($i -lt $n) {
-        $after = if ($i + 1 -lt $n) { $Sql[$i + 1] } else { [char]0 }
-        if ($Sql[$i] -eq '/' -and $after -eq '*') { $depth++; $i += 2 }
-        elseif ($Sql[$i] -eq '*' -and $after -eq '/') { $depth--; $i += 2; if ($depth -eq 0) { break } }
-        else { $i++ }
+  # Compiled, not interpreted: a per-character PowerShell loop costs microseconds a character, and minutes over
+  # the shipped migrations on a Windows runner (#1762).
+  if (-not ('WhizbangReview.SqlNormalizer' -as [type])) { Add-Type -TypeDefinition $script:SqlNormalizerSource }
+  return [WhizbangReview.SqlNormalizer]::Normalize($Sql)
+}
+
+# The C# normalizer, written to compile on every PowerShell 7 (no primary constructors or newer APIs).
+$script:SqlNormalizerSource = @'
+namespace WhizbangReview {
+  public static class SqlNormalizer {
+    public static string Normalize(string sql) {
+      var output = new System.Text.StringBuilder(sql.Length);
+      var pendingSpace = false;
+      var lineHasContent = false;
+      var pendingNewline = false;
+      var n = sql.Length;
+      var i = 0;
+      while (i < n) {
+        var c = sql[i];
+        var next = i + 1 < n ? sql[i + 1] : '\0';
+        int end;
+        if (c == '\n' || c == '\r') {
+          i += c == '\r' && next == '\n' ? 2 : 1;
+          pendingSpace = false;
+          if (lineHasContent) { pendingNewline = true; lineHasContent = false; }
+          continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\f' || c == '\v') { pendingSpace = true; i++; continue; }
+        if (c == '-' && next == '-') {
+          while (i < n && sql[i] != '\n' && sql[i] != '\r') { i++; }
+          continue;
+        }
+        if (c == '/' && next == '*') {
+          var depth = 0;
+          while (i < n) {
+            var after = i + 1 < n ? sql[i + 1] : '\0';
+            if (sql[i] == '/' && after == '*') { depth++; i += 2; }
+            else if (sql[i] == '*' && after == '/') { depth--; i += 2; if (depth == 0) { break; } }
+            else { i++; }
+          }
+          pendingSpace = true;
+          continue;
+        }
+        int tag;
+        if (c == '\'' || c == '"') {
+          var escapes = c == '\'' && i > 0 && (sql[i - 1] == 'E' || sql[i - 1] == 'e') && (i < 2 || !IsIdentifierChar(sql[i - 2]));
+          end = QuotedEnd(sql, i, escapes);
+        } else if (c == '$' && (tag = DollarTagLength(sql, i)) > 0) {
+          var close = sql.IndexOf(sql.Substring(i, tag), i + tag, System.StringComparison.Ordinal);
+          end = close < 0 ? n : close + tag;
+        } else {
+          end = i + 1;
+        }
+        // Content, preceded by whatever separator is pending: a line ending, or one space within a line.
+        if (pendingNewline) { output.Append('\n'); pendingNewline = false; }
+        else if (pendingSpace && lineHasContent) { output.Append(' '); }
+        pendingSpace = false;
+        lineHasContent = true;
+        output.Append(sql, i, end - i);
+        i = end;
       }
-      $state.PendingSpace = $true
-    } elseif ($c -eq "'" -or $c -eq '"') {
-      $escapes = $c -eq "'" -and $i -gt 0 -and ($Sql[$i - 1] -ceq 'E' -or $Sql[$i - 1] -ceq 'e') -and
-        ($i -lt 2 -or -not (_isSqlIdentifierChar $Sql[$i - 2]))
-      $end = _quotedEnd $Sql $i $escapes
-      _appendSqlContent $state $Sql $i ($end - $i)
-      $i = $end
-    } elseif ($c -eq '$' -and ($tag = _dollarTagLength $Sql $i) -gt 0) {
-      $close = $Sql.IndexOf($Sql.Substring($i, $tag), $i + $tag, [StringComparison]::Ordinal)
-      $end = if ($close -lt 0) { $n } else { $close + $tag }
-      _appendSqlContent $state $Sql $i ($end - $i)
-      $i = $end
-    } else {
-      _appendSqlContent $state $Sql $i 1
-      $i++
+      return output.ToString();
+    }
+
+    // Where the quoted literal opening at At ends (its doubled quote escapes it); the text's end when unterminated.
+    private static int QuotedEnd(string sql, int at, bool escapes) {
+      var quote = sql[at];
+      var j = at + 1;
+      while (j < sql.Length) {
+        if (escapes && sql[j] == '\\') { j += 2; }
+        else if (sql[j] == quote) {
+          if (j + 1 < sql.Length && sql[j + 1] == quote) { j += 2; } else { return j + 1; }
+        } else { j++; }
+      }
+      return sql.Length;
+    }
+
+    private static bool IsIdentifierChar(char c) { return char.IsLetterOrDigit(c) || c == '_' || c == '$'; }
+
+    // The length of the $$ or $tag$ delimiter at At, or 0 when the dollar opens no quote.
+    private static int DollarTagLength(string sql, int at) {
+      if (at > 0 && IsIdentifierChar(sql[at - 1])) { return 0; }
+      var j = at + 1;
+      while (j < sql.Length && sql[j] != '$') {
+        var ch = sql[j];
+        var valid = j == at + 1 ? char.IsLetter(ch) || ch == '_' : char.IsLetterOrDigit(ch) || ch == '_';
+        if (!valid) { return 0; }
+        j++;
+      }
+      return j < sql.Length ? j - at + 1 : 0;
     }
   }
-  return $state.Out.ToString()
 }
-
-function _appendSqlContent([hashtable]$State, [string]$Sql, [int]$Start, [int]$Length) {
-  # Content, preceded by whatever separator is pending: a line ending, or one space within a line.
-  if ($State.PendingNewline) { [void]$State.Out.Append("`n"); $State.PendingNewline = $false }
-  elseif ($State.PendingSpace -and $State.LineHasContent) { [void]$State.Out.Append(' ') }
-  $State.PendingSpace = $false
-  $State.LineHasContent = $true
-  [void]$State.Out.Append($Sql, $Start, $Length)
-}
-
-function _quotedEnd([string]$Sql, [int]$At, [bool]$Escapes) {
-  # Where the quoted literal opening at At ends (its doubled quote escapes it); the text's end when unterminated.
-  $quote = $Sql[$At]
-  $j = $At + 1
-  while ($j -lt $Sql.Length) {
-    if ($Escapes -and $Sql[$j] -eq '\') { $j += 2 }
-    elseif ($Sql[$j] -eq $quote) {
-      if ($j + 1 -lt $Sql.Length -and $Sql[$j + 1] -eq $quote) { $j += 2 } else { return $j + 1 }
-    } else { $j++ }
-  }
-  return $Sql.Length
-}
-
-function _isSqlIdentifierChar([char]$C) { return [char]::IsLetterOrDigit($C) -or $C -eq '_' -or $C -eq '$' }
-
-function _dollarTagLength([string]$Sql, [int]$At) {
-  # The length of the $$ or $tag$ delimiter at At, or 0 when the dollar opens no quote.
-  if ($At -gt 0 -and (_isSqlIdentifierChar $Sql[$At - 1])) { return 0 }
-  $j = $At + 1
-  while ($j -lt $Sql.Length -and $Sql[$j] -ne '$') {
-    $ch = $Sql[$j]
-    $valid = if ($j -eq $At + 1) { [char]::IsLetter($ch) -or $ch -eq '_' } else { [char]::IsLetterOrDigit($ch) -or $ch -eq '_' }
-    if (-not $valid) { return 0 }
-    $j++
-  }
-  if ($j -lt $Sql.Length) { return $j - $At + 1 }
-  return 0
-}
+'@
 
 function _isInertMigrationEdit($File, [scriptblock]$ReadMigrationVersions) {
   # True only when both sides were read and normalize to the same SQL; anything unreadable is flagged.
