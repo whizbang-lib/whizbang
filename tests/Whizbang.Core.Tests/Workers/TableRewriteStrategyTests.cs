@@ -91,9 +91,25 @@ public class TableRewriteStrategyTests {
       .IsEqualTo(TableRewriteStrategy.PgSqueeze);
   }
 
+  /// <summary>
+  /// The requirements Whizbang.Core's own generated manifest declares. The registry is process-wide, and other tests
+  /// in this assembly register manifests of their own (one declares a requirement on this very key), so these tests
+  /// read the library's manifest alone rather than whatever the registry holds when they run.
+  /// </summary>
+  private static IReadOnlyList<CapabilityRequirement> _libraryRequirements() =>
+    [.. ConfigurationManifestRegistry.Manifests
+      .Single(manifest => manifest.Assembly == typeof(MaintenanceWorkerOptions).Assembly.GetName().Name)
+      .Bindings.SelectMany(binding => binding.Requirements)];
+
+  /// <summary>The library's requirements, put in force by configuration as the manifest source does.</summary>
+  private sealed class LibraryRequirements : ICapabilityRequirementSource {
+    public IReadOnlyList<ActiveCapabilityRequirement> Resolve(IConfiguration? configuration) =>
+      CapabilityActivationResolver.Resolve(_libraryRequirements(), configuration);
+  }
+
   [Test]
   public async Task PgSqueeze_IsTheLibrarysFirstSettingDrivenRequirementAsync() {
-    var requirement = ConfigurationManifestRegistry.Requirements
+    var requirement = _libraryRequirements()
       .Single(r => r.Key == "Whizbang:Workers:Maintenance:TableRewriteStrategy");
 
     await Assert.That(requirement.Capability).IsEqualTo(new CapabilityId("postgres", "pg_squeeze"));
@@ -111,7 +127,7 @@ public class TableRewriteStrategyTests {
     var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
     var step = new CapabilitiesStartupStep(registry, Options.Create(new CapabilityOptions()),
-      [new ConfigurationManifestRequirementSource()], [], configuration, NullLogger<CapabilitiesStartupStep>.Instance);
+      [new LibraryRequirements()], [], configuration, NullLogger<CapabilitiesStartupStep>.Instance);
     await step.ExecuteAsync(CancellationToken.None);
     return registry.Verdict;
   }
