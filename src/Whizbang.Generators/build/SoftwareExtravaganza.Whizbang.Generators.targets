@@ -87,7 +87,7 @@ public class WhizbangExtractEmbeddedJson : Task {
       Directory.CreateDirectory(outputDir);
     }
     var bytes = new UTF8Encoding(false).GetBytes(scan.Json);
-    if (File.Exists(OutputFile) && WhizbangEmbeddedJsonScanner.SameBytes(File.ReadAllBytes(OutputFile), bytes)) {
+    if (File.Exists(OutputFile) && WhizbangEmbeddedJsonScanner.SameIgnoringCarriageReturns(File.ReadAllBytes(OutputFile), bytes)) {
       Log.LogMessage(MessageImportance.Low, "Whizbang: " + OutputFile + " unchanged, skipping write");
       return true;
     }
@@ -126,16 +126,29 @@ public static class WhizbangEmbeddedJsonScanner {
     return new Result { Json = found.Count == 1 ? found[0] : null };
   }
 
-  public static bool SameBytes(byte[] left, byte[] right) {
-    if (left.Length != right.Length) {
-      return false;
-    }
-    for (var i = 0; i < left.Length; i++) {
-      if (left[i] != right[i]) {
+  // Whether the file on disk already holds the extracted JSON, line endings aside. A checkout under text=auto with
+  // core.autocrlf=true holds CRLF where the generator writes LF; rewriting it would change no content, only bytes
+  // version control then reports as modified after every build. A raw carriage return cannot occur inside a JSON
+  // string (it is escaped), so dropping them from both sides ignores line breaks and nothing else.
+  public static bool SameIgnoringCarriageReturns(byte[] onDisk, byte[] extracted) {
+    var i = 0;
+    var j = 0;
+    while (true) {
+      while (i < onDisk.Length && onDisk[i] == (byte)'\r') {
+        i++;
+      }
+      while (j < extracted.Length && extracted[j] == (byte)'\r') {
+        j++;
+      }
+      if (i == onDisk.Length || j == extracted.Length) {
+        return i == onDisk.Length && j == extracted.Length;
+      }
+      if (onDisk[i] != extracted[j]) {
         return false;
       }
+      i++;
+      j++;
     }
-    return true;
   }
 
   // The index of the brace that closes the object opening at start, or -1 when the text ends first, a close

@@ -141,13 +141,14 @@ internal sealed class PinnedTypeLedger {
 
   private static readonly JsonSerializerOptions _writeOptions = new() {
     WriteIndented = true,
-    // LF on every OS, as the file is committed; the OS default would rewrite it on Windows after every build.
-    NewLine = "\n",
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     // The ledger is a file-destined, human-reviewed lockfile — never embedded in HTML — so use the relaxed
     // encoder. The default HTML-safe encoder escapes '+' (and angle brackets and ampersand) to a 6-char unicode
     // escape, which would render every nested-type name's '+' separator as an unreadable escape and wreck diffs.
     Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    // Indented output breaks lines with Environment.NewLine unless told otherwise, which made a Windows build's
+    // ledger CRLF and a Linux build's LF. A committed lockfile must be the same bytes on every build machine.
+    NewLine = "\n",
   };
 
   /// <summary>Serializes the ledger to committable JSON (camelCase, indented, entries sorted by CLR name for stable diffs).</summary>
