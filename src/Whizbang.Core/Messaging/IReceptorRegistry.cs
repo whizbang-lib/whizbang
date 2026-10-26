@@ -119,7 +119,7 @@ public interface IReceptorRegistry {
 
   /// <summary>
   /// True if any runtime-registered receptor exists for the given message-type string at any
-  /// lifecycle stage. Lets compile-time gates (the receive-boundary drop gate, lifecycle
+  /// lifecycle stage. Lets compile-time gates (the receive-boundary no-consumer gate, lifecycle
   /// short-circuits) honor runtime registrations without requiring a <see cref="Type"/> at
   /// the call site — the gates only have an envelope-type string before deserialization.
   /// </summary>
@@ -131,7 +131,7 @@ public interface IReceptorRegistry {
   /// runtime registry's <see cref="Type"/> keys to strings and compares.
   /// </para>
   /// <para>
-  /// "Any stage" semantics — the drop gate wants to know whether <em>anything</em> on this
+  /// "Any stage" semantics: the no-consumer gate wants to know whether <em>anything</em> on this
   /// service will react to the message type. Per-stage runtime checks live alongside the
   /// per-stage compile-time <c>HasReceptors</c> on <see cref="IReceptorRegistryQuery"/>.
   /// </para>

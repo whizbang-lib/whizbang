@@ -231,12 +231,12 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
   /// <summary>
   /// True when any runtime-registered receptor exists for the given message-type string at any
-  /// lifecycle stage. Used by the receive-boundary drop gate in TransportConsumerWorker (and
+  /// lifecycle stage. Used by the receive-boundary no-consumer gate in TransportConsumerWorker (and
   /// ServiceBusConsumerWorker) to keep messages that runtime registrations are listening for
   /// even when the compile-time consumer registry reports nothing for the type. Without this,
   /// integration tests that register a runtime receptor for a type the service has no
-  /// compile-time consumer for would have their messages silently dropped before any inbox
-  /// row is written.
+  /// compile-time consumer for would have their messages stored settled as having no local
+  /// consumer, never dispatched.
   /// </summary>
   public bool HasAnyRuntimeReceptors(string messageType) {
     if (_runtimeRegistrations.IsEmpty || string.IsNullOrEmpty(messageType)) {

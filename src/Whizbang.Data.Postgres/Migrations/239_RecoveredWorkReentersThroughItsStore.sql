@@ -52,7 +52,7 @@ ALTER TABLE __SCHEMA__.wh_perspective_events ADD COLUMN IF NOT EXISTS recovered_
 
 -- move_to_dead_letters: last word 162, with an outbox row's capture keeping every field its store takes and a
 -- perspective row's keeping its priority (#1722).
--- <docs>messaging/dead-letters</docs>
+-- <docs>operations/dead-letter-queue/recovery</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MoveToDeadLettersSqlTests.cs:MoveToDeadLetters_InboxRow_MovesIntoDlqAndDeletesSourceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqStackTracePreservationSqlTests.cs:MoveToDeadLetters_PreservesFullStackTextAcrossAllSourceTablesAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
@@ -791,7 +791,7 @@ COMMENT ON FUNCTION __SCHEMA__.store_perspective_events(JSONB, UUID, TIMESTAMPTZ
 -- through its store (#1722) with the partition count arrivals are stored with. A function of its own rather than a
 -- second argument on recover_dead_letter: a new arity adds an overload, and the earlier files that comment on the
 -- function by its bare name would raise 42725 when the ledger re-runs them.
--- <docs>messaging/dead-letters</docs>
+-- <docs>operations/dead-letter-queue/recovery</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:RecoverDeadLetter_OfAnInboxOrBrokerRow_LeavesItForReentryAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OutboxDlqRecoverySqlTests.cs:RecoverDeadLetter_OutboxSource_ReturnsToOutboxAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
@@ -918,7 +918,7 @@ COMMENT ON FUNCTION __SCHEMA__.wh_recover_dead_letter(UUID, INTEGER) IS
 
 -- recover_dead_letter: last word 236, now wh_recover_dead_letter at the claim's default partition count (#1722).
 -- Signature unchanged; callers that know the service's partition count call wh_recover_dead_letter.
--- <docs>messaging/dead-letters</docs>
+-- <docs>operations/dead-letter-queue/recovery</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:RecoverDeadLetter_OfAnInboxOrBrokerRow_LeavesItForReentryAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredWorkReentrySqlTests.cs:ARecoveredOutboxMessage_IsStoredInTheShapeItWasStoredInAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.recover_dead_letter(
