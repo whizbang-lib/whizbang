@@ -297,7 +297,7 @@ public class FlushApiTests {
       workChannelWriter: channelWriter,
       options: options ?? new WorkCoordinatorOptions(),
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
   }
 
@@ -313,7 +313,7 @@ public class FlushApiTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
   }
 
@@ -327,7 +327,7 @@ public class FlushApiTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
   }
 

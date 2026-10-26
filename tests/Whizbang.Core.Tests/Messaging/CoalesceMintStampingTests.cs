@@ -150,6 +150,7 @@ public class CoalesceMintStampingTests {
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
       auditDecisionHook: null,
+      detachedWork: new DetachedLifecycleWork(),
       coalesceResolver: _resolver(time, out _));
 
     await strategy.FlushAsync(WorkBatchOptions.None);

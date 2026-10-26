@@ -975,7 +975,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return ValueTask.CompletedTask;
     }
 
-    _ = _observeTagProcessingAsync(task.AsTask(), messageType, stage);
+    // Recorded, so a stopping host waits for the handler instead of disposing the provider it resolves from (#1721)
+    var observed = _observeTagProcessingAsync(task.AsTask(), messageType, stage);
+    _scopedProvider.GetService<DetachedLifecycleWork>()?.Track(observed);
     return ValueTask.CompletedTask;
   }
 

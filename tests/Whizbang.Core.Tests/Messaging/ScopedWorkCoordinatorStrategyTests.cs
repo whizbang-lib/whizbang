@@ -48,7 +48,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     _queueTestOutboxMessage(sut);
     using var canceled = new CancellationTokenSource();
     await canceled.CancelAsync();
@@ -118,7 +118,8 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork());
 
   /// <summary>
   /// A flush that fails for any other reason, a cancellation its caller did not ask for included, keeps
@@ -133,7 +134,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: new WorkCoordinatorOptions { PartitionCount = 10000, LeaseSeconds = 300, AbandonStaleInstanceThresholdSeconds = 300 },
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     _queueTestOutboxMessage(sut);
     using var callers = new CancellationTokenSource();
 
@@ -164,7 +165,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       // IWorkChannelWriter (not needed for these tests)
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId1 = _idProvider.NewGuid();
@@ -270,7 +271,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       // IWorkChannelWriter (not needed for these tests)
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -349,7 +350,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       // IWorkChannelWriter (not needed for these tests)
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var outboxId1 = _idProvider.NewGuid();
@@ -498,7 +499,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     _queueTestOutboxMessage(sut);
@@ -534,7 +535,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Simulate a typical request: multiple publishes via BestEffort
@@ -581,6 +582,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
       }
@@ -621,6 +623,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
       }
@@ -667,6 +670,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
       }
@@ -707,7 +711,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -724,7 +728,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -741,7 +745,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: null!,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -756,7 +760,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     var messageId = _idProvider.NewGuid();
@@ -790,7 +794,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     var messageId = _idProvider.NewGuid();
@@ -821,7 +825,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -836,7 +840,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -851,7 +855,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -866,7 +870,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -881,7 +885,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Act & Assert
@@ -901,7 +905,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
 
-    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var sut = new ScopedWorkCoordinatorStrategy(coordinator: fakeCoordinator, instanceProvider: instanceProvider, workChannelWriter: null, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     _queueTestOutboxMessage(sut);
 
@@ -948,6 +952,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
       }
@@ -985,7 +990,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1017,7 +1022,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1049,7 +1054,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue a message so there is work queued
@@ -1296,7 +1301,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1324,7 +1329,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1352,7 +1357,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1380,7 +1385,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -1413,6 +1418,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       metrics: metrics
     );
 
@@ -1443,6 +1449,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       metrics: metrics
     );
 
@@ -1480,7 +1487,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     _queueTestOutboxMessage(sut);
@@ -1515,7 +1522,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue messages but don't flush manually
@@ -1549,7 +1556,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue a message so DisposeAsync attempts flush
@@ -1576,7 +1583,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options, // no logger
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue a message so DisposeAsync attempts flush
@@ -1613,7 +1620,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -1656,7 +1663,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -1702,7 +1709,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     _queueTestInboxMessage(sut);
@@ -1746,6 +1753,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: null
     );
 
@@ -1783,7 +1791,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       workChannelWriter: null,
       options: options,
       logger: logger,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue all types of operations to ensure all counters in the warning are non-zero

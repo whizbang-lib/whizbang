@@ -133,7 +133,7 @@ public class LifecycleStageTriggerIndependenceTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     return (strategy, invoker);
   }
 

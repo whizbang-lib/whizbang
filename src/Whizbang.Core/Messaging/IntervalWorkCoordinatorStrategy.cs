@@ -27,6 +27,9 @@ namespace Whizbang.Core.Messaging;
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
 public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  /// <summary>The timer flushes still running; the strategy's stop waits for them before its final flush.</summary>
+  internal DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   // Reported as the strategy dimension on every metric this type emits, and passed to the
   // shared drain helper so its metrics carry the same name.
   private const string STRATEGY_NAME = "interval";
@@ -42,7 +45,12 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork;
   private readonly Timer _flushTimer;
+  // Removes the strategy from the host's producers once it is disposed on its own.
+  private readonly IDisposable _producerRegistration;
 
   // Queues for batching operations within the interval
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -54,7 +62,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   private readonly Lock _lock = new();
   private bool _disposed;
-  private bool _flushing;
+  // One flush at a time. A timer or API flush that finds it taken returns at once; the stop and disposal flushes wait
+  // for it instead, so they never return while a flush is still storing, nor leave behind what was queued after its
+  // snapshot (#1721).
+  private readonly SemaphoreSlim _flushGate = new(1, 1);
 
   /// <summary>
   /// Constructs an interval-based work coordinator strategy with periodic flushing.
@@ -77,6 +88,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
     IInboxChannelWriter inboxChannelWriter,
+    DetachedLifecycleWork detachedWork,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -91,6 +103,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
     _inboxChannelWriter = inboxChannelWriter;
+    ArgumentNullException.ThrowIfNull(detachedWork);
+    _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -101,6 +115,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
       period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
     );
+
+    // The host stops the timer and flushes what is queued while the service provider is still alive (#1721)
+    _producerRegistration = _detachedWork.RegisterProducer(ct => _stopAndFlushAsync(ct));
 
     LogStrategyStarted(_logger, _options.IntervalMilliseconds);
   }
@@ -234,7 +251,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     return _flushCoreAsync(trigger: "api", skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(string trigger, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(string trigger, bool skipLifecycle, CancellationToken ct, bool waitForInFlight = false) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1,
       new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
@@ -246,16 +263,15 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     // Prevent concurrent flushes
-    lock (_lock) {
-      if (_flushing) {
-        LogFlushAlreadyInProgress(_logger);
-        return new WorkBatch {
-          OutboxWork = [],
-          InboxWork = [],
-          PerspectiveWork = []
-        };
-      }
-      _flushing = true;
+    if (waitForInFlight) {
+      await _flushGate.WaitAsync(ct).ConfigureAwait(false);
+    } else if (!await _flushGate.WaitAsync(0, CancellationToken.None).ConfigureAwait(false)) {
+      LogFlushAlreadyInProgress(_logger);
+      return new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      };
     }
 
     try {
@@ -278,7 +294,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle,
-          Metrics: _metrics, Strategy: STRATEGY_NAME),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
         ct
       );
 
@@ -287,9 +303,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       RouteClaimedInboxWorkToChannel(workBatch);
       return workBatch;
     } finally {
-      lock (_lock) {
-        _flushing = false;
-      }
+      _flushGate.Release();
     }
   }
 
@@ -385,13 +399,14 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Fire and forget flush on timer. Lifecycle stages run here too (issue #485): delivery must
     // not depend on WHICH trigger flushed — LifecycleInvocationHelper reconstructs each message
     // from its envelope and reads no ambient state, so the old background-thread skip was stale.
-    _ = Task.Run(async () => {
+    // Recorded, so the stop waits for it instead of disposing the service provider under it (#1721)
+    InFlightFlushes.Track(Task.Run(async () => {
       try {
         await _flushCoreAsync(trigger: "timer", skipLifecycle: false, ct: default);
       } catch (Exception ex) {
         LogErrorDuringIntervalFlush(_logger, ex);
       }
-    });
+    }));
   }
 
   /// <summary>
@@ -404,11 +419,27 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     LogStrategyDisposing(_logger);
+    _producerRegistration.Dispose();
+    // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
+    // backgrounded stage halves would race process exit.
+    await _stopAndFlushAsync(CancellationToken.None);
 
-    // Stop the timer first
+    _disposed = true;
+    _flushGate.Dispose();
+    GC.SuppressFinalize(this);
+
+    LogStrategyDisposed(_logger);
+  }
+
+  /// <summary>
+  /// Stops the timer, waits for the timer flushes still running, then flushes what is left. The host runs it while it
+  /// stops, before the service provider the flush stores through is disposed; disposal runs it again for whatever was
+  /// queued since, so it is safe to repeat.
+  /// </summary>
+  private async Task _stopAndFlushAsync(CancellationToken cancellationToken) {
     await _flushTimer.DisposeAsync();
+    await InFlightFlushes.DrainAsync(cancellationToken);
 
-    // Flush any remaining queued operations
     lock (_lock) {
       if (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
@@ -427,17 +458,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      // Disposal is the ONE deliberate lifecycle skip (issue #485 kept it): a shutdown drain's
-      // backgrounded stage halves would race process exit.
-      await _flushCoreAsync(trigger: "disposal", skipLifecycle: true, ct: default);
-    } catch (Exception ex) {
+      // Skips lifecycle like disposal always has (#485): the stages would start after the host's drain began.
+      await _flushCoreAsync(trigger: "disposal", skipLifecycle: true, ct: cancellationToken, waitForInFlight: true);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogErrorFlushingOnDisposal(_logger, ex);
     }
-
-    _disposed = true;
-    GC.SuppressFinalize(this);
-
-    LogStrategyDisposed(_logger);
   }
 
   // LoggerMessage definitions

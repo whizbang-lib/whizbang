@@ -26,6 +26,8 @@ namespace Whizbang.Core.Messaging;
 /// <c>RaiseOnMixedStream</c> (#1546) is set by a flush whose caller awaits it (the immediate and scoped strategies'
 /// <c>FlushAsync</c>): every outbox message it stores asks the store to raise a WHIZ133 refusal as
 /// <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+/// <c>DetachedWork</c> (#1721) is where the flush records the detached lifecycle stages it starts, so the stopping host
+/// waits for them before it disposes the service provider they resolve their receptors from.
 /// </remarks>
 internal readonly record struct FlushContext(
   IWorkCoordinator? Coordinator,
@@ -47,7 +49,8 @@ internal readonly record struct FlushContext(
   bool SkipLifecycle = false,
   WorkCoordinatorMetrics? Metrics = null,
   string Strategy = "",
-  bool RaiseOnMixedStream = false);
+  bool RaiseOnMixedStream = false,
+  DetachedLifecycleWork? DetachedWork = null);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
@@ -123,7 +126,8 @@ internal static class WorkCoordinatorFlushHelper {
         ctx.LifecycleMessageDeserializer,
         ctx.Logger,
         enableLifecycleTracing,
-        ctx.LifecycleMetrics);
+        ctx.LifecycleMetrics,
+        ctx.DetachedWork);
 
       if (!ctx.SkipLifecycle) {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

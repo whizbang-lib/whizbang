@@ -92,6 +92,7 @@ public static class WorkCoordinatorStrategyFactory {
       options,
       logger,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+      detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       dependencies: dependencies
     );
   }
@@ -114,6 +115,7 @@ public static class WorkCoordinatorStrategyFactory {
       systemEventOptions: sp.GetRequiredService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
       workChannelWriter: channelWriter,
       auditDecisionHook: sp.GetService<Whizbang.Core.SystemEvents.IAuditDecisionHook>(),
+      detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     );
   }
@@ -134,6 +136,7 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
       inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+      detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );
@@ -154,6 +157,7 @@ public static class WorkCoordinatorStrategyFactory {
       lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
       tracingOptions: sp.GetRequiredService<IOptionsMonitor<TracingOptions>>(),
       workChannelWriter: channelWriter,
+      detachedWork: sp.GetRequiredService<DetachedLifecycleWork>(),
       metrics: sp.GetService<WorkCoordinatorMetrics>(),
       lifecycleMetrics: sp.GetService<LifecycleMetrics>()
     );

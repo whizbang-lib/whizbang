@@ -145,7 +145,9 @@ public class InProcessTransport : ITransport {
 
     // Create response destination based on request MessageId
     var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-    var tcs = new TaskCompletionSource<IMessageEnvelope>();
+    // The reply arrives inside the response subscription's flush; continuing asynchronously keeps the caller's work
+    // (disposing that subscription included) off the flush's thread.
+    var tcs = new TaskCompletionSource<IMessageEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Subscribe to response destination before publishing request (batch of 1, immediate flush)
     var responseSubscription = await SubscribeBatchAsync(

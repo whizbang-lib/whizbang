@@ -49,7 +49,7 @@ public class WorkFlusherTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -77,7 +77,7 @@ public class WorkFlusherTests {
       workChannelWriter: null,
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -108,7 +108,7 @@ public class WorkFlusherTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -144,7 +144,7 @@ public class WorkFlusherTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
@@ -188,7 +188,7 @@ public class WorkFlusherTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     strategy.QueueOutboxMessage(_createOutboxMessage());
