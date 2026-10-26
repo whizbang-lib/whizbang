@@ -168,4 +168,55 @@ public class BatcherShutdownTests {
       .Because("a flush started by a full batch still stores what the transport received");
     await Assert.That(await held.Finished.Task).IsTrue();
   }
+
+  private static TransportBatchOptions _flushOnEveryMessage() =>
+    new() { BatchSize = 1, SlideMs = int.MaxValue - 1, MaxWaitMs = int.MaxValue - 1 };
+
+  /// <summary>
+  /// A flush callback that disposes its own collector (an in-process request that unsubscribes once its reply arrives)
+  /// used to wait, inside that flush, for the flush to finish: it never did. Disposal now finishes without waiting for
+  /// the flush it was called from. The callback reports whether disposal had finished before it returned, so a disposal
+  /// that waits fails this test instead of hanging it.
+  /// </summary>
+  [Test]
+  public async Task ATransportBatchCollector_DisposedFromItsOwnFlush_DoesNotWaitForThatFlushAsync() {
+    var finishedInsideTheFlush = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    TransportBatchCollector<int>? collector = null;
+    collector = new TransportBatchCollector<int>(_flushOnEveryMessage(), _ => {
+      var disposal = collector!.DisposeAsync().AsTask();
+      finishedInsideTheFlush.TrySetResult(disposal.IsCompleted);
+      return Task.CompletedTask;
+    });
+
+    collector.Enqueue(1);
+
+    await Assert.That(await finishedInsideTheFlush.Task).IsTrue()
+      .Because("a disposal called from the collector's own flush cannot wait for that flush to finish");
+  }
+
+  /// <summary>
+  /// The same disposal reached through a continuation the flush callback runs inline: completing a task whose awaiter
+  /// then disposes the collector, on the flush's own thread, as an in-process request's reply does.
+  /// </summary>
+  [Test]
+  public async Task ATransportBatchCollector_DisposedByAContinuationItsFlushRanInline_DoesNotWaitForThatFlushAsync() {
+    var replied = new TaskCompletionSource();
+    TransportBatchCollector<int>? collector = null;
+    collector = new TransportBatchCollector<int>(_flushOnEveryMessage(), _ => {
+      // Without RunContinuationsAsynchronously, the awaiter below runs here, inside the flush
+      replied.TrySetResult();
+      return Task.CompletedTask;
+    });
+    var finishedInsideTheFlush = _disposeOnceRepliedAsync();
+
+    collector.Enqueue(1);
+
+    await Assert.That(await finishedInsideTheFlush).IsTrue()
+      .Because("the request's continuation runs on the flush's own thread, so its disposal cannot wait for that flush");
+
+    async Task<bool> _disposeOnceRepliedAsync() {
+      await replied.Task.ConfigureAwait(false);
+      return collector.DisposeAsync().AsTask().IsCompleted;
+    }
+  }
 }
