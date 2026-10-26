@@ -634,6 +634,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A heartbeat no longer rolls an instance's recorded lifecycle phase back behind its startup stage (#1781).** A beat
+  reads the phase when it is built and writes it when it lands, so a beat built before a startup stage or transition
+  was recorded wrote the earlier phase back over it: an instance that had entered Accept commands read Migrating again
+  in `wh_service_instances`, and was left out of partition assignment and claim rankings until its next beat or claim.
+  Migration 244 redefines `record_heartbeat` so that a beat from the process the row records never moves the phase down
+  the startup and shutdown ladder (Starting, Connecting, Migrating, AcceptingCommands, Running, Stopping, Stopped), which
+  a process only ever climbs. Such a beat keeps the recorded phase and still refreshes liveness. Phases off the ladder
+  (a pause, a stand-by and the revival from it, a fault) are taken from the beat as before, a beat ahead of the row
+  still repairs a lost transition, and a new process registering under an instance id an old process left behind
+  records its own, earlier phase. The function's signature is unchanged, so both drivers call it as before.
 - **A Windows build no longer rewrites a committed pinned-type ledger whose content did not change (#1769).** The
   extraction step compared `.whizbang/pinned-type-ledger.json` with the extracted JSON byte for byte, and the ledger
   was serialized with `Environment.NewLine`, so a Windows build rewrote a ledger checked out with LF as CRLF: version
