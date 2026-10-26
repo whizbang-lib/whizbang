@@ -172,22 +172,9 @@ namespace Whizbang.Core.Tests.Workers {
     };
 
     /// <summary>A consumer worker over a transport that hands it one batch, and a coordinator that records each row it stores.</summary>
-    private sealed class Harness {
-      private readonly bool _hasAnyConsumer;
-      private readonly bool _ownsNamespace;
-      private readonly Type[] _catalog;
-      private readonly Type? _catalogGrowsWith;
-
-      private readonly TransportMetrics? _metrics;
-
-      public Harness(bool hasAnyConsumer, bool ownsNamespace = false, Type[]? catalog = null, Type? catalogGrowsWith = null,
-          TransportMetrics? metrics = null) {
-        _metrics = metrics;
-        _hasAnyConsumer = hasAnyConsumer;
-        _ownsNamespace = ownsNamespace;
-        _catalog = catalog ?? [];
-        _catalogGrowsWith = catalogGrowsWith;
-      }
+    private sealed class Harness(bool hasAnyConsumer, bool ownsNamespace = false, Type[]? catalog = null,
+        Type? catalogGrowsWith = null, TransportMetrics? metrics = null) {
+      private readonly Type[] _catalog = catalog ?? [];
 
       public NoOpWorkCoordinator Coordinator { get; } = new();
 
@@ -202,10 +189,10 @@ namespace Whizbang.Core.Tests.Workers {
         var services = new ServiceCollection();
         services.TryAddWhizbangDefaults();
         services.AddScoped<IWorkCoordinator>(_ => Coordinator);
-        services.AddSingleton<IEventTypeProvider>(new GrowingEventTypeProvider(_catalog, _catalogGrowsWith));
+        services.AddSingleton<IEventTypeProvider>(new GrowingEventTypeProvider(_catalog, catalogGrowsWith));
         services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
         var routing = new RoutingOptions();
-        if (_ownsNamespace) {
+        if (ownsNamespace) {
           routing.OwnDomains(typeof(OwnedShipmentEvent).Namespace!);
         }
         await using var provider = services.BuildServiceProvider();
@@ -217,14 +204,14 @@ namespace Whizbang.Core.Tests.Workers {
           scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
           jsonOptions: new JsonSerializerOptions(),
           orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-          metrics: _metrics,
+          metrics: metrics,
           logger: NullLogger<TransportConsumerWorker>.Instance,
           serviceInstanceProvider: new ServiceInstanceProvider(Guid.Parse("0198f5d2-0000-7000-8000-000000000002"), THIS_SERVICE, "host", 1),
           schemaReadyGate: SchemaReadyGate.AlreadyReady(),
           routingOptions: Options.Create(routing),
           workChannelWriter: new WorkChannelWriter(),
           claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
-          receptorRegistry: new ConsumerRegistry(_hasAnyConsumer),
+          receptorRegistry: new ConsumerRegistry(hasAnyConsumer),
           runtimeReceptorRegistry: NullReceptorRegistry.Instance,
           ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
           eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),

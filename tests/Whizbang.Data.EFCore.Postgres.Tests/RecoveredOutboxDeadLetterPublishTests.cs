@@ -158,7 +158,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests {
       await using var command = connection.CreateCommand();
       command.CommandText = "SELECT move_to_dead_letters(@dl, 'wh_outbox', @id, @reason, 'publish failed: broker unreachable', @inst, 'test/1')";
       command.Parameters.AddWithValue("dl", deadLetterId);
-      command.Parameters.AddWithValue("id", id);
+      command.Parameters.AddWithValue(nameof(id), id);
       command.Parameters.AddWithValue("reason", (int)MessageFailureReason.TransportException);
       command.Parameters.AddWithValue("inst", Guid.CreateVersion7());
       await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(deadLetterId);

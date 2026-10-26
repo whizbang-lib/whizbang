@@ -176,7 +176,7 @@ public class TransportConsumerWorkerDropGateTests {
 
     await cts.CancelAsync();
 
-    await Assert.That(coordinator.StoredMessages.Select(m => m.DiscardedOnReceive ?? "(processed)").ToList())
+    await Assert.That(coordinator.StoredMessages.ConvertAll(m => m.DiscardedOnReceive ?? "(processed)"))
       .IsEquivalentTo([InboxReceiveDiscard.NO_LOCAL_CONSUMER, InboxReceiveDiscard.NO_LOCAL_CONSUMER, InboxReceiveDiscard.NO_LOCAL_CONSUMER])
       .Because("a message with no local consumer is stored settled with its reason, never dropped unstored (#1720)");
   }

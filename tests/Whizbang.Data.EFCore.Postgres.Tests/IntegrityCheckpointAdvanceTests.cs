@@ -133,6 +133,26 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task CountReceivedFromOrigin_UnscopedEvent_BucketsWithNoTenantAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    // A received event whose scope carries no tenant (a global, unscoped stream).
+    await _seedReceivedAsync(conn, stream, 1, tenant: null, "Contracts.TypeX", origin, originSeq: 11);
+    await _seedReceivedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX", origin, originSeq: 12);
+
+    var counts = await coordinator.CountReceivedFromOriginAsync(origin, fromCommitSequence: 10, toCommitSequence: 20);
+
+    await Assert.That(counts.Select(b => $"{b.TenantScope ?? "(none)"}|{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["(none)|Contracts.TypeX=1", $"{TENANT_A}|Contracts.TypeX=1"])
+      .Because("an event with no tenant in its scope buckets under a null tenant, the same unscoped key the " +
+               "origin's half reports, never under an empty-string tenant that would read as a distinct bucket.");
+  }
+
+  [Test]
   public async Task CheckpointCounts_LeaveAuditRecordsOut_OnBothSidesAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
@@ -174,7 +194,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   /// <summary>Seeds one RECEIVED event: origin identity stamped, as the 1:1 forward persist does.</summary>
   private static async Task _seedReceivedAsync(
-      NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
+      NpgsqlConnection conn, Guid streamId, int version, string? tenant, string eventType,
       Guid originServiceId, long originSeq) {
     var eventId = TrackedGuid.New().Value;
     await using var store = conn.CreateCommand();
@@ -184,7 +204,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     store.Parameters.AddWithValue("event", eventId);
     store.Parameters.AddWithValue("stream", streamId);
     store.Parameters.AddWithValue("type", eventType);
-    store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
+    store.Parameters.AddWithValue("scope", tenant is null ? "{}" : $"{{\"t\":\"{tenant}\"}}");
     store.Parameters.AddWithValue(nameof(version), version);
     store.Parameters.AddWithValue("origin", originServiceId);
     store.Parameters.AddWithValue("oseq", originSeq);

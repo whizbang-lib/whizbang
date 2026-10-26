@@ -108,6 +108,44 @@ internal class AsbReceiveDecisionMaker {
         AsbReceiveReason.MISSING_ENVELOPE_TYPE, "Message does not contain EnvelopeType metadata", rawReceptor: null);
     }
 
+    var typeInfo = _resolveTypeInfo(applicationProperties, envelopeTypeName, getTypeInfoByName, jsonOptions, typeBinder);
+
+    if (typeInfo == null) {
+      // No context here describes the type: stored as received; a raw receptor for it runs once it is stored.
+      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
+        AsbReceiveReason.MISSING_JSON_TYPE_INFO, $"No JsonTypeInfo registered locally for envelope type '{envelopeTypeName}'",
+        _findRawReceptor(envelopeTypeName, rawReceptorRegistry));
+    }
+
+    var envelope = _tryReadTyped(bodyJson, typeInfo);
+    if (envelope is null) {
+      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
+        AsbReceiveReason.DESERIALIZATION_FAILED, $"Could not deserialize envelope as '{envelopeTypeName}'", rawReceptor: null);
+    }
+    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
+
+    // #1720: no local-consumer filter here. A payload no receptor or perspective on this service takes is stored, and
+    // the consumer settles it unprocessed with the reason, so the skip is durable and inspectable.
+    return new AsbReceiveDecision {
+      Action = AsbReceiveAction.Process,
+      Envelope = envelope,
+      EnvelopeTypeName = envelopeTypeName,
+      Reason = AsbReceiveReason.OK,
+      Description = "Envelope deserialized; ready for handler dispatch",
+    };
+  }
+
+  /// <summary>
+  /// The metadata to read the body with: the registry's for the named envelope type (or the claim envelope's, for a
+  /// body-offload claim), falling back to the multi-pass type binder on a registry miss for a non-claim message.
+  /// <see langword="null"/> when nothing here describes the type.
+  /// </summary>
+  private static JsonTypeInfo? _resolveTypeInfo(
+      IReadOnlyDictionary<string, object> applicationProperties,
+      string envelopeTypeName,
+      Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
+      JsonSerializerOptions jsonOptions,
+      IMessageTypeBinder? typeBinder) {
     // Body-offload claim detection: when the producer's post-serialize hook
     // substituted the wire body, the bytes are MessageEnvelope<BodyClaimEnvelopePayload>
     // while ENVELOPE_TYPE_PROPERTY still names the original type (so transport-level
@@ -143,36 +181,20 @@ internal class AsbReceiveDecisionMaker {
       }
     }
 
-    if (typeInfo == null) {
-      // No context here describes the type: stored as received; a raw receptor for it runs once it is stored.
-      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
-        AsbReceiveReason.MISSING_JSON_TYPE_INFO, $"No JsonTypeInfo registered locally for envelope type '{envelopeTypeName}'",
-        _findRawReceptor(envelopeTypeName, rawReceptorRegistry));
-    }
+    return typeInfo;
+  }
 
-    IMessageEnvelope? envelope = null;
+  /// <summary>
+  /// The body read as the typed envelope, or <see langword="null"/> when the typed read rejects it: not the type's JSON,
+  /// or a message id that is not a UUIDv7 (an <see cref="ArgumentException"/> as it is read). The caller then reads it
+  /// as received (#1720).
+  /// </summary>
+  private static IMessageEnvelope? _tryReadTyped(string bodyJson, JsonTypeInfo typeInfo) {
     try {
-      envelope = JsonSerializer.Deserialize(bodyJson, typeInfo) as IMessageEnvelope;
+      return JsonSerializer.Deserialize(bodyJson, typeInfo) as IMessageEnvelope;
     } catch (Exception ex) when (ex is JsonException or ArgumentException) {
-      // the typed read rejects the body (an ArgumentException is a message id that is not a UUIDv7); it is read as
-      // received below
+      return null;
     }
-
-    if (envelope is null) {
-      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
-        AsbReceiveReason.DESERIALIZATION_FAILED, $"Could not deserialize envelope as '{envelopeTypeName}'", rawReceptor: null);
-    }
-    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
-
-    // #1720: no local-consumer filter here. A payload no receptor or perspective on this service takes is stored, and
-    // the consumer settles it unprocessed with the reason, so the skip is durable and inspectable.
-    return new AsbReceiveDecision {
-      Action = AsbReceiveAction.Process,
-      Envelope = envelope,
-      EnvelopeTypeName = envelopeTypeName,
-      Reason = AsbReceiveReason.OK,
-      Description = "Envelope deserialized; ready for handler dispatch",
-    };
   }
 
   /// <summary>
