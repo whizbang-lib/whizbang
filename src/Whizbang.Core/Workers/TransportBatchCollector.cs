@@ -109,7 +109,11 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
 
     // The flushes already running finish first: each hands its batch to the callback, and the owner disposes the
     // collector so that nothing is handed over after it is gone (#1721)
-    await InFlightFlushes.DrainAsync(CancellationToken.None);
+    // Not from inside one of those flushes (its callback disposing its own subscription): that flush cannot finish
+    // until this disposal does, so waiting for it would never end. The flush finishes once the callback returns.
+    if (!TransportBatchFlushScope.IsInsideFlushOf(this)) {
+      await InFlightFlushes.DrainAsync(CancellationToken.None);
+    }
 
     // Flush any remaining pending messages
     await _flushBatchAsync();
@@ -141,6 +145,9 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     SlideTimerTick(state);
   }
 
+  // Marks the callback as this collector's flush while it runs, so a disposal it reaches does not wait for it
+  private Task _invokeFlushCallbackAsync(List<T> batch) => TransportBatchFlushScope.Run(this, batch, _flushCallback);
+
   private async Task _flushBatchAsync() {
     List<T> batch;
 
@@ -158,7 +165,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     }
 
     try {
-      await _flushCallback(batch);
+      await _invokeFlushCallbackAsync(batch);
       OnBatchFlushed?.Invoke(batch.Count);
     } catch (Exception) {
       // Re-add failed batch to pending for retry on next flush
@@ -173,4 +180,31 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       throw;
     }
   }
+}
+
+/// <summary>
+/// Which transport batch collector's flush callback is running: on this thread, for the callback's synchronous part
+/// and every continuation it runs inline (an in-process request completing its reply), and along the callback's own
+/// awaited path. A disposal reached from either is inside that flush and must not wait for it (#1721).
+/// </summary>
+/// <remarks>Not in the generic collector, so one record serves every closed collector type.</remarks>
+internal static class TransportBatchFlushScope {
+  [ThreadStatic] private static object? _onThisThread;
+  private static readonly AsyncLocal<object?> _onThisPath = new();
+
+  /// <summary>Runs <paramref name="callback"/> as <paramref name="collector"/>'s flush.</summary>
+  public static Task Run<T>(object collector, List<T> batch, Func<IReadOnlyList<T>, Task> callback) {
+    var outer = _onThisThread;
+    _onThisThread = collector;
+    _onThisPath.Value = collector;
+    try {
+      return callback(batch);
+    } finally {
+      _onThisThread = outer;
+    }
+  }
+
+  /// <summary>Whether the caller is inside <paramref name="collector"/>'s flush.</summary>
+  public static bool IsInsideFlushOf(object collector) =>
+    ReferenceEquals(_onThisThread, collector) || ReferenceEquals(_onThisPath.Value, collector);
 }

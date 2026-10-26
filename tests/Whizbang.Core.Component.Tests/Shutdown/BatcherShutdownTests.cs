@@ -219,4 +219,22 @@ public class BatcherShutdownTests {
       return collector.DisposeAsync().AsTask().IsCompleted;
     }
   }
+
+  /// <summary>
+  /// The same disposal reached later on the callback's own awaited path, after it has left the flush's thread.
+  /// </summary>
+  [Test]
+  public async Task ATransportBatchCollector_DisposedAlongItsFlushsAwaitedPath_DoesNotWaitForThatFlushAsync() {
+    var finishedInsideTheFlush = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    TransportBatchCollector<int>? collector = null;
+    collector = new TransportBatchCollector<int>(_flushOnEveryMessage(), async _ => {
+      await Task.Yield();
+      finishedInsideTheFlush.TrySetResult(collector!.DisposeAsync().AsTask().IsCompleted);
+    });
+
+    collector.Enqueue(1);
+
+    await Assert.That(await finishedInsideTheFlush.Task).IsTrue()
+      .Because("the flush is still awaiting this callback, so its disposal cannot wait for that flush");
+  }
 }

@@ -600,7 +600,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   debounce flushes were not awaited, and disposal returned at once on the in-progress guard when one was running,
   dropping the work queued after that flush's snapshot. The idle sweeps of the sliding-window batchers and the
   per-stream serializer are waited for by their stop (an evicted stream's last flush was not), the transport batch
-  collector's disposal waits for its flushes, the transport consumer's active body cleanup is waited for by its stop,
+  collector's disposal waits for its flushes (other than one it is called from, as an in-process reply disposing
+  its own subscription is), the transport consumer's active body cleanup is waited for by its stop,
   and disposing the Service Bus transport ends a throttle pause instead of letting it restart a processor later.
   `DetachedLifecycleWork` gains `Waiting`, `RegisterProducer` and `StopProducersAsync`, and the four work coordinator
   strategies take it as a required constructor argument.
