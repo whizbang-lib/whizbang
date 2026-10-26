@@ -92,12 +92,15 @@ public class PerspectiveWorkerPartlyCooledEventDrainTests {
     CommitSequence = 1
   };
 
+  // The hop's moment plays no part in the drain; a fixed one keeps the test off the real clock.
+  private static readonly DateTimeOffset _hopTimestamp = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   private static MessageEnvelope<IEvent> _envelope(Guid eventId) => new() {
     MessageId = new MessageId(eventId),
     Payload = new ProbeEvent("probe"),
     Hops = [new MessageHop {
       Type = HopType.Current,
-      Timestamp = DateTimeOffset.UtcNow,
+      Timestamp = _hopTimestamp,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New(),
       ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 }
