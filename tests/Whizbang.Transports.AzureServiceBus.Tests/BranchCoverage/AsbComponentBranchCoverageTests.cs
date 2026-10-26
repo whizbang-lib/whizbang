@@ -306,7 +306,7 @@ public class AsbComponentBranchCoverageTests {
   /// is not consulted and the envelope proceeds to processing, where the handler sees it as it is.
   /// </summary>
   [Test]
-  public async Task Decide_EnvelopeWithNullPayload_SkipsTheConsumerFilterAndProcessesAsync() {
+  public async Task Decide_EnvelopeWithNullPayload_ProcessesAsync() {
     var options = AsbTransportTestData.CombinedOptions;
     var typeInfo = options.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var node = JsonNode.Parse(JsonSerializer.Serialize(AsbTransportTestData.CreateEnvelope(), typeInfo))!.AsObject();
@@ -319,8 +319,7 @@ public class AsbComponentBranchCoverageTests {
       properties,
       node.ToJsonString(),
       (_, _) => typeInfo,
-      options,
-      isHandledLocally: _ => throw new InvalidOperationException("a payload-less envelope has no type to look up"));
+      options);
 
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
     await Assert.That(decision.Envelope).IsNotNull();

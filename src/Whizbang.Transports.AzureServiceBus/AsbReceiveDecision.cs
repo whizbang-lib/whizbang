@@ -14,36 +14,17 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// each action onto <c>CompleteMessageAsync</c> / <c>DeadLetterMessageAsync</c>.
 /// </summary>
 internal enum AsbReceiveAction {
-  /// <summary>Envelope deserialized successfully; hand to the local handler.</summary>
+  /// <summary>
+  /// The body is a valid envelope (typed, or as received when this service cannot read its type): hand it to the
+  /// handler, which stores it before the broker is told anything (#1720).
+  /// </summary>
   Process,
 
   /// <summary>
-  /// Envelope cannot be bound to a CLR type in this service (unknown JsonTypeInfo or shape
-  /// rejection), OR the deserialized payload has no local consumer (slice 2). Ack the broker
-  /// — do NOT dead-letter — so the message exits the topic without accumulating in ASB DLQ
-  /// or the inbox table.
-  /// </summary>
-  /// <remarks>
-  /// Slice 1 hotfix triggers this on type-resolution failures. Slice 2 extends it to
-  /// payloads that deserialize fine but match no local receptor / perspective Apply target.
-  /// </remarks>
-  AckAndDrop,
-
-  /// <summary>
-  /// Genuine broker-routing failure (no <c>EnvelopeType</c> ApplicationProperty). The
-  /// message has no metadata to route on, so dead-lettering at the broker is correct —
-  /// these aren't expected to ever appear in steady-state production traffic.
+  /// The body is not a readable envelope (#1720), or the poison detector quarantined the message: dead-letter it at the
+  /// broker, where the dead-letter drain gives it custody. Never acked and dropped.
   /// </summary>
   DeadLetter,
-
-  /// <summary>
-  /// Slice 5 — the typed CLR envelope can't bind locally, but an opt-in
-  /// <see cref="Whizbang.Core.Messaging.IRawReceptor"/> is registered for the inner
-  /// message type. The transport invokes the raw receptor with the envelope's
-  /// <c>"p"</c> payload as a <see cref="System.Text.Json.JsonElement"/>, then acks the
-  /// broker. The decision carries the matched receptor and the extracted payload.
-  /// </summary>
-  InvokeRawReceptor,
 }
 
 /// <summary>
@@ -67,15 +48,14 @@ internal sealed record AsbReceiveDecision {
   public required string Description { get; init; }
 
   /// <summary>
-  /// When <see cref="Action"/> is <see cref="AsbReceiveAction.InvokeRawReceptor"/>, the
-  /// matched raw receptor that should handle the message; null for other actions.
+  /// Slice 5: the opt-in raw receptor registered for a message this service cannot read as its typed envelope. The
+  /// transport invokes it once the handler has stored the message (#1720); null otherwise.
   /// </summary>
   public IRawReceptor? RawReceptor { get; init; }
 
   /// <summary>
-  /// When <see cref="Action"/> is <see cref="AsbReceiveAction.InvokeRawReceptor"/>, the
-  /// envelope's payload as an unparsed <see cref="JsonElement"/> for the receptor; null
-  /// otherwise.
+  /// The envelope's payload as an unparsed <see cref="JsonElement"/> for <see cref="RawReceptor"/>; null when there is
+  /// no raw receptor.
   /// </summary>
   public JsonElement? RawPayload { get; init; }
 
@@ -102,7 +82,6 @@ internal static class AsbReceiveReason {
   internal const string MISSING_ENVELOPE_TYPE = "MissingEnvelopeType";
   internal const string MISSING_JSON_TYPE_INFO = "MissingJsonTypeInfo";
   internal const string DESERIALIZATION_FAILED = "DeserializationFailed";
-  internal const string NO_LOCAL_CONSUMER = "NoLocalConsumer";
   internal const string RAW_RECEPTOR_MATCH = "RawReceptorMatch";
 
   /// <summary>

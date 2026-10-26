@@ -65,7 +65,7 @@ public class AsbReceiveStoresBeforeSettlingTests {
     var typed = _options.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
 
     var decision = new AsbReceiveDecisionMaker().Decide(
-      _withEnvelopeType(UNKNOWN_ENVELOPE_TYPE), body, (_, _) => typed, _options, isHandledLocally: _ => false);
+      _withEnvelopeType(UNKNOWN_ENVELOPE_TYPE), body, (_, _) => typed, _options);
 
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process)
       .Because("the skip is decided after the message is stored");
@@ -98,6 +98,20 @@ public class AsbReceiveStoresBeforeSettlingTests {
       .Because("the consumer gives a message it cannot store as a row dead-letter custody with its body");
     await Assert.That(decision.Envelope!.MessageId.Value).IsEqualTo(id);
     await Assert.That(decision.EnvelopeTypeName).IsNull();
+  }
+
+  [Test]
+  public async Task Decide_AnEnvelopeWhoseIdIsNotAMessageId_IsDeadLetteredAsync() {
+    var (id, body) = _envelopeBody();
+    var v4 = Guid.Parse("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+    var typed = _options.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+
+    var decision = new AsbReceiveDecisionMaker().Decide(
+      _withEnvelopeType(UNKNOWN_ENVELOPE_TYPE), body.Replace(id.ToString(), v4.ToString(), StringComparison.Ordinal),
+      (_, _) => typed, _options);
+
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter)
+      .Because("the id validation's ArgumentException must not escape the decision, which the broker would redeliver forever");
   }
 
   [Test]

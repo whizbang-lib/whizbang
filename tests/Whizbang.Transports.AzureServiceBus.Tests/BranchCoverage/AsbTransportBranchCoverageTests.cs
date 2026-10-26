@@ -230,11 +230,11 @@ public class AsbTransportBranchCoverageTests {
   }
 
   /// <summary>
-  /// A message dropped on a routing-key-less subscription is attributed to the default subscription
-  /// in the drop warning, so the drop can be traced to the entity it came from.
+  /// A message dead-lettered on a routing-key-less subscription (its body is not a readable envelope, #1720) is
+  /// attributed to the default subscription in the warning, so it can be traced to the entity it came from.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_NoRoutingKey_AttributesTheDropToTheDefaultSubscriptionAsync() {
+  public async Task ProcessMessage_NoRoutingKey_AttributesTheDeadLetterToTheDefaultSubscriptionAsync() {
     var logger = new RecordingTransportLogger();
     var client = new RaisableServiceBusClient();
     var transport = _receivingTransport(client, logger, enableSessions: false);
@@ -244,9 +244,10 @@ public class AsbTransportBranchCoverageTests {
     await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
       AsbTransportTestData.RawMessage("{}", "Unknown.Contracts.Nothing, Unknown.Contracts"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("an unresolvable type is acked and dropped, not redelivered");
-    await Assert.That(logger.Contains(LogLevel.Warning, "Subscription=fallback-sub")).IsTrue();
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("a body that is not a readable envelope is dead-lettered, never acked and dropped");
+    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(logger.Contains(LogLevel.Warning, $"{TOPIC}/fallback-sub")).IsTrue();
   }
 
   /// <summary>
@@ -345,36 +346,6 @@ public class AsbTransportBranchCoverageTests {
     await Assert.That(sent.SessionId).IsEqualTo(AsbSessionKey.For(streamId, envelope.MessageId.Value));
     await Assert.That(sent.SessionId).IsNotEqualTo(AsbSessionKey.For(null, envelope.MessageId.Value))
       .Because("a parsed stream must key the session by the stream, not fall back to the streamless key");
-  }
-
-  // ========================================
-  // RECEIVE FILTER WITH RECEPTORS ONLY
-  // ========================================
-
-  /// <summary>
-  /// With a receptor registry and no perspective registry, a payload no receptor handles is dropped
-  /// at receive: the missing perspective registry counts as "nothing applies it", not as an error.
-  /// </summary>
-  [Test]
-  public async Task ProcessMessage_ReceptorRegistryOnly_UnhandledPayloadIsAckedAndDroppedAsync() {
-    var client = new RaisableServiceBusClient();
-    var transport = new AzureServiceBusTransport(
-      client,
-      AsbTransportTestData.CombinedOptions,
-      new AzureServiceBusOptions { AutoProvisionInfrastructure = false, EnableSessions = false },
-      NullLogger<AzureServiceBusTransport>.Instance,
-      receptorRegistry: new StubReceptorRegistry(null));
-    var handlerInvoked = false;
-    await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
-      new TransportDestination(TOPIC, SUBSCRIPTION));
-    var receiver = new RecordingTransportReceiver();
-
-    await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
-      AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
-
-    await Assert.That(handlerInvoked).IsFalse();
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
   }
 
   // ========================================

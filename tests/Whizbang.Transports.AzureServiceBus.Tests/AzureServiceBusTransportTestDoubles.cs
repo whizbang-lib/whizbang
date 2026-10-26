@@ -488,7 +488,7 @@ internal sealed class MissTypeBinder : IMessageTypeBinder {
   public (Type? Type, MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) => (null, MessageTypeBinderPass.Miss);
 }
 
-/// <summary>Recording IRawReceptor for the slice-5 InvokeRawReceptor receive branch.</summary>
+/// <summary>Recording IRawReceptor for the slice-5 raw receptor, which runs once the message is stored (#1720).</summary>
 internal sealed class RecordingRawReceptor(string targetMessageTypeName) : IRawReceptor {
   public List<JsonElement> Handled { get; } = [];
 

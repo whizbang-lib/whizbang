@@ -21,8 +21,8 @@ public sealed record GlobalNamespacePayload(string Value);
 
 namespace Whizbang.Transports.AzureServiceBus.Tests {
   /// <summary>
-  /// A payload type with no namespace cannot belong to an absorbed namespace, so an unconsumed one is
-  /// dropped like any other rather than the namespace check failing on the missing name.
+  /// A payload type with no namespace is handed on to be stored like any other (#1720), rather than any check on its
+  /// missing namespace failing.
   /// </summary>
   /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AsbReceiveDecisionMaker.cs</code-under-test>
   public class AsbGlobalNamespacePayloadTests {
@@ -31,7 +31,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests {
     };
 
     [Test]
-    public async Task Decide_UnconsumedPayloadWithNoNamespace_IsNotAbsorbedAndIsDroppedAsync() {
+    public async Task Decide_UnconsumedPayloadWithNoNamespace_IsHandedOnToBeStoredAsync() {
       var decider = new AsbReceiveDecisionMaker();
       var props = new Dictionary<string, object> {
         [AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY] = "Whizbang.Core.Observability.MessageEnvelope`1[[GlobalNamespacePayload]]",
@@ -53,13 +53,13 @@ namespace Whizbang.Transports.AzureServiceBus.Tests {
         DispatchContext = new MessageDispatchContext { Mode = Whizbang.Core.Dispatch.DispatchModes.Local, Source = MessageSource.Local },
       };
       var body = JsonSerializer.Serialize(envelope, typeInfo);
-      var absorbed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Absorbed.Contracts" };
 
-      var decision = decider.Decide(
-        props, body, (_, _) => typeInfo, _jsonOptions, isHandledLocally: static _ => false, absorbedNamespaces: absorbed);
+      var decision = decider.Decide(props, body, (_, _) => typeInfo, _jsonOptions);
 
-      await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
-      await Assert.That(decision.Reason).IsEqualTo(AsbReceiveReason.NO_LOCAL_CONSUMER);
+      // #1720: the receive decision no longer asks whether anything here consumes the payload; the consumer stores
+      // it and decides any skip after storage, a payload with no namespace included.
+      await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
+      await Assert.That(decision.Reason).IsEqualTo(AsbReceiveReason.OK);
     }
   }
 }

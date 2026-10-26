@@ -46,6 +46,13 @@ public sealed class TransportMetrics {
   /// <summary>Messages rejected as duplicates.</summary>
   public PassiveCounter<long> InboxMessagesDeduplicated { get; }
 
+  /// <summary>
+  /// Messages the consumer stored and settled without processing on receive, tagged <c>reason</c> (one of
+  /// <see cref="Whizbang.Core.Messaging.InboxReceiveDiscard"/>) and <c>message_type</c> (#1720).
+  /// </summary>
+  /// <docs>operations/observability/metrics#transport</docs>
+  public PassiveCounter<long> InboxMessagesDiscarded { get; }
+
   /// <summary>Processing failures.</summary>
   public PassiveCounter<long> InboxMessagesFailed { get; }
 
@@ -144,6 +151,7 @@ public sealed class TransportMetrics {
     InboxMessagesReceived = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.messages_received", description: "Messages received from transport");
     InboxMessagesProcessed = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.messages_processed", description: "Successfully processed");
     InboxMessagesDeduplicated = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.messages_deduplicated", description: "Rejected as duplicates");
+    InboxMessagesDiscarded = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.messages_discarded", description: "Stored and settled without processing on receive, by reason");
     InboxMessagesFailed = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.messages_failed", description: "Processing failures");
     InboxSubscriptionRetries = meter.CreatePassiveCounter<long>("whizbang.transport.inbox.subscription_retries", description: "Transport subscription retry attempts");
 

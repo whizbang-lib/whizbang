@@ -20,8 +20,8 @@ namespace Whizbang.Core.Messaging;
 ///   <item><description>Pass 3 — Type <c>FullName</c> across all loaded assemblies (handles assembly-rename case).</description></item>
 /// </list>
 /// <para>
-/// A miss across all three returns null. The caller decides what to do — typically fall
-/// back to the slice 5 raw-receptor path or ack + drop with a structured log.
+/// A miss across all three returns null. The caller decides what to do: a transport hands a
+/// valid envelope on as received to be stored (#1720), with the slice 5 raw receptor, if any.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/serialization/type-binding</docs>

@@ -649,8 +649,7 @@ public sealed partial class OutboxPublishWorker(
   /// Today this is a no-op: <see cref="MessageDiscardPolicy.EvaluateOutbox"/> always
   /// returns <c>ShouldDiscard = false</c> so a misconfiguration can never silently
   /// suppress a publish. The seam exists so a populated catalog can opt-in later
-  /// without changing the worker. Mirrors <c>ShouldSkipInbox</c> and
-  /// <c>RabbitMQTransport.ShouldSkipReceive</c>.
+  /// without changing the worker. Mirrors <c>ShouldSkipInbox</c>.
   /// </remarks>
   internal static bool ShouldSkipOutboxPublish(
       IMessageDiscardPolicy? discardPolicy,

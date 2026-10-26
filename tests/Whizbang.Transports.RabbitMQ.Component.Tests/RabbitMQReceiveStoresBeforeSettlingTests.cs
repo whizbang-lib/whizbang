@@ -147,6 +147,83 @@ public class RabbitMQReceiveStoresBeforeSettlingTests {
     await Assert.That(channel.NackAttempts).IsEmpty();
   }
 
+  [Test]
+  public async Task Flush_AValidEnvelopeWithNoEnvelopeTypeHeader_IsHandedOnWithNoTypeAsync() {
+    var channel = new RecordingChannel();
+    var logger = new CapturingLogger<RabbitMQTransport>();
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(
+      new FakeConnection(() => Task.FromResult<IChannel>(channel)), logger: logger);
+    var (props, body) = RabbitTestWire.ValidWireMessage("no-type");
+    props.Headers!.Remove("EnvelopeType");
+    var handled = new List<TransportMessage>();
+
+    await transport.FlushBatchAsync(
+      [_pending(channel, props, body, 7)],
+      (batch, _) => {
+        handled.AddRange(batch);
+        return Task.CompletedTask;
+      },
+      null,
+      QUEUE);
+
+    await Assert.That(handled).Count().IsEqualTo(1)
+      .Because("the consumer gives a message it cannot store as a row dead-letter custody with its body");
+    await Assert.That(handled[0].EnvelopeType).IsNull();
+    await Assert.That(channel.AckAttempts).IsEquivalentTo([7UL]);
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("handed on to be stored as received", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task Deliver_AValidEnvelopeWithNoEnvelopeTypeHeader_IsHandedOnWithNoTypeAsync() {
+    var channel = new RecordingChannel();
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(new FakeConnection(() => Task.FromResult<IChannel>(channel)));
+    var handled = new List<(IMessageEnvelope Envelope, string? EnvelopeType)>();
+    await transport.SubscribeAsync(
+      (envelope, envelopeType, _) => {
+        handled.Add((envelope, envelopeType));
+        return Task.CompletedTask;
+      },
+      RabbitTestWire.Destination());
+    var (props, body) = RabbitTestWire.ValidWireMessage("no-type-single");
+    props.Headers!.Remove("EnvelopeType");
+
+    await RabbitTestWire.DeliverAsync(channel, props, body, 8);
+
+    await Assert.That(handled).Count().IsEqualTo(1);
+    await Assert.That(handled[0].EnvelopeType).IsNull();
+    await Assert.That(channel.AckAttempts).IsEquivalentTo([8UL]);
+  }
+
+  [Test]
+  public async Task Flush_AnEnvelopeWhoseIdIsNotAMessageId_IsDeadLettered_AndTheFlushCompletesAsync() {
+    var channel = new RecordingChannel();
+    var transport = await _transportAsync(channel);
+    var (props, body) = RabbitTestWire.ValidWireMessage("v4-id");
+    var v4 = Guid.Parse("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+    var rewritten = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(body).Replace(props.MessageId!, v4.ToString(), StringComparison.Ordinal));
+
+    await Assert.That(async () => await transport.FlushBatchAsync(
+      [_pending(channel, props, rewritten, 11)], (_, _) => Task.CompletedTask, null, QUEUE)).ThrowsNothing()
+      .Because("the id validation's ArgumentException must not escape the flush, or the collector re-queues the batch");
+
+    await Assert.That(channel.NackAttempts).IsEquivalentTo([(11UL, false)]);
+  }
+
+  [Test]
+  public async Task Deliver_ABodyTheDeserializerThrowsOn_IsDeadLetteredNotLoopedAsync() {
+    var channel = new RecordingChannel();
+    var transport = await RabbitTestWire.NewInitializedTransportAsync(new FakeConnection(() => Task.FromResult<IChannel>(channel)));
+    var handled = 0;
+    await transport.SubscribeAsync((_, _, _) => { handled++; return Task.CompletedTask; }, RabbitTestWire.Destination());
+    var (props, _) = RabbitTestWire.ValidWireMessage("bad-single");
+
+    await RabbitTestWire.DeliverAsync(channel, props, "{\"id\": not json"u8.ToArray(), 9);
+
+    await Assert.That(handled).IsEqualTo(0);
+    await Assert.That(channel.NackAttempts).IsEquivalentTo([(9UL, false)])
+      .Because("a body that is not JSON goes to the dead-letter exchange");
+  }
+
   // ===== Helpers =====
 
   /// <summary>A valid envelope whose envelope type header names a payload type no context here describes.</summary>

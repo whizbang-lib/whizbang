@@ -398,14 +398,12 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
 
   /// <summary>
   /// Earlier coverage of the no-local-consumer drop only ever used an EMPTY perspective
-  /// registry, which (for a foreach over an array) never actually executes the loop body or
-  /// its exit — a service that legitimately owns perspectives for OTHER event types takes a
-  /// different path through this same predicate. If that path ever mistakenly reported a match
-  /// (or threw), an unrelated payload could either be delivered to a handler that never
-  /// registered for it, or silently stop being ack+dropped at all.
+  /// registry. Since #1720 the transport no longer consults the registries on receive: a payload no
+  /// local consumer takes, with a perspective registry that tracks OTHER event types wired, still
+  /// reaches the handler, which stores it, and the consumer decides the skip after storage.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_PerspectiveRegistryTracksOtherTypesOnly_NoLocalConsumerDropsAsync() {
+  public async Task ProcessMessage_PerspectiveRegistryTracksOtherTypesOnly_IsHandedToTheHandlerAsync() {
     var (transport, client) = _createDecisionTransport(
       receptorRegistry: new StubReceptorRegistry(null),
       perspectiveRegistry: new StubPerspectiveRegistry(typeof(UnregisteredBatchMessage)));
@@ -418,10 +416,9 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
     await client.LastProcessor!.RaiseMessageAsync(
       AsbTransportTestData.MessageArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("no-local-consumer drops still ack the broker so the message exits the topic");
-    await Assert.That(handlerInvoked).IsFalse()
-      .Because("a perspective registry that tracks OTHER event types must not make an unrelated payload look locally handled");
+    await Assert.That(handlerInvoked).IsTrue()
+      .Because("a payload no local consumer takes is stored, and the consumer decides the skip after storage (#1720)");
+    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
   }
 
   /// <summary>

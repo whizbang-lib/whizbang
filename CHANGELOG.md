@@ -684,6 +684,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits for them after flushing the batchers and before the provider is disposed, logging at Information how many
   it is waiting for, within the host's shutdown timeout. `DistributeLifecycleContext` gains an optional
   `DetachedWork` (`DetachedLifecycleWork`) that records the background invocations.
+- **A received message is stored before it is settled with the broker, and a skip is recorded with the row (#1720).**
+  Several receive paths completed, acked or nacked a message before anything stored it, so it was gone with no row.
+  Azure Service Bus acked and dropped a message whose envelope type no context here describes, one the typed read
+  rejected and one no local consumer takes, handled a raw receptor match with no inbox row, and dead-lettered a valid
+  envelope that lacked the `EnvelopeType` property. RabbitMQ nacked an unresolvable type without requeue (dropped
+  unless a dead-letter exchange was declared) and acked a no-consumer message on the single-message path, and a body
+  its deserializer threw on left `FlushBatchAsync` with the `JsonException`: the batch collector re-queues a batch whose
+  flush throws, so that message and its neighbors were flushed again on every sliding window and never acked or
+  nacked. The transport consumer skipped no-consumer, foreign-target, owned-echo, self-echo and unknown-event messages
+  before `store_inbox_messages`, counting them as `messages_deduplicated`, and the Service Bus consumer dropped a
+  no-consumer message the same way. Now every body that is a valid envelope reaches the handler and is stored first: as
+  its typed envelope, or as received (`ReceivedEnvelopeReader`, an envelope of `JsonElement` with the type the producer
+  named) when this service cannot read its type, and a raw receptor runs once it is stored. A message the consumer
+  decides not to process is stored settled: `InboxMessage.DiscardedOnReceive` (one of `InboxReceiveDiscard`) makes
+  `store_inbox_messages` write the row processed, Stored and Published, with `discarded on receive: <reason>` in
+  `wh_inbox_state.error`, never claimed, copied into the event store or dispatched (migration 240). Each skip is
+  counted by `whizbang.transport.inbox.messages_discarded` with a `reason` tag. Only a body that is not a readable
+  envelope is refused before storage, and it is dead-lettered at the broker (where the dead-letter drain gives it
+  custody), never dropped; a valid envelope with no envelope type is given dead-letter custody with its body by the
+  consumer. Operators will see more inbox rows (settled ones, purged by maintenance with other completed rows) and
+  fewer Service Bus ack-drop warnings; the `receptorRegistry`, `perspectiveRegistry`, `discardPolicy` and
+  `absorbedNamespaces` constructor parameters of `AzureServiceBusTransport` and `discardPolicy` of `RabbitMQTransport`
+  are no longer consulted on receive. The control class's non-durable receive is unchanged.
 - **A recovered outbox or perspective dead letter is published or applied as the work it was, and reads Recovered
   only once that has happened (#1722).** `recover_dead_letter` re-inserted both with column lists of its own and
   marked the dead letter Recovered in the same call, before anything ran. The outbox copy wrote the envelope type

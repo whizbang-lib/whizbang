@@ -17,12 +17,11 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
-/// RED-first regression locks for slice 1 hotfix's behavior change: when the local service
-/// can't bind a received envelope to a CLR type (unknown JsonTypeInfo or shape rejection),
-/// the broker is acked and the message dropped instead of dead-lettered. The legacy receive
-/// path dead-lettered every such case, which produced unbounded ASB DLQ accumulation on
-/// consumer services that received events from contracts assemblies they didn't reference. These
-/// tests pin the new behavior so a future refactor can't quietly regress to broker DLQ.
+/// The receive decision's policy. A valid envelope the local service can't bind to a CLR type
+/// (unknown JsonTypeInfo or shape rejection) is handed on as received to be stored (#1720), so
+/// services that receive events from contracts assemblies they don't reference neither drop them
+/// nor accumulate them in the broker DLQ. Only a body that is not a readable envelope is
+/// dead-lettered at the broker, where the dead-letter drain gives it custody.
 /// </summary>
 public class AsbReceiveDecisionMakerTests {
   private static readonly JsonSerializerOptions _jsonOptions = new() {
@@ -48,32 +47,31 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   [Test]
-  public async Task Decide_UnregisteredEnvelopeType_ReturnsAckAndDropAsync() {
-    // The behavior-change lock: today this dead-letters; new behavior is ack + drop.
-    // This is the change that stops ASB DLQ accumulation on services that don't reference
-    // the publisher's contracts assembly.
+  public async Task Decide_UnregisteredEnvelopeType_BodyNotAnEnvelope_ReturnsDeadLetterAsync() {
+    // A body that is only an id is not a readable envelope, so it cannot be stored: dead-lettered,
+    // never acked and dropped (#1720). A valid envelope of the same type is handed on as received.
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown.Event, UnknownContracts]]");
 
     var decision = decider.Decide(props, """{"id":"00000000-0000-0000-0000-000000000000"}""", _resolveAlwaysNull, _jsonOptions);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
     await Assert.That(decision.EnvelopeTypeName).IsEqualTo("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown.Event, UnknownContracts]]");
     await Assert.That(decision.Envelope).IsNull();
   }
 
   [Test]
-  public async Task Decide_ResolverHitsButDeserializeReturnsNull_ReturnsAckAndDropAsync() {
+  public async Task Decide_ResolverHitsButDeserializeReturnsNull_ReturnsDeadLetterAsync() {
     // JsonTypeInfo resolved but JsonSerializer.Deserialize returns null (e.g., body is just
-    // "null"). Pre-hotfix: DLQ. Post-hotfix: ack + drop.
+    // "null"): not a readable envelope either, so it is dead-lettered (#1720).
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Foo]]");
     var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
 
     var decision = decider.Decide(props, "null", (_, _) => typeInfo, _jsonOptions);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("DeserializationFailed");
   }
 
@@ -124,24 +122,6 @@ public class AsbReceiveDecisionMakerTests {
   // ============================================================
 
   [Test]
-  public async Task Decide_PayloadHasNoLocalConsumer_ReturnsAckAndDropWithReasonNoLocalConsumerAsync() {
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
-    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var envelope = _makeEnvelope();
-    var body = JsonSerializer.Serialize(envelope, typeInfo);
-
-    // Local registry says: no local consumer for THIS payload type.
-    bool _isHandledLocally(Type _) => false;
-
-    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
-    await Assert.That(decision.Reason).IsEqualTo("NoLocalConsumer");
-  }
-
-  [Test]
   public async Task Decide_IsClaimHeaderPresentWithNullValue_IsNotAClaim_ReturnsProcessAsync() {
     // AMQP application properties may carry a null. An is-claim header holding null says nothing
     // about a claim, so the envelope type is resolved as named and the message processes normally,
@@ -180,59 +160,6 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Description).IsEqualTo(nameof(Whizbang.Core.Routing.PoisonQuarantineReason.MessageAgeExceeded));
   }
 
-  [Test]
-  public async Task Decide_PayloadHasLocalConsumer_ReturnsProcessAsync() {
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
-    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var envelope = _makeEnvelope();
-    var body = JsonSerializer.Serialize(envelope, typeInfo);
-
-    bool _isHandledLocally(Type _) => true;
-
-    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
-    await Assert.That(decision.Reason).IsEqualTo("Ok");
-  }
-
-  [Test]
-  public async Task Decide_NoLocalRegistryProvided_KeepsLegacyBehavior_ProcessAsync() {
-    // Backward compat: when isHandledLocally is null, the filter is bypassed so existing
-    // call sites that don't yet wire a registry behave as before slice 2.
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
-    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var envelope = _makeEnvelope();
-    var body = JsonSerializer.Serialize(envelope, typeInfo);
-
-    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, isHandledLocally: null);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
-  }
-
-  [Test]
-  public async Task Decide_UnconsumedPayload_OnAbsorbedNamespace_ReturnsProcessAsync() {
-    // A payload with NO local consumer whose NAMESPACE is absorbed must NOT be dropped — it's kept so the
-    // inbox -> event-store write can persist it for a later rebuild. (JsonElement's namespace = System.Text.Json.)
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
-    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var envelope = _makeEnvelope();
-    var body = JsonSerializer.Serialize(envelope, typeInfo);
-
-    static bool _isHandledLocally(Type _) => false; // no local consumer
-    var absorbed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System.Text.Json" };
-
-    var decision = decider.Decide(
-      props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally, absorbedNamespaces: absorbed);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
-  }
-
   // ============================================================
   // Body-offload (claim-check) — a message whose serialized body exceeds the transport limit is
   // offloaded: the wire payload becomes BodyClaimEnvelopePayload, the ORIGINAL type is carried in
@@ -240,9 +167,9 @@ public class AsbReceiveDecisionMakerTests {
   //
   // REGRESSION observed in production: a large bulk status-update command silently did nothing. The
   // command exceeded ASB's 256 KB limit → offloaded. On receive, Decide's
-  // Slice-2 NO_LOCAL_CONSUMER filter ran against the CLAIM payload type (BodyClaimEnvelopePayload),
-  // which no service has a receptor for → AckAndDrop before rehydration. Every offloaded message
-  // died here. The filter must not fire for claim payloads — the real type is rehydrated downstream.
+  // since-removed no-consumer filter ran against the CLAIM payload type (BodyClaimEnvelopePayload),
+  // which no service has a receptor for, and dropped the message before rehydration. Every offloaded
+  // message died here. A claim must reach the handler, which rehydrates the real type downstream.
   // ============================================================
 
   [Test]
@@ -289,12 +216,11 @@ public class AsbReceiveDecisionMakerTests {
     };
 
     // Service consumes its real messages but has NO receptor for the internal claim type.
-    bool _isHandledLocally(Type t) => t != typeof(BodyClaimEnvelopePayload);
 
-    var decision = decider.Decide(props, body, (_, _) => claimTypeInfo, combinedOptions, _isHandledLocally);
+    var decision = decider.Decide(props, body, (_, _) => claimTypeInfo, combinedOptions);
 
     // Must Process so TransportConsumerWorker.MaybeRehydrateAsync can download + rehydrate the
-    // original message. Today this is AckAndDrop / NoLocalConsumer — the silent bulk drop.
+    // original message.
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process);
     await Assert.That(decision.Reason).IsEqualTo("Ok");
   }
@@ -327,7 +253,6 @@ public class AsbReceiveDecisionMakerTests {
       props, body,
       _resolveAlwaysNull,  // registry says no
       combinedOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: null,
       typeBinder: binder);
 
@@ -337,18 +262,17 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   [Test]
-  public async Task Decide_RegistryMisses_BinderAlsoMisses_FallsThroughToAckAndDropAsync() {
+  public async Task Decide_RegistryMisses_BinderAlsoMisses_FallsThroughToDeadLetterAsync() {
     var decider = new AsbReceiveDecisionMaker();
     var binder = new FakeBinder(null);  // binder also misses
     var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown]]");
 
     var decision = decider.Decide(
       props, """{"p":{}}""",
-      _resolveAlwaysNull, _jsonOptions,
-      isHandledLocally: null, rawReceptorRegistry: null,
+      _resolveAlwaysNull, _jsonOptions, rawReceptorRegistry: null,
       typeBinder: binder);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
@@ -362,9 +286,9 @@ public class AsbReceiveDecisionMakerTests {
   // Slice 5 — opt-in raw JSON receptor wire-up
   //
   // When the typed JsonTypeInfo lookup misses but a raw receptor is registered for the
-  // envelope's inner message type, the decision routes to InvokeRawReceptor instead of
-  // AckAndDrop. Transport invokes the raw receptor with the envelope's "p" payload as a
-  // JsonElement, then acks the broker.
+  // envelope's inner message type, the decision hands the envelope on as received and carries the
+  // receptor; the transport invokes it with the "p" payload once the handler has stored the message
+  // (#1720). A body that is not a readable envelope is dead-lettered either way.
   // ============================================================
 
   private sealed class FakeRawReceptor(string targetName) : Whizbang.Core.Messaging.IRawReceptor {
@@ -373,44 +297,21 @@ public class AsbReceiveDecisionMakerTests {
   }
 
   [Test]
-  public async Task Decide_TypeInfoMisses_RawReceptorRegistered_ReturnsInvokeRawReceptorAsync() {
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
-    var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
-    var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType(envelopeType);
-
-    var decision = decider.Decide(
-      props,
-      """{"p":{"someField":42},"id":"01234567-89ab-7def-0123-456789abcdef"}""",
-      _resolveAlwaysNull,  // forces JsonTypeInfo miss
-      _jsonOptions,
-      isHandledLocally: null,
-      rawReceptorRegistry: rawRegistry);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.InvokeRawReceptor);
-    await Assert.That(decision.Reason).IsEqualTo("RawReceptorMatch");
-    await Assert.That(decision.RawReceptor).IsSameReferenceAs(receptor);
-    await Assert.That(decision.RawPayload.HasValue).IsTrue();
-  }
-
-  [Test]
-  public async Task Decide_TypeInfoMisses_NoRawReceptor_FallsThroughToAckAndDropAsync() {
+  public async Task Decide_TypeInfoMisses_NoRawReceptor_FallsThroughToDeadLetterAsync() {
     var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([]);
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[Unknown.Type, UnknownAsm]]");
 
     var decision = decider.Decide(
       props, """{"p":{}}""", _resolveAlwaysNull, _jsonOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: rawRegistry);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
   [Test]
-  public async Task Decide_TypeInfoMisses_RawReceptorButMalformedBody_FallsThroughToAckAndDropAsync() {
+  public async Task Decide_TypeInfoMisses_RawReceptorButMalformedBody_FallsThroughToDeadLetterAsync() {
     var receptor = new FakeRawReceptor("MyApp.Foo, MyApp");
     var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
     var decider = new AsbReceiveDecisionMaker();
@@ -418,16 +319,15 @@ public class AsbReceiveDecisionMakerTests {
 
     var decision = decider.Decide(
       props, "not valid json{{{", _resolveAlwaysNull, _jsonOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: rawRegistry);
 
-    // Can't extract payload → fall through, don't fabricate an InvokeRawReceptor.
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    // Not a readable envelope: dead-lettered, and no raw receptor is attached.
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
   [Test]
-  public async Task Decide_BinderBindsButOptionsCannotResolve_ReturnsAckAndDropInsteadOfThrowingAsync() {
+  public async Task Decide_BinderBindsButOptionsCannotResolve_ReturnsDeadLetterInsteadOfThrowingAsync() {
     // The binder fallback resolves a LOADABLE type the serializer holds no metadata for.
     // STJ's GetTypeInfo throws NotSupportedException there — and an unguarded throw escapes
     // Decide, the transport abandons the delivery, and the broker redelivers the same
@@ -445,11 +345,10 @@ public class AsbReceiveDecisionMakerTests {
 
     var decision = decider.Decide(
       props, """{"p":1}""", _resolveAlwaysNull, barrenOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: null,
       typeBinder: binder);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
@@ -484,7 +383,7 @@ public class AsbReceiveDecisionMakerTests {
   // consumers are the INNER events, which only become addressable after the dispatch-seam fan-out.
   //
   // REGRESSION observed on a consumer fleet: every stream-integrity RedeliveryComposite served by
-  // an origin was ack+dropped here as NoLocalConsumer — at EVERY service including the requester —
+  // an origin was acked and dropped here as NoLocalConsumer, at EVERY service including the requester:
   // so repair deficits never closed and the repair drain re-requested forever (amplifying broker
   // ops-rate load). The worker-level no-consumer gates already exempt composites
   // (CompositeInboxFanout.IsCompositeWireType); this transport-level filter must too. The payload
@@ -528,9 +427,8 @@ public class AsbReceiveDecisionMakerTests {
       "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
 
     // Faithful to every real service: nothing consumes the composite type itself.
-    static bool _isHandledLocally(Type _) => false;
 
-    var decision = decider.Decide(props, body, (_, _) => compositeTypeInfo, combinedOptions, _isHandledLocally);
+    var decision = decider.Decide(props, body, (_, _) => compositeTypeInfo, combinedOptions);
 
     await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.Process)
       .Because("a composite has no receptor anywhere by design — dropping it as NoLocalConsumer "
@@ -539,22 +437,5 @@ public class AsbReceiveDecisionMakerTests {
     await Assert.That(decision.Reason).IsEqualTo("Ok");
   }
 
-  [Test]
-  public async Task Decide_PlainUnconsumedPayload_StillDrops_CompositeExemptionIsNarrowAsync() {
-    // Guard: the composite exemption must not weaken the slice-2 filter for ordinary payloads.
-    var decider = new AsbReceiveDecisionMaker();
-    var props = _withEnvelopeType("Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]]");
-    var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var envelope = _makeEnvelope();
-    var body = JsonSerializer.Serialize(envelope, typeInfo);
-
-    static bool _isHandledLocally(Type _) => false;
-
-    var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
-
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
-    await Assert.That(decision.Reason).IsEqualTo("NoLocalConsumer");
-  }
 }
 

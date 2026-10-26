@@ -43,7 +43,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class TransportConsumerWorkerBranchCoverageTests {
   private const string THIS_SERVICE = "OrderService";
-  private const string DEDUPLICATED = "whizbang.transport.inbox.messages_deduplicated";
+  private const string DISCARDED = "whizbang.transport.inbox.messages_discarded";
   private static readonly TimeSpan _wait = TimeSpan.FromSeconds(20);
 
   private static readonly string _ownedEventType =
@@ -82,10 +82,10 @@ public class TransportConsumerWorkerBranchCoverageTests {
       await worker.StopAsync(CancellationToken.None);
     }
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("an event under the owned domain prefix is an echo of this service's own publish");
-    await Assert.That(_positiveSum(metricHelper, DEDUPLICATED)).IsEqualTo(1d)
-      .Because("every echo discard is counted when metrics are registered");
+    await Assert.That(coordinator.StoredMessages.Any(m => m.DiscardedOnReceive is null)).IsFalse()
+      .Because("an event under the owned domain prefix is an echo of this service's own publish, never processed (#1720)");
+    await Assert.That(_positiveSum(metricHelper, DISCARDED)).IsEqualTo(1d)
+      .Because("every echo is counted under its reason when metrics are registered");
   }
 
   [Test]
@@ -109,10 +109,10 @@ public class TransportConsumerWorkerBranchCoverageTests {
       await worker.StopAsync(CancellationToken.None);
     }
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("an owned command whose last hop is this service is a self-echo");
-    await Assert.That(_positiveSum(metricHelper, DEDUPLICATED)).IsEqualTo(1d)
-      .Because("the self-echo discard is counted when metrics are registered");
+    await Assert.That(coordinator.StoredMessages.Any(m => m.DiscardedOnReceive is null)).IsFalse()
+      .Because("an owned command whose last hop is this service is a self-echo, never processed (#1720)");
+    await Assert.That(_positiveSum(metricHelper, DISCARDED)).IsEqualTo(1d)
+      .Because("the self-echo is counted under its reason when metrics are registered");
   }
 
   // ---- known-event filter without metrics -----------------------------------------------------
@@ -139,8 +139,8 @@ public class TransportConsumerWorkerBranchCoverageTests {
       await worker.StopAsync(CancellationToken.None);
     }
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
-      .Because("the filter drops the uncached event before the insert even with no metrics to count it");
+    await Assert.That(coordinator.StoredMessages.Count(m => m.DiscardedOnReceive is null)).IsEqualTo(1)
+      .Because("the filter settles the uncached event (stored with its reason) even with no metrics to count it");
   }
 
   // ---- poison quarantine on a host missing a provider -----------------------------------------

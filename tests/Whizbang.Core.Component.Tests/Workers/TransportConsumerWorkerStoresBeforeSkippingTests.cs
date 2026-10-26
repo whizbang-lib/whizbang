@@ -15,6 +15,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Tests.Workers.StoreFirstOwned;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -57,6 +58,8 @@ namespace Whizbang.Core.Tests.Workers {
 
       await Assert.That(harness.StoredIds).Contains(envelope.MessageId.Value)
         .Because("the skip is decided after the message is stored, where it is durable and inspectable");
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+        .Because("the row records why it was not processed, so the store writes it settled");
     }
 
     [Test]
@@ -68,16 +71,23 @@ namespace Whizbang.Core.Tests.Workers {
       await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
 
       await Assert.That(harness.StoredIds).Contains(envelope.MessageId.Value);
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.FOREIGN_TARGET)
+        .Because("the row records why it was not processed, so the store writes it settled");
     }
 
     [Test]
-    public async Task AnEchoOfThisServicesOwnEvent_IsStoredAsync() {
+    public async Task AnEchoOfThisServicesOwnEvent_IsHeldNotDroppedAsync() {
       var harness = new Harness(hasAnyConsumer: true, ownsNamespace: true, catalog: [typeof(OwnedShipmentEvent)]);
-      var envelope = _envelope(lastHopService: THIS_SERVICE);
+      // Delivered from another instance's hop: an owned event is an echo whoever sent it. The echo check matches the
+      // event's own type name.
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
 
-      await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
+      await harness.DeliverAsync(envelope, typeof(OwnedShipmentEvent).FullName + ", " + typeof(OwnedShipmentEvent).Assembly.GetName().Name);
 
-      await Assert.That(harness.StoredIds).Contains(envelope.MessageId.Value);
+      // The echo check matches the bare type name, from which no inbox row can be built, so the message goes to
+      // dead-letter custody with its body: held, never processed and never dropped.
+      await Assert.That(harness.Coordinator.DeadLetterImports.Select(i => i.MessageId)).Contains(envelope.MessageId.Value);
+      await Assert.That(harness.StoredIds).DoesNotContain(envelope.MessageId.Value);
     }
 
     [Test]
@@ -88,6 +98,8 @@ namespace Whizbang.Core.Tests.Workers {
       await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipCommand>());
 
       await Assert.That(harness.StoredIds).Contains(envelope.MessageId.Value);
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.SELF_ECHO)
+        .Because("the row records why it was not processed, so the store writes it settled");
     }
 
     [Test]
@@ -99,6 +111,46 @@ namespace Whizbang.Core.Tests.Workers {
       await harness.DeliverAsync(envelope, _envelopeTypeOf<LateCatalogEvent>());
 
       await Assert.That(harness.StoredIds).Contains(envelope.MessageId.Value);
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.UNKNOWN_EVENT_TYPE)
+        .Because("the row records why it was not processed, so the store writes it settled");
+    }
+
+    [Test]
+    public async Task AnUnconsumedEventTheKnownEventFilterAlsoRejects_KeepsItsFirstReasonAsync() {
+      var harness = new Harness(hasAnyConsumer: false, catalog: [typeof(OwnedShipmentEvent)], catalogGrowsWith: typeof(LateCatalogEvent));
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
+
+      await harness.DeliverAsync(envelope, _envelopeTypeOf<LateCatalogEvent>());
+
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+        .Because("a row records the first reason it was skipped for");
+    }
+
+    [Test]
+    public async Task AMessageThisServiceProcesses_IsStoredWithNoReasonAsync() {
+      var harness = new Harness(hasAnyConsumer: true);
+      var envelope = _envelope(lastHopService: OTHER_SERVICE);
+
+      await harness.DeliverAsync(envelope, _envelopeTypeOf<OwnedShipmentEvent>());
+
+      await Assert.That(harness.ReasonFor(envelope.MessageId.Value)).IsNull()
+        .Because("only a skipped message is stored settled");
+    }
+
+    [Test]
+    public async Task ASkip_IsCountedUnderItsReason_NotAsADuplicateAsync() {
+      using var meterFactory = new TestMeterFactory();
+      var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+      using var meter = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+      var harness = new Harness(hasAnyConsumer: false, metrics: metrics);
+
+      await harness.DeliverAsync(_envelope(lastHopService: OTHER_SERVICE), _envelopeTypeOf<OwnedShipmentEvent>());
+
+      var discarded = meter.GetByName("whizbang.transport.inbox.messages_discarded").Where(m => m.Value > 0).ToList();
+      await Assert.That(discarded.Sum(m => m.Value)).IsEqualTo(1d);
+      await Assert.That(discarded.Single().Tags["reason"]).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER);
+      await Assert.That(meter.GetByName("whizbang.transport.inbox.messages_deduplicated").Where(m => m.Value > 0)).IsEmpty()
+        .Because("a skip is not a duplicate");
     }
 
     // ===== Helpers =====
@@ -126,7 +178,11 @@ namespace Whizbang.Core.Tests.Workers {
       private readonly Type[] _catalog;
       private readonly Type? _catalogGrowsWith;
 
-      public Harness(bool hasAnyConsumer, bool ownsNamespace = false, Type[]? catalog = null, Type? catalogGrowsWith = null) {
+      private readonly TransportMetrics? _metrics;
+
+      public Harness(bool hasAnyConsumer, bool ownsNamespace = false, Type[]? catalog = null, Type? catalogGrowsWith = null,
+          TransportMetrics? metrics = null) {
+        _metrics = metrics;
         _hasAnyConsumer = hasAnyConsumer;
         _ownsNamespace = ownsNamespace;
         _catalog = catalog ?? [];
@@ -136,6 +192,8 @@ namespace Whizbang.Core.Tests.Workers {
       public NoOpWorkCoordinator Coordinator { get; } = new();
 
       public IReadOnlyList<Guid> StoredIds => [.. Coordinator.StoredMessages.Select(m => m.MessageId)];
+
+      public string? ReasonFor(Guid messageId) => Coordinator.StoredMessages.Single(m => m.MessageId == messageId).DiscardedOnReceive;
 
       public async Task DeliverAsync(IMessageEnvelope envelope, string envelopeType) {
         var transport = new HandingTransport();
@@ -159,7 +217,7 @@ namespace Whizbang.Core.Tests.Workers {
           scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
           jsonOptions: new JsonSerializerOptions(),
           orderedProcessor: new OrderedStreamProcessor(logger: NullLogger<OrderedStreamProcessor>.Instance, parallelizeStreams: false),
-          metrics: null,
+          metrics: _metrics,
           logger: NullLogger<TransportConsumerWorker>.Instance,
           serviceInstanceProvider: new ServiceInstanceProvider(Guid.Parse("0198f5d2-0000-7000-8000-000000000002"), THIS_SERVICE, "host", 1),
           schemaReadyGate: SchemaReadyGate.AlreadyReady(),
