@@ -76,6 +76,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
       sp.GetService<Routing.IOutboxRoutingStrategy>() as Routing.ICommandInboxAddressResolver
         ?? Routing.NullCommandInboxAddressResolver.Instance);
     services.TryAddSingleton<Workers.IMessagePublishStrategy>(Workers.NullMessagePublishStrategy.Instance);
+    // The background work a stopping host waits for before it disposes the service provider (#1721): the detached
+    // lifecycle stages the work coordinator strategies and other producers start. One per container.
+    services.TryAddSingleton<Messaging.DetachedLifecycleWork>();
     services.TryAddSingleton<Messaging.IEventTypeProvider>(Messaging.NullEventTypeProvider.Instance);
     // Concurrency governors are keyed per worker: each worker sizes its own from its own options,
     // and a host that wants a different strategy for one worker registers it under that key.

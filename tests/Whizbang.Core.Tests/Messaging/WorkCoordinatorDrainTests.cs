@@ -196,7 +196,7 @@ public class WorkCoordinatorDrainTests {
       deferredChannel: deferredChannel ?? new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
   }
 

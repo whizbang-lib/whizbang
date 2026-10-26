@@ -147,7 +147,7 @@ public class DistributeStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
         dependencies: new ScopedWorkCoordinatorDependencies {
           ScopeFactory = sp.GetRequiredService<IServiceScopeFactory>(),
           LifecycleMessageDeserializer = sp.GetRequiredService<ILifecycleMessageDeserializer>()
-        }));
+        }, detachedWork: new DetachedLifecycleWork()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

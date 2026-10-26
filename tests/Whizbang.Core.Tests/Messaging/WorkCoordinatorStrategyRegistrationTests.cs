@@ -497,7 +497,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: new InboxChannelWriter(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>(), detachedWork: new DetachedLifecycleWork()
       );
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
@@ -514,7 +514,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>()
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>(), detachedWork: new DetachedLifecycleWork()
       );
     });
 

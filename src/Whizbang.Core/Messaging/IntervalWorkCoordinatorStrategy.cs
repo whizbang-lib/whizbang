@@ -42,6 +42,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IInboxChannelWriter _inboxChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork;
   private readonly Timer _flushTimer;
 
   // Queues for batching operations within the interval
@@ -77,6 +80,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
     IInboxChannelWriter inboxChannelWriter,
+    DetachedLifecycleWork detachedWork,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -91,6 +95,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
     _inboxChannelWriter = inboxChannelWriter;
+    ArgumentNullException.ThrowIfNull(detachedWork);
+    _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -278,7 +284,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle,
-          Metrics: _metrics, Strategy: STRATEGY_NAME),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
         ct
       );
 

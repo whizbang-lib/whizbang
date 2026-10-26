@@ -95,7 +95,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -132,7 +132,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -168,7 +168,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -207,7 +207,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -242,7 +242,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -290,7 +290,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -328,7 +328,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = Guid.CreateVersion7();
@@ -359,7 +359,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = Guid.CreateVersion7();
@@ -398,7 +398,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -434,7 +434,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -464,7 +464,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
     await sut.DisposeAsync();
 
@@ -488,7 +488,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
     await sut.DisposeAsync();
 
@@ -514,7 +514,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -550,7 +550,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -569,7 +569,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -596,7 +596,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Assert - the startup line is the only place the EFFECTIVE batch configuration is visible.
@@ -630,7 +630,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
     var message = _createOutboxMessage(destination: "orders.placed");
 
@@ -670,7 +670,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
     var message = _createInboxMessage(handlerName: "OrderPlacedHandler");
 
@@ -710,7 +710,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -746,7 +746,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -773,7 +773,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -807,7 +807,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue operations without flushing: 1 outbox message, 1 inbox message,
@@ -856,7 +856,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -898,7 +898,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -928,7 +928,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -959,7 +959,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -989,7 +989,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1027,7 +1027,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1071,7 +1071,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1106,7 +1106,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1146,7 +1146,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1178,7 +1178,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1219,7 +1219,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1261,7 +1261,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1301,7 +1301,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1330,7 +1330,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1365,7 +1365,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: scopeFactory,
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1397,7 +1397,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1429,7 +1429,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1464,7 +1464,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var message = new OutboxMessage {
@@ -1498,7 +1498,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var message = new InboxMessage {
@@ -1532,7 +1532,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     var message = new OutboxMessage {
@@ -1587,7 +1587,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1631,7 +1631,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics
+      metrics: metrics, detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1661,7 +1661,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics
+      metrics: metrics, detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1690,7 +1690,7 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics
+      metrics: metrics, detachedWork: new DetachedLifecycleWork()
     );
 
     try {
@@ -1720,7 +1720,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxMessage(_createInboxMessage()))
@@ -1737,7 +1737,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published))
@@ -1754,7 +1754,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored))
@@ -1771,7 +1771,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1788,7 +1788,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     await Assert.That(() => sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
@@ -1828,7 +1828,7 @@ public class BatchWorkCoordinatorStrategyTests {
       scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: channelWriter
+      workChannelWriter: channelWriter, detachedWork: new DetachedLifecycleWork()
     );
 
     try {

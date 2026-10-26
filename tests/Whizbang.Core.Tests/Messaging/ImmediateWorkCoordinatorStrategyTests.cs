@@ -57,7 +57,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -122,7 +122,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -187,7 +187,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     var messageId = _idProvider.NewGuid();
@@ -246,7 +246,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -268,7 +268,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -290,7 +290,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     )).Throws<ArgumentNullException>();
   }
 
@@ -335,7 +335,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -363,7 +363,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null);
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork());
     var withdrawn = _createOutboxMessage();
     sut.QueueOutboxMessage(withdrawn);
     using var canceled = new CancellationTokenSource();
@@ -430,7 +430,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null);
+      auditDecisionHook: null,
+      detachedWork: new DetachedLifecycleWork());
 
   [Test]
   public async Task QueueInboxMessage_WithLogger_LogsMessageQueuedAsync() {
@@ -456,7 +457,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -497,7 +498,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -531,7 +532,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -565,7 +566,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -599,7 +600,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Act
@@ -633,7 +634,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue a message so FlushAsync has work (exercises flush logging)
@@ -675,7 +676,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Microsoft.Extensions.Options.Options.Create(systemEventOptions),
       workChannelWriter: new WorkChannelWriter(),
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     // Queue an event message with IsEvent=true
@@ -734,7 +735,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       deferredChannel: new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: channelWriter,
-      auditDecisionHook: null
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());

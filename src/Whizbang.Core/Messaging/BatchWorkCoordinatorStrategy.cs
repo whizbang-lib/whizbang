@@ -44,6 +44,9 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly IWorkChannelWriter _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork;
   private readonly Timer _debounceTimer;
 
   // Queues for batching operations
@@ -83,6 +86,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     ILifecycleMessageDeserializer lifecycleMessageDeserializer,
     IOptionsMonitor<TracingOptions> tracingOptions,
     IWorkChannelWriter workChannelWriter,
+    DetachedLifecycleWork detachedWork,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null) {
 #pragma warning restore S107
@@ -96,6 +100,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _workChannelWriter = workChannelWriter;
+    ArgumentNullException.ThrowIfNull(detachedWork);
+    _detachedWork = detachedWork;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -329,7 +335,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
           _logger, _tracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
           SkipLifecycle: skipLifecycle,
-          Metrics: _metrics, Strategy: STRATEGY_NAME),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
         ct
       );
 

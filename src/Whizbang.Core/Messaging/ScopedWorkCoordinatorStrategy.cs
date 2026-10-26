@@ -56,6 +56,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   WorkCoordinatorOptions options,
   ILogger<ScopedWorkCoordinatorStrategy> logger,
   IInboxChannelWriter inboxChannelWriter,
+  DetachedLifecycleWork detachedWork,
   ScopedWorkCoordinatorDependencies? dependencies = null,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
@@ -66,6 +67,9 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
   private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork = ArgumentGuard.NotNull(detachedWork);
   private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
@@ -174,7 +178,7 @@ public partial class ScopedWorkCoordinatorStrategy(
           _logger, _dependencies.TracingOptions, _lifecycleMetrics,
           WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
           // #1546: this flush's caller awaits it, so a mixed-stream refusal is raised to it.
-          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true),
+          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true, DetachedWork: _detachedWork),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
@@ -274,7 +278,7 @@ public partial class ScopedWorkCoordinatorStrategy(
             // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
             // shutdown's backgrounded stage halves would race process exit.
             SkipLifecycle: true,
-            Metrics: _metrics, Strategy: STRATEGY_NAME),
+            Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
           ct: default
         );
 
