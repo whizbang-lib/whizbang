@@ -133,19 +133,19 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     // The ledger re-runs every LATER file that defines an object an earlier, re-run file defines (rule 11).
     // When a re-run brings back the 214 definition of close_stream, the file that retires it has to be in
     // that closure, or the database ends with both names again.
-    var lastNamingCloseStream = new Whizbang.Data.Postgres.PostgresMigrationProvider().GetMigrations()
-      .Select(m => (m.Name, Objects: Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(m.Sql).Objects))
+    var (name, objects) = new Whizbang.Data.Postgres.PostgresMigrationProvider().GetMigrations()
+      .Select(m => (m.Name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(m.Sql).Objects))
       .Last(m => m.Objects.Contains("close_stream"));
 
-    await Assert.That(lastNamingCloseStream.Objects).Contains("wh_truncate_stream_prefix")
-      .Because($"{lastNamingCloseStream.Name} is the last word on close_stream, so it must be the file that retires it");
+    await Assert.That(objects).Contains("wh_truncate_stream_prefix")
+      .Because($"{name} is the last word on close_stream, so it must be the file that retires it");
   }
 
   private static async Task<long> _functionCountAsync(NpgsqlConnection connection, string name) {
     await using var count = connection.CreateCommand();
     count.CommandText = "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
       "WHERE n.nspname = 'public' AND p.proname = @name";
-    count.Parameters.AddWithValue("name", name);
+    count.Parameters.AddWithValue(nameof(name), name);
     return (long)(await count.ExecuteScalarAsync())!;
   }
 

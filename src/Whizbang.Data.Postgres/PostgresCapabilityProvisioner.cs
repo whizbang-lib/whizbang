@@ -24,8 +24,9 @@ namespace Whizbang.Data.Postgres;
 /// <para>
 /// The create is <see cref="PostgresRequiredExtension"/>'s own. A refusal it classifies comes back as the state it
 /// reveals, with the server's SQLSTATE as the detail and its message as the reason. A refused upgrade leaves the
-/// extension Ready at its installed version, already present, with the refusal as the reason. After a commit the
-/// extension is read back, so the status carries the version the server reports.
+/// extension Ready at its installed version, already present, with the refusal as the reason; an error that is not a
+/// refusal is thrown, as it is for a create. After a commit the extension is read back, so the status carries the
+/// version the server reports.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/capabilities#provisioning</docs>
@@ -63,42 +64,64 @@ internal sealed partial class PostgresCapabilityProvisioner : ICapabilityProvisi
       await using (transaction.ConfigureAwait(false)) {
         await _lockSchemaAsync(connection, transaction, status, cancellationToken).ConfigureAwait(false);
         var row = await _readAsync(connection, extension, cancellationToken).ConfigureAwait(false);
-        if (action == CapabilityProvisionAction.Upgrade) {
-          if (CapabilityVersion.IsNewer(row.DefaultVersion, row.InstalledVersion)) {
-            var refusal = await _updateAsync(connection, extension.Name, cancellationToken).ConfigureAwait(false);
-            if (refusal is not null) {
-              return status with {
-                Provisioning = CapabilityProvisioningOutcome.Present,
-                Reason = $"upgrade to {row.DefaultVersion} refused ({refusal.SqlState}: {refusal.MessageText})",
-              };
-            }
-            outcome = CapabilityProvisioningOutcome.Upgraded;
-          } else {
-            outcome = CapabilityProvisioningOutcome.Present;
-          }
-        } else {
-          var state = PostgresCapabilityProbe.DeriveState(extension, row);
-          if (state == PostgresExtensionState.Installed) {
-            outcome = CapabilityProvisioningOutcome.Present;
-          } else if (state is PostgresExtensionState.Available or PostgresExtensionState.Unknown) {
-            var refusal = await PostgresRequiredExtension.TryCreateAsync(connection, extension.Name, cancellationToken).ConfigureAwait(false);
-            if (refusal is not null) {
-              return status with {
-                State = PostgresCapabilityProbe.ToCapabilityState(PostgresRequiredExtension.StateOfRefusal(refusal.SqlState)),
-                Detail = refusal.SqlState,
-                Reason = refusal.MessageText,
-              };
-            }
-            outcome = CapabilityProvisioningOutcome.Created;
-          } else {
-            return PostgresCapabilityProvider.Status(status.Descriptor, status.Scope, extension, row);
-          }
+        var (settled, done) = action == CapabilityProvisionAction.Upgrade
+          ? await _upgradeAsync(connection, status, extension, row, cancellationToken).ConfigureAwait(false)
+          : await _createAsync(connection, status, extension, row, cancellationToken).ConfigureAwait(false);
+        if (settled is not null) {
+          return settled;
         }
+        outcome = done;
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
       }
       var after = await _readAsync(connection, extension, cancellationToken).ConfigureAwait(false);
       return PostgresCapabilityProvider.Status(status.Descriptor, status.Scope, extension, after) with { Provisioning = outcome };
     }
+  }
+
+  /// <summary>
+  /// The upgrade under the lock: <c>ALTER EXTENSION ... UPDATE</c> when the server's default is newer than the
+  /// installed version. A refusal settles the status as Present with the refusal as its reason.
+  /// </summary>
+  private static async Task<(CapabilityStatus? Settled, CapabilityProvisioningOutcome Outcome)> _upgradeAsync(
+      NpgsqlConnection connection, CapabilityStatus status, PostgresExtensionInfo extension, PostgresExtensionProbeRow row,
+      CancellationToken cancellationToken) {
+    if (!CapabilityVersion.IsNewer(row.DefaultVersion, row.InstalledVersion)) {
+      return (null, CapabilityProvisioningOutcome.Present);
+    }
+    var refusal = await _updateAsync(connection, extension.Name, cancellationToken).ConfigureAwait(false);
+    if (refusal is not null) {
+      return (status with {
+        Provisioning = CapabilityProvisioningOutcome.Present,
+        Reason = $"upgrade to {row.DefaultVersion} refused ({refusal.SqlState}: {refusal.MessageText})",
+      }, CapabilityProvisioningOutcome.Present);
+    }
+    return (null, CapabilityProvisioningOutcome.Upgraded);
+  }
+
+  /// <summary>
+  /// The create under the lock: nothing for an installed extension, <c>CREATE EXTENSION</c> for one the probe finds
+  /// available or cannot decide, and the probe's status for one this role cannot create. A refusal settles the status
+  /// as the state it reveals.
+  /// </summary>
+  private static async Task<(CapabilityStatus? Settled, CapabilityProvisioningOutcome Outcome)> _createAsync(
+      NpgsqlConnection connection, CapabilityStatus status, PostgresExtensionInfo extension, PostgresExtensionProbeRow row,
+      CancellationToken cancellationToken) {
+    var state = PostgresCapabilityProbe.DeriveState(extension, row);
+    if (state == PostgresExtensionState.Installed) {
+      return (null, CapabilityProvisioningOutcome.Present);
+    }
+    if (state is not (PostgresExtensionState.Available or PostgresExtensionState.Unknown)) {
+      return (PostgresCapabilityProvider.Status(status.Descriptor, status.Scope, extension, row), CapabilityProvisioningOutcome.Present);
+    }
+    var refusal = await PostgresRequiredExtension.TryCreateAsync(connection, extension.Name, cancellationToken).ConfigureAwait(false);
+    if (refusal is not null) {
+      return (status with {
+        State = PostgresCapabilityProbe.ToCapabilityState(PostgresRequiredExtension.StateOfRefusal(refusal.SqlState)),
+        Detail = refusal.SqlState,
+        Reason = refusal.MessageText,
+      }, CapabilityProvisioningOutcome.Present);
+    }
+    return (null, CapabilityProvisioningOutcome.Created);
   }
 
   private static async Task<PostgresExtensionProbeRow> _readAsync(
@@ -128,13 +151,16 @@ internal sealed partial class PostgresCapabilityProvisioner : ICapabilityProvisi
     await wait.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
-  /// <summary>Runs <c>ALTER EXTENSION ... UPDATE</c>; null once done, the server's answer when it refuses.</summary>
+  /// <summary>
+  /// Runs <c>ALTER EXTENSION ... UPDATE</c>; null once done, the server's answer when it is a refusal the refusal
+  /// states classify (any other error is thrown, as a refused create's is).
+  /// </summary>
   private static async Task<PostgresException?> _updateAsync(NpgsqlConnection connection, string extension, CancellationToken cancellationToken) {
     try {
       await using var update = new NpgsqlCommand($"ALTER EXTENSION {PostgresRequiredExtension.Quote(extension)} UPDATE", connection);
       await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       return null;
-    } catch (PostgresException ex) {
+    } catch (PostgresException ex) when (OptionalExtensionBlocks.IsUnavailable(ex.SqlState)) {
       return ex;
     }
   }

@@ -88,8 +88,8 @@ public class SignalPartitionCarryForwardTests : EFCoreTestBase {
     await using var command = connection.CreateCommand();
     command.CommandText =
       "SELECT action, partition_name FROM wh_partition_maintain('wh_signals', '1 day', 0, @keep::interval, @at)";
-    command.Parameters.Add(new NpgsqlParameter("keep", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)keep ?? DBNull.Value });
-    command.Parameters.Add(new NpgsqlParameter("at", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = at });
+    command.Parameters.Add(new NpgsqlParameter(nameof(keep), NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)keep ?? DBNull.Value });
+    command.Parameters.Add(new NpgsqlParameter(nameof(at), NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = at });
     await using var reader = await command.ExecuteReaderAsync();
     while (await reader.ReadAsync()) {
       results.Add((reader.GetString(0), reader.GetString(1)));
