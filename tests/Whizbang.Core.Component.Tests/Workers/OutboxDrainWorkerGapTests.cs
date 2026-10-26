@@ -1116,7 +1116,7 @@ public class OutboxDrainWorkerGapTests {
     await drainChannel.WriteAsync(brokenStream);
     await drainChannel.WriteAsync(healthyStream);
     // Wait for both batches to FINISH, not for the healthy publish. When the two streams share a
-    // batch, the publish lands inside the per-stream fallback; cancelling on it would unwind the
+    // batch, the publish lands inside the per-stream fallback; canceling on it would unwind the
     // fallback with a cancellation before it returned (#1784). The markers are released in the
     // batch's finally, so seeing both released means the fallback ran to its end.
     await Task.WhenAll(
