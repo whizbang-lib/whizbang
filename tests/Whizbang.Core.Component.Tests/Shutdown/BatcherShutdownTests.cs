@@ -201,8 +201,7 @@ public class BatcherShutdownTests {
   [Test]
   public async Task ATransportBatchCollector_DisposedByAContinuationItsFlushRanInline_DoesNotWaitForThatFlushAsync() {
     var replied = new TaskCompletionSource();
-    TransportBatchCollector<int>? collector = null;
-    collector = new TransportBatchCollector<int>(_flushOnEveryMessage(), _ => {
+    var collector = new TransportBatchCollector<int>(_flushOnEveryMessage(), _ => {
       // Without RunContinuationsAsynchronously, the awaiter below runs here, inside the flush
       replied.TrySetResult();
       return Task.CompletedTask;

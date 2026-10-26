@@ -233,7 +233,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     try {
       // Act
@@ -270,7 +271,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -307,7 +309,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());

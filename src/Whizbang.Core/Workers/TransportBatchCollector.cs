@@ -193,6 +193,7 @@ internal static class TransportBatchFlushScope {
   private static readonly AsyncLocal<object?> _onThisPath = new();
 
   /// <summary>Runs <paramref name="callback"/> as <paramref name="collector"/>'s flush.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1229:Use async/await when necessary", Justification = "Deliberate: the thread marker covers only the callback's synchronous part, which is where continuations it completes run inline, and is restored as soon as that part returns. The awaited path is covered by the async-local marker, which flows on its own.")]
   public static Task Run<T>(object collector, List<T> batch, Func<IReadOnlyList<T>, Task> callback) {
     var outer = _onThisThread;
     _onThisThread = collector;

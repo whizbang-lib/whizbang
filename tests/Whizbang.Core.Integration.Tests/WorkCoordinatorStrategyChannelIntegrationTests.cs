@@ -157,8 +157,9 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: sp.GetRequiredService<IInboxChannelWriter>(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(), detachedWork: new DetachedLifecycleWork());
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -173,8 +174,9 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
-        lifecycleMetrics: sp.GetService<LifecycleMetrics>(), detachedWork: new DetachedLifecycleWork());
+        lifecycleMetrics: sp.GetService<LifecycleMetrics>());
     });
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {

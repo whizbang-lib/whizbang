@@ -671,7 +671,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -705,7 +706,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     try {
       // Act - flush with nothing queued
@@ -737,7 +739,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     try {
       // Act

@@ -1631,7 +1631,8 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     try {
@@ -1661,7 +1662,8 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     try {
@@ -1690,7 +1692,8 @@ public class BatchWorkCoordinatorStrategyTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     try {

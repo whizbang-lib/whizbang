@@ -582,9 +582,10 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     _queueTestOutboxMessage(sut);
@@ -622,9 +623,10 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = trackingScopeFactory
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     // Queue messages but don't flush manually — let DisposeAsync handle it
@@ -668,9 +670,10 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     // First flush: queue an event message (generates audit message)
@@ -949,9 +952,10 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     // Queue an event message with IsEvent=true
@@ -1414,7 +1418,8 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     _queueTestOutboxMessage(sut);
@@ -1444,7 +1449,8 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     // Act - flush with empty queues
@@ -1747,7 +1753,8 @@ public class ScopedWorkCoordinatorStrategyTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
-      dependencies: null, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      dependencies: null
     );
 
     // Should work fine without throwing

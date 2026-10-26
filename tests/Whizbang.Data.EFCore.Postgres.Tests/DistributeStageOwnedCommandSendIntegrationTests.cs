@@ -144,10 +144,11 @@ public class DistributeStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
         options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
         logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
         inboxChannelWriter: new InboxChannelWriter(),
+        detachedWork: new DetachedLifecycleWork(),
         dependencies: new ScopedWorkCoordinatorDependencies {
           ScopeFactory = sp.GetRequiredService<IServiceScopeFactory>(),
           LifecycleMessageDeserializer = sp.GetRequiredService<ILifecycleMessageDeserializer>()
-        }, detachedWork: new DetachedLifecycleWork()));
+        }));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

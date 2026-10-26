@@ -118,9 +118,10 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     // Queue an event (generates audit message internally)
@@ -155,9 +156,10 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         SystemEventOptions = systemEventOptions
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     // Queue a NON-event outbox message (IsEvent = false)
@@ -228,7 +230,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       options: options,
       logger: logger,
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     // Act
@@ -292,7 +295,8 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       options: options,
       logger: logger,
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork()
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics
     );
 
     _queueOutboxMessage(sut);
@@ -412,9 +416,10 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       options: options,
       logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance,
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       dependencies: new ScopedWorkCoordinatorDependencies {
         ScopeFactory = scopeFactory
-      }, detachedWork: new DetachedLifecycleWork()
+      }
     );
 
     _queueOutboxMessage(sut);

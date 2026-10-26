@@ -156,7 +156,8 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     try {
       // Act
@@ -195,7 +196,8 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
@@ -330,7 +332,8 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 

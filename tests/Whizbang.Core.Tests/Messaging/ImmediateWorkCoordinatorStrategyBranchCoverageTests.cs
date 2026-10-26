@@ -44,7 +44,8 @@ public class ImmediateWorkCoordinatorStrategyBranchCoverageTests {
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
       auditDecisionHook: null,
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     await sut.FlushAsync(WorkBatchOptions.None);
 
@@ -76,7 +77,8 @@ public class ImmediateWorkCoordinatorStrategyBranchCoverageTests {
       systemEventOptions: Options.Create(new SystemEventOptions()),
       workChannelWriter: new WorkChannelWriter(),
       auditDecisionHook: null,
-      metrics: metrics, detachedWork: new DetachedLifecycleWork());
+      detachedWork: new DetachedLifecycleWork(),
+      metrics: metrics);
 
     await sut.FlushAsync(WorkBatchOptions.None);
 
