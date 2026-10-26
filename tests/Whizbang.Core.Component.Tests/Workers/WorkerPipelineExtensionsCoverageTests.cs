@@ -50,7 +50,7 @@ public class WorkerPipelineExtensionsCoverageTests {
   public async Task StreamPrefixTruncatorAndStreamCompactor_ResolveAsSingletonsAndCompactorRunsEndToEndAsync() {
     // Both IStreamPrefixTruncator and IStreamCompactor are TryAddSingleton factories chaining several
     // dependencies (IWorkCoordinator, IEventStore, IPerspectiveSnapshotStore, and — for the
-    // compactor — IStreamPrefixTruncator itself). Registering the factory proves nothing about whether
+    // compactor, IStreamPrefixTruncator itself). Registering the factory proves nothing about whether
     // the chain actually builds; on-demand callers (E3 tier-2 compaction, an admin operation)
     // are the first ones who would discover a broken binding otherwise.
     var services = _composeWorkerPipeline();

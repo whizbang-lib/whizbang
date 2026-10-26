@@ -89,7 +89,7 @@ public class ScheduledStreamCloseReceptorTests {
       sp.GetRequiredService<IServiceScopeFactory>(), logger);
     var streamId = Guid.NewGuid();
 
-    // Must not throw — a host without an IStreamPrefixTruncator simply ignores the occurrence.
+    // Must not throw: a host without an IStreamPrefixTruncator simply ignores the occurrence.
     await receptor.HandleAsync(new ScheduledStreamClose(streamId, 1, false));
 
     // Inert is not the same as silent: a scheduled close that fired and closed nothing is a
