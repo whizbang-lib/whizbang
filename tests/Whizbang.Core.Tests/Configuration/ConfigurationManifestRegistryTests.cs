@@ -84,6 +84,41 @@ public sealed class ConfigurationManifestRegistryTests {
   }
 
   [Test]
+  public async Task RemovedKeys_AreEveryManifestsDeclarations_FoundIgnoringCaseAsync() {
+    var first = new RemovedConfigurationKeyEntry("Tests:Registry:Removed:Old", ["Tests:Registry:Removed:New"]);
+    var second = new RemovedConfigurationKeyEntry("Tests:Registry:Removed:Other", []);
+    ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.Registry.Removed.One", []) { RemovedKeys = [first] });
+    ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.Registry.Removed.Two", []) { RemovedKeys = [second] });
+
+    await Assert.That(ConfigurationManifestRegistry.RemovedKeys).Contains(first);
+    await Assert.That(ConfigurationManifestRegistry.RemovedKeys).Contains(second);
+    await Assert.That(ConfigurationManifestRegistry.FindRemovedKey("tests:registry:removed:old")).IsSameReferenceAs(first)
+      .Because("configuration keys are case-insensitive, so a differently cased removed key is still the removed key");
+    await Assert.That(ConfigurationManifestRegistry.FindRemovedKey("Tests:Registry:Removed:Never")).IsNull();
+  }
+
+  [Test]
+  public async Task FindRemovedKey_DeclaredByTwoAssemblies_TheFirstByAssemblyNameWinsAsync() {
+    var a = new RemovedConfigurationKeyEntry("Tests:Registry:RemovedTwice", ["Tests:Registry:FromA"]);
+    var b = new RemovedConfigurationKeyEntry("Tests:Registry:RemovedTwice", ["Tests:Registry:FromB"]);
+    ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.Registry.RemovedTwice.B", []) { RemovedKeys = [b] });
+    ConfigurationManifestRegistry.Register(new ConfigurationManifest("Tests.Registry.RemovedTwice.A", []) { RemovedKeys = [a] });
+
+    await Assert.That(ConfigurationManifestRegistry.FindRemovedKey("Tests:Registry:RemovedTwice")).IsSameReferenceAs(a)
+      .Because("the answer is the same on every start, whatever order the assemblies loaded in");
+  }
+
+  [Test]
+  public async Task Manifest_WithNoRemovedKeysDeclared_HasNoneAsync() {
+    await Assert.That(_manifest("Tests.Registry.NoRemoved").RemovedKeys).IsEmpty();
+  }
+
+  [Test]
+  public async Task FindRemovedKey_Null_ThrowsAsync() {
+    await Assert.That(() => ConfigurationManifestRegistry.FindRemovedKey(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task Register_Null_ThrowsAsync() {
     await Assert.That(() => ConfigurationManifestRegistry.Register(null!)).Throws<ArgumentNullException>();
   }
