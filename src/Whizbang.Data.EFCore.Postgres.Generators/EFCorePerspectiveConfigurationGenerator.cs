@@ -140,7 +140,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       List<PerspectiveInfo> allPerspectives,
       IDbProviderLimits limits) {
 
-    return [.. allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits))];
+    var valid = allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits)).ToList();
+    foreach (var collision in PerspectiveTableNaming.Collisions(
+        valid.Select(p => (p.TableName, p.ModelTypeName.Replace("global::", ""), p.ModelLocation)))) {
+      context.ReportDiagnostic(collision);
+    }
+    return [.. valid];
   }
 
   /// <summary>
@@ -153,9 +158,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var hasError = false;
 
-    // Validate table name
-    var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
-    if (tableError is not null) {
+    // Validate table name: a manual one must be a valid perspective table name (WHIZ824), and any must fit (WHIZ820)
+    if (perspective.IsManualTableName && !PerspectiveTableNaming.IsValidManualName(perspective.TableName)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          PerspectiveTableNaming.InvalidManualTableName,
+          perspective.ModelLocation,
+          perspective.ModelTypeName.Replace("global::", ""),
+          perspective.TableName));
+      hasError = true;
+    } else if (IdentifierValidation.ValidateTableName(perspective.TableName, limits) is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TableNameExceedsLimit,
           perspective.ModelLocation,
@@ -368,8 +379,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    // Use GetTableBaseName to handle nested types correctly (e.g., ActiveJobTemplate.Model -> ActiveJobTemplateModel)
-    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
@@ -379,7 +388,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     return new PerspectiveCandidate(
         ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
-        TableBaseName: tableBaseName,
+        // The rule both drivers share (#1719): the model's [PerspectiveTable] name, or its generated base name.
+        TableSource: PerspectiveTableNaming.From(modelType),
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
         BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
@@ -394,8 +404,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       PerspectiveCandidate candidate,
       TableNameConfig config) {
 
-    // Generate table name using shared utility with configurable suffix stripping
-    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+    // The manual name as written, or the generated one under the build's suffix settings
+    var tableName = candidate.TableSource.TableName(config);
 
     return new PerspectiveInfo(
         ModelTypeName: candidate.ModelTypeName,
@@ -403,7 +413,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
         BuildsDataIndex: candidate.BuildsDataIndex,
-        ModelLocation: candidate.ModelLocation);
+        ModelLocation: candidate.ModelLocation,
+        IsManualTableName: candidate.TableSource.IsManual);
   }
 
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";

@@ -556,7 +556,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
     var dbSetPropertyName = TypeNameUtilities.GetDbSetPropertyName(modelType);
 
     // Extract physical fields from model type
@@ -582,7 +581,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
-        TableBaseName: tableBaseName,
+        // The rule both drivers share (#1719): the model's [PerspectiveTable] name, or its generated base name.
+        TableSource: PerspectiveTableNaming.From(modelType),
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
@@ -686,7 +686,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       TableNameConfig config) {
 
     // Apply table name configuration to generate final table name
-    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+    var tableName = candidate.TableSource.TableName(config);
 
     return new PerspectiveModelInfo(
         PerspectiveClassName: candidate.PerspectiveClassName,
@@ -3927,7 +3927,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
 /// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
-/// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
+/// <param name="TableSource">Where the model's table name comes from: its base name, or its <c>[PerspectiveTable]</c> name (#1719)</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
@@ -3948,7 +3948,7 @@ internal sealed record PerspectiveModelCandidate(
     string ModelTypeName,
     string ModelClrTypeName,
     string DbSetPropertyName,
-    string TableBaseName,
+    PerspectiveTableSource TableSource,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,

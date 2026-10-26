@@ -101,8 +101,8 @@ public partial class PerspectiveTableNameGoldenTests {
   private static readonly string[] _goldenNames = [
     "wh_per_active_account",
     "wh_per_customer",
-    "wh_per_fulfillment_backlog",
     "wh_per_customer_loyalty_tier_summary",
+    "wh_per_fulfillment_backlog",
     "wh_per_order",
     "wh_per_paged_snapshot",
     "wh_per_picking",

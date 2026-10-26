@@ -240,12 +240,12 @@ public class PhysicalFieldMoveGenerationTests {
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs")!;
     var entry = sql[sql.IndexOf("Entries", StringComparison.Ordinal)..];
 
-    var arm = entry.IndexOf("SELECT wh_arm_physical_column('wh_per_ticket_perspective', 'lane', 'Lane', $wbfill$(data ->> 'Lane')::integer$wbfill$, true);", StringComparison.Ordinal);
-    var add = entry.IndexOf("ALTER TABLE IF EXISTS wh_per_ticket_perspective ADD COLUMN IF NOT EXISTS watchers uuid[];", StringComparison.Ordinal);
-    var create = entry.IndexOf("CREATE TABLE IF NOT EXISTS wh_per_ticket_perspective", StringComparison.Ordinal);
-    var sync = entry.IndexOf("SELECT wh_sync_physical_moves('wh_per_ticket_perspective');", StringComparison.Ordinal);
-    var fill = entry.IndexOf("UPDATE wh_per_ticket_perspective SET lane = (data ->> 'Lane')::integer", StringComparison.Ordinal);
-    var demote = entry.IndexOf("SELECT * FROM wh_demote_physical_columns('wh_per_ticket_perspective', '{\"\"score\"\": \"\"Score\"\"}'::jsonb, ARRAY['lane', 'watchers']::text[]);", StringComparison.Ordinal);
+    var arm = entry.IndexOf("SELECT wh_arm_physical_column('wh_per_ticket', 'lane', 'Lane', $wbfill$(data ->> 'Lane')::integer$wbfill$, true);", StringComparison.Ordinal);
+    var add = entry.IndexOf("ALTER TABLE IF EXISTS wh_per_ticket ADD COLUMN IF NOT EXISTS watchers uuid[];", StringComparison.Ordinal);
+    var create = entry.IndexOf("CREATE TABLE IF NOT EXISTS wh_per_ticket", StringComparison.Ordinal);
+    var sync = entry.IndexOf("SELECT wh_sync_physical_moves('wh_per_ticket');", StringComparison.Ordinal);
+    var fill = entry.IndexOf("UPDATE wh_per_ticket SET lane = (data ->> 'Lane')::integer", StringComparison.Ordinal);
+    var demote = entry.IndexOf("SELECT * FROM wh_demote_physical_columns('wh_per_ticket', '{\"\"score\"\": \"\"Score\"\"}'::jsonb, ARRAY['lane', 'watchers']::text[]);", StringComparison.Ordinal);
 
     await Assert.That(arm).IsGreaterThan(-1);
     await Assert.That(add).IsGreaterThan(arm);
@@ -263,7 +263,7 @@ public class PhysicalFieldMoveGenerationTests {
       "[PerspectiveStorage(FieldStorageMode.Split)]", "[PerspectiveStorage(FieldStorageMode.Extracted)]", StringComparison.Ordinal));
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs")!;
 
-    await Assert.That(sql).Contains("wh_arm_physical_column('wh_per_ticket_perspective', 'lane', 'Lane', $wbfill$(data ->> 'Lane')::integer$wbfill$, false);");
+    await Assert.That(sql).Contains("wh_arm_physical_column('wh_per_ticket', 'lane', 'Lane', $wbfill$(data ->> 'Lane')::integer$wbfill$, false);");
     await Assert.That(sql).DoesNotContain("wh_sync_physical_moves")
       .Because("both releases read an Extracted field from the document, so a write cannot be read in the wrong place");
   }
