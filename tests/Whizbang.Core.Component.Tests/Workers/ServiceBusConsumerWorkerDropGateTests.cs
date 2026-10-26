@@ -193,9 +193,9 @@ public class ServiceBusConsumerWorkerDropGateTests {
     => typeof(MessageEnvelope<DropGateTestEvent>).AssemblyQualifiedName ?? throw new InvalidOperationException("AQN missing");
 
   [Test]
-  public async Task HandleMessage_RegistrySaysNoConsumer_DropsMessage_NoInboxQueueAsync() {
-    // Registry reports no consumer for the inner message type → gate fires and the message
-    // never reaches QueueInboxMessage. This is the load-bearing slice 3 invariant.
+  public async Task HandleMessage_RegistrySaysNoConsumer_StoresTheMessageBeforeTheSkipAsync() {
+    // Registry reports no consumer for the inner message type. #1720: the message is stored first, and the skip is
+    // decided after storage, where it is durable and inspectable; dropping it here left no row anywhere.
     var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
     var (worker, transport, strategy, sp) = _buildWorker(registry);
     await using (sp) {
@@ -210,8 +210,8 @@ public class ServiceBusConsumerWorkerDropGateTests {
         [new TransportMessage(_makeEnvelope(), _makeWrapperEnvelopeType())],
         cts.Token);
 
-      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
-        .Because("Drop gate must skip storage entirely for messages with no local consumer.");
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
+        .Because("a message with no local consumer is stored, and skipped after storage (#1720)");
 
       await worker.StopAsync(CancellationToken.None);
     }
