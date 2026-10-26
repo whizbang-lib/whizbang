@@ -588,6 +588,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   character that would end the comment early. Values with no special characters are written exactly as before. The
   source generators' documentation path resolver now treats a whitespace-only `WhizbangDocsPath` or project directory
   as unset, as it already did an empty one, instead of passing it to the file system, where Windows rejected it.
+- **A stopping host waits for all of the framework's background work before it disposes the service provider
+  (#1721).** Only the outbox batcher's detached stages were waited for. The work coordinator strategies' flush stages,
+  the dispatcher's ImmediateDetached stages, the receptor invoker's tag handlers, the destruction stages, and the
+  inbox dispatch, outbox drain, perspective and Service Bus consumer workers' detached stages all ran on after the
+  container was disposed, failing with `ObjectDisposedException` or losing their work or failure record. The shared
+  `DetachedLifecycleWork` now records them, and every entry point registers it with the stop-time flush
+  (`TryAddWhizbangDefaults`), so a host without the worker pipeline waits too. The hosted workers wait for their own
+  detached stages in their stop, before the failure flush registered ahead of them stops. The interval and batch
+  strategies register with the host and are stopped and flushed while it stops: before, the timer, batch-size and
+  debounce flushes were not awaited, and disposal returned at once on the in-progress guard when one was running,
+  dropping the work queued after that flush's snapshot. The idle sweeps of the sliding-window batchers and the
+  per-stream serializer are waited for by their stop (an evicted stream's last flush was not), the transport batch
+  collector's disposal waits for its flushes, the transport consumer's active body cleanup is waited for by its stop,
+  and disposing the Service Bus transport ends a throttle pause instead of letting it restart a processor later.
+  `DetachedLifecycleWork` gains `Waiting`, `RegisterProducer` and `StopProducersAsync`, and the four work coordinator
+  strategies take it as a required constructor argument.
 - **A stopping host no longer logs "Error invoking PostDistributeDetached lifecycle receptors ... Cannot access a
   disposed object".** The outbox batcher's flush runs its detached lifecycle stages (`PreDistributeDetached`,
   `DistributeDetached`, `PostDistributeDetached`) in the background, and nothing waited for them: one still running

@@ -109,6 +109,81 @@ public class DetachedLifecycleWorkTests {
   }
 
   [Test]
+  public async Task ADrain_AnnouncesOnceThatItIsWaiting_WithHowManyAreInFlightAsync() {
+    var work = new DetachedLifecycleWork();
+    var first = new TaskCompletionSource();
+    var second = new TaskCompletionSource();
+    work.Track(first.Task);
+    work.Track(second.Task);
+    var announced = new List<int>();
+    work.Waiting += announced.Add;
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    first.SetResult();
+    second.SetResult();
+    await drain;
+    await work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(announced).IsEquivalentTo([2])
+      .Because("a drain says once, when it starts waiting, how many invocations it waits for; one with none says nothing");
+  }
+
+  [Test]
+  public async Task StopProducers_StopsEachRegisteredProducer_WithTheHostsTokenAsync() {
+    var work = new DetachedLifecycleWork();
+    using var deadline = new CancellationTokenSource();
+    var stoppedWith = new List<CancellationToken>();
+    using var first = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+    using var second = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+
+    await work.StopProducersAsync(deadline.Token);
+
+    await Assert.That(stoppedWith).IsEquivalentTo([deadline.Token, deadline.Token]);
+  }
+
+  [Test]
+  public async Task AProducerThatUnregistered_IsNotStoppedAsync() {
+    var work = new DetachedLifecycleWork();
+    var stopped = false;
+    var registration = work.RegisterProducer(_ => { stopped = true; return Task.CompletedTask; });
+
+    registration.Dispose();
+    await work.StopProducersAsync(CancellationToken.None);
+
+    await Assert.That(stopped).IsFalse()
+      .Because("a producer disposed on its own has already stopped and flushed");
+  }
+
+  [Test]
+  public async Task AProducerThatFailsToStop_DoesNotKeepTheOthersFromStopping_AndIsRaisedAsync() {
+    var work = new DetachedLifecycleWork();
+    var secondStopped = false;
+    using var first = work.RegisterProducer(_ => Task.FromException(new InvalidOperationException("store unavailable")));
+    using var second = work.RegisterProducer(_ => { secondStopped = true; return Task.CompletedTask; });
+
+    var failure = await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<AggregateException>();
+
+    await Assert.That(secondStopped).IsTrue();
+    await Assert.That(failure!.InnerExceptions.Single().Message).IsEqualTo("store unavailable");
+  }
+
+  [Test]
+  public async Task AProducerCanceledByTheDeadline_EndsTheStop_WithTheCancellationAsync() {
+    var work = new DetachedLifecycleWork();
+    using var registration = work.RegisterProducer(_ => Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<OperationCanceledException>()
+      .Because("a stop that ran out of time is the host's to see, not a producer failure");
+  }
+
+  [Test]
+  public async Task RegisterProducer_WithoutAStop_IsRefusedAsync() {
+    var work = new DetachedLifecycleWork();
+
+    await Assert.That(() => work.RegisterProducer(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
   public async Task TheDistributeStages_TrackTheirDetachedStage_InTheContextsWorkAsync() {
     var work = new DetachedLifecycleWork();
     var receptor = new HeldDetachedReceptor();

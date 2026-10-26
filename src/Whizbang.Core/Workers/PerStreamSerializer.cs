@@ -40,6 +40,10 @@ namespace Whizbang.Core.Workers;
 /// <docs>internals/stream-affinity</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerStreamSerializerTests.cs</tests>
 public sealed class PerStreamSerializer<T> : IAsyncDisposable {
+  /// <summary>
+  /// The idle sweeps still running. A sweep evicts a quiet stream and waits for its drain worker, which may still be
+  /// flushing the stream's last batch; the stream has left the map by then, so the stop waits for the sweep instead (#1721).
+  /// </summary>
   internal Messaging.DetachedLifecycleWork IdleSweeps { get; } = new();
   private readonly Func<T, Guid?> _streamIdSelector;
   private readonly Func<T, CancellationToken, Task> _processor;
@@ -115,6 +119,8 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     var workers = _streams.Values.Select(s => s.Worker).ToArray();
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
+      // A sweep already under way may hold a stream it evicted, whose worker is still flushing (#1721)
+      await IdleSweeps.DrainAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       // shutdown deadline hit; remaining workers will observe _stopCts when canceled
       await _stopCts.CancelAsync().ConfigureAwait(false);
@@ -237,9 +243,10 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     }
   }
 
-  // The timer callback is static so the timer does not root a closure; the sweep runs fire-and-forget.
+  // The timer callback is static so the timer does not root a closure; the sweep runs in the background, recorded so
+  // the stop can wait for it (#1721).
 
-  private void _fireAndForgetIdleSweep() => _ = _runIdleSweepAsync();
+  private void _fireAndForgetIdleSweep() => IdleSweeps.Track(_runIdleSweepAsync());
 
 
   private async Task _runIdleSweepAsync() {

@@ -50,6 +50,10 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  /// <summary>
+  /// The active body cleanups this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag nothing ever added to.
+  /// </summary>
   internal DetachedLifecycleWork DetachedWork { get; } = new();
 
   private readonly ITransport _transport;
@@ -59,7 +63,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly IReceptorRegistryQuery _receptorRegistry;
@@ -680,7 +683,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // delete failures fall back to the provider's storage-level TTL (the default
     // ActiveCleanup=false path).
     if (pendingCleanupClaims is { Count: > 0 }) {
-      _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
+      DetachedWork.Track(_fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken));
     }
   }
 
@@ -1106,7 +1109,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -1296,6 +1299,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     await base.StopAsync(cancellationToken);
     linkedCts?.Dispose();
+
+    // The active body cleanups still running finish before the host disposes the container (#1721)
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>

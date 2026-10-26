@@ -126,7 +126,8 @@ internal static class WorkCoordinatorFlushHelper {
         ctx.LifecycleMessageDeserializer,
         ctx.Logger,
         enableLifecycleTracing,
-        ctx.LifecycleMetrics);
+        ctx.LifecycleMetrics,
+        ctx.DetachedWork);
 
       if (!ctx.SkipLifecycle) {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

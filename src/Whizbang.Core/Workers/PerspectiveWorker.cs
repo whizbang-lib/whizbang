@@ -105,7 +105,10 @@ public partial class PerspectiveWorker(
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag that only tests ever drained.
+  /// </summary>
   internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
@@ -329,7 +332,8 @@ public partial class PerspectiveWorker(
   }
 
   /// <inheritdoc />
-  public override Task StopAsync(CancellationToken cancellationToken) {
+  /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
     if (_perspectiveSignalSubscribed) {
       _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
       _perspectiveSignalSubscribed = false;
@@ -338,7 +342,8 @@ public partial class PerspectiveWorker(
       wake.Timer.Dispose();
     }
     _collectiveHoldWakes.Clear();
-    return base.StopAsync(cancellationToken);
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
@@ -1427,7 +1432,7 @@ public partial class PerspectiveWorker(
             _metrics?.Errors.Add(1);
             if (upcomingEvents is { Count: > 0 }) {
               var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
-              _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+              _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)failedEventIds, perspectiveName);
             }
             var failure = new PerspectiveCursorFailure {
               StreamId = streamId,
@@ -2602,9 +2607,9 @@ public partial class PerspectiveWorker(
           // reads this as "the read model has it", which a failure must never claim (#959). Marked before
           // the processed release, so anything that observes the release has seen the mark decided.
           if (result.Status == PerspectiveProcessingStatus.Completed) {
-            _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
+            _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
           }
-          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+          _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
         }
 
         // Belt-and-suspenders sweep — when the runner short-circuits its batch
@@ -4627,8 +4632,8 @@ public partial class PerspectiveWorker(
       // Marked applied before the processed release (#959; see the drain-mode site). Only a committed apply
       // reaches here with events: they are loaded for a Completed result alone, and the collective sink, which
       // marks under its own name, reports only an apply that committed.
-      _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
-      _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+      _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
+      _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
       _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}",
@@ -4769,7 +4774,7 @@ public partial class PerspectiveWorker(
         batchProcessedEvents, lifecycleCoordinator, groupedWork, scopedProvider, cancellationToken);
     } else if (receptorInvoker is not null) {
       await _firePostLifecycleFallbackAsync(
-        batchProcessedEvents, receptorInvoker, scopedProvider, _detachedTasks.Add, batchIsNewByEventId, cancellationToken);
+        batchProcessedEvents, receptorInvoker, scopedProvider, DetachedWork.Track, batchIsNewByEventId, cancellationToken);
     }
   }
 
@@ -4917,7 +4922,7 @@ public partial class PerspectiveWorker(
         LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
-    _detachedTasks.Add(task);
+    DetachedWork.Track(task);
   }
 
   /// <summary>
@@ -4925,7 +4930,7 @@ public partial class PerspectiveWorker(
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>

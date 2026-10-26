@@ -71,7 +71,7 @@ public class SignalBusHostedServiceCoverageTests {
     services.AddWhizbangSignalBus();
     services.AddSingleton<ISignalTransport>(transport);
     await using var provider = services.BuildServiceProvider();
-    var hosted = provider.GetServices<IHostedService>().Single();
+    var hosted = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Single();
     var state = provider.GetRequiredService<SignalBusLivenessState>();
 
     await hosted.StartAsync(CancellationToken.None);
@@ -100,7 +100,7 @@ public class SignalBusHostedServiceCoverageTests {
     services.AddWhizbangSignalBus();
     services.AddSingleton<ISignalTransport>(transport);
     await using var provider = services.BuildServiceProvider();
-    var hosted = provider.GetServices<IHostedService>().Single();
+    var hosted = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Single();
     var state = provider.GetRequiredService<SignalBusLivenessState>();
 
     await hosted.StartAsync(CancellationToken.None);

@@ -86,7 +86,7 @@ public class SignalBusHostingTests {
     services.AddWhizbangSignalBus();
 
     await using var provider = services.BuildServiceProvider();
-    var hostedCount = provider.GetServices<IHostedService>().Count();
+    var hostedCount = provider.GetServices<IHostedService>().OfType<SignalBusHostedService>().Count();
 
     await Assert.That(hostedCount)
       .IsEqualTo(1)

@@ -55,6 +55,10 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
 public sealed partial class InboxDispatchWorker : BackgroundService {
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish,
+  /// and report a failure, while the services they resolve are still alive (#1721).
+  /// </summary>
   internal DetachedLifecycleWork DetachedWork { get; } = new();
 
   private readonly IServiceScopeFactory _scopeFactory;
@@ -1063,7 +1067,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         // but in production it spawns a dedicated OS thread per inbox message — observed
         // throughput collapse on a consumer's service (10 msg/min vs target 1000s/min) traced here.
         // If pool starvation comes back, fix it at the host via ThreadPool.SetMinThreads.
-        _ = Task.Run(async () => {
+        DetachedWork.Track(Task.Run(async () => {
           try {
             // Fresh DI scope is required (detached body outlives the dispatch scope; needs
             // its own DbContext etc.). But we do NOT re-establish security context: the
@@ -1098,7 +1102,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
               Reason = ClassifyHandlerFailure(ex),
             }, detachedCt);
           }
-        }, detachedCt);
+        }, detachedCt));
       }
 
       // Inline: blocks until complete
@@ -1108,7 +1112,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         if (isHandlingStage && !hasDetached) {
           // ImmediateDetached is never part of the inbox unit of work (#1393): it starts after the handler, in its
           // own scope, and its failure is logged without failing the message
-          _ = _runImmediateDetachedAsync(typedEnvelope, lifecycleContext, work.MessageId, detachedCt);
+          DetachedWork.Track(_runImmediateDetachedAsync(typedEnvelope, lifecycleContext, work.MessageId, detachedCt));
         }
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
@@ -1132,6 +1136,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         Reason = ClassifyHandlerFailure(ex),
       }, cancellationToken);
     }
+  }
+
+  /// <summary>
+  /// Stops the worker, then waits for the detached lifecycle stages it started: the host stops the services registered
+  /// before this one (the failure flush among them) and disposes the container only after this returns (#1721).
+  /// </summary>
+  /// <param name="cancellationToken">The host's stop deadline.</param>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   // ImmediateDetached after the handler, in a scope of its own, when no PostInboxDetached task is there to run it

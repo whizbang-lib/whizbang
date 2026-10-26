@@ -79,6 +79,9 @@ public static class WhizbangDefaultsServiceCollectionExtensions {
     // The background work a stopping host waits for before it disposes the service provider (#1721): the detached
     // lifecycle stages the work coordinator strategies and other producers start. One per container.
     services.TryAddSingleton<Messaging.DetachedLifecycleWork>();
+    // ...and the host's stop-time flush that stops the producers registered on it and waits for that work, after every
+    // hosted service has stopped and before the container is disposed.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Microsoft.Extensions.Hosting.IHostedService, Workers.BatchStrategyShutdownFlush>());
     services.TryAddSingleton<Messaging.IEventTypeProvider>(Messaging.NullEventTypeProvider.Instance);
     // Concurrency governors are keyed per worker: each worker sizes its own from its own options,
     // and a host that wants a different strategy for one worker registers it under that key.

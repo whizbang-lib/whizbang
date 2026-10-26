@@ -26,6 +26,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer#batch-collector</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs</tests>
 public sealed class TransportBatchCollector<T> : IAsyncDisposable {
+  /// <summary>The flushes started by a full batch or a timer that are still running; disposal waits for them (#1721).</summary>
   internal Messaging.DetachedLifecycleWork InFlightFlushes { get; } = new();
 
   private readonly TransportBatchOptions _options;
@@ -91,9 +92,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     }
 
     if (shouldFlushNow) {
-#pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
-      _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
-#pragma warning restore RCS1075
+      _startBackgroundFlush();
     }
   }
 
@@ -108,6 +107,10 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     await _slideTimer.DisposeAsync();
     await _hardMaxTimer.DisposeAsync();
 
+    // The flushes already running finish first: each hands its batch to the callback, and the owner disposes the
+    // collector so that nothing is handed over after it is gone (#1721)
+    await InFlightFlushes.DrainAsync(CancellationToken.None);
+
     // Flush any remaining pending messages
     await _flushBatchAsync();
   }
@@ -121,8 +124,13 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       return;
     }
 
+    _startBackgroundFlush();
+  }
+
+  // Recorded, so disposal waits for it instead of returning while it still hands a batch to the callback (#1721)
+  private void _startBackgroundFlush() {
 #pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
-    _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
+    InFlightFlushes.Track(Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } }));
 #pragma warning restore RCS1075
   }
 

@@ -48,6 +48,10 @@ namespace Whizbang.Core.Workers;
 /// <docs>extending/internals/event-ordering-invariant</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/SlidingWindowInboxBatchStrategyTests.cs</tests>
 public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
+  /// <summary>
+  /// The idle sweeps still running. A sweep evicts a quiet stream and waits for its drain worker, which may still be
+  /// flushing the stream's last batch; the stream has left the map by then, so the stop waits for the sweep instead (#1721).
+  /// </summary>
   internal Messaging.DetachedLifecycleWork IdleSweeps { get; } = new();
   private static readonly Guid _defaultStreamKey = Guid.Empty;
 
@@ -118,6 +122,8 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     var workers = _streams.Values.Select(b => b.Worker).ToArray();
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
+      // A sweep already under way may hold a stream it evicted, whose worker is still flushing (#1721)
+      await IdleSweeps.DrainAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       await _stopCts.CancelAsync().ConfigureAwait(false);
     }
@@ -226,9 +232,9 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
 #pragma warning restore CA1848
   }
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
+  // The timer callback starts the sweep without waiting for it; the sweep is recorded so the stop can (#1721).
   private void _fireAndForgetIdleSweep() {
-    _ = _runIdleSweepAsync();
+    IdleSweeps.Track(_runIdleSweepAsync());
   }
 
   private sealed class StreamBuffer(Guid key, Channel<InboxMessage> channel, DateTimeOffset createdAt) {

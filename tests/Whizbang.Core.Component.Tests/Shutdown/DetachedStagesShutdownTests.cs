@@ -160,6 +160,29 @@ public class DetachedStagesShutdownTests {
     await Assert.That(await held.Finished.Task).IsTrue();
   }
 
+  /// <summary>A container without the host's record (no <c>TryAddWhizbangDefaults</c>) still runs the stage.</summary>
+  [Test]
+  public async Task ADestructionStage_WithoutTheHostsRecord_StillRunsAsync() {
+    var held = new HeldWork();
+    var services = new ServiceCollection();
+    services.AddSingleton<ProviderLiveness>();
+    services.AddScoped<IReceptorInvoker>(sp => new HeldStageInvoker(held, LifecycleStage.PostDestructionDetached, sp));
+    await using var provider = services.BuildServiceProvider();
+    MessageEnvelope<IEvent> envelope = new() {
+      MessageId = MessageId.New(),
+      Payload = new ShutdownDestroyed(Guid.CreateVersion7()),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+
+    await DestructionStageReceptors.FirePostAsync(provider, [envelope], CancellationToken.None);
+    await held.Entered.Task;
+    held.Release();
+
+    await Assert.That(await held.Finished.Task).IsTrue()
+      .Because("with nothing to record it in, the stage runs untracked, as before");
+  }
+
   private static MessageEnvelope<IMessage> _envelope(IMessage payload) => new() {
     MessageId = MessageId.New(),
     Payload = payload,
