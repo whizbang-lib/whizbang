@@ -46,6 +46,19 @@ public class OutboxDrainWorkerGapTests {
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) =>
       _channel.Writer.WriteAsync(streamId, cancellationToken);
     public bool TryWrite(Guid streamId) => _channel.Writer.TryWrite(streamId);
+
+    private readonly ConcurrentDictionary<Guid, TaskCompletionSource> _drained = new();
+
+    /// <summary>
+    /// Completes when the worker releases <paramref name="streamId"/>'s in-flight marker, which it
+    /// does in the <c>finally</c> of the batch that drained it: the batch has finished, fallback included.
+    /// </summary>
+    public Task WhenDrained(Guid streamId) => _drainedSignal(streamId).Task;
+
+    public void MarkDrained(Guid streamId) => _drainedSignal(streamId).TrySetResult();
+
+    private TaskCompletionSource _drainedSignal(Guid streamId) =>
+      _drained.GetOrAdd(streamId, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
   }
 
   private sealed class GapCompletionChannel : IOutboxCompletionChannel {
@@ -1102,7 +1115,13 @@ public class OutboxDrainWorkerGapTests {
     await worker.StartAsync(cts.Token);
     await drainChannel.WriteAsync(brokenStream);
     await drainChannel.WriteAsync(healthyStream);
-    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Wait for both batches to FINISH, not for the healthy publish. When the two streams share a
+    // batch, the publish lands inside the per-stream fallback; cancelling on it would unwind the
+    // fallback with a cancellation before it returned (#1784). The markers are released in the
+    // batch's finally, so seeing both released means the fallback ran to its end.
+    await Task.WhenAll(
+        drainChannel.WhenDrained(brokenStream), drainChannel.WhenDrained(healthyStream), completion.ReachedTarget.Task)
+      .WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
