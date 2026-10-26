@@ -7,6 +7,13 @@
 # (Test-CiImagePulls.ps1) that fails a job pulling a Docker Hub image the manifest does not list.
 
 BeforeAll {
+  # Pester mocks only a command that exists, and a runner may lack these tools (a Windows machine with no Docker
+  # or GitHub CLI). A stand-in lets the mocks below attach; it throws if a test ever reaches it unmocked.
+  foreach ($tool in 'docker') {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+      Set-Item -Path "function:global:$tool" -Value ([scriptblock]::Create("throw '$tool is not installed'"))
+    }
+  }
   $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
   $script:Scripts = Join-Path $Root '.github' 'scripts'
   Import-Module (Join-Path $Root 'scripts' 'lib' 'CiImages.psm1') -Force

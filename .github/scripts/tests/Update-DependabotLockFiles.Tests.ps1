@@ -8,6 +8,13 @@
 # mocked, and the restore targets come from a real .slnx and project tree on TestDrive.
 
 BeforeAll {
+  # Pester mocks only a command that exists, and a runner may lack these tools (a Windows machine with no Docker
+  # or GitHub CLI). A stand-in lets the mocks below attach; it throws if a test ever reaches it unmocked.
+  foreach ($tool in 'gh', 'dotnet') {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+      Set-Item -Path "function:global:$tool" -Value ([scriptblock]::Create("throw '$tool is not installed'"))
+    }
+  }
   . (Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'Update-DependabotLockFiles.ps1') -Step Credentials
 
   $script:AppEmail = '123456+wb-lockfiles[bot]@users.noreply.github.com'
