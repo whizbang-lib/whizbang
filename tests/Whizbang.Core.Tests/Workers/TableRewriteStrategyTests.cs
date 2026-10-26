@@ -110,13 +110,26 @@ public class TableRewriteStrategyTests {
   [Test]
   public async Task PgSqueeze_IsTheLibrarysFirstSettingDrivenRequirementAsync() {
     var requirement = _libraryRequirements()
-      .Single(r => r.Key == "Whizbang:Workers:Maintenance:TableRewriteStrategy");
+      .Single(r => r.Key == "Whizbang:Workers:Maintenance:TableRewriteStrategy" && r.Capability.Name == "pg_squeeze");
 
     await Assert.That(requirement.Capability).IsEqualTo(new CapabilityId("postgres", "pg_squeeze"));
     await Assert.That(requirement.Feature).IsEqualTo("Online table rewrite");
     await Assert.That(requirement.Value).IsEqualTo("PgSqueeze");
     await Assert.That(requirement.Default).IsEqualTo("Auto")
       .Because("Auto does not use pg_squeeze, so the default never puts the requirement in force");
+  }
+
+  [Test]
+  public async Task PgRepack_RequiresThePgRepackExtension_WhenSelectedAsync() {
+    // #1753: the extension is needed in both run modes (the external job uses it too); the client program is a
+    // separate prerequisite, in force only in process (PgRepackTests).
+    var requirement = _libraryRequirements()
+      .Single(r => r.Key == "Whizbang:Workers:Maintenance:TableRewriteStrategy" && r.Capability.Name == "pg_repack");
+
+    await Assert.That(requirement.Capability).IsEqualTo(new CapabilityId("postgres", "pg_repack"));
+    await Assert.That(requirement.Feature).IsEqualTo("Online table rewrite (pg_repack)");
+    await Assert.That(requirement.Value).IsEqualTo("PgRepack");
+    await Assert.That(requirement.Default).IsEqualTo("Auto");
   }
 
   private static async Task<CapabilityVerdict> _verdictAsync(
