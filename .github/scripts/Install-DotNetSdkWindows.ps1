@@ -31,7 +31,7 @@
     Default: $env:USERPROFILE\.dotnet.
 
 .EXAMPLE
-    pwsh .github/scripts/Install-DotNetSdk.ps1 -FallbackVersion 10.0.x
+    pwsh .github/scripts/Install-DotNetSdkWindows.ps1 -FallbackVersion 10.0.x
 #>
 
 param(

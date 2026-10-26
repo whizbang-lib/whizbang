@@ -5,12 +5,12 @@
 
 # The Windows half of .github/actions/setup-dotnet-retry. A team Windows machine has no bash on the runner
 # service's PATH (or only the WSL stub), so the action's bash step failed every job routed there before
-# anything else ran. Install-DotNetSdk.ps1 makes the same choice the bash step makes (the global.json
+# anything else ran. Install-DotNetSdkWindows.ps1 makes the same choice the bash step makes (the global.json
 # feature band, else the input's channel) and installs with dotnet-install.ps1. The download and the
 # install are replaced by scriptblocks here.
 
 BeforeAll {
-  $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'Install-DotNetSdk.ps1'
+  $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath '..' -AdditionalChildPath 'Install-DotNetSdkWindows.ps1'
   . $ScriptPath
 
   function New-GlobalJson([string]$Content) {
