@@ -62,14 +62,24 @@ public class DirectedMessageE2ETests {
     await harness.PublishAsync(new DirectedProbeEvent { X = 2 });
 
     var targetStored = await harness.GetService("target-svc").Inbox.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
-    var bystanderStored = await harness.GetService("bystander-svc").Inbox.WaitForInboxAsync(1, TimeSpan.FromSeconds(10));
+    var bystanderStored = await harness.GetService("bystander-svc").Inbox.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
 
     await Assert.That(targetStored.Count).IsEqualTo(2)
       .Because("the target service stores BOTH the message directed at it and the broadcast.");
-    await Assert.That(bystanderStored.Count).IsEqualTo(1)
-      .Because("a non-target service discards the directed message at the receive seam — " +
-               "only the broadcast reaches its inbox.");
+    await Assert.That(targetStored.All(r => r.DiscardedOnReceive is null)).IsTrue()
+      .Because("the target processes both: neither is settled on receive.");
+    // #1720: a non-target service no longer drops the directed message unstored. It stores it settled with the
+    // foreign-target reason: durable and inspectable, but processed at arrival, so it is never claimed, copied or
+    // dispatched. Only the broadcast is work for the bystander.
+    await Assert.That(bystanderStored.Count).IsEqualTo(2);
+    await Assert.That(bystanderStored.Single(r => _x(r) == 1).DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.FOREIGN_TARGET)
+      .Because("the message directed at another service is stored settled, never processed by the bystander.");
+    await Assert.That(bystanderStored.Single(r => _x(r) == 2).DiscardedOnReceive).IsNull()
+      .Because("the broadcast is the bystander's only work.");
   }
+
+  private static int _x(InboxMessage row) =>
+    row.Envelope.Payload.TryGetProperty("x", out var lower) ? lower.GetInt32() : row.Envelope.Payload.GetProperty("X").GetInt32();
 }
 
 /// <summary>JSON context for the directed-message E2E payloads (production-parity registration).</summary>

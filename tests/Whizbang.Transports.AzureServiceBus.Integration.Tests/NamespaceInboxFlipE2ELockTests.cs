@@ -25,7 +25,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// THE PHASE-6 E2E ACCEPTANCE LOCKS (Azure Service Bus tier) — the per-namespace-command-
 /// inboxes spec's §test-cases run against the real broker protocol (emulator): entity
 /// derivation, single-handler exclusivity with zero non-handler operations, multi-handler
-/// fan-out, loud unroutable failure, discard-at-receive-boundary on the new entities,
+/// fan-out, loud unroutable failure, store-then-skip of a mis-delivery on the new entities (#1720),
 /// same-stream ordering within a namespace, cross-namespace interleave completeness (the
 /// deliberate semantic change; the store-side pump remains the ordering authority — its
 /// final-state lock lives at the store/harness tier), and per-namespace DLQ + replay.
@@ -283,10 +283,11 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
   }
 
   [Test]
-  public async Task MisdeliveredMessage_OnFlippedEntity_DiscardsSafely_NoDlqNoHandlerAsync(CancellationToken ct) {
-    // Discard-at-receive-boundary stays the safety belt on the NEW entities: a message
-    // whose envelope type has no JSON type info is completed (ack+drop), never
-    // dead-lettered, and never reaches the handler.
+  public async Task MisdeliveredMessage_OnFlippedEntity_NotAnEnvelope_IsDeadLetteredNeverHandledAsync(CancellationToken ct) {
+    // #1720 on the NEW entities: a mis-delivered message whose envelope type has no JSON type info and whose body is
+    // not a readable envelope cannot be stored, so it is dead-lettered (custody, which the dead-letter drain imports),
+    // never acked and dropped, and it never reaches the handler. (A readable envelope of an unknown type is handed on
+    // and stored settled by the consumer; the RabbitMQ lock proves that through the real consumer worker.)
     await _drainAsync(ORDERS_ENTITY, "svc-orders");
     await _drainDlqAsync(ORDERS_ENTITY, "svc-orders");
 
@@ -324,15 +325,16 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     await sentinelAwaiter.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
     await Assert.That(Volatile.Read(ref handlerInvocations)).IsEqualTo(1)
-      .Because("only the sentinel reaches the handler — the mis-delivered message is dropped at the receive boundary");
+      .Because("only the sentinel reaches the handler: a body that is not an envelope is never handed on");
 
-    // Safely discarded = completed at the broker, NOT dead-lettered. PEEK (credit-free) —
-    // a timed-out receive would leave link credit and hang the emulator's drain on close.
+    // Dead-lettered with its reason. PEEK (credit-free): a timed-out receive would leave link credit and hang the
+    // emulator's drain on close.
     await using var dlqReceiver = _fixture.Client.CreateReceiver(ORDERS_ENTITY, "svc-orders",
       new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
     var deadLettered = await dlqReceiver.PeekMessageAsync(fromSequenceNumber: 0, ct);
-    await Assert.That(deadLettered).IsNull()
-      .Because("ack+drop must not dead-letter — mis-delivery is discard, not poison");
+    await Assert.That(deadLettered?.MessageId).IsEqualTo(misdeliveredId)
+      .Because("a body that cannot be stored is dead-lettered with custody, never dropped (#1720)");
+    await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("MissingJsonTypeInfo");
   }
 
   // ---------- §ordering ----------

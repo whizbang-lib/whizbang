@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
@@ -15,6 +16,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -29,7 +31,7 @@ namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 /// THE PHASE-6 E2E ACCEPTANCE LOCKS (RabbitMQ tier) — the per-namespace-command-inboxes
 /// spec's §test-cases against a real broker: entity derivation, single-handler exclusivity
 /// with a zero-message non-handler queue, multi-handler fan-out, loud unroutable failure,
-/// discard-at-receive-boundary on the new entities, same-stream ordering within a namespace,
+/// store-then-skip of a mis-delivery on the new entities (#1720), same-stream ordering within a namespace,
 /// cross-namespace interleave completeness (the deliberate semantic change; the store-side
 /// pump remains the ordering authority — its final-state lock lives at the store/harness
 /// tier), and per-namespace DLQ + replay.
@@ -271,32 +273,48 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
   [Test]
   [Timeout(90000)]
-  public async Task MisdeliveredMessage_OnFlippedEntity_DiscardedAtReceiveBoundary_NoDlqNoHandlerAsync(CancellationToken ct) {
-    // Discard-at-receive-boundary stays the safety belt on the NEW entities: a deliverable,
-    // deserializable message whose type this service does NOT consume is acked+dropped —
-    // never dead-lettered, never handled. The discard policy consults the receptor registry —
-    // this stub consumes PlaceOrder (the sentinel) and nothing else, so the mis-delivered
-    // ChargeCard on the orders exchange is exactly a mis-delivery.
-    var discardPolicy = new MessageDiscardPolicy(
-      registry: new ConsumesOnlyPlaceOrderRegistry(),
-      logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<MessageDiscardPolicy>.Instance,
-      meter: new System.Diagnostics.Metrics.Meter($"phase6-discard-{Guid.NewGuid():N}"),
-      routingOptions: Options.Create(new RoutingOptions()),
-      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
-    var transport = await _createTransportAsync(discardPolicy: discardPolicy);
+  public async Task MisdeliveredMessage_OnFlippedEntity_IsStoredSettledByTheConsumer_NeverWork_NoDlqAsync(CancellationToken ct) {
+    // #1720 replaces discard-at-the-receive-boundary with store-then-skip. A deliverable, deserializable message whose
+    // type this service does NOT consume (a ChargeCard mis-delivered onto the orders exchange) is no longer acked unstored
+    // by the transport: the REAL consumer worker stores it, settled with the no-local-consumer reason, so it is never
+    // claimed or dispatched, then the transport acks it. It never reaches a receptor and is never dead-lettered. The
+    // worker's receptor registry consumes PlaceOrder (the sentinel) and nothing else.
+    var transport = await _createTransportAsync();
     var handlerService = _uniqueService("svc-orders");
-
-    var sentinelWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"sentinel-{Guid.CreateVersion7():N}"));
-    var handlerInvocations = 0;
-    var sentinelAwaiter = new Whizbang.Testing.Transport.MessageIdAwaiter(sentinelWork.MessageId.ToString());
-    var subscription = await transport.SubscribeAsync(
-      (envelope, envelopeType, token) => {
-        Interlocked.Increment(ref handlerInvocations);
-        return sentinelAwaiter.Handler(envelope, envelopeType, token);
-      },
-      _subscribeDestination(ORDERS_ENTITY, handlerService), ct);
+    var inbox = new Whizbang.Testing.MultiService.CapturingWorkCoordinator();
+    var services = new ServiceCollection();
+    services.TryAddWhizbangDefaults();
+    services.AddScoped<IWorkCoordinator>(_ => inbox);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(_jsonOptions));
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
+    await using var provider = services.BuildServiceProvider();
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(_subscribeDestination(ORDERS_ENTITY, handlerService));
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: consumerOptions,
+      resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: _jsonOptions,
+      orderedProcessor: new OrderedStreamProcessor(NullLogger<OrderedStreamProcessor>.Instance),
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new ServiceInstanceProvider(Guid.CreateVersion7(), handlerService, "phase6-host", 1),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+      routingOptions: Options.Create(new RoutingOptions()),
+      workChannelWriter: new WorkChannelWriter(),
+      claimWorkerOptions: Options.Create(new ClaimWorkerOptions()),
+      receptorRegistry: new ConsumesOnlyPlaceOrderRegistry(),
+      runtimeReceptorRegistry: NullReceptorRegistry.Instance,
+      ephemeralModeResolver: new EphemeralModeResolver(NullMessageTypeCatalog.Instance),
+      eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
+      controlClass: Options.Create(new ControlClassOptions()),
+      // One message per batch, so each is stored and settled with the broker on its own.
+      transportBatchOptions: new TransportBatchOptions { BatchSize = 1 });
+    await worker.StartAsync(ct);
 
     try {
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(15), ct);
       var publish = _flipPublishStrategy(transport);
 
       // Mis-delivered FIRST: a ChargeCard envelope straight onto the ORDERS exchange.
@@ -305,23 +323,29 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
         misdelivered.Envelope, new TransportDestination(ORDERS_ENTITY, "wbtopo.orders.commands.misdelivered"),
         misdelivered.EnvelopeType, cancellationToken: ct);
 
-      // Then the sentinel; single consumer on one queue → strict order → the sentinel's
-      // arrival proves the mis-delivered message was already settled.
+      // Then the sentinel; single consumer on one queue, strict order: once the sentinel is stored, the mis-delivered
+      // message's fate is final.
+      var sentinelWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"sentinel-{Guid.CreateVersion7():N}"));
       await publish.PublishAsync(sentinelWork, ct);
-      await sentinelAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct);
+      var stored = await inbox.WaitForInboxAsync(2, TimeSpan.FromSeconds(15));
 
-      await Assert.That(Volatile.Read(ref handlerInvocations)).IsEqualTo(1)
-        .Because("only the sentinel reaches the handler — the mis-delivered message is dropped at the receive boundary");
+      await Assert.That(stored.Single(r => r.MessageId == misdelivered.MessageId).DiscardedOnReceive)
+        .IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+        .Because("the mis-delivered message is stored settled: durable and inspectable, never claimed, dispatched or handled");
+      await Assert.That(stored.Single(r => r.MessageId == sentinelWork.MessageId).DiscardedOnReceive).IsNull()
+        .Because("the sentinel is this service's only work");
 
-      // Safely discarded = acked at the broker, NOT dead-lettered.
+      // Stored, then acked at the broker: NOT dead-lettered.
       await using var probeChannel = await _connection!.CreateChannelAsync(cancellationToken: ct);
       var dlqDepth = await probeChannel.MessageCountAsync($"{handlerService}-{ORDERS_ENTITY}.dlq", ct);
       await Assert.That(dlqDepth).IsEqualTo(0u)
-        .Because("ack+drop must not dead-letter — mis-delivery is discard, not poison");
+        .Because("a mis-delivery is stored and skipped, not poison");
     } finally {
-      subscription.Dispose();
+      await worker.StopAsync(CancellationToken.None);
+      worker.Dispose();
     }
   }
+
 
   // ---------- §ordering ----------
 
