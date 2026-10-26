@@ -168,6 +168,29 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
   // ========================================
 
   [Test]
+  [NotInParallel(["WhizbangBackgroundServiceTests", "WhizbangActivityListener"])]
+  public async Task HandleMessage_WithTraceParentAndNoListener_ProcessesWithoutAnInboxSpanAsync() {
+    // With nothing listening, the source starts no span: the message is still processed, and no tag is set on a
+    // span that does not exist. The key keeps every Whizbang.Transport listener out while this runs.
+    await Assert.That(WhizbangActivitySource.Transport.HasListeners()).IsFalse()
+      .Because("this test covers the no-listener path, so no other test may be listening now");
+    var transport = new CapturingTransport();
+    var strategy = new SignalingStrategy { ClaimQueuedInbox = true };
+    var worker = _createWorker(transport, strategy);
+    await _startAsync(worker);
+
+    await transport.Deliver(_message(MessageId.New(), Guid.CreateVersion7(), _traceParent(ActivityTraceId.CreateRandom())))
+      .WaitAsync(_signalTimeout);
+
+    await Assert.That(strategy.FlushCallCount).IsEqualTo(2)
+      .Because("the message was claimed, processed and reported without a span");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  // Every test listening to Whizbang.Transport shares this key, so the no-listener test below sees none.
+  [NotInParallel(["WhizbangBackgroundServiceTests", "WhizbangActivityListener"])]
   public async Task HandleMessage_WithTraceParentAndListener_Success_MarksInboxSpanOkAsync() {
     var traceId = ActivityTraceId.CreateRandom();
     using var capture = new SpanCapture("Whizbang.Transport", traceId);
@@ -191,6 +214,7 @@ public class ServiceBusConsumerWorkerBranchCoverageTests {
   }
 
   [Test]
+  [NotInParallel(["WhizbangBackgroundServiceTests", "WhizbangActivityListener"])]
   public async Task HandleMessage_WithTraceParentAndListener_Failure_MarksInboxSpanErrorWithExceptionTagsAsync() {
     var traceId = ActivityTraceId.CreateRandom();
     using var capture = new SpanCapture("Whizbang.Transport", traceId);

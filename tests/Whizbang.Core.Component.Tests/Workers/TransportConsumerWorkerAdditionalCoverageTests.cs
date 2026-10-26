@@ -180,6 +180,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   /// here — the reason the traceparent is in this test's name — is not covered there.
   /// </summary>
   [Test]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_WhenExceptionWithTraceParent_SetsActivityErrorStatusAsync() {
     // The inbox span only exists while something is listening, so the listener is not just the
     // observer here — it is what makes the SetStatus path run at all.
@@ -270,6 +271,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   /// receive from one whose status was never decided.
   /// </summary>
   [Test]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_StoredWithTraceParent_SetsActivityOkStatusAsync() {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {

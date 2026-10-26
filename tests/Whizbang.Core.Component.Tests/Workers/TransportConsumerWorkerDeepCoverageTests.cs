@@ -528,6 +528,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_WithException_SetsActivityErrorTagsAsync() {
     // Arrange
     var messageId = MessageId.New();
