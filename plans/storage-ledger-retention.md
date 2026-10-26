@@ -158,7 +158,9 @@ by `event_id` range (the manager takes a time-ordered `uuid` key), each converte
 window, with their row sweeps narrowed to the default partition while managed. Follow-ups (2026-10-24): every
 partition the manager creates carries its ledger's autovacuum settings, and partitions made without them are tuned on
 the next cycle (#1693, migration 237); the `wh_log` row sweep clears `wh_log`'s default partition once managed instead
-of skipping the table (#1694, migration 238). Remaining: the pg_partman strategy (`Partitioning:Strategy`, WS-8 slice
+of skipping the table (#1694, migration 238); before a `wh_signals` partition is dropped or emptied, the signals past
+the slowest live instance's tail cursor move to the current partition, ids unchanged (#1758 from #1692, migration
+239). Remaining: the pg_partman strategy (`Partitioning:Strategy`, WS-8 slice
 8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
 
 **Also needed by WS-2 S9/S9b** (`plans/storage-event-slimming.md`): the staged full-metadata table and the trace

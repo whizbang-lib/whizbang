@@ -207,10 +207,10 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     var workId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
     var eventStore = new DrainEventStore();
-    // Both drains fetch the row: it stays pending until the completion flush deletes it.
+    // Both drains fetch the row: it stays pending until the completion flush deletes it. Only the first parses it:
+    // by the second drain the abandoned apply has ended and put the row in the cooldown cache (#1759).
     coordinator.EnqueueStreamEvents([_raw(streamId, eventId, workId)]);
     coordinator.EnqueueStreamEvents([_raw(streamId, eventId, workId)]);
-    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("abandoned"))]);
     eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("abandoned"))]);
     var hang = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var runner = new DrainRunner { FirstApplyHangsUntil = hang.Task };
@@ -225,6 +225,14 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       drainChannel: drainChannel);
     var releases = new System.Collections.Concurrent.ConcurrentQueue<PerspectiveWorker.AffinityGateRelease>();
     worker.OnStreamAffinityGateReleased += releases.Enqueue;
+    var batches = 0;
+    var secondBatchEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    void onBatchCycleComplete() {
+      if (Interlocked.Increment(ref batches) == 2) {
+        secondBatchEnded.TrySetResult();
+      }
+    }
+    worker.OnBatchCycleComplete += onBatchCycleComplete;
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -246,19 +254,18 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     }
 
     await drainChannel.WriteAsync(streamId, cts.Token);
-    await drainChannel.SecondDrained.WaitAsync(TimeSpan.FromSeconds(10));
+    await secondBatchEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(runner.RunWithEventsCallCount).IsEqualTo(1)
       .Because("the second drain ran only after the abandoned apply ended and marked the event processed");
+    await Assert.That(eventStore.DeserializeCallCount).IsEqualTo(1)
+      .Because("the second drain found the row in the cooldown cache and skipped it before parsing (#1759)");
     await Assert.That(releases.ToArray()).IsEquivalentTo(
-      [
-        new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true),
-        new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: false)
-      ], TUnit.Assertions.Enums.CollectionOrdering.Matching)
-      .Because("the abandoned apply released the gate when it ended, then the second drain took and released it");
+      [new PerspectiveWorker.AffinityGateRelease(streamId, PERSPECTIVE, Abandoned: true)])
+      .Because("the abandoned apply released the gate when it ended; the second drain had nothing to apply, so never took it");
     await Assert.That(worker.SnapshotAffinityHolds(TimeSpan.Zero)).IsEmpty()
       .Because("the gate went free when the abandoned apply ended");
   }
@@ -547,11 +554,9 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
   private sealed class DrainedSignalingChannel(Guid watchedStreamId) : IPerspectiveDrainChannel {
     private readonly PerspectiveDrainChannel _inner = new();
     private readonly TaskCompletionSource _firstDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _secondDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _drained;
 
     public Task FirstDrained => _firstDrained.Task;
-    public Task SecondDrained => _secondDrained.Task;
 
     public System.Threading.Channels.ChannelReader<Guid> Reader => _inner.Reader;
     public ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) => _inner.WriteAsync(streamId, cancellationToken);
@@ -566,8 +571,6 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       }
       if (Interlocked.Increment(ref _drained) == 1) {
         _firstDrained.TrySetResult();
-      } else {
-        _secondDrained.TrySetResult();
       }
     }
   }
