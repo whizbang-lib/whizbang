@@ -15,7 +15,7 @@ namespace Whizbang.Core.Attributes;
 /// Default (unmarked) perspectives are assumed <em>resumable</em> — they can rebuild from the closing event
 /// forward, which is the common "closing the books" case. Add <c>[FullHistory]</c> only to projections that
 /// genuinely need the full detail. Resolved at compile time (the perspective-runner generator registers it),
-/// enforced at runtime by <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> — a Roslyn analyzer cannot
+/// enforced at runtime by <see cref="Whizbang.Core.Lifecycle.IStreamPrefixTruncator"/>; a Roslyn analyzer cannot
 /// decide it statically (the target stream, and which perspectives consume it, are runtime values).
 /// </remarks>
 /// <docs>fundamentals/events/ephemeral-events</docs>

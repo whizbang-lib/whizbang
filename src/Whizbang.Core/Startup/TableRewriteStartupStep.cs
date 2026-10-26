@@ -3,10 +3,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Workers;
 
@@ -14,8 +17,10 @@ namespace Whizbang.Core.Startup;
 
 /// <summary>
 /// The <c>Rewrite</c> step: performs the table rewrites migrations and the runtime bloat detector
-/// have recorded, through the <see cref="ITableRewriter"/> of the selected strategy. The framework's
-/// strategy is <see cref="VacuumFullTableRewriter"/>: the blocking, space-reclaiming <c>VACUUM FULL</c>
+/// have recorded, through the <see cref="ITableRewriter"/> of the strategy
+/// <see cref="TableRewriteStrategyResolver"/> resolves from <see cref="MaintenanceWorkerOptions.TableRewriteStrategy"/>
+/// and <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>. The framework's rewriter is
+/// <see cref="VacuumFullTableRewriter"/>: the blocking, space-reclaiming <c>VACUUM FULL</c>
 /// that cannot run inside a migration transaction. Post-ready and fleet-exclusive by declaration: it requires the
 /// <see cref="StartupDuties.MAINTAINER"/> duty (one instance rewrites), non-holders
 /// <see cref="NonHolderBehavior.Skip"/> (nobody blocks on a <c>VACUUM FULL</c> — the entire
@@ -25,8 +30,9 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// Previously this work ran on the <em>runtime</em> maintenance cadence, taking an ACCESS
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
-/// The maintenance cycle now only detects and records. A rewriter that cannot run is not called, and
-/// its reason is the step's: <c>VACUUM FULL</c> stays behind the operator permission
+/// The maintenance cycle now only detects and records. A strategy that resolves to no rewrite, or to a strategy
+/// with no registered rewriter (<see cref="TableRewriteStrategy.PgSqueeze"/> in this version), skips with the
+/// resolution as its reason, and so does a rewriter that cannot run. <c>VACUUM FULL</c> stays behind the operator permission
 /// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
 /// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
@@ -40,43 +46,59 @@ namespace Whizbang.Core.Startup;
 public sealed partial class TableRewriteStartupStep : IStartupStep {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly ITableRewriter[] _rewriters;
-  private readonly string _strategy;
+  private readonly IOptions<MaintenanceWorkerOptions> _options;
+  private readonly ICapabilityRegistry? _capabilities;
   private readonly ILogger<TableRewriteStartupStep> _logger;
 
   /// <summary>Creates the step over the scope factory the coordinator resolves from.</summary>
   /// <param name="scopeFactory">The scope factory the work coordinator is resolved from.</param>
-  /// <param name="rewriters">The registered rewriters; the one whose <see cref="ITableRewriter.Strategy"/> is <paramref name="strategy"/> runs.</param>
-  /// <param name="strategy">The selected strategy name, for example <see cref="TableRewriteStrategies.VACUUM_FULL"/>.</param>
+  /// <param name="rewriters">The registered rewriters; the one whose <see cref="ITableRewriter.Strategy"/> the strategy resolves to runs.</param>
+  /// <param name="options">The maintenance options: <see cref="MaintenanceWorkerOptions.TableRewriteStrategy"/> and <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>.</param>
+  /// <param name="capabilities">
+  /// The capability registry, which says whether pg_squeeze is usable, or null when the host registers none. With
+  /// one, the step runs after the <c>Capabilities</c> step that probes it.
+  /// </param>
   /// <param name="logger">The step's logger.</param>
   public TableRewriteStartupStep(
       IServiceScopeFactory scopeFactory,
       IEnumerable<ITableRewriter> rewriters,
-      string strategy,
+      IOptions<MaintenanceWorkerOptions> options,
+      ICapabilityRegistry? capabilities,
       ILogger<TableRewriteStartupStep> logger) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(rewriters);
-    ArgumentException.ThrowIfNullOrWhiteSpace(strategy);
+    ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(logger);
     _scopeFactory = scopeFactory;
     _rewriters = [.. rewriters];
-    _strategy = strategy;
+    _options = options;
+    _capabilities = capabilities;
     _logger = logger;
+    Descriptor = new() {
+      Name = FrameworkStartupSteps.REWRITE,
+      DependsOn = capabilities is null
+        ? [FrameworkStartupSteps.MIGRATE]
+        : [FrameworkStartupSteps.MIGRATE, CapabilitiesStartupStep.STEP_NAME],
+      RequiredCapability = StartupDuties.MAINTAINER,
+      NonHolderBehavior = NonHolderBehavior.Skip,
+      Blocking = false,
+    };
   }
 
   /// <inheritdoc />
-  public StartupStepDescriptor Descriptor { get; } = new() {
-    Name = FrameworkStartupSteps.REWRITE,
-    DependsOn = [FrameworkStartupSteps.MIGRATE],
-    RequiredCapability = StartupDuties.MAINTAINER,
-    NonHolderBehavior = NonHolderBehavior.Skip,
-    Blocking = false,
-  };
+  public StartupStepDescriptor Descriptor { get; }
 
   /// <inheritdoc />
   public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
-    var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, _strategy, StringComparison.Ordinal));
+    var options = _options.Value;
+    var plan = TableRewriteStrategyResolver.Resolve(options.TableRewriteStrategy, options.AllowTableRewrite, _pgSqueezeUsable());
+    if (plan.Strategy is null) {
+      return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
+    }
+    var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, plan.Strategy, StringComparison.Ordinal));
     if (rewriter is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped,
-        $"no table rewriter registered for strategy '{_strategy}'");
+        $"{plan.Reason}; no table rewriter is registered for it, so requested tables stay queued");
     }
     if (!rewriter.CanRun) {
       return new StartupStepReport(StartupStepOutcome.Skipped, rewriter.CannotRunReason);
@@ -119,6 +141,18 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
         ? $"rewrote {rewritten} table(s)"
         : $"rewrote {rewritten} table(s); {leftQueued} ineffective, left queued for the next boot");
   }
+
+  /// <summary>Whether pg_squeeze is usable (Ready or Provisionable) on every database the registry probes it on.</summary>
+  private bool _pgSqueezeUsable() {
+    if (_capabilities is null) {
+      return false;
+    }
+    var squeeze = new CapabilityId(RequiresPostgresExtensionAttribute.PROVIDER, PG_SQUEEZE_EXTENSION);
+    var statuses = _capabilities.Statuses.Where(s => s.Descriptor.Id == squeeze).ToList();
+    return statuses.Count > 0 && statuses.TrueForAll(s => s.IsUsable);
+  }
+
+  private const string PG_SQUEEZE_EXTENSION = "pg_squeeze";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Rewrite step: {Table} rewritten, bloat {Before}x -> {After}x")]

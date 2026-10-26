@@ -41,7 +41,7 @@ public sealed record CapabilityVerdictEntry(
 
   /// <summary>
   /// The verdict line, in the form
-  /// <code>capability provider/name on 'scope': State[, version][; detail][: reason][. Fix: fix].
+  /// <code>capability provider/name on 'scope': State[, created|already present|upgraded][, version][; detail][: reason][. Fix: fix].
   /// Required by: Feature (Key = Value, explicit|default)[; ...]</code>
   /// A capability no provider describes has no scope.
   /// </summary>
@@ -52,8 +52,11 @@ public sealed record CapabilityVerdictEntry(
         line.Append(" on '").Append(Status.Scope).Append('\'');
       }
       line.Append(": ").Append(Status.State);
+      if (Status.Provisioning is { } provisioning) {
+        line.Append(", ").Append(_said(provisioning));
+      }
       if (Status.Version is not null) {
-        line.Append(", ").Append(Status.Version);
+        line.Append(Status.Provisioning is null ? ", " : " ").Append(Status.Version);
       }
       if (Status.Detail is not null) {
         line.Append("; ").Append(Status.Detail);
@@ -67,6 +70,12 @@ public sealed record CapabilityVerdictEntry(
       return line.Append(". Required by: ").AppendJoin("; ", RequiredBy).ToString();
     }
   }
+
+  private static string _said(CapabilityProvisioningOutcome outcome) => outcome switch {
+    CapabilityProvisioningOutcome.Created => "created",
+    CapabilityProvisioningOutcome.Upgraded => "upgraded",
+    _ => "already present",
+  };
 
   // A provisionable capability is usable once provisioned, but nothing has provisioned it yet, so a feature that
   // needs it now cannot run; the descriptor has no fix for a usable state.

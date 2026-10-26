@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Capabilities;
 
@@ -51,13 +52,21 @@ internal sealed class PostgresCapabilityProvider : ICapabilityProvider {
     var connection = await _databases[scope].OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using (connection.ConfigureAwait(false)) {
       var rows = await PostgresCapabilityProbe.ReadAsync(connection, _catalog, cancellationToken).ConfigureAwait(false);
-      return [.. _catalog.Select((extension, i) => {
-        var row = rows[extension.Name];
-        var state = PostgresCapabilityProbe.DeriveState(extension, row);
-        return new CapabilityStatus(Descriptors[i], scope, PostgresCapabilityProbe.ToCapabilityState(state),
-          row.InstalledVersion, state.ToString(), Reason: null);
-      })];
+      return [.. _catalog.Select((extension, i) => Status(Descriptors[i], scope, extension, rows[extension.Name]))];
     }
+  }
+
+  /// <summary>
+  /// One extension's status from what the probe read: the generic state, the installed version, the version an
+  /// install or update reaches, and the Postgres state as the detail.
+  /// </summary>
+  internal static CapabilityStatus Status(
+      CapabilityDescriptor descriptor, string scope, PostgresExtensionInfo extension, PostgresExtensionProbeRow row) {
+    var state = PostgresCapabilityProbe.DeriveState(extension, row);
+    return new CapabilityStatus(descriptor, scope, PostgresCapabilityProbe.ToCapabilityState(state),
+      row.InstalledVersion, state.ToString(), Reason: null) {
+      AvailableVersion = row.DefaultVersion,
+    };
   }
 }
 
@@ -70,7 +79,8 @@ internal sealed class PostgresCapabilityProvider : ICapabilityProvider {
 public static class PostgresCapabilityServiceCollectionExtensions {
   /// <summary>
   /// Registers <paramref name="database"/> as a scope of the Postgres capability provider, and once per
-  /// container the provider and capability detection (<c>AddWhizbangCapabilities</c>). Safe to call more
+  /// container the provider, its provisioner (<c>CREATE EXTENSION</c> and <c>ALTER EXTENSION ... UPDATE</c>) and
+  /// capability detection (<c>AddWhizbangCapabilities</c>). Safe to call more
   /// than once; a database registered twice is probed once.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -91,6 +101,9 @@ public static class PostgresCapabilityServiceCollectionExtensions {
     services.AddSingleton(sp => new PostgresCapabilityDatabase(database, ct => openConnection(sp, ct)));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ICapabilityProvider, PostgresCapabilityProvider>(
       sp => new PostgresCapabilityProvider(sp.GetServices<PostgresCapabilityDatabase>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ICapabilityProvisioner, PostgresCapabilityProvisioner>(
+      sp => new PostgresCapabilityProvisioner(
+        sp.GetServices<PostgresCapabilityDatabase>(), sp.GetRequiredService<ILogger<PostgresCapabilityProvisioner>>())));
     return services.AddWhizbangCapabilities();
   }
 

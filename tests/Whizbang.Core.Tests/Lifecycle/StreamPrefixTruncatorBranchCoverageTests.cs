@@ -12,13 +12,13 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Lifecycle;
 
 /// <summary>
-/// Branch coverage for <see cref="StreamCloser.CloseAsync"/>'s post-truncate hook gate: the
+/// Branch coverage for <see cref="StreamPrefixTruncator.CloseAsync"/>'s post-truncate hook gate: the
 /// PostDestruction hook fires only when the coordinator actually closed the stream. A close the
 /// coordinator declined (gate-blocked, nothing to carry forward, debug-skipped) destroyed nothing,
 /// so announcing a destruction would trigger notifications and cascades for data that still exists.
 /// </summary>
-/// <code-under-test>src/Whizbang.Core/Lifecycle/StreamCloser.cs</code-under-test>
-public class StreamCloserBranchCoverageTests {
+/// <code-under-test>src/Whizbang.Core/Lifecycle/StreamPrefixTruncator.cs</code-under-test>
+public class StreamPrefixTruncatorBranchCoverageTests {
   // No receptor registry: the closer runs no destruction-stage receptor and reads nothing for them
   private static readonly IServiceScopeFactory _noServices = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
@@ -34,8 +34,8 @@ public class StreamCloserBranchCoverageTests {
     }
   }
 
-  private sealed class FixedResultCoordinator(List<string> log, StreamCloseResult result) : IWorkCoordinator {
-    public Task<StreamCloseResult> CloseStreamAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+  private sealed class FixedResultCoordinator(List<string> log, StreamTruncateResult result) : IWorkCoordinator {
+    public Task<StreamTruncateResult> TruncateStreamPrefixAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       log.Add("close");
       return Task.FromResult(result);
     }
@@ -56,12 +56,12 @@ public class StreamCloserBranchCoverageTests {
   }
 
   [Test]
-  public async Task Close_CoordinatorDeclinesTheClose_DoesNotFireThePostDestructionHookAsync() {
+  public async Task Truncate_CoordinatorDeclinesTheClose_DoesNotFireThePostDestructionHookAsync() {
     var log = new List<string>();
-    var coordinator = new FixedResultCoordinator(log, new StreamCloseResult("gate_blocked", 0));
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new RecordingHook(log), _noServices);
+    var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("gate_blocked", 0));
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new RecordingHook(log), _noServices);
 
-    var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 
     await Assert.That(result.Status).IsEqualTo("gate_blocked")
       .Because("the coordinator's outcome is returned to the caller unchanged");
@@ -86,14 +86,14 @@ public class StreamCloserBranchCoverageTests {
   // A real post-destruction hook (a notifier, a cascade) awaits I/O, so the close must survive the
   // hook suspending: it resumes, lets the hook finish, and only then returns the coordinator's result.
   [Test]
-  public async Task Close_PostDestructionHookSuspends_WaitsForTheHookThenReturnsTheClosedResultAsync() {
+  public async Task Truncate_PostDestructionHookSuspends_WaitsForTheHookThenReturnsTheClosedResultAsync() {
     var log = new List<string>();
-    var coordinator = new FixedResultCoordinator(log, new StreamCloseResult("closed", 3));
-    var closer = new StreamCloser(coordinator, NullLogger<StreamCloser>.Instance, new SuspendingAfterHook(log), _noServices);
+    var coordinator = new FixedResultCoordinator(log, new StreamTruncateResult("truncated", 3));
+    var closer = new StreamPrefixTruncator(coordinator, NullLogger<StreamPrefixTruncator>.Instance, new SuspendingAfterHook(log), _noServices);
 
-    var result = await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
+    var result = await closer.TruncateAsync(Guid.NewGuid(), throughVersion: 10, archive: true);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(string.Join(",", log)).IsEqualTo("before,close,after-started,after-finished")
       .Because("the close awaits the post-destruction hook to completion before returning, even when the hook yields");
   }

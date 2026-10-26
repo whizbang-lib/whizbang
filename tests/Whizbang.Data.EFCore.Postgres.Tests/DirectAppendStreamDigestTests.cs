@@ -102,9 +102,9 @@ public class DirectAppendStreamDigestTests : EFCoreTestBase {
 
     // close_stream XORs the truncated rows back out. Before the fold, it subtracted direct appends that were never added.
     await using (var close = connection.CreateCommand()) {
-      close.CommandText = "SELECT close_status FROM close_stream(@sid, 2, FALSE)";
+      close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@sid, 2, FALSE)";
       close.Parameters.AddWithValue("sid", streamId);
-      await Assert.That((string?)await close.ExecuteScalarAsync()).IsEqualTo("closed");
+      await Assert.That((string?)await close.ExecuteScalarAsync()).IsEqualTo("truncated");
     }
 
     var (differences, _) = await _compareWithRecomputeAsync(connection, streamId);

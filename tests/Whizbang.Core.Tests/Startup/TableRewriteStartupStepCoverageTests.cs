@@ -31,10 +31,12 @@ public class TableRewriteStartupStepCoverageTests {
   public async Task ExecuteAsync_PermittedButNoWorkCoordinatorRegistered_SkipsWithTheStatedReasonAsync() {
     var services = new ServiceCollection(); // deliberately no IWorkCoordinator registration
     var provider = services.BuildServiceProvider();
+    var options = Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true });
     var step = new TableRewriteStartupStep(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      rewriters: [new VacuumFullTableRewriter(Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = true }))],
-      strategy: TableRewriteStrategies.VACUUM_FULL,
+      rewriters: [new VacuumFullTableRewriter(options)],
+      options: options,
+      capabilities: null,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
 
     var report = await step.ExecuteAsync(CancellationToken.None);

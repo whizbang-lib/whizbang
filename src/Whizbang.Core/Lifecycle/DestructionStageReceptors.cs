@@ -26,7 +26,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </remarks>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/DestructionStageReceptorComponentTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamCloserDestructionStageComponentTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Lifecycle/StreamPrefixTruncatorDestructionStageComponentTests.cs</tests>
 public static partial class DestructionStageReceptors {
   private static readonly LifecycleStage[] _stages = [
     LifecycleStage.PreDestructionDetached, LifecycleStage.PreDestructionInline,

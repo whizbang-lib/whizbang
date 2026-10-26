@@ -118,9 +118,9 @@ public class OriginGenerationSqlTests : EFCoreTestBase {
     var generationBefore = await _generationAsync(conn);
 
     await using (var close = conn.CreateCommand()) {
-      close.CommandText = "SELECT close_status FROM close_stream(@s, 10, false)";
+      close.CommandText = "SELECT truncate_status FROM wh_truncate_stream_prefix(@s, 10, false)";
       close.Parameters.AddWithValue("s", stream);
-      await Assert.That((string)(await close.ExecuteScalarAsync())!).IsEqualTo("closed");
+      await Assert.That((string)(await close.ExecuteScalarAsync())!).IsEqualTo("truncated");
     }
 
     await Assert.That(await _generationAsync(conn)).IsGreaterThan(generationBefore)

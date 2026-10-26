@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// <summary>
 /// Unit tests for the E3-3b <see cref="StreamCompactor"/> fold orchestration: read the authoritative snapshot,
 /// append the permanent <see cref="Compacted"/> origin (summary durable BEFORE the truncate), then gated-
-/// truncate the folded detail via the A1 <see cref="IStreamCloser"/>. Branches: no snapshot, no anchor version,
+/// truncate the folded detail via the A1 <see cref="IStreamPrefixTruncator"/>. Branches: no snapshot, no anchor version,
 /// and the happy path (append-then-close ordering + the Compacted payload). The DB-touching pieces (append
 /// flagging Compacted, the version query, the truncate) are integration-tested individually elsewhere.
 /// </summary>
@@ -57,10 +57,10 @@ public class StreamCompactorTests {
     public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => throw new NotSupportedException();
   }
 
-  private sealed class FakeCloser(List<string> log, StreamCloseResult result) : IStreamCloser {
+  private sealed class FakeTruncator(List<string> log, StreamTruncateResult result) : IStreamPrefixTruncator {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }
     public int Calls { get; private set; }
-    public Task<StreamCloseResult> CloseAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       log.Add("close");
       Calls++;
       LastCall = (streamId, throughVersion, archive);
@@ -86,14 +86,14 @@ public class StreamCompactorTests {
     return Whizbang.Core.Serialization.VersionedJsonEnvelope.Wrap(model.RootElement, version);
   }
 
-  private static StreamCompactor _compactor(FakeSnapshotStore snaps, FakeCoordinator coord, FakeEventStore events, FakeCloser closer) =>
+  private static StreamCompactor _compactor(FakeSnapshotStore snaps, FakeCoordinator coord, FakeEventStore events, FakeTruncator closer) =>
     new(snaps, coord, events, closer, NullLogger<StreamCompactor>.Instance);
 
   [Test]
   public async Task Compact_NoSnapshot_ReturnsNoSnapshot_AppendsNothingAsync() {
     var log = new List<string>();
     var events = new FakeEventStore(log);
-    var closer = new FakeCloser(log, new StreamCloseResult("closed", 3));
+    var closer = new FakeTruncator(log, new StreamTruncateResult("truncated", 3));
     var compactor = _compactor(new FakeSnapshotStore { Snapshot = null }, new FakeCoordinator(5), events, closer);
 
     var result = await compactor.CompactAsync(Guid.NewGuid(), "P");
@@ -108,7 +108,7 @@ public class StreamCompactorTests {
   public async Task Compact_NoAnchorVersion_ReturnsNoAnchor_AppendsNothingAsync() {
     var log = new List<string>();
     var events = new FakeEventStore(log);
-    var closer = new FakeCloser(log, new StreamCloseResult("closed", 3));
+    var closer = new FakeTruncator(log, new StreamTruncateResult("truncated", 3));
     var snaps = new FakeSnapshotStore { Snapshot = (Guid.NewGuid(), _wrappedSnapshot("{}", 1)) };
     var compactor = _compactor(snaps, new FakeCoordinator(version: null), events, closer);
 
@@ -125,7 +125,7 @@ public class StreamCompactorTests {
     var log = new List<string>();
     var streamId = Guid.NewGuid();
     var events = new FakeEventStore(log);
-    var closer = new FakeCloser(log, new StreamCloseResult("closed", 7));
+    var closer = new FakeTruncator(log, new StreamTruncateResult("truncated", 7));
     var snaps = new FakeSnapshotStore { Snapshot = (Guid.NewGuid(), _wrappedSnapshot("""{"balance":140}""", 3)) };
     var compactor = _compactor(snaps, new FakeCoordinator(version: 42), events, closer);
 
@@ -162,7 +162,7 @@ public class StreamCompactorTests {
     // claiming success.
     var log = new List<string>();
     var events = new FakeEventStore(log);
-    var closer = new FakeCloser(log, new StreamCloseResult("blocked", 0));
+    var closer = new FakeTruncator(log, new StreamTruncateResult("blocked", 0));
     var snaps = new FakeSnapshotStore { Snapshot = (Guid.NewGuid(), _wrappedSnapshot("{}", 1)) };
     var compactor = _compactor(snaps, new FakeCoordinator(version: 10), events, closer);
 

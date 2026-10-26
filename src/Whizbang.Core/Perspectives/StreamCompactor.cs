@@ -12,7 +12,7 @@ namespace Whizbang.Core.Perspectives;
 /// <param name="Status">
 /// <c>compacted</c> (folded + truncated) | <c>no_snapshot</c> (no authoritative model to fold) |
 /// <c>no_anchor</c> (the snapshot's anchor event has no resolvable version) | or the underlying
-/// <see cref="StreamCloseResult.Status"/> if the truncate did not proceed (<c>blocked</c> / <c>full_history_blocked</c> / …).
+/// <see cref="StreamTruncateResult.Status"/> if the truncate did not proceed (<c>blocked</c> / <c>full_history_blocked</c> / …).
 /// </param>
 /// <param name="ThroughVersion">The per-stream version folded through (0 unless a fold was attempted).</param>
 /// <param name="EventsFolded">How many detail events were truncated.</param>
@@ -23,7 +23,7 @@ public sealed record CompactionResult(string Status, long ThroughVersion, long E
 /// E3 (Carry-forward / Tier-2) — folds an ephemeral stream's detail into an authoritative
 /// <see cref="Compacted"/> carry-forward. Composes the pieces that already exist: read the authoritative
 /// perspective snapshot, write it as a <see cref="Compacted"/> origin at the stream head (summary durable
-/// BEFORE the truncate), then gated-truncate the folded detail via the A1 <see cref="IStreamCloser"/>. The
+/// BEFORE the truncate), then gated-truncate the folded detail via the A1 <see cref="IStreamPrefixTruncator"/>. The
 /// compacted stream then replays only back to the <see cref="Compacted"/> event.
 /// </summary>
 /// <docs>fundamentals/events/event-streams</docs>
@@ -34,14 +34,14 @@ public interface IStreamCompactor {
 
 /// <inheritdoc cref="IStreamCompactor" />
 /// <docs>fundamentals/events/ephemeral-events</docs>
-/// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 closer.</summary>
+/// <summary>Creates a compactor over the snapshot store, coordinator, event store, and A1 prefix truncator.</summary>
 public sealed partial class StreamCompactor(
     IPerspectiveSnapshotStore snapshots, IWorkCoordinator coordinator, IEventStore eventStore,
-    IStreamCloser closer, ILogger<StreamCompactor> logger) : IStreamCompactor {
+    IStreamPrefixTruncator truncator, ILogger<StreamCompactor> logger) : IStreamCompactor {
   private readonly IPerspectiveSnapshotStore _snapshots = ArgumentGuard.NotNull(snapshots);
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly IEventStore _eventStore = ArgumentGuard.NotNull(eventStore);
-  private readonly IStreamCloser _closer = ArgumentGuard.NotNull(closer);
+  private readonly IStreamPrefixTruncator _truncator = ArgumentGuard.NotNull(truncator);
   private readonly ILogger<StreamCompactor> _logger = ArgumentGuard.NotNull(logger);
 
   /// <inheritdoc />
@@ -82,14 +82,14 @@ public sealed partial class StreamCompactor(
     await _eventStore.AppendAsync(streamId, compacted, cancellationToken).ConfigureAwait(false);
 
     // 5. Truncate the folded detail (discard — the data was ephemeral, so there is no archive). The Compacted
-    //    event sits above throughVersion, so it survives as the head origin; the A1 closer's consumption gate
+    //    event sits above throughVersion, so it survives as the head origin; the A1 prefix truncator's consumption gate
     //    ensures the folded detail was actually consumed before it goes.
-    var close = await _closer.CloseAsync(streamId, throughVersion.Value, archive: false, cancellationToken)
+    var truncate = await _truncator.TruncateAsync(streamId, throughVersion.Value, archive: false, cancellationToken)
       .ConfigureAwait(false);
 
-    var status = string.Equals(close.Status, "closed", StringComparison.Ordinal) ? "compacted" : close.Status;
-    LogCompacted(_logger, streamId, perspectiveName, throughVersion.Value, status, close.EventsTruncated);
-    return new CompactionResult(status, throughVersion.Value, close.EventsTruncated);
+    var status = string.Equals(truncate.Status, "truncated", StringComparison.Ordinal) ? "compacted" : truncate.Status;
+    LogCompacted(_logger, streamId, perspectiveName, throughVersion.Value, status, truncate.EventsTruncated);
+    return new CompactionResult(status, throughVersion.Value, truncate.EventsTruncated);
   }
 
   [LoggerMessage(EventId = 50, Level = LogLevel.Information,

@@ -103,6 +103,23 @@ public class PostgresCapabilityProviderTests {
     await Assert.That(provider.GetRequiredService<ICapabilityRegistry>().Statuses.Count)
       .IsEqualTo(2 * PostgresExtensionCatalog.BuiltIn.Count);
     await Assert.That(provider.GetServices<IStartupStep>().OfType<CapabilitiesStartupStep>().Count()).IsEqualTo(1);
+    var provisioner = provider.GetServices<ICapabilityProvisioner>().Single();
+    await Assert.That(provisioner.Provider).IsEqualTo("postgres")
+      .Because("one provisioner creates and upgrades extensions on every registered database");
+  }
+
+  [Test]
+  public async Task TheProvisionerOpensItsConnectionThroughTheContainer_AndValidatesItsArgumentAsync() {
+    await using var provider = new ServiceCollection().AddLogging()
+      .AddWhizbangPostgresCapabilities("orders-db", _throwing).BuildServiceProvider();
+    var provisioner = provider.GetServices<ICapabilityProvisioner>().Single();
+    var status = new CapabilityStatus(PostgresExtensionCatalog.Describe(_entry("pg_trgm")), "orders-db",
+      CapabilityState.Provisionable, Version: null, Detail: null, Reason: null);
+
+    await Assert.That(async () => await provisioner.ProvisionAsync(status, CapabilityProvisionAction.Create, CancellationToken.None))
+      .Throws<InvalidOperationException>().WithMessageContaining("opened with");
+    await Assert.That(async () => await provisioner.ProvisionAsync(null!, CapabilityProvisionAction.Create, CancellationToken.None))
+      .Throws<ArgumentNullException>();
   }
 
   [Test]

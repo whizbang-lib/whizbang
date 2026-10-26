@@ -19,7 +19,7 @@ namespace Whizbang.Core.Lifecycle;
 /// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/injectable-services</docs>
-/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorTests.cs</tests>
 public sealed class NoOpDestructionHook : IDestructionHook {
 
   /// <summary>A shared instance; the type is stateless.</summary>

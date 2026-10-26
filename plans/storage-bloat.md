@@ -94,6 +94,17 @@ Each slice is one red-then-green increment and its own commit.
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
    NotAllowlisted fails startup" (WS-8 slice 3). Docs:
    `operations/configuration/configuration-reference.md` (Maintenance section).
+   **Status (2026-10-25):** done on branch `feat/1742-1750-rewrite-provisioning` (#1742). `TableRewriteStrategy`
+   (`Auto`, `PgSqueeze`, `VacuumFull`, `None`; default `Auto`) on `MaintenanceWorkerOptions`, resolved each run by
+   `TableRewriteStrategyResolver` against `AllowTableRewrite` and whether pg_squeeze is usable (Ready or Provisionable
+   on every probed database), one test per cell. Per decision 1, `Auto` resolves to `VacuumFull` when permitted and
+   otherwise detects and reports; it never picks pg_squeeze, and names the opt-in when pg_squeeze is usable.
+   `PgSqueeze` is not gated by `AllowTableRewrite` (choosing it is the opt-in) and never falls back to `VacuumFull`.
+   It carries `[RequiresPostgresExtension("pg_squeeze", Feature = "Online table rewrite")]`, the library's first
+   setting-driven requirement: explicit `PgSqueeze` on a server that does not allowlist or preload it fails start with
+   the fix. No pg_squeeze rewriter exists until slice 3 (#1743): the step skips with
+   `...; no table rewriter is registered for it, so requested tables stay queued`. With a capability registry the
+   `Rewrite` step depends on the `Capabilities` step. The `PgRepack` value is slice 5.
 3. **PgSqueeze strategy, driven by maintenance.** The maintenance cycle (idle-gated by
    `HousekeepingCoordinator`) takes requested tables from `wh_tables_needing_rewrite()` largest
    ratio first and calls `squeeze.squeeze_table(schema, table)` on its own connection (see
@@ -105,16 +116,20 @@ Each slice is one red-then-green increment and its own commit.
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
    Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
    bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
+   **Status (2026-10-24):** open. No pg_squeeze rewriter and no `OnlineRewriteMaxBytesPerCycle`. Depends on
+   slice 2, WS-8 slices 4 and 7, and a mirrored CI image with pg_squeeze. Decision 4 (#1671) adds the
+   managed-server privilege investigation as a prerequisite.
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.
-   **Status (2026-10-23):** done in #1667, migration 235. Nothing in `src/` read the key, so behavior is
-   unchanged for any value it held.
+   **Status (2026-10-24):** done. #1667, closed by PR #1695 (migration 235). Nothing in `src/` read the key, so
+   behavior is unchanged for any value it held.
 5. **PgRepack strategy.** A fifth `TableRewriteStrategy` value, `PgRepack`, carrying
    `[RequiresPostgresExtension("pg_repack")]`. The extension is provisioned and the client program
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
    an external job reading the same queue). RED: the resolution matrix gains the PgRepack column.
    Docs: the storage-maintenance page (when to prefer it over pg_squeeze).
+   **Status (2026-10-24):** open. No `PgRepack` strategy. Depends on slice 2 and WS-8 slice 9.
 
 ### C2: autovacuum
 
@@ -127,8 +142,9 @@ Each slice is one red-then-green increment and its own commit.
    Update 088's comment about the event store, whose reason (dead tuples) does not cover the insert
    threshold. RED: a migration test reading `pg_class.reloptions` and the TOAST relation's
    reloptions per table; idempotence on re-run. Docs: storage-maintenance page.
-   **Status (2026-10-23):** shipped in 222 (#1582). `wh_perspective_applied`, which stays unpartitioned
-   (#1577), gets the same shape for deletes and inserts in migration 234 (#1666).
+   **Status (2026-10-24):** done. #1582, closed by PR #1583 (migration 222). `wh_perspective_applied`, which
+   stays unpartitioned (#1577), gets the same shape for deletes and inserts in migration 234 (#1666, PR #1695).
+   Partitions the partition manager creates keep these settings from #1723 (#1693, migration 237).
 7. **Perspective tables, by attribute.** Extend `[PerspectiveTableStorage]` with
    `AutovacuumVacuumThreshold`, `AutovacuumVacuumScaleFactor`, `AutovacuumInsertThreshold` and
    matching TOAST properties. `TableStorageInfo.From` reads them; `ColumnStorageSql.ForTable` emits
@@ -137,9 +153,10 @@ Each slice is one red-then-green increment and its own commit.
    for each property and for omission; an integration test that the reloptions land. Docs:
    `fundamentals/perspectives/physical-fields.md` (`#jsonb-storage`, where the attribute is
    documented).
-   **Status (2026-10-21):** ships in #1584. A value out of PostgreSQL's range (a scale factor above
-   100) fails the schema pass with the server's error; slice 8's range diagnostic covers these
-   properties too.
+   **Status (2026-10-24):** done. #1584, closed by PR #1585. A value out of PostgreSQL's range (a scale factor
+   above 100) fails the schema pass with the server's error; slice 8's range diagnostic covers these properties
+   too. Decision 3 (#1671), a `RESET` when an attribute property is removed, is not built: the generators emit
+   no `RESET`.
 
 ### C3: fillfactor and event-store churn
 
@@ -149,12 +166,13 @@ Each slice is one red-then-green increment and its own commit.
    rewrite request (`wh_request_table_rewrite`) for the table. RED: generator tests for the
    statement and the out-of-range diagnostic; integration test reading `reloptions` and the queued
    request. Docs: physical-fields page, with the HOT explanation above.
-   **Status (2026-10-21):** ships in #1592. The fillfactor went into a new migration (223) rather than
-   slice 6's 222, which had already shipped. The range diagnostic is WHIZ804 (analyzer
-   `PerspectiveTableStorageAnalyzer`), covering `FillFactor`, `ToastTupleTarget` and the three scale
-   factors; the generators leave an out-of-range value out. The rewrite is queued only when the value
-   changes on a table that has pages. `wh_tables_needing_rewrite` still offers a requested table only
-   once it crosses the bloat threshold, so a queued request is a hint, not a forced rewrite.
+   **Status (2026-10-24):** done. #1592, closed by PR #1593. The fillfactor went into a new migration (223)
+   rather than slice 6's 222, which had already shipped. The range diagnostic is WHIZ804 (analyzer
+   `PerspectiveTableStorageAnalyzer`), covering `FillFactor`, `ToastTupleTarget` and the three scale factors;
+   the generators leave an out-of-range value out. The rewrite is queued only when the value changes on a table
+   that has pages. `wh_tables_needing_rewrite` still offers a requested table only once it crosses the bloat
+   threshold, so a queued request is a hint, not a forced rewrite (#1594). The decision 3 `RESET` gap noted on
+   slice 7 applies to `FillFactor` too.
 9. **Defect 7 investigation: what updates `wh_event_store`.** Code search found these writers:
 
    | Writer | Columns | When |
@@ -175,6 +193,8 @@ Each slice is one red-then-green increment and its own commit.
    completion and asserts `n_tup_upd` grows by exactly N (and `n_tup_hot_upd` by 0), then a
    variant that forces a stamp timeout and asserts the retry count. The test that fails names the
    cause.
+   **Status (2026-10-24):** done. #1489, closed by PR #1519: an integration test locks exactly one update per
+   inserted event in `wh_event_store`, so the twelve-to-one excess did not reproduce from code.
 10. **Stop the churn.** Depends on slice 9. If the excess is retries, bound them (smaller batches,
     no full-batch rollback). The one remaining update per event then moves out of the wide row,
     following the 162 precedent: a narrow `wh_event_commit_order (event_id, commit_sequence)` table
@@ -183,6 +203,8 @@ Each slice is one red-then-green increment and its own commit.
     0 updates per event; read-path tests for every `commit_sequence` reader. Docs:
     `operations/infrastructure/migrations.md`. This is a large change and needs a design decision
     first (see open questions).
+    **Status (2026-10-24):** closed by decision, nothing to build. Decision 2 (#1671) keeps `commit_sequence` on
+    the event row and accepts one non-HOT update per event.
 
 ### C4: indexes
 
@@ -191,11 +213,13 @@ Each slice is one red-then-green increment and its own commit.
     BRIN index only where correlation is near 1 and a range filter exists. The existing B-tree
     `idx_event_store_ephemeral_reap` stays: the reap needs its order. RED: a plan-shape test per added
     index (`EXPLAIN` uses it for the range query).
+    **Status (2026-10-24):** open. No migration creates a BRIN index, and no correlation measurement is
+    recorded.
 12. **Index review, report only.** A diagnostic listing framework indexes with zero scans since the
     last stats reset, as a log and a gauge. Nothing is dropped automatically.
-    **Status (2026-10-23):** done in #1669: `whizbang.table.unused_index_bytes` on the table-statistics meter
-    and an Information log line when the set changes. Constraint indexes are left out; partition indexes roll
-    up to their parent; capped by `MaxTrackedTables`.
+    **Status (2026-10-24):** done. #1669, closed by PR #1695: `whizbang.table.unused_index_bytes` on the
+    table-statistics meter and an Information log line when the set changes. Constraint indexes are left out;
+    partition indexes roll up to their parent; capped by `MaxTrackedTables`.
 13. **`REINDEX CONCURRENTLY` task.** For queue tables that churn to empty (`wh_outbox`, `wh_inbox`,
     `wh_inbox_state`, `wh_perspective_events`): when an index's size over its expected size exceeds
     `ReindexBloatThreshold`, rebuild it concurrently on its own connection (it cannot run in a
@@ -204,6 +228,7 @@ Each slice is one red-then-green increment and its own commit.
     first. RED: threshold decision unit tests; integration test that a bloated index shrinks and
     that an invalid leftover is cleaned. Docs: storage-maintenance page and
     `fundamentals/workers/maintenance-steps.md`.
+    **Status (2026-10-24):** open. `src/` has no reindex task and no `ReindexBloatThreshold`.
 
 ### Defect 9: idle-gate ceiling as a time
 
@@ -217,6 +242,7 @@ Each slice is one red-then-green increment and its own commit.
     forced at the time regardless of tick; not forced one tick early; reset on End; count still
     honored when only it is configured. Docs: `operations/workers/housekeeping-arbitration.md`
     (lines 74 and 96 describe the count today) and the configuration reference.
+    **Status (2026-10-24):** done. #1491, closed by PR #1518 (`Whizbang:Housekeeping:MaxDeferral`).
 
 ## Engineering standards
 

@@ -56,22 +56,29 @@ Each slice is one red-then-green increment and its own commit.
    appear; a non-`wh_` table in the same schema does not; a table in another schema does not; the
    cap folds the smallest into `other` and the sum is preserved. Docs:
    `operations/observability/metrics.md#table-statistics`.
+   **Status (2026-10-24):** done. #1488, closed by PR #1515.
 2. **Provider for both drivers.** The provider uses only `NpgsqlDataSource`, so move it to
    `src/Whizbang.Data.Postgres/` and register it from the Dapper driver as well (see
    `plans/dapper-efcore-startup-parity.md`). RED: a Dapper-driver test that the collector receives
    values. Docs: same page, a note that both drivers report.
+   **Status (2026-10-24):** done in PR #1515: the provider lives in
+   `src/Whizbang.Data.Postgres/Observability/PostgresTableStatisticsProvider.cs` and the Dapper driver registers
+   it.
 3. **Heap, TOAST and index bytes.** New gauge `whizbang.table.component_bytes` with tags
    `table_name` and `component` (`heap`, `toast`, `indexes`), from `pg_relation_size`,
    `pg_relation_size(reltoastrelid)` and `pg_indexes_size`. The existing `estimated_bytes` keeps its
    meaning (total) so no dashboard breaks. RED: a test that a table with large JSONB rows reports
    non-zero TOAST, and that the three components sum to the total within one page per relation.
+   **Status (2026-10-24):** done in PR #1515 (`whizbang.table.component_bytes`).
 4. **Live rows.** New gauge `whizbang.table.live_rows` (`pg_class.reltuples`, the same synchronous
    source the rewrite measure uses, `src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs:1163-1170`).
    With bytes it gives bytes per row, and both give growth. RED: value after `ANALYZE` matches the
    inserted count.
+   **Status (2026-10-24):** done in PR #1515 (`whizbang.table.live_rows`).
 5. **Growth.** No new instrument: growth is `deriv()` or `delta()` over the gauges, which every
    Prometheus-compatible backend computes. The dashboard ships those panels. RED: the dashboard
    drift test (slice 7) checks each panel names a real instrument.
+   **Status (2026-10-24):** open. The growth panels ship with the dashboard. Depends on slice 7.
 6. **Bytes per event type, sampled.** DONE (#1590). Slices 1-4 DONE in #1515 (#1488); `CollectionInterval` is a bound, validated setting since #1668 (2026-10-23). The `database` tag on every table-statistics gauge and the configurable `MaxTrackedTables` cap (decisions 1 and 3) DONE in #1717 (2026-10-24). On `EventTypeSampleInterval`, one instance per window (the
    claim `IndexStatisticsMaintenanceStep` uses in `wh_unique_emission_claims`,
    `src/Whizbang.Data.EFCore.Postgres/IndexStatisticsMaintenanceStep.cs:42`) samples
@@ -84,6 +91,8 @@ Each slice is one red-then-green increment and its own commit.
    two types with known sizes report the right means; `MaxEventTypes` folds the rest into `other`;
    an interval of zero never queries; a non-claimant instance never queries. Docs: metrics page,
    new section under `Whizbang.TableStatistics`.
+   **Status (2026-10-24):** done. #1590, closed by PR #1591. Decision 2 (#1675) is not built: the sample reads
+   only `wh_event_body`, not the `wh_event_store` pointer rows or the inline outbox metadata.
 7. **Grafana dashboard.** New folder `dashboards/grafana/` with `whizbang-storage.json`: total and
    per-table bytes, component split, growth per day, bytes per row, bloat ratio with the rewrite
    threshold line, top event types by bytes, metadata share, extension states (from
@@ -92,9 +101,14 @@ Each slice is one red-then-green increment and its own commit.
    RED: a unit test that parses the JSON and fails when a panel's query names a metric that no meter
    in the repository declares, so a rename breaks the build rather than the dashboard. Docs: new
    `operations/observability/storage-dashboard.md` (import steps, panel meanings, the PromQL).
+   **Status (2026-10-24):** open. The repository has no `dashboards/` folder.
 8. **Docs catch-up.** Add `whizbang.table.bloat_ratio` (shipped, undocumented) and every new
    instrument to `operations/observability/metrics.md#table-statistics`, and the new section to
    `operations/configuration/configuration-reference.md`.
+   **Status (2026-10-24):** done. The docs repo's `operations/observability/metrics.md` lists `bloat_ratio` and
+   every new instrument, and the configuration reference has the `Whizbang:TableStatistics` section.
+   `CollectionInterval` is a bound, validated option since #1668 (PR #1695). Decisions 1 (a `database` tag) and
+   3 (a configurable cap) are done in #1723 (#1717).
 
 ## Engineering standards
 

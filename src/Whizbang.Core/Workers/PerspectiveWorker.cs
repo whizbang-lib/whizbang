@@ -1872,7 +1872,7 @@ public partial class PerspectiveWorker(
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      scope, workCoordinator, streamIds, cancellationToken);
+      scope, workCoordinator, streamIds, lifecycleCoordinator, cancellationToken);
     if (fetchResult is null) {
       return;
     }
@@ -1904,6 +1904,7 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       List<Guid> streamIds,
+      ILifecycleCoordinator? lifecycleCoordinator,
       CancellationToken cancellationToken) {
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
 
@@ -1959,11 +1960,19 @@ public partial class PerspectiveWorker(
       return null;
     }
 
+    // #1759: a row in the cooldown cache was applied by an earlier session of its stream and is only waiting for its
+    // completion to delete it; the cooldown partition below would discard it after parsing. Parse only the rest. Every
+    // row stays in the lookup, so a perspective whose own row is cooled still sees it as cooled.
+    var rowsToParse = _rowsOutsideCooldown(rawEvents, _recentlyProcessedEventCache, lifecycleCoordinator);
+    if (rowsToParse.Count == 0) {
+      return null;
+    }
+
     // Deserialize raw events into typed envelopes (AOT-safe).
     var eventTypes = _eventTypeProvider.GetEventTypes();
     List<MessageEnvelope<IEvent>> typedEvents;
     try {
-      typedEvents = eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
+      typedEvents = eventStore.DeserializeStreamEvents(rowsToParse, eventTypes);
     } catch (Exception ex) {
 #pragma warning disable CA1848
       _logger.LogError(ex, "Drain mode: DeserializeStreamEvents threw {ExceptionType}: {Message}", ex.GetType().Name, ex.Message);
@@ -1973,7 +1982,7 @@ public partial class PerspectiveWorker(
 
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
-      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rawEvents.Count);
+      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
 #pragma warning restore CA1848
       return null;
     }
@@ -1983,6 +1992,39 @@ public partial class PerspectiveWorker(
     // (get_stream_events joins perspective_events × event_store). Each row has a unique EventWorkId
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
+  }
+
+  /// <summary>
+  /// #1759: the fetched rows a drain session still has to parse: every row whose event_work_id is not in the cooldown
+  /// cache, or every row when cooldown is off. A cached row was applied by an earlier session of its stream (ClaimWorker
+  /// re-sends every stream it still leases, and the refetch loop re-reads a stream) and only waits for its completion.
+  /// </summary>
+  /// <remarks>
+  /// A skipped row's perspective completion is signaled again on the lifecycle coordinator, as the cooldown path
+  /// after parsing did (<see cref="_signalCooldownSkippedEvents"/>), so the WhenAll gate's bookkeeping never depends
+  /// on whether the event was parsed. The signal needs only the row's event id and perspective name.
+  /// </remarks>
+  /// <param name="rawEvents">The rows the session fetched.</param>
+  /// <param name="cache">The cooldown cache, or <see langword="null"/> when cooldown is off.</param>
+  /// <param name="lifecycleCoordinator">The batch's lifecycle coordinator, when one is registered.</param>
+  /// <returns>The rows to parse, in fetch order.</returns>
+  /// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs:LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync</tests>
+  internal static List<StreamEventData> _rowsOutsideCooldown(
+      List<StreamEventData> rawEvents, RecentlyProcessedEventCache? cache, ILifecycleCoordinator? lifecycleCoordinator) {
+    if (cache is null) {
+      return rawEvents;
+    }
+    var rowsToParse = new List<StreamEventData>(rawEvents.Count);
+    foreach (var raw in rawEvents) {
+      if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
+        rowsToParse.Add(raw);
+      } else if (raw.PerspectiveName is { } perspectiveName) {
+        lifecycleCoordinator?.SignalPerspectiveComplete(raw.EventId, perspectiveName);
+      }
+    }
+    return rowsToParse;
   }
 
   /// <summary>
@@ -2261,7 +2303,7 @@ public partial class PerspectiveWorker(
     await using var refetchScope = _scopeFactory.CreateAsyncScope();
     var refetchWorkCoordinator = refetchScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      refetchScope, refetchWorkCoordinator, [streamId], ct);
+      refetchScope, refetchWorkCoordinator, [streamId], sharedContext.LifecycleCoordinator, ct);
     if (fetchResult is null) {
       return null;
     }
@@ -3020,6 +3062,7 @@ public partial class PerspectiveWorker(
   /// rows are cached.
   /// </para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerPartlyCooledEventDrainTests.cs:Drain_EventWithCooledRowForOnePerspectiveAndFreshRowForAnother_AppliesOnlyTheFreshOneAndLogsTheCooledRowAsync</tests>
   internal static (List<MessageEnvelope<IEvent>> cooled, List<MessageEnvelope<IEvent>> fresh) _partitionByCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,

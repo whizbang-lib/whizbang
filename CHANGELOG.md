@@ -145,6 +145,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Postgres extensions are the first provider, registered by both Postgres drivers with the database as the
   scope: `vector`, `pg_trgm`, `pg_squeeze`, `pg_repack`, `pg_partman`, `pgstattuple`, `pg_stat_statements`,
   `pg_cron`.
+- **`Whizbang:Workers:Maintenance:TableRewriteStrategy`** (#1742): `Auto` (default), `PgSqueeze`, `VacuumFull` or
+  `None`, resolved against `AllowTableRewrite` by the post-ready `Rewrite` step. `Auto` rewrites with `VACUUM FULL`
+  when `AllowTableRewrite` permits it (the behavior earlier releases had) and otherwise only detects and reports; it
+  never starts an online rewrite, and names the opt-in when pg_squeeze is usable. `PgSqueeze` requires the pg_squeeze
+  extension, so an explicit choice on a server that does not allow it stops start with the fix; it never falls back
+  to `VACUUM FULL`, and this version has no pg_squeeze rewriter yet, which the step reports. `None` rewrites nothing.
+- **Required capabilities are provisioned before the verdict** (#1750): between the probe and the verdict, the
+  `Capabilities` step creates every capability a requirement in force names that is Provisionable, and upgrades
+  every one that is Ready with a newer version available, so an explicit requirement on a capability the library
+  may create passes. The verdict line says `created`, `already present` or `upgraded` before the version. A
+  capability nothing requires is only detected. `Whizbang:Capabilities:AutoProvision` (default `true`), overridden
+  per provider (`Whizbang:Capabilities:<provider>:AutoProvision`) and per capability
+  (`Whizbang:Capabilities:<provider>:<name>:AutoProvision`), turns it off; detection is unchanged, so an
+  operator-created extension is still used. A refusal is reported by the verdict line, never thrown, and a refused
+  upgrade leaves the installed version working. The Postgres provider runs `CREATE EXTENSION` and
+  `ALTER EXTENSION ... UPDATE` each in one transaction holding the schema lock. `ICapabilityProvisioner` is the
+  extension point for any provider.
 - **Unknown configuration keys are reported at startup** (#1490): .NET binding ignores a key nothing reads,
   so a removed or misspelled `Whizbang:*` key used to leave its setting at the default without a word. When
   the host starts, every configured `Whizbang:*` key is checked against the keys the library reads (the
@@ -337,6 +354,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
+  Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
+  `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
+  is `truncate_status` (was `close_status`) and its success status `truncated` (was `closed`). The C# API follows:
+  `IWorkCoordinator.CloseStreamAsync` is `TruncateStreamPrefixAsync`, `GetStreamCloseTargetsAsync` is
+  `GetStreamTruncateTargetsAsync`, `StreamCloseResult` is `StreamTruncateResult`, and `IStreamCloser` /
+  `StreamCloser` with `CloseAsync` are `IStreamPrefixTruncator` / `StreamPrefixTruncator` with `TruncateAsync`
+  (registered by `AddWhizbangWorkers()` as before). The refusal statuses are unchanged. No forwarding alias is kept.
+  The scheduled close types (`ScheduledStreamClose`, `StreamCloseSchedule`) keep their names, so stored schedules
+  still dispatch. **Upgrade:** rename the calls and types above; compare a result's `Status` with `"truncated"`
+  instead of `"closed"`; and change SQL that calls `close_stream(...)` or reads `close_status` to
+  `wh_truncate_stream_prefix(...)` and `truncate_status`. A custom `IWorkCoordinator` that overrode `CloseStreamAsync`
+  overrides `TruncateStreamPrefixAsync` instead, or the default (`unsupported`) answers.
 - **Transport test warmup waits on the subscriber's signal only (#1657).** `SubscriptionWarmup.WarmupAsync` in the
   testing library publishes one warmup message and completes when the subscriber signals that it arrived. The 5-second
   initial delay and the 2-second resend loop are gone, and so are the `retryInterval` and `initialDelay` parameters

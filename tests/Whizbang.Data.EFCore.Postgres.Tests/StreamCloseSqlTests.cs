@@ -13,9 +13,11 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Integration tests for migration 084's <c>close_stream</c> — A1 (Archival &amp; Compaction) increment 1, the
-/// gated-truncate primitive behind <c>IWorkCoordinator.CloseStreamAsync</c> ("closing the books"). A close
-/// truncates a durable Sourced stream's detail at/below a version ONLY when (1) every perspective has processed
+/// Integration tests for the gated prefix truncate, <c>wh_truncate_stream_prefix</c> (migration 240; <c>close_stream</c>
+/// from 084 until #1731 renamed it), the primitive behind <c>IWorkCoordinator.TruncateStreamPrefixAsync</c>. The class
+/// and the <c>CloseStream_</c> method names are kept on purpose: migrations 212 and 214 link to them by name, the
+/// migration lint validates every such link at every definition site, and shipped migrations cannot be edited. A
+/// truncate removes a durable Sourced stream's detail at/below a version ONLY when (1) every perspective has processed
 /// every event at/below that point (the consumption gate) AND (2) a carry-forward event survives above it (the
 /// domain's closing event / new origin). Discard-only in this increment; skipped under debug_mode. Verified
 /// against a real Postgres so the migration SQL (check_function_bodies=on) runs end-to-end.
@@ -102,8 +104,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.PresencePing");
     await _commitFlaggedAsync(connection, newOrigin, streamId, "Whizbang.Core.Perspectives.Compacted", flags: 16);
 
-    var result = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: false);
-    await Assert.That(result.Status).IsEqualTo("closed");
+    var result = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2, archive: false);
+    await Assert.That(result.Status).IsEqualTo("truncated");
 
     await Assert.That(await _eventExistsAsync(connection, priorOrigin)).IsEqualTo(0L)
       .Because("The prior Compacted origin (v1) is superseded and truncated by the re-compaction — origins coalesce.");
@@ -111,6 +113,40 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       .Because("The new Compacted origin (v3) survives as the lone head.");
     await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(1L)
       .Because("A re-compacted stream holds exactly one origin at its head.");
+  }
+
+  [Test]
+  public async Task TruncateStreamPrefix_AfterMigration_IsTheOnlyNameTheTruncateGoesByAsync() {
+    // #1731: the prefix truncate was close_stream until migration 240, which frees "close" for closing the
+    // books. A leftover close_stream beside the new name would keep the old contract callable.
+    await using var dbContext = CreateDbContext();
+    var connection = await _openAsync(dbContext);
+
+    await Assert.That(await _functionCountAsync(connection, "close_stream")).IsEqualTo(0L)
+      .Because("migration 240 drops every overload of close_stream");
+    await Assert.That(await _functionCountAsync(connection, "wh_truncate_stream_prefix")).IsEqualTo(1L)
+      .Because("the truncate exists under its new name, at exactly one arity");
+  }
+
+  [Test]
+  public async Task TruncateStreamPrefix_TheLastMigrationNamingCloseStream_AlsoDefinesTheNewNameAsync() {
+    // The ledger re-runs every LATER file that defines an object an earlier, re-run file defines (rule 11).
+    // When a re-run brings back the 214 definition of close_stream, the file that retires it has to be in
+    // that closure, or the database ends with both names again.
+    var (name, objects) = new Whizbang.Data.Postgres.PostgresMigrationProvider().GetMigrations()
+      .Select(m => (m.Name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(m.Sql).Objects))
+      .Last(m => m.Objects.Contains("close_stream"));
+
+    await Assert.That(objects).Contains("wh_truncate_stream_prefix")
+      .Because($"{name} is the last word on close_stream, so it must be the file that retires it");
+  }
+
+  private static async Task<long> _functionCountAsync(NpgsqlConnection connection, string name) {
+    await using var count = connection.CreateCommand();
+    count.CommandText = "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
+      "WHERE n.nspname = 'public' AND p.proname = @name";
+    count.Parameters.AddWithValue(nameof(name), name);
+    return (long)(await count.ExecuteScalarAsync())!;
   }
 
   private static async Task _processWorkItemsAsync(NpgsqlConnection connection, Guid streamId) {
@@ -160,7 +196,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
 
     // Consumption gate: a perspective has NOT processed versions 1-3 => the close is refused, nothing truncated.
-    var blocked = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    var blocked = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
     await Assert.That(blocked.Status).IsEqualTo("blocked")
       .Because("A close must be refused while any perspective has an unprocessed event at/below the close point.");
     await Assert.That(blocked.EventsTruncated).IsEqualTo(0L);
@@ -170,8 +206,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     // Every perspective processes the detail => the gate opens.
     await _processWorkItemsAsync(connection, streamId);
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
-    await Assert.That(closed.Status).IsEqualTo("closed")
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
+    await Assert.That(closed.Status).IsEqualTo("truncated")
       .Because("Once every perspective has consumed past the close point, the close proceeds.");
     await Assert.That(closed.EventsTruncated).IsEqualTo(3L)
       .Because("The three detail events at/below the close point are truncated.");
@@ -193,7 +229,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
 
-    var result = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    var result = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
     await Assert.That(result.Status).IsEqualTo("no_carry_forward")
       .Because("Closing the books must leave an opening balance — a total truncation with no surviving origin is refused.");
     await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(3L)
@@ -216,7 +252,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       await dbg.ExecuteNonQueryAsync();
     }
 
-    var result = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    var result = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
     await Assert.That(result.Status).IsEqualTo("debug_skipped")
       .Because("Under debug_mode the close is skipped so forensic history is retained, like the reaper.");
     await Assert.That(await _streamEventCountAsync(connection, streamId)).IsEqualTo(3L)
@@ -244,8 +280,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, detail2, streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: true);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2, archive: true);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
     await Assert.That(closed.EventsTruncated).IsEqualTo(2L);
 
     // Detail is gone from the HOT store …
@@ -279,8 +315,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2, archive: false);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2, archive: false);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
     await Assert.That(await _archiveCountAsync(connection, streamId)).IsEqualTo(0L)
       .Because("A discard close (archive: false) truncates the detail without preserving it — leanest, audit lost.");
     await Assert.That((await coordinator.GetArchivedEventsAsync(streamId)).Count).IsEqualTo(0);
@@ -300,8 +336,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     }
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");       // v5 (origin)
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 4, archive: true);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 4, archive: true);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
 
     var archived = await _archiveCountAsync(connection, streamId);     // 4 detail
     var hot = await _streamEventCountAsync(connection, streamId);       // 1 origin
@@ -359,7 +395,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task GetStreamCloseTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync() {
+  public async Task GetStreamTruncateTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync() {
     // #1504: the closer reads the events a close is about to truncate before it truncates them, so the
     // destruction-stage receptors can be handed them. Exactly the close's range: this stream, at/below the point.
     await using var dbContext = CreateDbContext();
@@ -374,7 +410,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");           // v3, survives
     await _commitAsync(connection, Guid.NewGuid(), Guid.NewGuid(), "Whizbang.Tests.LedgerEntry");     // another stream
 
-    var targets = await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamCloseTargetsAsync(streamId, throughVersion: 2);
+    var targets = await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamTruncateTargetsAsync(streamId, throughVersion: 2);
 
     await Assert.That(targets.Select(t => t.EventId)).IsEquivalentTo([first, second], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("Every event at or below the close point, in version order, and nothing above it or from another stream.");
@@ -382,7 +418,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       ["Whizbang.Tests.LedgerEntry", "Whizbang.Tests.LedgerAdjusted"], TUnit.Assertions.Enums.CollectionOrdering.Matching)
       .Because("Each target carries its stored type name, which picks the destruction-stage receptors.");
     await Assert.That(targets.All(t => t.StreamId == streamId)).IsTrue();
-    await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamCloseTargetsAsync(Guid.NewGuid(), throughVersion: 2)).IsEmpty()
+    await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)coordinator).GetStreamTruncateTargetsAsync(Guid.NewGuid(), throughVersion: 2)).IsEmpty()
       .Because("A stream with no events has nothing to close.");
   }
 
@@ -411,7 +447,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, janClose, streamId, "Whizbang.Tests.MonthClosed");
-    await Assert.That((await coordinator.CloseStreamAsync(streamId, throughVersion: 3)).Status).IsEqualTo("closed");
+    await Assert.That((await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3)).Status).IsEqualTo("truncated");
     await Assert.That(await _eventExistsAsync(connection, janClose)).IsEqualTo(1L);
 
     // Month 2: 2 more detail (v5-6) + Feb close (v7). Close through 6 => truncates the Jan close (v4) too.
@@ -419,8 +455,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, febClose, streamId, "Whizbang.Tests.MonthClosed");
 
-    var second = await coordinator.CloseStreamAsync(streamId, throughVersion: 6);
-    await Assert.That(second.Status).IsEqualTo("closed");
+    var second = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 6);
+    await Assert.That(second.Status).IsEqualTo("truncated");
     await Assert.That(await _eventExistsAsync(connection, janClose)).IsEqualTo(0L)
       .Because("The prior (Jan) closing event is truncated by the later close — origins coalesce, they don't accumulate.");
     await Assert.That(await _eventExistsAsync(connection, febClose)).IsEqualTo(1L);
@@ -441,12 +477,12 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.LedgerEntry");
     await _commitAsync(connection, Guid.NewGuid(), streamId, "Whizbang.Tests.MonthClosed");
 
-    var first = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
-    await Assert.That(first.Status).IsEqualTo("closed");
+    var first = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
+    await Assert.That(first.Status).IsEqualTo("truncated");
     await Assert.That(first.EventsTruncated).IsEqualTo(2L);
 
-    var again = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
-    await Assert.That(again.Status).IsEqualTo("closed")
+    var again = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
+    await Assert.That(again.Status).IsEqualTo("truncated")
       .Because("Re-closing through an already-truncated point is idempotent — the carry-forward still survives.");
     await Assert.That(again.EventsTruncated).IsEqualTo(0L)
       .Because("Nothing remains at/below the point, so a re-close truncates nothing.");
@@ -472,8 +508,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await Assert.That(await _bodyCountAsync(connection, detail1)).IsEqualTo(1L);
     await Assert.That(await _bodyCountAsync(connection, closing)).IsEqualTo(1L);
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
     await Assert.That(closed.EventsTruncated).IsEqualTo(2L);
 
     // The detail bodies AND pointers are gone; the closing event's body + pointer survive.
@@ -584,9 +620,9 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _cursorAsync(connection, streamId, caughtUp, ids[3]);     // already on the boundary
     await _cursorAsync(connection, streamId, neverRan, null);       // has applied nothing
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
 
-    await Assert.That(closed.Status).IsEqualTo("closed")
+    await Assert.That(closed.Status).IsEqualTo("truncated")
       .Because("a cursor inside the range is re-anchored, not a reason for the truncate to fail");
     await Assert.That(closed.EventsTruncated).IsEqualTo(3L);
     await Assert.That(await _cursorEventAsync(connection, streamId, detailOnly)).IsEqualTo(ids[3])
@@ -621,7 +657,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _cursorAsync(connection, streamId, ledger, ids[2]);
     await _commitAsync(connection, ids[3], streamId, closingType);  // v4: work the perspective still owes
 
-    var refused = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
+    var refused = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
 
     await Assert.That(refused.Status).IsEqualTo("cursor_behind")
       .Because("re-anchoring onto an event the perspective has not applied would skip it");
@@ -633,8 +669,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
 
     // Once the boundary event's work is done, nothing is owed and the close goes through.
     await _processWorkItemsAsync(connection, streamId);
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
     await Assert.That(await _cursorEventAsync(connection, streamId, ledger)).IsEqualTo(ids[3]);
   }
 
@@ -671,8 +707,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _snapshotAsync(connection, streamId, current, ids[3], version: 4);  // above the range: kept
     await _snapshotAsync(connection, streamId, current, ids[4], version: null); // unplaceable, not truncated: kept
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 3);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 3);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
 
     var parkedLeft = await _snapshotEventsAsync(connection, streamId, parked);
     await Assert.That(parkedLeft.Count).IsEqualTo(1);
@@ -716,7 +752,7 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _executeAsync(connection,
       "INSERT INTO wh_event_destruction_hold (event_id, hold_until) VALUES (@id, NOW() + INTERVAL '1 day')", ids[0]);
 
-    var refused = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
+    var refused = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
     await Assert.That(refused.Status).IsEqualTo("held")
       .Because("an active hold is a recorded decision to keep that event");
     await Assert.That(refused.EventsTruncated).IsEqualTo(0L);
@@ -726,8 +762,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
     await _executeAsync(connection,
       "UPDATE wh_event_destruction_hold SET hold_until = NOW() - INTERVAL '1 second' WHERE event_id = @id", ids[0]);
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
     await Assert.That(await _countAsync(connection,
         "SELECT count(*) FROM wh_event_destruction_hold WHERE event_id = @id", ids[0])).IsEqualTo(0L)
       .Because("a lapsed hold on a truncated event is removed with the event");
@@ -758,8 +794,8 @@ public class StreamCloseSqlTests : EFCoreTestBase {
       "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id", streamId)).IsEqualTo(2L)
       .Because("precondition: both detail events left a processed work row");
 
-    var closed = await coordinator.CloseStreamAsync(streamId, throughVersion: 2);
-    await Assert.That(closed.Status).IsEqualTo("closed");
+    var closed = await coordinator.TruncateStreamPrefixAsync(streamId, throughVersion: 2);
+    await Assert.That(closed.Status).IsEqualTo("truncated");
 
     await Assert.That(await _countAsync(connection,
       "SELECT count(*) FROM wh_perspective_events WHERE stream_id = @id", streamId)).IsEqualTo(0L)

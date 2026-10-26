@@ -102,6 +102,19 @@ public sealed record CapabilityStatus(
   string? Version,
   string? Detail,
   string? Reason) {
+  /// <summary>
+  /// The version the provider would install, or upgrade an installed one to, when it knows it (for Postgres, the
+  /// extension's default version). An upgrade is due when it is newer than <see cref="Version"/>
+  /// (<see cref="CapabilityVersion.IsNewer"/>).
+  /// </summary>
+  public string? AvailableVersion { get; init; }
+
+  /// <summary>
+  /// What provisioning did on this start: created, found already present, or upgraded. Null when provisioning did
+  /// not consider the capability, because nothing requires it or it is not Ready.
+  /// </summary>
+  public CapabilityProvisioningOutcome? Provisioning { get; init; }
+
   /// <summary>Whether the capability can be used: <see cref="CapabilityState.Ready"/> or <see cref="CapabilityState.Provisionable"/>.</summary>
   public bool IsUsable => State is CapabilityState.Ready or CapabilityState.Provisionable;
 

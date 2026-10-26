@@ -24,24 +24,24 @@ namespace Whizbang.Core.Tests.Lifecycle;
 /// fix a close ran only the <see cref="IDestructionHook"/>, and a receptor declared at a destruction stage never saw the
 /// events the close removed.
 /// </summary>
-/// <code-under-test>src/Whizbang.Core/Lifecycle/StreamCloser.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Lifecycle/StreamPrefixTruncator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Lifecycle/DestructionStageReceptors.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/WorkerPipelineExtensions.cs</code-under-test>
 /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class StreamCloserDestructionStageComponentTests {
+public class StreamPrefixTruncatorDestructionStageComponentTests {
   private const long THROUGH_VERSION = 7;
 
   [Test]
-  public async Task Close_RunsThePreStagesBeforeTheTruncateAndThePostStagesAfterItAsync() {
+  public async Task Truncate_RunsThePreStagesBeforeTheTruncateAndThePostStagesAfterItAsync() {
     var id = Guid.CreateVersion7();
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent));
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
     await DestructionProbe.RanAsync(id, LifecycleStage.PreDestructionDetached).WaitAsync(TimeSpan.FromSeconds(30));
     await DestructionProbe.RanAsync(id, LifecycleStage.PostDestructionDetached).WaitAsync(TimeSpan.FromSeconds(30));
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(fixture.Coordinator.TargetRequests).IsEquivalentTo([(id, THROUGH_VERSION)])
       .Because("the events read before the truncate are exactly the ones the close removes: the stream, through the close point");
     await Assert.That(fixture.Coordinator.StagesSeenAtTheTruncate).Contains(LifecycleStage.PreDestructionInline)
@@ -61,7 +61,7 @@ public class StreamCloserDestructionStageComponentTests {
     DestructionProbe.FailPreInlineFor(id);
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent));
 
-    await Assert.That(async () => await fixture.Closer.CloseAsync(id, THROUGH_VERSION)).Throws<InvalidOperationException>()
+    await Assert.That(async () => await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION)).Throws<InvalidOperationException>()
       .Because("a throwing Pre Inline receptor aborts the close, as a throwing destruction hook does");
 
     await Assert.That(fixture.Coordinator.CloseCalls).IsEqualTo(0)
@@ -76,7 +76,7 @@ public class StreamCloserDestructionStageComponentTests {
     var id = Guid.CreateVersion7();
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent), hook: new CancelingHook());
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
 
     await Assert.That(result.Status).IsEqualTo("canceled");
     await Assert.That(fixture.Coordinator.CloseCalls).IsEqualTo(0);
@@ -89,7 +89,7 @@ public class StreamCloserDestructionStageComponentTests {
     var id = Guid.CreateVersion7();
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent), closeStatus: "blocked");
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
     await DestructionProbe.RanAsync(id, LifecycleStage.PreDestructionDetached).WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(result.Status).IsEqualTo("blocked");
@@ -103,9 +103,9 @@ public class StreamCloserDestructionStageComponentTests {
     var id = Guid.CreateVersion7();
     var fixture = await _buildAsync(id, typeof(DsUnwatchedEvent));
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(DestructionProbe.Stages(id)).IsEmpty();
     await Assert.That(fixture.Store.Reads).IsEqualTo(0).Because("only events a destruction receptor handles are read before the truncate");
   }
@@ -115,9 +115,9 @@ public class StreamCloserDestructionStageComponentTests {
     var id = Guid.CreateVersion7();
     var fixture = await _buildAsync(id, typeof(DsUnwatchedEvent), catalogOnly: [typeof(DsUnwatchedEvent)]);
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
 
-    await Assert.That(result.Status).IsEqualTo("closed");
+    await Assert.That(result.Status).IsEqualTo("truncated");
     await Assert.That(fixture.Coordinator.TargetRequests).IsEmpty()
       .Because("with no destruction-stage receptor registered, a close reads nothing it did not read before");
   }
@@ -128,9 +128,9 @@ public class StreamCloserDestructionStageComponentTests {
     DestructionProbe.FailPostInlineFor(id);
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent));
 
-    var result = await fixture.Closer.CloseAsync(id, THROUGH_VERSION);
+    var result = await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION);
 
-    await Assert.That(result.Status).IsEqualTo("closed")
+    await Assert.That(result.Status).IsEqualTo("truncated")
       .Because("the truncate already committed: a failing Post stage cannot undo it, so it is reported, not thrown");
     var warning = fixture.Log.Entries.Single(e => e.Level == LogLevel.Warning);
     await Assert.That(warning.Exception).IsTypeOf<InvalidOperationException>();
@@ -143,7 +143,7 @@ public class StreamCloserDestructionStageComponentTests {
     DestructionProbe.CancelPreInlineFor(id);
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent));
 
-    await Assert.That(async () => await fixture.Closer.CloseAsync(id, THROUGH_VERSION)).Throws<OperationCanceledException>();
+    await Assert.That(async () => await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION)).Throws<OperationCanceledException>();
 
     await Assert.That(fixture.Coordinator.CloseCalls).IsEqualTo(0);
     await Assert.That(fixture.Log.Entries).IsEmpty()
@@ -156,14 +156,14 @@ public class StreamCloserDestructionStageComponentTests {
     DestructionProbe.CancelPostInlineFor(id);
     var fixture = await _buildAsync(id, typeof(DsEphemeralEvent));
 
-    await Assert.That(async () => await fixture.Closer.CloseAsync(id, THROUGH_VERSION)).Throws<OperationCanceledException>();
+    await Assert.That(async () => await fixture.Truncator.TruncateAsync(id, THROUGH_VERSION)).Throws<OperationCanceledException>();
 
     await Assert.That(fixture.Coordinator.CloseCalls).IsEqualTo(1);
     await Assert.That(fixture.Log.Entries).IsEmpty();
   }
 
   private static async Task<Fixture> _buildAsync(Guid id, Type eventType, IDestructionHook? hook = null,
-      string closeStatus = "closed", Type[]? catalogOnly = null) {
+      string closeStatus = "truncated", Type[]? catalogOnly = null) {
     var store = new CountingEventStore();
     object payload = eventType == typeof(DsEphemeralEvent) ? new DsEphemeralEvent(id) : new DsUnwatchedEvent(id);
     await store.AppendAsync(id, new MessageEnvelope<IEvent> {
@@ -175,7 +175,7 @@ public class StreamCloserDestructionStageComponentTests {
     var coordinator = new CloseCoordinator(id, closeStatus) {
       Targets = [new EphemeralDestructionTarget(id, id, $"{eventType.FullName}, {eventType.Assembly.GetName().Name}")],
     };
-    var log = new ListLoggerProvider(typeof(StreamCloser).FullName!);
+    var log = new ListLoggerProvider(typeof(StreamPrefixTruncator).FullName!);
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()));
@@ -197,10 +197,10 @@ public class StreamCloserDestructionStageComponentTests {
     // The closer exactly as the worker pipeline registers it
     services.AddWhizbangWorkers();
     var provider = services.BuildServiceProvider();
-    return new Fixture(provider.GetRequiredService<IStreamCloser>(), coordinator, store, log);
+    return new Fixture(provider.GetRequiredService<IStreamPrefixTruncator>(), coordinator, store, log);
   }
 
-  private sealed record Fixture(IStreamCloser Closer, CloseCoordinator Coordinator, CountingEventStore Store, ListLoggerProvider Log);
+  private sealed record Fixture(IStreamPrefixTruncator Truncator, CloseCoordinator Coordinator, CountingEventStore Store, ListLoggerProvider Log);
 
   private sealed class CancelingHook : IDestructionHook {
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) =>
@@ -268,16 +268,16 @@ public class StreamCloserDestructionStageComponentTests {
     public List<LifecycleStage> StagesSeenAtTheTruncate { get; } = [];
     public int CloseCalls { get; private set; }
 
-    public Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamCloseTargetsAsync(Guid streamId, long throughVersion,
+    public Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(Guid streamId, long throughVersion,
         CancellationToken cancellationToken = default) {
       TargetRequests.Add((streamId, throughVersion));
       return Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>(Targets);
     }
 
-    public Task<StreamCloseResult> CloseStreamAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
+    public Task<StreamTruncateResult> TruncateStreamPrefixAsync(Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) {
       CloseCalls++;
       StagesSeenAtTheTruncate.AddRange(DestructionProbe.Stages(watched));
-      return Task.FromResult(new StreamCloseResult(closeStatus, closeStatus == "closed" ? 1 : 0));
+      return Task.FromResult(new StreamTruncateResult(closeStatus, closeStatus == "truncated" ? 1 : 0));
     }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

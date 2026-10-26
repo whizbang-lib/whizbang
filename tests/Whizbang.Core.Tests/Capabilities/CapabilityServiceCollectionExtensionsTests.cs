@@ -52,6 +52,39 @@ public class CapabilityServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AutoProvision_DefaultsToTrue_AndBindsFromConfigurationAsync() {
+    await using (var defaults = _services().AddWhizbangCapabilities().BuildServiceProvider()) {
+      await Assert.That(defaults.GetRequiredService<IOptions<CapabilityOptions>>().Value.AutoProvision).IsTrue();
+    }
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["Whizbang:Capabilities:AutoProvision"] = "false" })
+      .Build();
+
+    await using var provider = _services(configuration).AddWhizbangCapabilities().BuildServiceProvider();
+
+    await Assert.That(provider.GetRequiredService<IOptions<CapabilityOptions>>().Value.AutoProvision).IsFalse();
+  }
+
+  [Test]
+  public async Task TheStep_RunsEveryRegisteredProvisionerAsync() {
+    var services = _services();
+    var provider = new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "x"));
+    provider.States["x"] = CapabilityState.Provisionable;
+    var provisioner = new FakeCapabilityProvisioner("broker");
+    services.AddSingleton<ICapabilityProvider>(provider);
+    services.AddSingleton<ICapabilityProvisioner>(provisioner);
+    services.AddSingleton<ICapabilityRequirementSource>(new FixedCapabilityRequirementSource([
+      new ActiveCapabilityRequirement(new CapabilityRequirement(new CapabilityId("broker", "x"), "Feature x", "W:x", null, null),
+        "W:x", "on", CapabilityActivation.Explicit)]));
+
+    await using var built = services.AddWhizbangCapabilities().BuildServiceProvider();
+    await built.GetServices<IStartupStep>().OfType<CapabilitiesStartupStep>().Single().ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(provisioner.Calls.Single().Action).IsEqualTo(CapabilityProvisionAction.Create)
+      .Because("AddWhizbangCapabilities hands the step every provisioner a provider package registered");
+  }
+
+  [Test]
   public async Task CodeConfiguration_KeepsItsValueWhenTheKeyIsAbsentAsync() {
     var services = _services(new ConfigurationBuilder().Build());
     services.Configure<CapabilityOptions>(o => o.ProbeOnStartup = false);

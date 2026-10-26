@@ -31,6 +31,7 @@ public class CapabilityMetricsTests {
     public CapabilityVerdict Verdict { get; private set; } = CapabilityVerdict.Empty;
     public CapabilityState GetState(CapabilityId id, string scope) => CapabilityState.Unknown;
     public Task RefreshAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public void Record(IReadOnlyList<CapabilityStatus> statuses) => Statuses = statuses;
     public void PublishVerdict(CapabilityVerdict verdict) => Verdict = verdict;
     public Task<CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken) => Task.FromResult(Verdict);
   }
