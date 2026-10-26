@@ -684,6 +684,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits for them after flushing the batchers and before the provider is disposed, logging at Information how many
   it is waiting for, within the host's shutdown timeout. `DistributeLifecycleContext` gains an optional
   `DetachedWork` (`DetachedLifecycleWork`) that records the background invocations.
+- **A recovered outbox or perspective dead letter is published or applied as the work it was, and reads Recovered
+  only once that has happened (#1722).** `recover_dead_letter` re-inserted both with column lists of its own and
+  marked the dead letter Recovered in the same call, before anything ran. The outbox copy wrote the envelope type
+  `recovered`, which the drain sends as the wire's envelope type header, so a receiving service could not resolve the
+  message and dropped it (Azure Service Bus completed it as `MISSING_JSON_TYPE_INFO`; RabbitMQ dead-lettered it). It
+  was also stored as not an event, with no scope or flags, partition 0 and background priority, and skipped every
+  step of `store_outbox_messages`. The perspective copy wrote partition 0, background priority and no rewind check.
+  The dead-letter capture now keeps every field the store needs (`move_to_dead_letters`: envelope type, event flag,
+  flags, scope, priority, schedule and coalesce group for the outbox; priority for perspective work), and recovery
+  re-enters through `store_outbox_messages` or `store_perspective_events` (redefined with the event-store chain's
+  rules, including the rewind of an event behind its cursor and the doorbell), differing only by naming the dead
+  letter (`recovered_from_dead_letter_id`). The dead letter stays Recovering until `complete_outbox_published` or
+  `process_perspective_event_completions` retires the row, then reads Recovered; a recovery dead-lettered again is
+  held for review naming the new dead letter, now for every source table; a perspective dead letter whose event is no
+  longer in the event store is held for review with the reason. A dead letter captured before this change is
+  re-entered under the envelope type its message type names, as an event with its event's flags and scope when the
+  event store holds it. Recovery stores the row with the partition count arrivals are stored with: the
+  new `wh_recover_dead_letter(id, partition_count)` takes it, `recover_dead_letter(id)` keeps its signature and uses the
+  claim's default, and `EFCoreDeadLetterRecoveryService` gains an optional `partitionCount` that the Postgres driver
+  fills from `ClaimWorkerOptions.PartitionCount`.
+  Recovered outbox and perspective work now takes the priority it was stored with rather than background. Migration
+  239.
 - **A recovered broker or inbox dead letter reaches the event store, and reads Recovered only once processed
   (#1664).** Recovery re-emitted an inbox or broker dead letter with inbox writes of its own that had drifted from a
   delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into

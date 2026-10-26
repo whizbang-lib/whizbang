@@ -82,8 +82,15 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     await Assert.That(recovered).IsTrue();
     await Assert.That(await _outboxRowExistsAsync(conn, originalMessageId)).IsTrue()
       .Because("recovery re-inserts the row into wh_outbox with the original message_id");
-    var status = await _readRecoveryStatusAsync(conn, dlqId);
-    await Assert.That(status).IsEqualTo(3).Because("recovered_at is set + status=Recovered");
+    await Assert.That(await _readRecoveryStatusAsync(conn, dlqId)).IsEqualTo(1)
+      .Because("the store claims the dead letter (Recovering); it reads Recovered once the message is published (#1722)");
+    await using (var complete = conn.CreateCommand()) {
+      complete.CommandText = "SELECT complete_outbox_published(ARRAY[@id]::uuid[])";
+      complete.Parameters.AddWithValue("id", originalMessageId);
+      await complete.ExecuteScalarAsync();
+    }
+    await Assert.That(await _readRecoveryStatusAsync(conn, dlqId)).IsEqualTo(3)
+      .Because("the published message settles its dead letter Recovered");
   }
 
   /// <summary>

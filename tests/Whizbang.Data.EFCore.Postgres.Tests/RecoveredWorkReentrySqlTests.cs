@@ -211,6 +211,63 @@ public class RecoveredWorkReentrySqlTests : EFCoreTestBase {
     await Assert.That(disposition).IsEqualTo((int)DeadLetterDisposition.HoldIndefinitely);
   }
 
+  [Test]
+  public async Task ASecondRecovery_OfAnOutboxDeadLetterAlreadyRecovering_StoresNothingAsync() {
+    var id = (Guid)TrackedGuid.New();
+    await using var connection = await _openAsync();
+    await _storeOutboxAsync(_event(id, (Guid)TrackedGuid.New()));
+    var deadLetterId = await _moveAsync(connection, "wh_outbox", id);
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
+
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsFalse()
+      .Because("a dead letter another recovery claimed is not re-entered twice");
+    await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo((int)DeadLetterRecoveryStatus.Recovering);
+  }
+
+  [Test]
+  public async Task ARecoveredPerspectiveWorkRow_CompletedInDebugMode_ReadsRecoveredAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
+    await using var connection = await _openAsync();
+    await _associatePerspectiveAsync(connection);
+    await _storeOutboxAsync(_event(first, streamId));
+    var workId = await _workIdAsync(connection, first);
+    var deadLetterId = await _moveAsync(connection, "wh_perspective_events", workId);
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsTrue();
+
+    await using (var complete = connection.CreateCommand()) {
+      complete.CommandText = "SELECT complete_perspective(NULL, ARRAY[@id]::uuid[], TRUE)";
+      complete.Parameters.AddWithValue("id", workId);
+      await complete.ExecuteScalarAsync();
+    }
+
+    var (status, recoveredAt, _, _) = await _deadLetterAsync(connection, deadLetterId);
+    await Assert.That(status).IsEqualTo((int)DeadLetterRecoveryStatus.Recovered)
+      .Because("a debug-mode completion retains the row and still records the apply");
+    await Assert.That(recoveredAt.HasValue).IsTrue();
+  }
+
+  [Test]
+  public async Task ADeadLetterFromAnUnknownSourceTable_IsLeftDueAsync() {
+    var id = (Guid)TrackedGuid.New();
+    await using var connection = await _openAsync();
+    var deadLetterId = (Guid)TrackedGuid.New();
+    await using (var command = connection.CreateCommand()) {
+      command.CommandText = """
+        INSERT INTO wh_dead_letters
+          (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason, attempts_when_dlq, generation)
+        VALUES (@dl, 'wh_elsewhere', @id, 'Unknown', '{}'::jsonb, 5, 1, 'test/1')
+        """;
+      command.Parameters.AddWithValue("dl", deadLetterId);
+      command.Parameters.AddWithValue("id", id);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    await Assert.That(await _recoverAsync(connection, deadLetterId)).IsFalse();
+    await Assert.That((await _deadLetterAsync(connection, deadLetterId)).Status).IsEqualTo((int)DeadLetterRecoveryStatus.Pending)
+      .Because("an operator investigates a source table recovery does not know");
+  }
+
   // ===== Helpers =====
 
   private static OutboxMessage _event(Guid id, Guid streamId) =>

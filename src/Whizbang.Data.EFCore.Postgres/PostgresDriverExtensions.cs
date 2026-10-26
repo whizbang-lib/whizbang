@@ -373,10 +373,13 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<IServiceScopeFactory>(),
             dbContextType,
             sp.GetService<WorkCoordinatorGate>()));
+        // The partition count every arrival is stored with: ClaimWorkerOptions is its one source, and a recovered
+        // outbox or perspective row re-enters its store with it (#1722).
         selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
           new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
             (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
-            sp.GetService<WorkCoordinatorGate>()));
+            sp.GetService<WorkCoordinatorGate>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.ClaimWorkerOptions>>().Value.PartitionCount));
 
         // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
         // stamper + app-signal channel use the same connection string EF Core already has,
