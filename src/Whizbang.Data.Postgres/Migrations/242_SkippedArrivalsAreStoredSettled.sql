@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 240_SkippedArrivalsAreStoredSettled.sql
+-- Migration: 242_SkippedArrivalsAreStoredSettled.sql
 -- Date: 2026-10-26
 -- Description: A message the consumer skips on receive is stored, already settled with the reason, instead of being
 --              dropped before the store (#1720).
@@ -50,7 +50,7 @@ DECLARE
   v_notify_inbox_streams UUID[] := ARRAY[]::UUID[];
   v_is_new BOOLEAN;           -- 236: a first arrival, or a recovery that claimed its dead letter
   v_claimed INTEGER;          -- 236: rows the recovery claim or the message insert touched
-  v_settled BOOLEAN;          -- 240: the consumer skipped it on receive, so the row is stored already settled
+  v_settled BOOLEAN;          -- 242: the consumer skipped it on receive, so the row is stored already settled
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -79,7 +79,7 @@ BEGIN
       (elem->>'SourceCommitSequence')::BIGINT as source_commit_sequence,
       -- 236 (#1664): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
       (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from,
-      -- 240 (#1720): set by a consumer that skipped the message on receive, naming why.
+      -- 242 (#1720): set by a consumer that skipped the message on receive, naming why.
       NULLIF(elem->>'DiscardedOnReceive', '') as discarded_on_receive
     FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
@@ -121,7 +121,7 @@ BEGIN
 
     -- 236: a recovery that claimed its dead letter stores the message whatever the count says.
     v_is_new := v_observations = 1 OR v_msg.recovered_from IS NOT NULL;
-    -- 240 (#1720): a message the consumer skipped on receive (no local consumer, directed at another service, this
+    -- 242 (#1720): a message the consumer skipped on receive (no local consumer, directed at another service, this
     -- service's own echo, an event of an unknown type) is stored like every arrival, so the skip is durable and
     -- inspectable, but already settled: processed, Stored and Published, the reason in its error column. Nothing
     -- claims, copies or dispatches a processed row, so it rings no doorbell, pins no stream and is not new work.
@@ -217,19 +217,19 @@ BEGIN
       v_partition,
       v_msg.priority,
       COALESCE(v_msg.is_event, false),
-      CASE WHEN v_settled THEN 1 | 4 ELSE 1 END,  -- Stored flag; 240: and Published, for a row settled on receive
-      CASE WHEN v_settled THEN p_now END,          -- 240: a settled row is processed as it arrives
+      CASE WHEN v_settled THEN 1 | 4 ELSE 1 END,  -- Stored flag; 242: and Published, for a row settled on receive
+      CASE WHEN v_settled THEN p_now END,          -- 242: a settled row is processed as it arrives
       NULL,  -- No lease, immediately claimable by WorkCoordinatorPublisherWorker
       NULL,
       0,     -- Initial attempts
       v_msg.recovered_from,  -- 236: NULL for every arrival but a recovery
-      -- 240: the reason a settled row records, on the column a processing failure would use; NULL otherwise.
+      -- 242: the reason a settled row records, on the column a processing failure would use; NULL otherwise.
       'discarded on receive: ' || v_msg.discarded_on_receive
     )
     ON CONFLICT (message_id) DO NOTHING;
 
     IF v_settled THEN
-      CONTINUE;  -- 240: no doorbell, no pin, not new work
+      CONTINUE;  -- 242: no doorbell, no pin, not new work
     END IF;
 
       IF v_msg.stream_id IS NOT NULL
@@ -257,4 +257,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 240 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work.';
+  'Stores received inbox messages with deduplication (121: every arrival counted), priority (149), the work-state row (162). 236 (#1664): a message recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead letter, is stored even though its id was seen, and its work-state row names the dead letter for the completion to settle. 242 (#1720): a message the consumer skipped on receive (DiscardedOnReceive) is stored settled: processed, Stored and Published, the reason in error, never claimed, copied or returned as new work.';

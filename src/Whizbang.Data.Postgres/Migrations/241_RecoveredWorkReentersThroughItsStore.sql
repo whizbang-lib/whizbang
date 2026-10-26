@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 239_RecoveredWorkReentersThroughItsStore.sql
+-- Migration: 241_RecoveredWorkReentersThroughItsStore.sql
 -- Date: 2026-10-24
 -- Description: A recovered outbox or perspective dead letter re-enters through its own arrival path, and its dead
 --              letter reads Recovered only once the message is published or the event applied (#1722).
@@ -103,7 +103,7 @@ BEGIN
         scheduled_for,
         coalesce_group
     )
-    -- 239 (#1722): every field store_outbox_messages takes, so recovery re-enters the message as it was stored.
+    -- 241 (#1722): every field store_outbox_messages takes, so recovery re-enters the message as it was stored.
     SELECT m.stream_id, m.message_type, m.destination,
            jsonb_build_object('event_data', m.event_data, 'metadata', m.metadata,
                               'envelope_type', m.envelope_type, 'is_event', m.is_event, 'flags', m.flags,
@@ -155,7 +155,7 @@ BEGIN
         error,
         priority
     )
-    -- 239 (#1722): and the work row's priority, which store_perspective_events takes.
+    -- 241 (#1722): and the work row's priority, which store_perspective_events takes.
     SELECT m.stream_id, m.perspective_name,
            jsonb_build_object('event_id', m.event_id, 'perspective_name', m.perspective_name, 'priority', m.priority),
            '{}'::JSONB, m.attempts, m.error
@@ -253,7 +253,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.move_to_dead_letters(UUID, TEXT, UUID, INTEGER, TEXT, UUID, TEXT) IS
   'Moves a failed work row into wh_dead_letters and deletes it from its source table, atomically (050; 118: the source '
-  'error kept; 120: the retry budget is the message''s; 162: inbox attempts from wh_inbox_state). 239 (#1722): an outbox '
+  'error kept; 120: the retry budget is the message''s; 162: inbox attempts from wh_inbox_state). 241 (#1722): an outbox '
   'row''s envelope keeps every field store_outbox_messages takes (envelope type, event flag, flags, scope, priority, '
   'schedule, coalesce group) and a perspective row''s keeps its priority, so recovery re-enters it as it was stored.';
 
@@ -308,7 +308,7 @@ DECLARE
   v_inserted_event_types TEXT[] := ARRAY[]::TEXT[];
   v_raise_event_ids UUID[] := ARRAY[]::UUID[];
   v_refused_event_ids UUID[];
-  v_claimed INTEGER;          -- 239: rows the recovery claim touched
+  v_claimed INTEGER;          -- 241: rows the recovery claim touched
 BEGIN
   IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
 
@@ -340,12 +340,12 @@ BEGIN
       NULLIF(elem->>'CollectiveLinkType', '') as collective_link_type,
       -- 228 (#1546): set by a write its caller awaits; a refusal of this event is raised instead of dead-lettered.
       COALESCE((elem->>'RaiseOnMixedStream')::BOOLEAN, false) as raise_on_mixed_stream,
-      -- 239 (#1722): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
+      -- 241 (#1722): set only by dead-letter recovery, naming the dead-letter row the message re-enters from.
       (elem->>'RecoveredFromDeadLetterId')::UUID as recovered_from
     FROM jsonb_array_elements(p_messages) as elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
   LOOP
-    -- 239 (#1722): dead-letter recovery re-enters a message HERE, as one more arrival, so every rule below applies to
+    -- 241 (#1722): dead-letter recovery re-enters a message HERE, as one more arrival, so every rule below applies to
     -- it unchanged. A row that names its dead letter claims it first (Recovering), in this transaction, so two
     -- recoveries of one row cannot both re-enter it, and a dead letter whose message the outbox still holds is left
     -- alone. The row then carries the dead-letter id, and complete_outbox_published settles it once published.
@@ -471,13 +471,13 @@ BEGIN
       v_msg.scheduled_for,
       v_msg.coalesce_group,
       v_msg.priority,
-      v_msg.recovered_from  -- 239: NULL for every arrival but a recovery
+      v_msg.recovered_from  -- 241: NULL for every arrival but a recovery
     )
     ON CONFLICT ON CONSTRAINT wh_outbox_pkey DO NOTHING;
 
     GET DIAGNOSTICS v_was_new = ROW_COUNT;
 
-    -- 239: a recovery that lost the race to a concurrent store of the same id hands its dead letter back, so the dead
+    -- 241: a recovery that lost the race to a concurrent store of the same id hands its dead letter back, so the dead
     -- letter is never left Recovering behind a row that does not name it.
     IF NOT v_was_new AND v_msg.recovered_from IS NOT NULL THEN
       UPDATE __SCHEMA__.wh_dead_letters dl
@@ -605,7 +605,7 @@ COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages(JSONB, UUID, TIMESTAMPTZ, T
   '(190, #1003), and fills each audit record''s stream position from its stored event (216, #1485), in the same '
   'transaction. 228: refuses an event that would make its stream hold both ephemeral and Sourced events (WHIZ133, '
   '#1546), raising when the element asks for it and dead-lettering the row otherwise. 232: reads every bit of flags '
-  'written as a name list, and raises 22P02 on a name EventFlags does not define (#1612). 239 (#1722): a message '
+  'written as a name list, and raises 22P02 on a name EventFlags does not define (#1612). 241 (#1722): a message '
   'recovered from a dead letter (RecoveredFromDeadLetterId) re-enters here as one more arrival: it claims its dead '
   'letter and its row names it for complete_outbox_published to settle.';
 
@@ -648,17 +648,17 @@ BEGIN
       (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID AS ev_stream_id,
       (elem->>'PerspectiveName')::VARCHAR(200) AS ev_perspective_name,
       (elem->>'EventId')::UUID AS ev_event_id,
-      -- 239: the work id to store the row under; a new one when absent. Recovery keeps the dead letter's, so a row
+      -- 241: the work id to store the row under; a new one when absent. Recovery keeps the dead letter's, so a row
       -- dead-lettered again is recognized as the same work.
       (elem->>'EventWorkId')::UUID AS ev_work_id,
       -- The chain schedules work with its source row's priority; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) AS ev_priority,
-      -- 239 (#1722): set only by dead-letter recovery, naming the dead-letter row the work re-enters from.
+      -- 241 (#1722): set only by dead-letter recovery, naming the dead-letter row the work re-enters from.
       (elem->>'RecoveredFromDeadLetterId')::UUID AS ev_recovered_from
     FROM jsonb_array_elements(p_events) AS elem
     ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID, (elem->>'EventId')::UUID
   LOOP
-    -- 239 (#1722): a recovery claims its dead letter first (Recovering), in this transaction, so two recoveries of one
+    -- 241 (#1722): a recovery claims its dead letter first (Recovering), in this transaction, so two recoveries of one
     -- row cannot both re-enter it, and a dead letter whose work is still queued is left alone.
     IF v_event.ev_recovered_from IS NOT NULL THEN
       UPDATE __SCHEMA__.wh_dead_letters dl
@@ -727,14 +727,14 @@ BEGIN
       v_lease_instance,
       p_lease_expiry,
       v_event.ev_priority,
-      v_event.ev_recovered_from  -- 239: NULL for every arrival but a recovery
+      v_event.ev_recovered_from  -- 241: NULL for every arrival but a recovery
     )
     -- Constraint-less, so a work id that is already taken is a conflict as well as the (stream, perspective, event) key.
     ON CONFLICT DO NOTHING;
     GET DIAGNOSTICS v_was_new = ROW_COUNT;
 
     IF NOT v_was_new THEN
-      -- 239: a recovery that lost the race to a concurrent store of the same work hands its dead letter back, so the
+      -- 241: a recovery that lost the race to a concurrent store of the same work hands its dead letter back, so the
       -- dead letter is never left Recovering behind a row that does not name it.
       IF v_event.ev_recovered_from IS NOT NULL THEN
         UPDATE __SCHEMA__.wh_dead_letters dl
@@ -781,10 +781,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.store_perspective_events(JSONB, UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Stores perspective work rows (022) with the event-store chain''s rules (239): partition from the stream, Stored, the '
+  'Stores perspective work rows (022) with the event-store chain''s rules (241): partition from the stream, Stored, the '
   'given priority, leased to the stream''s live owner (or the caller) when a lease expiry is given, the cursor flagged '
   'RewindRequired for an event behind it, and the perspective doorbell rung for a stream that had no pending work. '
-  'Unique on (stream, perspective, event). 239 (#1722): work recovered from a dead letter (RecoveredFromDeadLetterId) '
+  'Unique on (stream, perspective, event). 241 (#1722): work recovered from a dead letter (RecoveredFromDeadLetterId) '
   're-enters here: it claims its dead letter and its row names it for process_perspective_event_completions to settle.';
 
 -- wh_recover_dead_letter: recover_dead_letter's body (last word 236), re-entering an outbox or perspective dead letter
@@ -806,14 +806,14 @@ DECLARE
   v_envelope JSONB;
   v_stream_id UUID;
   v_event_id UUID;
-  v_event_flags INTEGER;      -- a pre-239 capture's event, when the event store holds it
+  v_event_flags INTEGER;      -- a pre-241 capture's event, when the event store holds it
   v_event_scope JSONB;
   v_has_event BOOLEAN := FALSE;
   v_stored BOOLEAN;
 BEGIN
   -- Only an outbox or perspective dead letter re-enters here. 236 (#1664): an inbox or broker dead letter re-enters
   -- through store_inbox_messages, from the recovery worker; it, and a row from any other source, is left untouched
-  -- and due. 239: the row is read, not claimed. The store it re-enters through claims it atomically (Recovering) as
+  -- and due. 241: the row is read, not claimed. The store it re-enters through claims it atomically (Recovering) as
   -- it stores the row, so a row another recovery claimed, or one already settled, is not re-entered twice.
   SELECT dl.source_table, dl.source_id, dl.stream_id, dl.message_type, dl.destination, dl.perspective_name, dl.envelope
   INTO v_dead
@@ -831,7 +831,7 @@ BEGIN
   v_stream_id := NULLIF(v_dead.stream_id, __EMPTY_UUID__::uuid);
 
   IF v_dead.source_table = 'wh_outbox' THEN
-    -- A dead letter captured before 239 kept the body and the metadata only. Its event flag, flags and scope are its
+    -- A dead letter captured before 241 kept the body and the metadata only. Its event flag, flags and scope are its
     -- event's when the event store holds it (an outbox event with a stream is appended as it is stored), and its
     -- envelope type is the one its message type names (EnvelopeSerializer's form).
     IF NOT (v_envelope ? 'is_event') THEN
@@ -858,7 +858,7 @@ BEGIN
           __ENVELOPE_FIELD_STREAM_ID__, v_stream_id,
           'IsEvent', COALESCE((v_envelope->>'is_event')::BOOLEAN, v_has_event),
           __ENVELOPE_FIELD_FLAGS__, COALESCE((v_envelope->>'flags')::INTEGER, v_event_flags, 0),
-          -- A dead letter captured before 239 keeps no priority; it re-enters in the band recovery used to give it.
+          -- A dead letter captured before 241 keeps no priority; it re-enters in the band recovery used to give it.
           'Priority', COALESCE((v_envelope->>'priority')::INTEGER, __PRIORITY_BACKGROUND__),
           'ScheduledFor', v_envelope->>'scheduled_for',
           'CoalesceGroup', v_envelope->>'coalesce_group',
@@ -895,7 +895,7 @@ BEGIN
         'PerspectiveName', v_dead.perspective_name,
         'EventId', v_event_id,
         'EventWorkId', v_dead.source_id,
-        -- A dead letter captured before 239 keeps no priority; it re-enters in the band recovery used to give it.
+        -- A dead letter captured before 241 keeps no priority; it re-enters in the band recovery used to give it.
         'Priority', COALESCE((v_envelope->>'priority')::INTEGER, __PRIORITY_BACKGROUND__),
         'RecoveredFromDeadLetterId', p_dead_letter_id)),
       NULL,   -- no instance: the row is left unleased for the claim
@@ -909,7 +909,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_recover_dead_letter(UUID, INTEGER) IS
-  'Re-enters an outbox or perspective dead letter through its store (239, #1722): store_outbox_messages or '
+  'Re-enters an outbox or perspective dead letter through its store (241, #1722): store_outbox_messages or '
   'store_perspective_events, which claims the dead letter (Recovering) and stores the row naming it; the completion '
   'settles it Recovered once the message is published or the event applied. Returns whether the row re-entered. Takes '
   'the partition count arrivals are stored with. A perspective dead letter whose event the event store no longer holds '
@@ -930,7 +930,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.recover_dead_letter(UUID) IS
-  'Re-enters a dead letter through its store at the claim''s default partition count (239, #1722): '
+  'Re-enters a dead letter through its store at the claim''s default partition count (241, #1722): '
   'wh_recover_dead_letter(id, 10000). 236 (#1664): an inbox or broker dead letter is declined and left due.';
 
 -- complete_outbox_published: last word 172, settling a published recovered message's dead letter (#1722). Signature
@@ -946,7 +946,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.complete_outbox_published(
 ) RETURNS INTEGER AS $$
 DECLARE
   v_affected INTEGER;
-  v_recovered UUID[];         -- 239: the dead letters the completed rows were recovered from
+  v_recovered UUID[];         -- 241: the dead letters the completed rows were recovered from
   v_dead_letter_id UUID;
 BEGIN
   IF p_ids IS NULL OR array_length(p_ids, 1) IS NULL THEN
@@ -957,7 +957,7 @@ BEGIN
     -- Debug mode: retain the row for forensics; stamp published_at + processed_at
     -- and set the Published bit. eligible_outbox filters published_at IS NULL so
     -- claim_work treats the row as if deleted on subsequent polls.
-    -- 239: counted and collected from the statement's own rows, so the settle below reads nothing again.
+    -- 241: counted and collected from the statement's own rows, so the settle below reads nothing again.
     WITH completed AS (
       UPDATE __SCHEMA__.wh_outbox o
       SET processed_at = NOW(),
@@ -1009,7 +1009,7 @@ BEGIN
     FROM completed c;
   END IF;
 
-  -- 239 (#1722): a recovered message that has been published settles the dead letter it re-entered from (Recovered).
+  -- 241 (#1722): a recovered message that has been published settles the dead letter it re-entered from (Recovered).
   -- After the outbox rows, so the outbox keeps its place first in the lock order.
   IF v_recovered IS NOT NULL THEN
     FOREACH v_dead_letter_id IN ARRAY v_recovered LOOP
@@ -1022,7 +1022,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.complete_outbox_published(UUID[], BOOLEAN) IS
-'Completes outbox rows after successful transport publish. Production (p_debug_mode=FALSE, default): DELETEs the row, structurally immune to claim_work re-issuing it. Debug mode (p_debug_mode=TRUE): retains the row, stamps published_at + processed_at + Published bit; eligible_outbox filters published_at IS NULL so claim_work skips it. Coalesced + batched by C# OutboxCompletionFlushWorker. Idempotent: unknown ids silently no-op. Returns rows-affected (deletions in prod, updates in debug). 172: rows are locked in (stream_id, created_at, message_id) order. 239 (#1722): a completed row recovered from a dead letter settles that dead letter Recovered.';
+'Completes outbox rows after successful transport publish. Production (p_debug_mode=FALSE, default): DELETEs the row, structurally immune to claim_work re-issuing it. Debug mode (p_debug_mode=TRUE): retains the row, stamps published_at + processed_at + Published bit; eligible_outbox filters published_at IS NULL so claim_work skips it. Coalesced + batched by C# OutboxCompletionFlushWorker. Idempotent: unknown ids silently no-op. Returns rows-affected (deletions in prod, updates in debug). 172: rows are locked in (stream_id, created_at, message_id) order. 241 (#1722): a completed row recovered from a dead letter settles that dead letter Recovered.';
 
 -- process_perspective_event_completions: last word 177, settling an applied recovered row's dead letter (#1722).
 -- Signature unchanged.
@@ -1074,7 +1074,7 @@ BEGIN
       FROM completed cd
       ON CONFLICT ON CONSTRAINT pk_wh_perspective_applied DO NOTHING
     ),
-    -- 239 (#1722): an applied row recovered from a dead letter settles that dead letter Recovered, in the same
+    -- 241 (#1722): an applied row recovered from a dead letter settles that dead letter Recovered, in the same
     -- statement (the processed branch of _wh_settle_recovered_dead_letter, written set-based).
     settled AS (
       UPDATE __SCHEMA__.wh_dead_letters dl
@@ -1109,7 +1109,7 @@ BEGIN
       FROM completed cd
       ON CONFLICT ON CONSTRAINT pk_wh_perspective_applied DO NOTHING
     ),
-    -- 239 (#1722): an applied row recovered from a dead letter settles that dead letter Recovered, in the same
+    -- 241 (#1722): an applied row recovered from a dead letter settles that dead letter Recovered, in the same
     -- statement (the processed branch of _wh_settle_recovered_dead_letter, written set-based).
     settled AS (
       UPDATE __SCHEMA__.wh_dead_letters dl
@@ -1142,7 +1142,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_completions(JSONB, TIMESTAMPTZ, BOOLEAN) IS
   'Retires completed perspective work rows (DELETE, or stamped in debug mode) and records each in the applied-event '
-  'ledger wh_perspective_applied (177, #959), pruning ledger rows older than an hour. 239 (#1722): a retired row '
+  'ledger wh_perspective_applied (177, #959), pruning ledger rows older than an hour. 241 (#1722): a retired row '
   'recovered from a dead letter settles that dead letter Recovered.';
 
 -- _wh_settle_superseded_recovery: last word 236, on every source table (#1722).
@@ -1153,9 +1153,9 @@ COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_completions(JSONB, TIME
 CREATE OR REPLACE FUNCTION __SCHEMA__._wh_settle_superseded_recovery() RETURNS TRIGGER AS $$
 BEGIN
   -- A recovered message dead-lettered again: NEW holds its custody now, so the row it was recovered from (Recovering
-  -- while the message is in flight, or Recovered by a recovery from before 236 and 239) is settled for review with the
+  -- while the message is in flight, or Recovered by a recovery from before 236 and 241) is settled for review with the
   -- outcome recorded. The operator hold keeps a cohort release from re-driving the message a second time while NEW
-  -- holds it. 239 (#1722): on every source table; a perspective row keeps its work id through recovery.
+  -- holds it. 241 (#1722): on every source table; a perspective row keeps its work id through recovery.
   UPDATE __SCHEMA__.wh_dead_letters prior
   SET recovery_status = 2,        -- HoldForReview
       recovered_at = NULL,
@@ -1175,7 +1175,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_settle_superseded_recovery() IS
-  'AFTER INSERT trigger fn on wh_dead_letters (236, #1664; 239, #1722: every source table): a recovered message or work row dead-lettered again settles the row it was recovered from as HoldForReview under an operator hold, naming the new dead letter in operator_notes, so Recovered never reads true of a recovery that did not complete.';
+  'AFTER INSERT trigger fn on wh_dead_letters (236, #1664; 241, #1722: every source table): a recovered message or work row dead-lettered again settles the row it was recovered from as HoldForReview under an operator hold, naming the new dead letter in operator_notes, so Recovered never reads true of a recovery that did not complete.';
 
 DROP TRIGGER IF EXISTS trg_wh_dead_letters_settle_superseded_recovery ON __SCHEMA__.wh_dead_letters;
 CREATE TRIGGER trg_wh_dead_letters_settle_superseded_recovery

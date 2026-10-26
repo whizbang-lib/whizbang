@@ -699,7 +699,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   named) when this service cannot read its type, and a raw receptor runs once it is stored. A message the consumer
   decides not to process is stored settled: `InboxMessage.DiscardedOnReceive` (one of `InboxReceiveDiscard`) makes
   `store_inbox_messages` write the row processed, Stored and Published, with `discarded on receive: <reason>` in
-  `wh_inbox_state.error`, never claimed, copied into the event store or dispatched (migration 240). Each skip is
+  `wh_inbox_state.error`, never claimed, copied into the event store or dispatched (migration 242). Each skip is
   counted by `whizbang.transport.inbox.messages_discarded` with a `reason` tag. Only a body that is not a readable
   envelope is refused before storage, and it is dead-lettered at the broker (where the dead-letter drain gives it
   custody), never dropped; a valid envelope with no envelope type is given dead-letter custody with its body by the
@@ -728,7 +728,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claim's default, and `EFCoreDeadLetterRecoveryService` gains an optional `partitionCount` that the Postgres driver
   fills from `ClaimWorkerOptions.PartitionCount`.
   Recovered outbox and perspective work now takes the priority it was stored with rather than background. Migration
-  239.
+  241.
 - **A recovered broker or inbox dead letter reaches the event store, and reads Recovered only once processed
   (#1664).** Recovery re-emitted an inbox or broker dead letter with inbox writes of its own that had drifted from a
   delivery: the row was not an event and, for a broker import without a session, had no stream. The inbox copy into

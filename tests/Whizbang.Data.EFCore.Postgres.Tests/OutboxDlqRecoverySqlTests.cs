@@ -146,7 +146,7 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
       .Because("Recovery resets attempts to 0 so the row gets a fresh retry budget — the prior failure had its forensic record preserved in wh_dead_letters.");
 
     await Assert.That((await _dlqRowAsync(conn, deadLetterId)).Status).IsEqualTo(1)
-      .Because("since 239 (#1722) the store claims the dead letter (Recovering); it reads Recovered once the message is published");
+      .Because("since 241 (#1722) the store claims the dead letter (Recovering); it reads Recovered once the message is published");
     await using (var complete = conn.CreateCommand()) {
       complete.CommandText = "SELECT complete_outbox_published(ARRAY[@id]::uuid[], TRUE)";
       complete.Parameters.AddWithValue("id", messageId);

@@ -119,7 +119,7 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Since 239 (#1722) a recovered outbox row re-enters through <c>store_outbox_messages</c> with the priority its dead
+  /// Since 241 (#1722) a recovered outbox row re-enters through <c>store_outbox_messages</c> with the priority its dead
   /// letter kept, as every other field it was stored with, rather than in the background band.
   /// </summary>
   [Test]
@@ -169,7 +169,7 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Since 239 (#1722) recovered perspective work re-enters through <c>store_perspective_events</c> with the priority
+  /// Since 241 (#1722) recovered perspective work re-enters through <c>store_perspective_events</c> with the priority
   /// its dead letter kept, rather than in the background band.
   /// </summary>
   [Test]

@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// arrival rule, and the dead letter reads Recovered only once the message is published or applied.
 /// </remarks>
 /// <docs>operations/dead-letter-queue/recovery</docs>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/239_RecoveredWorkReentersThroughItsStore.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/241_RecoveredWorkReentersThroughItsStore.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard3")]
