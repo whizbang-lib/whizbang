@@ -908,7 +908,8 @@ Describe 'Which class each ci.yml job takes' {
         if (-not $inJobs) { continue }
         if ($line -match '^\S') { break }
         if ($line -match '^  ([A-Za-z0-9_-]+):\s*$') { $current = $Matches[1]; $jobs[$current] = [System.Text.StringBuilder]::new(); continue }
-        if ($current) { $null = $jobs[$current].AppendLine($line) }
+        # LF, not AppendLine: the tests anchor on line ends, and AppendLine writes CRLF on Windows.
+        if ($current) { $null = $jobs[$current].Append($line).Append("`n") }
       }
       $table = [ordered]@{}
       foreach ($k in $jobs.Keys) { $table[$k] = $jobs[$k].ToString() }
