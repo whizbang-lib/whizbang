@@ -118,9 +118,10 @@ public static partial class SubscriptionRetryHelper {
 
       LogSubscriptionDisconnected(ctx.Logger, ctx.Destination.Address, args.Reason);
 
-      ctx.State.Status = SubscriptionStatus.Recovering;
+      // The error is recorded before the status, so an observer of the change to Recovering reads it.
       ctx.State.LastError = args.Exception;
       ctx.State.LastErrorTime = DateTimeOffset.UtcNow;
+      ctx.State.Status = SubscriptionStatus.Recovering;
 
       _ = Task.Run(async () => {
         try {
@@ -150,10 +151,11 @@ public static partial class SubscriptionRetryHelper {
   /// Updates subscription state on failure.
   /// </summary>
   private static void _handleSubscriptionFailure(SubscriptionState state, Exception ex) {
+    // The status is written last, so an observer of the change to Recovering reads the error and the count.
     state.LastError = ex;
     state.LastErrorTime = DateTimeOffset.UtcNow;
-    state.Status = SubscriptionStatus.Recovering;
     state.IncrementAttempt();
+    state.Status = SubscriptionStatus.Recovering;
   }
 
   /// <summary>

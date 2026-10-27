@@ -58,10 +58,37 @@ public class SubscriptionState(TransportDestination destination) {
   /// </summary>
   public TransportDestination Destination { get; } = ArgumentGuard.NotNull(destination);
 
+  private SubscriptionStatus _status = SubscriptionStatus.Pending;
+
   /// <summary>
   /// Current status of the subscription.
   /// </summary>
-  public SubscriptionStatus Status { get; set; } = SubscriptionStatus.Pending;
+  /// <remarks>
+  /// A write that changes the value is reported to <see cref="Workers.TransportConsumerWorker.SubscriptionStatusChanged"/>
+  /// for a state the worker owns; writing the value the state already has reports nothing. Write the fields that
+  /// accompany a status (<see cref="LastError"/>, <see cref="AttemptCount"/>, <see cref="Subscription"/>) first, so
+  /// an observer of the change reads them already recorded.
+  /// </remarks>
+  /// <docs>messaging/transports/transport-consumer#subscription-status-changes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_StatusWrittenDirectly_RaisedOnlyWhenTheValueChangesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionStateTests.cs:Status_SetToRecovering_UpdatesStatusAsync</tests>
+  public SubscriptionStatus Status {
+    get => _status;
+    set {
+      var previous = Interlocked.Exchange(ref _status, value);
+      if (previous != value) {
+        StatusChanged?.Invoke(this, previous, value);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Called after <see cref="Status"/> changes value, with the state, the status it had before and the one it was
+  /// changed to (passed rather than re-read, so a later concurrent write cannot be reported as this one). Set by the
+  /// owning <see cref="Workers.TransportConsumerWorker"/>, which turns it into its public
+  /// <see cref="Workers.TransportConsumerWorker.SubscriptionStatusChanged"/> event.
+  /// </summary>
+  internal Action<SubscriptionState, SubscriptionStatus, SubscriptionStatus>? StatusChanged { get; set; }
 
   /// <summary>
   /// Number of subscription attempts made. Used for logging phase transitions.
