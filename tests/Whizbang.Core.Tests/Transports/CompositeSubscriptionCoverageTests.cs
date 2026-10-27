@@ -94,13 +94,16 @@ public class CompositeSubscriptionCoverageTests {
   public async Task Disconnection_WhenAnUnderlyingSubscriptionRecordedOne_ReportsItAsync() {
     var connected = new FakeSubscription();
     var dropped = new FakeSubscription();
-    ISubscription composite = new CompositeSubscription([connected, dropped]);
-    await Assert.That(composite.Disconnection).IsNull()
+    var composite = new CompositeSubscription([connected, dropped]);
+    await Assert.That(_disconnectionOf(composite)).IsNull()
       .Because("no mirror has recorded a disconnect");
 
     var recorded = new SubscriptionDisconnectedEventArgs { Reason = "mirror dropped" };
     dropped.Disconnection = recorded;
 
-    await Assert.That(composite.Disconnection).IsSameReferenceAs(recorded);
+    await Assert.That(_disconnectionOf(composite)).IsSameReferenceAs(recorded);
   }
+
+  // Reads the disconnect through the interface, as the retry helper reads it (#1831).
+  private static SubscriptionDisconnectedEventArgs? _disconnectionOf(ISubscription subscription) => subscription.Disconnection;
 }

@@ -187,7 +187,8 @@ public class SubscriptionRetryHelperDisconnectWindowTests {
         CancellationToken cancellationToken = default) {
       if (Interlocked.Increment(ref _subscribeCallCount) > 1) {
         ReconnectRequested.TrySetResult();
-        await Task.Delay(Timeout.Infinite, cancellationToken);
+        // Park the reconnect until the test cancels it: a signal nothing completes, so no clock is involved.
+        await new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task.WaitAsync(cancellationToken);
       }
       var subscription = new WindowSubscription();
       configureFirst?.Invoke(subscription);

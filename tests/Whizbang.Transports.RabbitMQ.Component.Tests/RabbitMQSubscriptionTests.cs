@@ -205,8 +205,7 @@ public class RabbitMQSubscriptionTests {
     // disconnect is how it finds out (#1831). Read through the interface, as the retry helper reads it.
     await using var channel = new FakeChannel();
     using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
-    ISubscription handle = subscription;
-    await Assert.That(handle.Disconnection).IsNull()
+    await Assert.That(_disconnectionOf(subscription)).IsNull()
       .Because("a subscription that has not disconnected reports no disconnect");
 
     var tcs = new TaskCompletionSource<SubscriptionDisconnectedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -214,11 +213,11 @@ public class RabbitMQSubscriptionTests {
     await channel.SimulateShutdownAsync(ShutdownInitiator.Peer, "connection lost");
     var raised = await tcs.Task;
 
-    await Assert.That(handle.Disconnection).IsSameReferenceAs(raised)
+    await Assert.That(_disconnectionOf(subscription)).IsSameReferenceAs(raised)
       .Because("the recorded disconnect is the one raised, so a caller that sees both treats them as one");
 
     await channel.SimulateShutdownAsync(ShutdownInitiator.Peer, "second report");
-    await Assert.That(handle.Disconnection).IsSameReferenceAs(raised)
+    await Assert.That(_disconnectionOf(subscription)).IsSameReferenceAs(raised)
       .Because("the first disconnect is the one recorded");
   }
 
@@ -365,4 +364,7 @@ public class RabbitMQSubscriptionTests {
 
     await Assert.That(subscription.IsActive).IsFalse();
   }
+
+  // Reads the disconnect through the interface, as the retry helper reads it (#1831).
+  private static SubscriptionDisconnectedEventArgs? _disconnectionOf(ISubscription subscription) => subscription.Disconnection;
 }

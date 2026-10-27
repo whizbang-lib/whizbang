@@ -191,8 +191,7 @@ public class AzureServiceBusSubscriptionTests {
     // A caller that attaches its handler after the disconnect hears nothing; the recorded disconnect is how it
     // finds out (#1831). Read through the interface, as the retry helper reads it.
     using var subscription = _subscription();
-    ISubscription handle = subscription;
-    await Assert.That(handle.Disconnection).IsNull();
+    await Assert.That(_disconnectionOf(subscription)).IsNull();
     SubscriptionDisconnectedEventArgs? seen = null;
     subscription.OnDisconnected += (_, e) => seen = e;
 
@@ -201,7 +200,7 @@ public class AzureServiceBusSubscriptionTests {
     subscription.RaiseDisconnected("second report", exception: null);
 
     await Assert.That(first).IsNotNull();
-    await Assert.That(handle.Disconnection).IsSameReferenceAs(first)
+    await Assert.That(_disconnectionOf(subscription)).IsSameReferenceAs(first)
       .Because("the recorded disconnect is the first one raised");
   }
 
@@ -275,4 +274,7 @@ public class AzureServiceBusSubscriptionTests {
 
     await Assert.That(subscription.IsActive).IsFalse();
   }
+
+  // Reads the disconnect through the interface, as the retry helper reads it (#1831).
+  private static SubscriptionDisconnectedEventArgs? _disconnectionOf(ISubscription subscription) => subscription.Disconnection;
 }
