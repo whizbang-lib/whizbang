@@ -7,13 +7,19 @@ namespace Whizbang.Core.Configuration;
 
 /// <summary>
 /// What one assembly reads from configuration, as its generated manifest records it: every section it binds from
-/// a literal key, the keys under each, and the capabilities its settings require.
+/// a literal key, the keys under each, the capabilities its settings require, and the keys it declares removed.
 /// </summary>
 /// <param name="Assembly">The assembly's name.</param>
 /// <param name="Bindings">One entry per section and options type the assembly binds, ordered by section.</param>
 /// <docs>operations/infrastructure/capabilities#declaring-a-requirement</docs>
 /// <tests>tests/Whizbang.Core.Tests/Configuration/ConfigurationManifestRegistryTests.cs</tests>
-public sealed record ConfigurationManifest(string Assembly, IReadOnlyList<ConfigurationBinding> Bindings);
+public sealed record ConfigurationManifest(string Assembly, IReadOnlyList<ConfigurationBinding> Bindings) {
+  /// <summary>
+  /// The keys the assembly declares removed with <see cref="RemovedConfigurationKeyAttribute"/>, ordered by key; empty
+  /// when it declares none.
+  /// </summary>
+  public IReadOnlyList<RemovedConfigurationKeyEntry> RemovedKeys { get; init; } = [];
+}
 
 /// <summary>One section bound to one options type, the keys the binder reads under it, and what they require.</summary>
 /// <param name="Section">The section's full key, for example <c>Whizbang:Workers:Maintenance</c>.</param>

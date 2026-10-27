@@ -1111,6 +1111,10 @@ public sealed partial class MaintenanceWorker(
 
 /// <summary>Configuration for <see cref="MaintenanceWorker"/>.</summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+// Removed with the legacy publisher worker. Maintenance now runs on the idle-gated cadence: an admission interval, a
+// settled dwell, and a forced run once deferrals have lasted MaxDeferral.
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:WorkCoordinator:MaintenanceInterval",
+  "Whizbang:Workers:Maintenance:IntervalMinutes", "Whizbang:Housekeeping:SettledCooldown", "Whizbang:Housekeeping:MaxDeferral")]
 public sealed class MaintenanceWorkerOptions {
   /// <summary>
   /// Killswitch. Set to <c>false</c> to disable the maintenance loop. Default <c>true</c>.

@@ -56,6 +56,7 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
   private const string CONFIGURATION_KEY_NAME = "global::Microsoft.Extensions.Configuration.ConfigurationKeyNameAttribute";
   private const string REQUIRES_CAPABILITY = "global::Whizbang.Core.Capabilities.RequiresCapabilityAttribute";
   private const string REQUIRES_POSTGRES_EXTENSION = "global::Whizbang.Core.Capabilities.RequiresPostgresExtensionAttribute";
+  private const string REMOVED_CONFIGURATION_KEY = "Whizbang.Core.Configuration.RemovedConfigurationKeyAttribute";
 
   private static readonly string[] _bindingMethods = ["Bind", "Get", "Configure"];
 
@@ -96,10 +97,35 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
       .Where(static binding => binding is not null)
       .Select(static (binding, _) => binding!);
 
+    // [RemovedConfigurationKey] on the assembly (a compilation unit's attribute list) or on a class or record.
+    var removedKeys = context.SyntaxProvider.ForAttributeWithMetadataName(
+        REMOVED_CONFIGURATION_KEY,
+        predicate: static (node, _) => node is CompilationUnitSyntax or TypeDeclarationSyntax,
+        transform: static (ctx, _) => _extractRemovedKeys(ctx.Attributes))
+      .SelectMany(static (keys, _) => keys);
+
     var assemblyName = context.CompilationProvider.Select(static (c, _) => c.Assembly.Name);
 
-    context.RegisterSourceOutput(bindings.Collect().Combine(assemblyName),
-      static (spc, pair) => _emit(spc, pair.Left, pair.Right));
+    context.RegisterSourceOutput(bindings.Collect().Combine(removedKeys.Collect()).Combine(assemblyName),
+      static (spc, pair) => _emit(spc, pair.Left.Left, pair.Left.Right, pair.Right));
+  }
+
+  /// <summary>
+  /// The removed keys a set of <c>[RemovedConfigurationKey]</c> attributes declares. A declaration with no key
+  /// (missing, or null) names nothing and is skipped; a null replacement, or a null list of them, names nothing.
+  /// </summary>
+  private static ImmutableArray<RemovedKeyInfo> _extractRemovedKeys(ImmutableArray<AttributeData> attributes) {
+    var keys = ImmutableArray.CreateBuilder<RemovedKeyInfo>();
+    foreach (var attribute in attributes) {
+      if (attribute.ConstructorArguments is not [{ Value: string key }, var replacements]) {
+        continue;
+      }
+      var replacedBy = replacements.IsNull
+        ? []
+        : replacements.Values.Select(static v => v.Value as string).OfType<string>().ToArray();
+      keys.Add(new RemovedKeyInfo(key, [.. replacedBy]));
+    }
+    return keys.ToImmutable();
   }
 
   /// <summary>
@@ -396,13 +422,16 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     return null;
   }
 
-  private static void _emit(SourceProductionContext context, ImmutableArray<SectionBindingInfo> bindings, string assemblyName) {
-    if (bindings.IsEmpty) {
+  private static void _emit(
+      SourceProductionContext context, ImmutableArray<SectionBindingInfo> bindings, ImmutableArray<RemovedKeyInfo> removedKeys,
+      string assemblyName) {
+    if (bindings.IsEmpty && removedKeys.IsEmpty) {
       return;
     }
     var assembly = typeof(ConfigurationManifestGenerator).Assembly;
     var bindingSnippet = TemplateUtilities.ExtractSnippet(assembly, SNIPPETS_FILE, "BINDING").Trim();
     var requirementSnippet = TemplateUtilities.ExtractSnippet(assembly, SNIPPETS_FILE, "REQUIREMENT").Trim();
+    var removedKeySnippet = TemplateUtilities.ExtractSnippet(assembly, SNIPPETS_FILE, "REMOVED_KEY").Trim();
 
     // The same section bound to the same type in two places is one binding.
     var lines = new StringBuilder();
@@ -427,6 +456,15 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     source = TemplateUtilities.ReplaceHeaderRegion(assembly, source);
     source = source.Replace("__ASSEMBLY__", _literal(assemblyName));
     source = TemplateUtilities.ReplaceRegion(source, "BINDINGS", lines.ToString());
+
+    // The same declaration in two places is one removed key; ordered by key so every build emits the same text.
+    var removed = new StringBuilder();
+    foreach (var key in removedKeys.Distinct().OrderBy(static k => k.Key, StringComparer.Ordinal)) {
+      removed.AppendLine(removedKeySnippet
+        .Replace("__KEY__", _literal(key.Key))
+        .Replace("__REPLACED_BY__", string.Join(", ", key.ReplacedBy.Select(_literal))));
+    }
+    source = TemplateUtilities.ReplaceRegion(source, "REMOVED_KEYS", removed.ToString());
     context.AddSource(MANIFEST_FILE, source);
   }
 
@@ -448,6 +486,9 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
     string OptionsType,
     EquatableArray<string> Keys,
     EquatableArray<RequirementInfo> Requirements);
+
+  /// <summary>One removed configuration key and its replacements, value-equal for caching.</summary>
+  private sealed record RemovedKeyInfo(string Key, EquatableArray<string> ReplacedBy);
 
   /// <summary>One capability requirement, value-equal for caching.</summary>
   private sealed record RequirementInfo(string Provider, string Name, string Feature, string Key, string? Value, string? Default);

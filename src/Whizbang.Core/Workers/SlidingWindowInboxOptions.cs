@@ -14,6 +14,13 @@ namespace Whizbang.Core.Workers;
 /// flush before downstream applies, eliminating cross-batch cursor inversions.
 /// </remarks>
 /// <docs>internals/inbox-batch-strategy</docs>
+// Never read (#1536): each transport's MessageProcessing section carried inbox batch settings nothing used.
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSize", "Whizbang:Workers:InboxBatch:MaxSize")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchSlideMs", "Whizbang:Workers:InboxBatch:SlidingWindow")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:AzureServiceBus:MessageProcessing:InboxBatchMaxWaitMs", "Whizbang:Workers:InboxBatch:MaxWait")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchSize", "Whizbang:Workers:InboxBatch:MaxSize")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchSlideMs", "Whizbang:Workers:InboxBatch:SlidingWindow")]
+[Whizbang.Core.Configuration.RemovedConfigurationKey("Whizbang:Transports:RabbitMQ:MessageProcessing:InboxBatchMaxWaitMs", "Whizbang:Workers:InboxBatch:MaxWait")]
 public sealed record SlidingWindowInboxOptions {
   /// <summary>
   /// Debounce window after the last append PER STREAM. Resets on each new arrival for the

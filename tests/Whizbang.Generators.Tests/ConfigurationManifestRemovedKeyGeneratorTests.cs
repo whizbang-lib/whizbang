@@ -48,6 +48,10 @@ public class ConfigurationManifestRemovedKeyGeneratorTests {
         public int Interval { get; set; }
         public int Cooldown { get; set; }
       }
+      [RemovedConfigurationKey("Whizbang:Old:Window", "Whizbang:Batch:Window")]
+      public sealed record BatchOptions {
+        public int Window { get; set; }
+      }
       public static class Binding {
         public static void Apply(IConfiguration configuration, MaintenanceOptions options) =>
           configuration.GetSection("Whizbang:Maintenance").Bind(options);
@@ -62,6 +66,8 @@ public class ConfigurationManifestRemovedKeyGeneratorTests {
     await Assert.That(manifest).Contains(RemovedKey("Whizbang:Old:Cadence", "Whizbang:Maintenance:Interval", "Whizbang:Maintenance:Cooldown"));
     await Assert.That(manifest).Contains(RemovedKey("Whizbang:Old:Dropped"))
       .Because("a key removed with nothing in its place is recorded with no replacement");
+    await Assert.That(manifest).Contains(RemovedKey("Whizbang:Old:Window", "Whizbang:Batch:Window"))
+      .Because("a record is a class, and options types are often records");
   }
 
   [Test]
