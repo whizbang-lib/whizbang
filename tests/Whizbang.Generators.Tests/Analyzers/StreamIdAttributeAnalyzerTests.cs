@@ -164,4 +164,221 @@ public class StreamIdAttributeAnalyzerTests {
     await Assert.That(diagnostics.Count(d => d.Id == "WHIZ006")).IsEqualTo(1)
       .Because("An interface has no base type to search, and its own two still count.");
   }
+  // #1833: [StreamId(Override = true)] says a derived type's stream id hides the inherited one on purpose.
+
+  [Test]
+  public async Task ADerivedOverridePropertyOverAnInheritedOne_IsNotReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract class CommandBase : ICommand { [StreamId] public virtual System.Guid StreamId { get; set; } }
+      public class AcknowledgeAlert : CommandBase { [StreamId(Override = true)] public System.Guid AckId { get; set; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id is "WHIZ006" or "WHIZ016")).IsEqualTo(0)
+      .Because("an override hides the inherited stream id on purpose, and there is one to hide");
+  }
+
+  [Test]
+  public async Task ADerivedOverrideParameterOverAnInheritedProperty_IsNotReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record OrderEventBase : IEvent { [StreamId] public System.Guid OrderId { get; init; } }
+      public record LineAdded([StreamId(Override = true)] System.Guid LineId) : OrderEventBase;
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id is "WHIZ006" or "WHIZ016")).IsEqualTo(0)
+      .Because("an override parameter is the stream id, ahead of the inherited property");
+  }
+
+  [Test]
+  public async Task AnOverrideTwoLevelsBelowTheInheritedStreamId_IsNotReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record EventRoot : IEvent { [StreamId] public System.Guid TenantId { get; init; } }
+      public abstract record OrderEventBase : EventRoot;
+      public record LineAdded : OrderEventBase { [StreamId(Override = true)] public System.Guid LineId { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id is "WHIZ006" or "WHIZ016")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AnOverrideThatRedeclaresTheInheritedProperty_IsNotReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract class OrderEventBase : IEvent { [StreamId] public virtual System.Guid OrderId { get; init; } }
+      public class LineAdded : OrderEventBase { [StreamId(Override = true)] public override System.Guid OrderId { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id is "WHIZ006" or "WHIZ016")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AnOverrideOverABaseParameterStreamId_IsNotReportedAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record OrderEventBase([StreamId] System.Guid OrderId) : IEvent;
+      public record LineAdded([StreamId(Override = true)] System.Guid LineId) : OrderEventBase(LineId);
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id is "WHIZ006" or "WHIZ016")).IsEqualTo(0)
+      .Because("a base record's [StreamId] parameter is a stream id the override replaces");
+  }
+
+  [Test]
+  public async Task AnExplicitOverrideFalse_IsAPlainStreamIdAndStillReportsWhiz006Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record OrderEventBase : IEvent { [StreamId] public System.Guid OrderId { get; init; } }
+      public record LineAdded : OrderEventBase { [StreamId(Override = false)] public System.Guid LineId { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ006")).IsEqualTo(1);
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ016")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task APlainStreamIdNextToAnOverrideOnOneType_ReportsWhiz006OnThePlainOneNamingTheOverrideAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record OrderEventBase : IEvent { [StreamId] public System.Guid OrderId { get; init; } }
+      public record LineAdded : OrderEventBase {
+        [StreamId] public System.Guid CustomerId { get; init; }
+        [StreamId(Override = true)] public System.Guid LineId { get; init; }
+      }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    await Assert.That(whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'LineId' will be used")
+      .Because("an override is the stream id even when a plain one is declared before it");
+    await Assert.That(whiz006.Location.SourceSpan.Start).IsLessThan(source.IndexOf("CustomerId", StringComparison.Ordinal))
+      .Because("the warning sits on the plain attribute, the one that is ignored");
+  }
+
+  [Test]
+  public async Task TwoOverridesOnOneType_ReportWhiz006OnTheSecondAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record OrderEventBase : IEvent { [StreamId] public System.Guid OrderId { get; init; } }
+      public record LineAdded : OrderEventBase {
+        [StreamId(Override = true)] public System.Guid LineId { get; init; }
+        [StreamId(Override = true)] public System.Guid CustomerId { get; init; }
+      }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    await Assert.That(whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'LineId' will be used");
+    await Assert.That(whiz006.Location.SourceSpan.Start).IsGreaterThan(source.IndexOf("LineId", StringComparison.Ordinal));
+  }
+
+  [Test]
+  public async Task AnOverrideOnAnIntermediateRecord_IsUsedAheadOfALeafParameterAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record EventRoot : IEvent { [StreamId] public System.Guid TenantId { get; init; } }
+      public abstract record OrderEventBase([StreamId(Override = true)] System.Guid OrderId) : EventRoot;
+      public record LineAdded([StreamId] System.Guid LineId) : OrderEventBase(LineId);
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    var message = whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("Type LineAdded");
+    await Assert.That(message).Contains("'OrderId' will be used")
+      .Because("the intermediate record's override is the inherited stream id, ahead of the leaf's plain parameter");
+  }
+
+  [Test]
+  public async Task APlainStreamIdHidingAnInheritedOverride_ReportsWhiz006Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record EventRoot : IEvent { [StreamId] public System.Guid TenantId { get; init; } }
+      public abstract record OrderEventBase : EventRoot { [StreamId(Override = true)] public System.Guid OrderId { get; init; } }
+      public record LineAdded : OrderEventBase { [StreamId] public System.Guid LineId { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    var message = whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("Type LineAdded");
+    await Assert.That(message).Contains("'LineId' will be used")
+      .Because("a hide without the option is still reported, even when what it hides is an override");
+  }
+
+  [Test]
+  public async Task AnOverrideWithNothingToOverride_ReportsWhiz016OnTheAttributeAsync() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public record OrderPlaced : IEvent { [StreamId(Override = true)] public System.Guid OrderId { get; init; } }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz016 = diagnostics.Single(d => d.Id == "WHIZ016");
+    var message = whiz016.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(whiz016.Severity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Warning);
+    await Assert.That(message).Contains("OrderPlaced");
+    await Assert.That(message).Contains("'OrderId'");
+    await Assert.That(whiz016.Location.SourceSpan.Start).IsLessThan(source.IndexOf("OrderId", StringComparison.Ordinal))
+      .Because("the warning sits on the override attribute");
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ006")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AnOverrideParameterWithNothingToOverride_ReportsWhiz016Async() {
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public abstract record EventRoot : IEvent { public System.Guid TenantId { get; init; } }
+      public record OrderPlaced([StreamId(Override = true)] System.Guid OrderId) : EventRoot;
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ016")).IsEqualTo(1)
+      .Because("a base type without a [StreamId] gives the override nothing to override");
+  }
+
+  [Test]
+  public async Task TwoConstructorParameterStreamIdsWithNoProperty_ReportWhiz006NamingTheFirstAsync() {
+    // A plain class's constructor parameters have no property for the extractor to read, so neither is chosen as
+    // the stream id; the first declared is still named as the one kept, and the second is reported.
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public class OrderPlaced : IEvent {
+        public OrderPlaced([StreamId] System.Guid orderId, [StreamId] System.Guid customerId) { }
+      }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    await Assert.That(whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'orderId' will be used");
+    await Assert.That(whiz006.Location.SourceSpan.Start).IsGreaterThan(source.IndexOf("orderId", StringComparison.Ordinal));
+  }
+
+  [Test]
+  public async Task TheAnalyzer_DeclaresWhiz016AsAWarningAsync() {
+    var descriptor = new StreamIdAttributeAnalyzer().SupportedDiagnostics.Single(d => d.Id == "WHIZ016");
+
+    await Assert.That(descriptor.DefaultSeverity).IsEqualTo(Microsoft.CodeAnalysis.DiagnosticSeverity.Warning);
+    await Assert.That(descriptor.IsEnabledByDefault).IsTrue();
+  }
 }

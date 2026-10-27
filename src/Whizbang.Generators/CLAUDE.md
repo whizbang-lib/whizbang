@@ -449,7 +449,7 @@ internal static class DiagnosticDescriptors {
 
 | Band | Area |
 |------|------|
-| WHIZ001-015 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types |
+| WHIZ001-016 | Discovery: receptors, stream ids (including overrides), perspectives, JSON-serializable types, generic message types |
 | WHIZ020-028 | Strongly-typed ids, topic filters, perspective runners |
 | WHIZ030-033 | Perspective events and models: stream ids, name collisions |
 | WHIZ040-041 | User service discovery |
