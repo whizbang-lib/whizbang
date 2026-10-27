@@ -159,7 +159,9 @@ public class PgPartmanPartitionSqlTests : EFCoreTestBase {
     await _convertedProbeAsync(connection);
     await using var reader = await _openAsync();
     await using var transaction = await reader.BeginTransactionAsync();
-    await reader.ExecuteAsync($"SELECT count(*) FROM {TABLE}_legacy", transaction: transaction);
+    await using (var hold = new NpgsqlCommand($"SELECT count(*) FROM {TABLE}_legacy", reader, transaction)) {
+      await hold.ExecuteScalarAsync();
+    }
 
     var results = await _passAsync(connection);
 
@@ -186,39 +188,25 @@ public class PgPartmanPartitionSqlTests : EFCoreTestBase {
     await Assert.That(_actions(second)).IsEquivalentTo([MAINTAINED]).Because("a registered table is not registered again");
     await Assert.That(await _callsAsync(connection, "create_parent")).IsEqualTo(1L);
     await Assert.That(await _callsAsync(connection, "run_maintenance")).IsEqualTo(2L);
-    var config = await connection.QuerySingleAsync<PartConfig>(
-      "SELECT parent_table AS Parent, control AS Control, partition_interval AS Interval, premake AS Premake, " +
-      "start_partition AS Start, default_table AS DefaultTable, automatic_maintenance AS Automatic, jobmon AS Jobmon, " +
-      $"time_encoder AS Encoder, retention AS Retention, infinite_time_partitions AS Infinite FROM {PARTMAN}.part_config");
+    var config = await connection.QuerySingleAsync<(string Parent, string Control, string Interval, int Premake, string Start)>(
+      $"SELECT parent_table, control, partition_interval, premake, start_partition FROM {PARTMAN}.part_config");
+    var flags = await connection.QuerySingleAsync<(bool DefaultTable, string Automatic, bool Jobmon, string? Encoder, string? Retention, bool Infinite)>(
+      $"SELECT default_table, automatic_maintenance, jobmon, time_encoder, retention, infinite_time_partitions FROM {PARTMAN}.part_config");
     await Assert.That(config.Parent).IsEqualTo("public." + TABLE);
     await Assert.That(config.Control).IsEqualTo("at");
     await Assert.That(config.Interval).IsEqualTo(DAY);
     await Assert.That(config.Premake).IsEqualTo(3).Because("pg_partman creates as far ahead as the built-in manager would");
     await Assert.That(config.Start).IsEqualTo("2026-10-25 00:00:00+00")
       .Because("pg_partman starts at the first day no partition covers, so it never overlaps one the built-in manager made");
-    await Assert.That(config.DefaultTable).IsFalse().Because("the manager keeps the default partition itself");
-    await Assert.That(config.Automatic).IsEqualTo("off").Because("this pass is the maintenance, on the maintainer duty's holder");
-    await Assert.That(config.Jobmon).IsFalse();
-    await Assert.That(config.Encoder).IsNull();
-    await Assert.That(config.Retention).IsNull().Because("the built-in manager drops, carrying unconsumed signals first");
-    await Assert.That(config.Infinite).IsTrue().Because("partitions are made from the clock, not from the newest row");
+    await Assert.That(flags.DefaultTable).IsFalse().Because("the manager keeps the default partition itself");
+    await Assert.That(flags.Automatic).IsEqualTo("off").Because("this pass is the maintenance, on the maintainer duty's holder");
+    await Assert.That(flags.Jobmon).IsFalse();
+    await Assert.That(flags.Encoder).IsNull();
+    await Assert.That(flags.Retention).IsNull().Because("the built-in manager drops, carrying unconsumed signals first");
+    await Assert.That(flags.Infinite).IsTrue().Because("partitions are made from the clock, not from the newest row");
     await Assert.That(await connection.ExecuteScalarAsync<long>(
       $"SELECT count(*) FROM {PARTMAN}.calls WHERE fn = 'run_maintenance' AND parent_table = 'public.{TABLE}' AND NOT jobmon"))
       .IsEqualTo(2L).Because("run_maintenance is called for this table alone");
-  }
-
-  private sealed class PartConfig {
-    public string Parent { get; set; } = "";
-    public string Control { get; set; } = "";
-    public string Interval { get; set; } = "";
-    public int Premake { get; set; }
-    public string Start { get; set; } = "";
-    public bool DefaultTable { get; set; }
-    public string Automatic { get; set; } = "";
-    public bool Jobmon { get; set; }
-    public string? Encoder { get; set; }
-    public string? Retention { get; set; }
-    public bool Infinite { get; set; }
   }
 
   [Test]

@@ -168,8 +168,9 @@ partition the manager creates carries its ledger's autovacuum settings, and part
 the next cycle (#1693, migration 237); the `wh_log` row sweep clears `wh_log`'s default partition once managed instead
 of skipping the table (#1694, migration 238); before a `wh_signals` partition is dropped or emptied, the signals past
 the slowest live instance's tail cursor move to the current partition, ids unchanged (#1758 from #1692, migration
-239). Remaining: the pg_partman strategy (`Partitioning:Strategy`, WS-8 slice
-8). Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
+239). The pg_partman strategy (`Partitioning:Strategy`, WS-8 slice 8) ships in #1752 (migration 246): pg_partman
+creates partitions under `Auto` (when Ready) or `PgPartman`, and the built-in manager keeps dropping them so the signal
+carry-forward holds. S4 is complete. Deduplication and `wh_perspective_applied` stay unpartitioned (#1577).
 
 **Also needed by WS-2 S9/S9b** (`plans/storage-event-slimming.md`): the staged full-metadata table and the trace
 table are daily partitions created ahead and dropped behind by this partition manager, so S4 lands first.

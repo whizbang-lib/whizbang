@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table and detached later. Migration 226.
   table and detached later. Migration 226.
 
+- **pg_partman can create the partitions (#1752).** `Whizbang:Workers:Maintenance:Partitioning:Strategy` (default
+  `Auto`) picks who creates them: `Auto` uses pg_partman where it is already Ready on every probed database and
+  otherwise keeps the built-in manager, saying why once (it never installs pg_partman); `BuiltIn` never uses it;
+  `PgPartman` requires it (`[RequiresPostgresExtension("pg_partman")]`), so it is provisioned where allowed and start
+  fails with the fix where the server cannot provide it. Under pg_partman each table is registered once with
+  `create_parent` (premake = `CreateAhead`, from the first interval no partition covers, no default table of its own,
+  automatic maintenance off, the version-7 encoder for a uuid key) and gets `run_maintenance` each cycle. A converted
+  table's oldest partition is first re-bounded from `MINVALUE` to the smallest key, which pg_partman can read, in three
+  committed steps that never scan under a lock writers wait on. pg_partman's retention stays off: the built-in manager
+  still drops expired partitions, so unconsumed signals are carried first (#1758). pg_partman's WARNINGs are logged,
+  and a partition the built-in pass had to create after pg_partman maintained the table is logged as a miss. Under
+  `Auto` a failed pass falls back to the built-in manager for the cycle; under `PgPartman` it fails the cycle.
+  Migration 246.
+
 - **`wh_signals` and `wh_lifecycle_completions` are partitioned by the partition manager (#1646).** While
   partitioning is enabled, `wh_signals` converts once to daily partitions by `created_at` (primary key
   `(id, created_at)`; publishing and the tail are unchanged) and `wh_lifecycle_completions` to daily `event_id` ranges

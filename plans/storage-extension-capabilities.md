@@ -233,8 +233,11 @@ Each slice is one red-then-green increment and its own commit.
    on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
    `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back
    to the built-in manager and says so in the verdict.
-   **Status (2026-10-24):** open. Depends on slice 4; it also closes the last piece of
-   `storage-ledger-retention.md` S4.
+   **Status (2026-10-26):** done on branch `feat/1752-pg-partman` (issue #1752, migration 246). `Auto` uses pg_partman
+   only when Ready (never provisions it) and logs its choice from the partition step, not the verdict: `Auto` puts no
+   requirement in force, so the verdict line in the format example above ("= Auto, default; using the built-in
+   manager") is not produced. pg_partman creates partitions; the built-in manager still drops (signal carry-forward).
+   A real-server test needs a pg_partman CI image (not added); verified by hand against pg_partman 5.5.
 9. **pg_repack managed, both run modes.** The client program becomes a probed prerequisite (found on
    `PATH` or at `ClientPath`, version read with `--version`). `InProcess` runs it from the maintainer
    duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
