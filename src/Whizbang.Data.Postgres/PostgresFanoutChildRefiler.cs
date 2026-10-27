@@ -95,7 +95,7 @@ public sealed partial class PostgresFanoutChildRefiler(
     while (true) {
       await using var page = new NpgsqlCommand(
         // A child with no body row reads as JSON null: unreadable, so left in place and counted.
-        "SELECT es.event_id, es.stream_id, es.event_type, COALESCE(b.event_data::text, 'null') "
+        "SELECT es.event_id, es.stream_id, es.event_type, COALESCE(b.event_data::text, 'null'), b.metadata #>> '{Hops,0,ca}' "
         + $"FROM {prefix}wh_event_store es LEFT JOIN {prefix}wh_event_body b ON b.event_id = es.event_id "
         + $"WHERE (COALESCE(es.flags, 0) & {(int)EventFlags.NoRebroadcast}) <> 0 AND es.event_id > $1 "
         + "ORDER BY es.event_id LIMIT $2",
@@ -112,8 +112,8 @@ public sealed partial class PostgresFanoutChildRefiler(
           var named = _streamNamedBy(reader.GetString(2), reader.GetString(3));
           if (named is null) {
             undecidable++;
-          } else if (named.Value != Guid.Empty && named.Value != storedOn) {
-            misfiled.Add(new Misfiled(eventId, storedOn, named.Value));
+          } else if (_belongsOn(eventId, storedOn, named.Value, reader.IsDBNull(4) ? null : reader.GetString(4)) is { } target) {
+            misfiled.Add(new Misfiled(eventId, storedOn, target));
           }
         }
       }
@@ -122,6 +122,21 @@ public sealed partial class PostgresFanoutChildRefiler(
         return (scanned, undecidable, misfiled);
       }
     }
+  }
+
+  /// <summary>
+  /// The stream a stored fan-out child belongs on, or null when it is where it belongs. A child whose payload names a
+  /// stream belongs on that one. A child whose payload names none, stored on its own composite's envelope id (the
+  /// causation of its lineage hop), was filed by a composite that named no stream, as the integrity re-delivery
+  /// bundle did before #1798: its producer stored it on its own id, as every message whose hop names no stream is
+  /// stored, so that is where it belongs.
+  /// </summary>
+  private static Guid? _belongsOn(Guid eventId, Guid storedOn, Guid named, string? causation) {
+    var target = named;
+    if (target == Guid.Empty) {
+      target = Guid.TryParse(causation, out var compositeId) && compositeId == storedOn ? eventId : storedOn;
+    }
+    return target != storedOn ? target : null;
   }
 
   /// <summary>

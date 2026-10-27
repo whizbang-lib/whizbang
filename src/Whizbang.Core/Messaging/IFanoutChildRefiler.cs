@@ -16,6 +16,13 @@ namespace Whizbang.Core.Messaging;
 /// <see cref="FanoutChildRefileReport.StreamsToRebuild"/>: the moved events reach those rows only through a rebuild.
 /// </para>
 /// <para>
+/// The integrity re-delivery repaired events the same way (its bundle named no stream, so each repaired event was filed
+/// under the bundle envelope's id). A repaired event whose payload names its stream is moved there like any other
+/// child; one whose payload names none, found on the stream its lineage hop names as its cause (the bundle's id), is
+/// moved onto its own id, where its producer stored it and where live delivery stores every message whose hop names no
+/// stream.
+/// </para>
+/// <para>
 /// Safe to repeat: a child already on its own stream is left alone, so a second run finds nothing to do.
 /// </para>
 /// </remarks>

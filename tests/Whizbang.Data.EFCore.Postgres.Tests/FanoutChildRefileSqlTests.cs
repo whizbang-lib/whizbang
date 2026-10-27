@@ -440,7 +440,7 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
       MessageId = id,
       Payload = payload,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
-      Hops = [],
+      Hops = hops,
     });
     await using (var ctx = CreateDbContext()) {
       await new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, options).StoreInboxMessagesAsync([new InboxMessage {
