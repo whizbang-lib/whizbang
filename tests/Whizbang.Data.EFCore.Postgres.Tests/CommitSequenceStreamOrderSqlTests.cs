@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Globalization;
+using System.Text.Json;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -265,6 +266,201 @@ public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
       .Because($"finding nothing to stamp read {shallow.Entries} index entries behind {HELD_BACK_SHALLOW_STREAMS * BACKLOG_VERSIONS} "
         + $"rows and {deep.Entries} behind {HELD_BACK_DEEP_STREAMS * BACKLOG_VERSIONS} ({deep.ByIndex}). A walk that reads every row behind the "
         + "horizon to learn none is eligible repeats that read on every fenced retry of an import");
+  }
+
+  /// <summary>
+  /// #1786: a backlog the statistics do not know about (an upgrade from below 046 writes every unstamped row's
+  /// commit-order columns in the same pass that creates them), every row sharing one insert_xid as 197 and 205 leave
+  /// it. The call reads its batch through idx_event_store_unstamped_insert_xid, under a Limit and without a sort, and
+  /// no scan of the event store returns more rows than the batch.
+  /// </summary>
+  /// <remarks>
+  /// Read from the plans the call's own statements ran (auto_explain, nested statements, actual row counts), which do
+  /// not depend on the machine.
+  /// </remarks>
+  [Test]
+  public async Task Stamp_ABacklogTheStatisticsDoNotKnow_IsReadOnceThroughTheInsertXidIndexAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await _fillBacklogTheStatisticsDoNotKnowAsync(conn);
+
+    var call = await _plansOfOneStampAsync(conn);
+
+    var walks = call.Nodes.Where(n => n.Index == "idx_event_store_unstamped_insert_xid").ToList();
+    await Assert.That(walks).Count().IsEqualTo(1)
+      .Because("the walk is the one read of the insert_xid index in a call");
+    await Assert.That(walks[0].ParentType).IsEqualTo("Limit")
+      .Because("the walk stops at the batch only when the Limit sits directly on the ordered index scan; a sort "
+        + "between them reads every unstamped row before the first one is returned");
+    await Assert.That(walks[0].RowsReturned).IsEqualTo(LARGE_BATCH);
+    var widest = call.Nodes.Where(n => n.Relation == "wh_event_store").MaxBy(n => n.RowsReturned)!;
+    await Assert.That(widest.RowsReturned).IsLessThanOrEqualTo(LARGE_BATCH)
+      .Because($"a call of {LARGE_BATCH} rows behind a backlog of {LARGE_BACKLOG_STREAMS * BACKLOG_VERSIONS} read "
+        + $"{widest.RowsReturned} rows in one {widest.Type} ({widest.Index ?? "no index"}); a call that reads the "
+        + "backlog to stamp a batch makes a drain cost the backlog squared over the batch");
+  }
+
+  /// <summary>
+  /// #1786: no step of a call compares the rows of its batch with each other. 205 joined the batch's own sets in one
+  /// statement, and on estimates as small as an unknown backlog gives (and on the generic plan a long-lived connection
+  /// settles on), the planner joined them by nested loop: a call of 1,000 rows removed about a million rows by join
+  /// filter, twice, so its cost grew with the square of the batch.
+  /// </summary>
+  [Test]
+  public async Task Stamp_ABacklogTheStatisticsDoNotKnow_NeverComparesTheBatchWithItselfAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await _fillBacklogTheStatisticsDoNotKnowAsync(conn);
+    // The plan the stamper's own connection uses once it has called the function more than five times.
+    await _execAsync(conn, "SET plan_cache_mode = force_generic_plan");
+
+    var call = await _plansOfOneStampAsync(conn);
+
+    var removed = call.Nodes.Sum(n => n.RemovedByJoinFilter);
+    await Assert.That(call.Stamped).IsEqualTo(LARGE_BATCH);
+    await Assert.That(removed).IsLessThanOrEqualTo(LARGE_BATCH)
+      .Because($"stamping {LARGE_BATCH} rows removed {removed} rows by join filter. A join of the batch with "
+        + "itself compares every row with every other, so halving the batch only quarters a cost that should halve");
+  }
+
+  /// <summary>
+  /// #1786: the same unknown backlog drains completely, in insertion order and in version order within each stream,
+  /// while a row committed behind an open transaction waits for it and is then numbered after every row before it:
+  /// the visibility fence and the commit order the rewrite must keep.
+  /// </summary>
+  [Test]
+  public async Task Stamp_ABacklogTheStatisticsDoNotKnow_DrainsInInsertionOrderBehindTheFenceAsync() {
+    await using var dataSource = NpgsqlDataSource.Create(ConnectionString);
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await using var bystander = await dataSource.OpenConnectionAsync();
+    await using var late = await dataSource.OpenConnectionAsync();
+    await _fillBacklogTheStatisticsDoNotKnowAsync(conn);
+    await _execAsync(conn, "SET plan_cache_mode = force_generic_plan");
+    // The bystander holds the horizon below the late transaction, which commits a row behind it.
+    await _execAsync(bystander, "BEGIN");
+    _ = await _xidAsync(bystander);
+    var lateRow = Guid.CreateVersion7();
+    await _execAsync(late, "BEGIN");
+    await _appendAsync(late, lateRow, Guid.CreateVersion7(), version: 1);
+    await _execAsync(late, "COMMIT");
+
+    var calls = await _drainAsync(conn);
+
+    await Assert.That(calls).IsEqualTo((LARGE_BACKLOG_STREAMS * BACKLOG_VERSIONS / LARGE_BATCH) + 1)
+      .Because("each call stamps a full batch until the backlog is drained, and the last one finds nothing eligible");
+    await Assert.That(await _sequenceAsync(conn, lateRow)).IsNull()
+      .Because("the late row committed behind the bystander's open transaction, so it is not yet past the horizon");
+    await Assert.That(await _countAsync(conn, "SELECT count(*) FROM wh_event_store WHERE commit_sequence IS NULL")).IsEqualTo(1);
+    await Assert.That(await _countAsync(conn, """
+      SELECT count(*) FROM (
+        SELECT row_number() OVER (ORDER BY commit_sequence) AS by_sequence,
+               row_number() OVER (ORDER BY insert_order) AS by_insertion
+        FROM wh_event_store WHERE commit_sequence IS NOT NULL) o
+      WHERE o.by_sequence <> o.by_insertion
+      """)).IsEqualTo(0)
+      .Because("every batch is numbered in insertion order and each batch after the one before; each stream was "
+        + "inserted in version order, so this is also version order within every stream");
+
+    await _execAsync(bystander, "ROLLBACK");
+    var afterwards = await _stampAsync(conn, LARGE_BATCH);
+
+    await Assert.That(afterwards).IsEqualTo(1);
+    await Assert.That(await _stampedAsync(conn, lateRow))
+      .IsGreaterThan(await _countAsync(conn, "SELECT max(commit_sequence) FROM wh_event_store WHERE event_id <> '" + lateRow + "'"))
+      .Because("a row stamped later always has a higher value than every row stamped before it");
+  }
+
+  private const int LARGE_BACKLOG_STREAMS = 3_000;
+  private const int LARGE_BATCH = 1_000;
+  private const int STREAMS_PER_BLOCK = 100;
+  private const int MOST_CALLS = 100;
+
+  /// <summary>
+  /// The backlog an upgrade from below 046 leaves: statistics taken while the table was empty, then
+  /// <see cref="LARGE_BACKLOG_STREAMS"/> streams of <see cref="BACKLOG_VERSIONS"/> rows in one statement, rewritten by
+  /// 205's own backfill so every row carries the insert_xid it gives them. Streams are inserted in blocks of
+  /// <see cref="STREAMS_PER_BLOCK"/>, version by version within a block, so a batch takes several versions of each of
+  /// its streams, interleaved.
+  /// </summary>
+  private static async Task _fillBacklogTheStatisticsDoNotKnowAsync(NpgsqlConnection conn) {
+    await _execAsync(conn, "ALTER TABLE wh_event_store SET (autovacuum_enabled = false)");
+    await _execAsync(conn, "ANALYZE wh_event_store");
+    await _execAsync(conn, $"""
+      WITH s AS (SELECT n, gen_random_uuid() AS stream_id FROM generate_series(0, {LARGE_BACKLOG_STREAMS - 1}) n)
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
+      SELECT gen_random_uuid(), s.stream_id, s.stream_id, 'TestAggregate', v, 'TestEvent', NULL, NOW()
+      FROM s CROSS JOIN generate_series(1, {BACKLOG_VERSIONS}) v
+      ORDER BY s.n / {STREAMS_PER_BLOCK}, v, s.n
+      """);
+    await _execAsync(conn, "UPDATE wh_event_store SET insert_xid = xmin::text::xid8 WHERE commit_sequence IS NULL");
+  }
+
+  /// <summary>Stamps <see cref="LARGE_BATCH"/> at a time until a call stamps nothing, and returns the number of calls.</summary>
+  private static async Task<int> _drainAsync(NpgsqlConnection conn) {
+    for (var call = 1; call <= MOST_CALLS; call++) {
+      if (await _stampAsync(conn, LARGE_BATCH) == 0) {
+        return call;
+      }
+    }
+    throw new InvalidOperationException($"the backlog did not drain in {MOST_CALLS} calls of {LARGE_BATCH}");
+  }
+
+  /// <summary>
+  /// One stamp of <see cref="LARGE_BATCH"/>, rolled back, with the plan of every statement it ran: auto_explain logs
+  /// each nested statement's plan, with actual row counts, as a notice on this connection.
+  /// </summary>
+  private static async Task<StampPlans> _plansOfOneStampAsync(NpgsqlConnection conn) {
+    var notices = new List<string>();
+    void Collect(object? _, NpgsqlNoticeEventArgs e) => notices.Add(e.Notice.MessageText);
+    await _execAsync(conn, """
+      LOAD 'auto_explain';
+      SET auto_explain.log_min_duration = 0;
+      SET auto_explain.log_analyze = on;
+      SET auto_explain.log_timing = off;
+      SET auto_explain.log_nested_statements = on;
+      SET auto_explain.log_format = 'json';
+      SET auto_explain.log_level = 'notice';
+      """);
+    conn.Notice += Collect;
+    await _execAsync(conn, "BEGIN");
+    var stamped = await _stampAsync(conn, LARGE_BATCH);
+    await _execAsync(conn, "ROLLBACK");
+    conn.Notice -= Collect;
+    await _execAsync(conn, "SET auto_explain.log_min_duration = -1");
+    var nodes = new List<PlanNode>();
+    foreach (var notice in notices.Where(n => n.Contains("\"Plan\"", StringComparison.Ordinal))) {
+      using var document = JsonDocument.Parse(notice[notice.IndexOf('{', StringComparison.Ordinal)..]);
+      _flatten(document.RootElement.GetProperty("Plan"), parentType: null, nodes);
+    }
+    return new StampPlans(stamped, nodes);
+  }
+
+  /// <summary>What one call stamped, and every node of every statement it ran, each with its parent's type.</summary>
+  private sealed record StampPlans(int Stamped, IReadOnlyList<PlanNode> Nodes);
+
+  private static void _flatten(JsonElement node, string? parentType, List<PlanNode> nodes) {
+    var type = node.GetProperty("Node Type").GetString()!;
+    nodes.Add(new PlanNode(
+      type,
+      parentType,
+      node.TryGetProperty("Relation Name", out var relation) ? relation.GetString() : null,
+      node.TryGetProperty("Index Name", out var index) ? index.GetString() : null,
+      (long)(node.GetProperty("Actual Rows").GetDouble() * node.GetProperty("Actual Loops").GetDouble()),
+      node.TryGetProperty("Rows Removed by Join Filter", out var removed) ? (long)removed.GetDouble() : 0));
+    if (node.TryGetProperty("Plans", out var children)) {
+      foreach (var child in children.EnumerateArray()) {
+        _flatten(child, type, nodes);
+      }
+    }
+  }
+
+  private sealed record PlanNode(string Type, string? ParentType, string? Relation, string? Index, long RowsReturned, long RemovedByJoinFilter);
+
+  private static async Task<long> _countAsync(NpgsqlConnection conn, string sql) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
   }
 
   private const int HELD_BACK_SHALLOW_STREAMS = 100;
