@@ -27,8 +27,8 @@ internal static class StreamIdSelection {
   /// constructor parameter.
   /// </summary>
   internal sealed record Declaration(string Name, AttributeData Attribute, IPropertySymbol? Property, IParameterSymbol? Parameter) {
-    /// <summary>Whether the attribute says <c>Override = true</c>.</summary>
-    public bool IsOverride { get; } = Attribute.NamedArguments.Any(a => a.Key == OVERRIDE && a.Value.Value is true);
+    /// <summary>Whether the attribute says <c>Override = true</c>; absent or <c>false</c> is a plain stream id.</summary>
+    public bool IsOverride { get; } = Attribute.NamedArguments.FirstOrDefault(a => a.Key == OVERRIDE).Value.Value is true;
   }
 
   /// <summary>
@@ -43,7 +43,7 @@ internal static class StreamIdSelection {
   /// </summary>
   internal static List<Declaration> Declared(INamedTypeSymbol type) {
     var properties = type.GetMembers().OfType<IPropertySymbol>().ToList();
-    return properties
+    return [.. properties
       .Select(p => (Symbol: (ISymbol)p, Attribute: _streamIdAttribute(p)))
       .Concat(type.InstanceConstructors.SelectMany(c => c.Parameters)
         .Select(p => (Symbol: (ISymbol)p, Attribute: _streamIdAttribute(p))))
@@ -54,14 +54,17 @@ internal static class StreamIdSelection {
             properties.FirstOrDefault(p => string.Equals(p.Name, d.Symbol.Name, System.StringComparison.OrdinalIgnoreCase)),
             (IParameterSymbol)d.Symbol))
       .GroupBy(d => d.Name, System.StringComparer.OrdinalIgnoreCase)
-      .Select(g => g.First())
-      .ToList();
+      .Select(g => g.First())];
   }
 
   /// <summary>The stream id the generators use for <paramref name="type"/>, or null when it has none.</summary>
+  /// <remarks>
+  /// The constructor-parameter fallback runs only when the search found nothing at the type itself, so the type declares
+  /// no <c>[StreamId]</c> property and every declaration left is a parameter; one with no matching property is skipped.
+  /// </remarks>
   internal static Choice? Select(INamedTypeSymbol type) =>
     SelectInherited(type, includeSelf: true)
-      ?? _toChoice(Declared(type).FirstOrDefault(d => d.Parameter is not null && d.Property is not null));
+      ?? _toChoice(Declared(type).FirstOrDefault(d => d.Property is not null));
 
   /// <summary>
   /// The stream id found by searching the levels only, without the type's own plain constructor parameter: from the

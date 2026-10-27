@@ -357,6 +357,24 @@ public class StreamIdAttributeAnalyzerTests {
   }
 
   [Test]
+  public async Task TwoConstructorParameterStreamIdsWithNoProperty_ReportWhiz006NamingTheFirstAsync() {
+    // A plain class's constructor parameters have no property for the extractor to read, so neither is chosen as
+    // the stream id; the first declared is still named as the one kept, and the second is reported.
+    const string source = """
+      using Whizbang.Core;
+      namespace App;
+      public class OrderPlaced : IEvent {
+        public OrderPlaced([StreamId] System.Guid orderId, [StreamId] System.Guid customerId) { }
+      }
+      """;
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<StreamIdAttributeAnalyzer>(source);
+
+    var whiz006 = diagnostics.Single(d => d.Id == "WHIZ006");
+    await Assert.That(whiz006.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("'orderId' will be used");
+    await Assert.That(whiz006.Location.SourceSpan.Start).IsGreaterThan(source.IndexOf("orderId", StringComparison.Ordinal));
+  }
+
+  [Test]
   public async Task TheAnalyzer_DeclaresWhiz016AsAWarningAsync() {
     var descriptor = new StreamIdAttributeAnalyzer().SupportedDiagnostics.Single(d => d.Id == "WHIZ016");
 
