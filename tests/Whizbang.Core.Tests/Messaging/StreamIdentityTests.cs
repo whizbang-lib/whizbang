@@ -122,6 +122,18 @@ public class StreamIdentityTests {
     await Assert.That(StreamIdentity.OfFanoutChild(null, payload, bundle, source, streamIds: null)).IsEqualTo(composite);
   }
 
+  /// <summary>A producer outside the dispatcher names the payload's stream on its hop, or nothing when it names none.</summary>
+  [Test]
+  public async Task HopMetadataFor_NamesThePayloadsStreamOrNothingAsync() {
+    var named = Guid.CreateVersion7();
+
+    await Assert.That(StreamIdentity.FromHopMetadata(StreamIdentity.HopMetadataFor(new object(), new FixedExtractor(named)))).IsEqualTo(named);
+    await Assert.That(StreamIdentity.HopMetadataFor(new object(), new FixedExtractor(Guid.Empty))).IsNull()
+      .Because("an empty stream id names no stream, so the hop names none and the receiver keeps the message id");
+    await Assert.That(StreamIdentity.HopMetadataFor(new object(), streamIds: null)).IsNull()
+      .Because("the generated registry finds no [StreamId] on a plain object");
+  }
+
   private sealed class ProbeComposite : Whizbang.Core.Minting.CompositeEventBase;
 
   private sealed class UnbasedComposite : Whizbang.Core.Minting.ICompositeEvent {

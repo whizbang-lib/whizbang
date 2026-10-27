@@ -99,6 +99,18 @@ internal static class StreamIdentity {
 
   private static Guid? _nonEmpty(Guid? streamId) => streamId is { } id && id != Guid.Empty ? id : null;
 
+  /// <summary>
+  /// Hop metadata naming the stream <paramref name="message"/>'s <c>[StreamId]</c> names, or null when it names none, for
+  /// a producer that builds an envelope outside the dispatcher (which writes the hop itself).
+  /// </summary>
+  /// <param name="message">The message.</param>
+  /// <param name="streamIds">Reads a <c>[StreamId]</c>; the generated registry's when null.</param>
+  /// <returns>The metadata, or null.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:HopMetadataFor_NamesThePayloadsStreamOrNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  internal static Dictionary<string, JsonElement>? HopMetadataFor(object message, IStreamIdExtractor? streamIds) =>
+    _named(message, streamIds ?? Registry.StreamIdExtractorRegistry.GetComposite()) is { } streamId ? HopMetadata(streamId) : null;
+
   /// <summary>Hop metadata naming <paramref name="streamId"/>, read back by <see cref="FromHopMetadata"/>.</summary>
   /// <param name="streamId">The stream.</param>
   /// <returns>The metadata.</returns>
