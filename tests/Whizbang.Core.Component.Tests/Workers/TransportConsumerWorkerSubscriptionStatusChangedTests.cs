@@ -176,8 +176,12 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
     await worker.StartAsync(cts.Token);
     await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
 
+    // The retry helper attaches its disconnect handler after it records Healthy, so wait for the handler
+    // too: a disconnect raised before it is attached has nobody to hear it.
+    var subscription = transport.Subscriptions.Single();
+    await subscription.DisconnectHandled.Task.WaitAsync(_guard);
     var disconnect = new InvalidOperationException("link dropped");
-    transport.Subscriptions.Single().Disconnect(disconnect);
+    subscription.Disconnect(disconnect);
     await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: 2).WaitAsync(_guard);
 
     var changes = recorder.Changes;
@@ -287,14 +291,25 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
   }
 
   private sealed class StatusSubscription : ISubscription {
+    private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
+
+    /// <summary>Completes when a disconnect handler is attached: the precondition for a disconnect to be handled.</summary>
+    public TaskCompletionSource DisconnectHandled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsActive => true;
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
+      add {
+        _onDisconnected += value;
+        DisconnectHandled.TrySetResult();
+      }
+      remove => _onDisconnected -= value;
+    }
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { }
 
     public void Disconnect(Exception error) =>
-      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+      _onDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
         Reason = "simulated disconnect",
         Exception = error,
         IsApplicationInitiated = false,
