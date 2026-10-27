@@ -120,7 +120,7 @@ public class ExternalTableRewriteTests : EFCoreTestBase {
 
     await Assert.That(seen!.ClientEnvironment["PGPASSWORD"]).IsEqualTo(new NpgsqlConnectionStringBuilder(ConnectionString).Password)
       .Because("the configured string, unlike the live connection's, still carries the password");
-    await Assert.That(ratio).IsNotNull();
+    await Assert.That(ratio.HasValue).IsTrue().Because("the table was analyzed and measured after the program reported success");
   }
 
   [Test]

@@ -1100,12 +1100,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteUnderDataOnlyRoleTests.cs</tests>
   public async Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
-    if (!_isFrameworkTableName(tableName)) {
-      throw new ArgumentException(
-        $"Refusing to rewrite '{tableName}': only framework tables matching wh_[a-z0-9_] may be rewritten.",
-        nameof(tableName));
-    }
+    _requireFrameworkTable(tableName);
 
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
@@ -1129,6 +1124,75 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await _vacuumFullAndAnalyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
     }
 
+    return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// The program gets the same connection <c>VACUUM FULL</c> would run on, as libpq environment variables: the
+  /// schema-initialization connection when configured, because it owns the table; otherwise the application's, for a
+  /// table its role owns. The application's connection string is the configured one, which still carries its
+  /// password; a context configured with a data source has none to give, so the program's libpq finds its own (a
+  /// password file or service file). After the program reports success the table is analyzed on the owning connection
+  /// and re-measured, exactly as after <c>VACUUM FULL</c>.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExternalTableRewriteTests.cs</tests>
+  public async Task<double?> RewriteTableWithAsync(
+      string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(rewrite);
+    _requireFrameworkTable(tableName);
+
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var qualified = BuildSchemaQualifiedName(schema, tableName);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+
+    var initConnectionString = _schemaInitConnectionString();
+    if (initConnectionString is null
+        && await _notOwnedReasonAsync(conn, qualified, tableName, cancellationToken).ConfigureAwait(false) is { } notOwned) {
+      EFCoreWorkCoordinatorLog.TableNotRewritten(_log, tableName, notOwned);
+      return null;
+    }
+    var clientConnectionString = initConnectionString ?? _configuredConnectionString() ?? conn.ConnectionString;
+    var target = new TableRewriteTarget(qualified, LibpqEnvironment.FromConnectionString(clientConnectionString));
+    if (!await rewrite(target, cancellationToken).ConfigureAwait(false)) {
+      return null;
+    }
+
+    if (initConnectionString is not null) {
+      await using var initConnection = new Npgsql.NpgsqlConnection(initConnectionString);
+      await initConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
+      await _analyzeAsync(initConnection, qualified, cancellationToken).ConfigureAwait(false);
+    } else {
+      await _analyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+    }
+    return await _measureRatioAsync(conn, tableName, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>Refuses a name that is not one of the framework's own tables: it is interpolated into DDL.</summary>
+  private static void _requireFrameworkTable(string tableName) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    if (!_isFrameworkTableName(tableName)) {
+      throw new ArgumentException(
+        $"Refusing to rewrite '{tableName}': only framework tables matching wh_[a-z0-9_] may be rewritten.",
+        nameof(tableName));
+    }
+  }
+
+  /// <summary>
+  /// The connection string the context was configured with, which still carries its password (the live connection's
+  /// has it redacted), or null for a context configured with a data source.
+  /// </summary>
+  private string? _configuredConnectionString() =>
+    Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension.Extract(
+      Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
+        .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)).ConnectionString;
+
+  /// <summary>The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it.</summary>
+  private static async Task<double?> _measureRatioAsync(
+      Npgsql.NpgsqlConnection conn, string tableName, CancellationToken cancellationToken) {
     await using var measure = conn.CreateCommand().WithCoordinatorTimeout();
     // pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup: the stats collector is
     // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
@@ -1258,6 +1322,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       await vacuum.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    await _analyzeAsync(conn, qualified, cancellationToken).ConfigureAwait(false);
+  }
+
+  // ANALYZE, so a re-measure reads the row count the rewrite left rather than the one before it.
+  private static async Task _analyzeAsync(
+      System.Data.Common.DbConnection conn, string qualified, CancellationToken cancellationToken) {
     await using var analyze = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
     analyze.CommandText = $"ANALYZE {qualified}";

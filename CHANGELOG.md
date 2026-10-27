@@ -186,6 +186,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Whizbang:Housekeeping:SettledCooldown` and `Whizbang:Housekeeping:MaxDeferral`.
   `Whizbang:Configuration:UnknownKeys` (default `Warn`) selects `Warn`, `Throw` (fail start, naming every
   unknown key) or `Ignore`.
+- **pg_repack table rewrites, in process or by an external job** (#1753): `TableRewriteStrategy = PgRepack` rewrites
+  requested tables online with pg_repack and requires the pg_repack extension.
+  `Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode` picks who runs the client: `InProcess` (default; the
+  maintainer-duty holder runs it per table in the `Rewrite` step) or `External` (Whizbang never starts a process; the
+  tables stay queued for an operator's job). In process, the client (`:ClientPath`, default `pg_repack` from `PATH`)
+  is a probed prerequisite, `program/pg_repack`: missing, it fails start when `Mode` was set explicitly and degrades
+  with a warning when left at its default. The connection reaches the client only as libpq environment variables
+  (`PGPASSWORD` among them), never as process arguments, and the client runs with `--no-superuser-check` and
+  `--no-kill-backend`. `IExternalProcessRunner` is the seam every process start goes through, and
+  `IWorkCoordinator.RewriteTableWithAsync` hands an external rewrite its table and connection and re-measures after.
+- **Removed configuration keys are declared with `[RemovedConfigurationKey]`** (#1755): the hand-kept table is gone.
+  The configuration manifest generator records each declaration (on the assembly, or on the replacement's options
+  type) in the assembly's manifest, `ConfigurationManifestRegistry.FindRemovedKey` answers the startup check, and a
+  package built on Whizbang declares its own removed keys the same way. All eight former entries moved to the
+  attribute. A key removed with nothing in its place logs event 3, naming no replacement.
 
 #### Messaging & delivery
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;

@@ -18,4 +18,10 @@ public static class TableRewriteStrategies {
   /// registered under it in this version, so the step reports that and leaves requested tables queued.
   /// </summary>
   public const string PG_SQUEEZE = "PgSqueeze";
+
+  /// <summary>
+  /// Online rewrite through the pg_repack client, selected by <see cref="TableRewriteStrategy.PgRepack"/>; run by
+  /// <see cref="PgRepackTableRewriter"/> in process, or by an external job.
+  /// </summary>
+  public const string PG_REPACK = "PgRepack";
 }

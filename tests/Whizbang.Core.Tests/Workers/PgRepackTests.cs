@@ -139,10 +139,11 @@ public sealed class PgRepackTests {
 
   [Test]
   public async Task Strategy_IsPgRepackAsync() {
-    await Assert.That(TableRewriteStrategies.PG_REPACK).IsEqualTo("PgRepack")
-      .Because("the name is the configuration value an operator writes");
     var rewriter = new PgRepackTableRewriter(_options(PgRepackMode.InProcess), new RecordingRunner(), null, NullLogger<PgRepackTableRewriter>.Instance);
+
     await Assert.That(rewriter.Strategy).IsEqualTo(TableRewriteStrategies.PG_REPACK);
+    await Assert.That(rewriter.Strategy).IsEqualTo("PgRepack")
+      .Because("the name is the configuration value an operator writes");
   }
 
   [Test]
@@ -270,6 +271,7 @@ public sealed class PgRepackTests {
     await Assert.That(probe.Arguments).IsEquivalentTo(["--version"]);
     await Assert.That(probe.Environment).IsEmpty().Because("reading the version needs no connection, so no credentials");
     await Assert.That(rewriter.CanRun).IsTrue();
+    await Assert.That(rewriter.CannotRunReason).IsEqualTo("none: the pg_repack client can run on this host");
   }
 
   [Test]
@@ -313,7 +315,7 @@ public sealed class PgRepackTests {
 
     var requirement = active.Single();
     await Assert.That(requirement.Activation).IsEqualTo(CapabilityActivation.Implicit);
-    await Assert.That(requirement.Requirement.Capability).IsEqualTo(PgRepackClient.CAPABILITY);
+    await Assert.That(requirement.Requirement.Capability).IsEqualTo(PgRepackClient.Capability);
     await Assert.That(requirement.Key).IsEqualTo(MODE_KEY);
     await Assert.That(requirement.Value).IsEqualTo("InProcess");
   }

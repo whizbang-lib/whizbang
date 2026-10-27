@@ -71,6 +71,8 @@ public sealed class ExternalProcessRequestTests {
 
   [Test]
   public async Task Runner_NullRequest_IsRefusedAsync() {
-    await Assert.That(() => new ExternalProcessRunner().RunAsync(null!, CancellationToken.None)).Throws<ArgumentNullException>();
+    Func<Task> act = () => new ExternalProcessRunner().RunAsync(null!, CancellationToken.None);
+
+    await Assert.That(act).Throws<ArgumentNullException>();
   }
 }

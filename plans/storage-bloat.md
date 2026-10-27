@@ -129,7 +129,10 @@ Each slice is one red-then-green increment and its own commit.
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
    an external job reading the same queue). RED: the resolution matrix gains the PgRepack column.
    Docs: the storage-maintenance page (when to prefer it over pg_squeeze).
-   **Status (2026-10-24):** open. No `PgRepack` strategy. Depends on slice 2 and WS-8 slice 9.
+   **Status (2026-10-26):** done on branch `feat/1753-1755-repack-removed-keys` with WS-8 slice 9 (#1753):
+   `TableRewriteStrategy.PgRepack` carries `[RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite
+   (pg_repack)")]` and resolves to `TableRewriteStrategies.PG_REPACK` in every cell of the matrix;
+   `PgRepackTableRewriter` runs it in process, or the step reports the queue left to an external job.
 
 ### C2: autovacuum
 

@@ -171,7 +171,7 @@ Each slice is one red-then-green increment and its own commit.
    `ICapabilityRequirementSource` seam (the registry is static and module-initialized; the verdict should read
    requirements through the seam so slice 6's vector columns can add a runtime source), and each setting's
    declared default (needed for "a default turned the feature on"). Not replaced: the recorded key manifest
-   and `RemovedConfigurationKeys` (no `[RemovedConfigurationKey]` yet). Original scope: `[RequiresCapability]` and
+   and `RemovedConfigurationKeys` (replaced by `[RemovedConfigurationKey]` in #1755). Original scope: `[RequiresCapability]` and
    `[RequiresPostgresExtension]` in core; a `ConfigurationManifestGenerator` in
    `src/Whizbang.Generators/`, modeled on `ServiceRequirementsGenerator.cs`, recognizing each literal
    `GetSection("<key>")` binding and emitting the key tree plus one requirement per attributed
@@ -243,7 +243,17 @@ Each slice is one red-then-green increment and its own commit.
    duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
    no client fails an explicit requirement and degrades an implicit one; external mode never starts a
    process; credentials never appear in the process arguments. Docs: the storage-maintenance page.
-   **Status (2026-10-24):** open. Depends on slice 4; pairs with `storage-bloat.md` slice 5.
+   **Status (2026-10-26):** done on branch `feat/1753-1755-repack-removed-keys` (#1753), with `storage-bloat.md`
+   slice 5. `TableRewriteStrategy.PgRepack` requires `postgres/pg_repack`; `PgRepackOptions.Mode` (`InProcess` default,
+   `External`) and `ClientPath` under `Whizbang:Workers:Maintenance:TableRewrite:PgRepack`. The client is the capability
+   `program/pg_repack` (`PgRepackClientCapabilityProvider`, probed with `--version` only when the strategy is PgRepack and
+   the mode is InProcess, so External never starts a process); `PgRepackClientRequirementSource` puts it in force,
+   explicit when `Mode` is configured and implicit at the default. `PgRepackTableRewriter` runs the client through
+   `IExternalProcessRunner` with `--no-superuser-check --no-kill-backend --table=<qualified>` and the connection as libpq
+   environment variables (`LibpqEnvironment`), handed over by `IWorkCoordinator.RewriteTableWithAsync` (the init
+   connection when configured; ownership checked otherwise; ANALYZE and re-measure after). Not covered: comparing the
+   client's version with the extension's (pg_repack itself refuses a mismatch, which is logged and left queued), and a
+   packaged job helper for External mode (the docs give the loop).
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
@@ -262,9 +272,10 @@ Each slice is one red-then-green increment and its own commit.
     `Whizbang:Workers:Maintenance:IntervalMinutes`. RED: a removed key warns with its replacement; a
     typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
     configuration reference.
-    **Status (2026-10-24):** done. #1490, closed by PR #1541. Removed keys are still a hand-kept table
-    (`src/Whizbang.Core/Configuration/RemovedConfigurationKeys.cs`), not `[RemovedConfigurationKey]` through
-    slice 2's generator.
+    **Status (2026-10-26):** done. #1490, closed by PR #1541. The removed-key table moved to
+    `[RemovedConfigurationKey]` through slice 2's generator on branch `feat/1753-1755-repack-removed-keys` (#1755): the
+    manifest carries `RemovedKeys`, `ConfigurationManifestRegistry.FindRemovedKey` answers the check, all eight entries
+    migrated (declared on `MaintenanceWorkerOptions`, `CapabilityOptions` and `SlidingWindowInboxOptions`).
 
 ## Engineering standards
 

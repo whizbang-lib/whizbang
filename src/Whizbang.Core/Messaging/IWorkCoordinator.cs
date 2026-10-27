@@ -1573,6 +1573,28 @@ public interface IWorkCoordinator {
   Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
+  /// <summary>
+  /// Rewrites a table with a program outside the process (the pg_repack client), returning the ratio afterwards so the
+  /// caller can confirm it worked. The coordinator checks the table name, chooses the connection (the
+  /// schema-initialization one, which owns the table, when configured; otherwise the application's, and only for a
+  /// table its role owns), hands <paramref name="rewrite"/> the qualified table and that connection as libpq
+  /// environment variables, then analyzes and re-measures the table.
+  /// </summary>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="rewrite">Runs the program; true when it rewrote the table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The re-measured bloat ratio, or null when nothing was rewritten: the program reported failure, the role does not
+  /// own the table, or the coordinator cannot hand out a connection (the default).
+  /// </returns>
+  /// <remarks>The <see cref="Whizbang.Core.Workers.PgRepackTableRewriter"/> strategy's rewrite.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExternalTableRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+  Task<double?> RewriteTableWithAsync(
+      string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;

@@ -31,6 +31,15 @@ public enum TableRewriteStrategy {
   PgSqueeze,
 
   /// <summary>
+  /// Online rewrite through pg_repack, which holds an ACCESS EXCLUSIVE lock only briefly at the start and the end.
+  /// Chosen explicitly, it requires the pg_repack extension, so a server that cannot provide it stops start with the
+  /// capability verdict's fix. Its client program runs in process or as an external job, as
+  /// <see cref="PgRepackOptions.Mode"/> says; in process the client is a probed prerequisite too.
+  /// </summary>
+  [RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite (pg_repack)")]
+  PgRepack,
+
+  /// <summary>
   /// <c>VACUUM FULL</c> at boot, under an ACCESS EXCLUSIVE lock, when <see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>
   /// permits it.
   /// </summary>
@@ -59,6 +68,7 @@ public readonly record struct TableRewritePlan(string? Strategy, string Reason);
 ///   <listheader><term>Strategy</term><description>Resolves to</description></listheader>
 ///   <item><term>Auto</term><description><c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing; never pg_squeeze (decision 1, #1671). A usable pg_squeeze is named, with how to opt in.</description></item>
 ///   <item><term>PgSqueeze</term><description>pg_squeeze, whatever AllowTableRewrite says (choosing it is the opt-in). When pg_squeeze is not usable the capability verdict stops start; it is never replaced by <c>VACUUM FULL</c>.</description></item>
+///   <item><term>PgRepack</term><description>pg_repack, whatever AllowTableRewrite says or pg_squeeze is (choosing it is the opt-in); in process or by an external job as <see cref="PgRepackOptions.Mode"/> says.</description></item>
 ///   <item><term>VacuumFull</term><description><c>VACUUM FULL</c> when AllowTableRewrite, otherwise nothing.</description></item>
 ///   <item><term>None</term><description>Nothing.</description></item>
 /// </list>
@@ -83,6 +93,7 @@ public static class TableRewriteStrategyResolver {
       TableRewriteStrategy.PgSqueeze => new(TableRewriteStrategies.PG_SQUEEZE, pgSqueezeUsable
         ? "PgSqueeze: online rewrite through pg_squeeze"
         : "PgSqueeze: pg_squeeze is not usable here, and the capability verdict stops start; VACUUM FULL is never used in its place"),
+      TableRewriteStrategy.PgRepack => new(TableRewriteStrategies.PG_REPACK, "PgRepack: online rewrite through pg_repack"),
       TableRewriteStrategy.VacuumFull => allowTableRewrite
         ? new(TableRewriteStrategies.VACUUM_FULL, "VacuumFull: " + AT_BOOT)
         : new(null, "VacuumFull: " + NOT_PERMITTED),

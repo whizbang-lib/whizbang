@@ -1143,6 +1143,13 @@ public sealed class MaintenanceWorkerOptions {
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
 
   /// <summary>
+  /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
+  /// <see cref="Workers.TableRewriteStrategy.PgRepack"/> runs.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
+  public TableRewriteOptions TableRewrite { get; } = new();
+
+  /// <summary>
   /// Whether an instance that takes the maintainer duty over from another instance (a hand-off, or a
   /// takeover after the holder lapsed) vacuums the work tables, as a first assignment always does.
   /// Default <c>true</c>.

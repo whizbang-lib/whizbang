@@ -231,6 +231,21 @@ public static class WorkerPipelineExtensions {
     // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
       new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // pg_repack (#1753): run in process by the maintainer-duty holder, or left to an external job. In process its
+    // client is a probed prerequisite; a host that does not use it starts no process, not even to probe.
+    services.TryAddSingleton<Whizbang.Core.Processes.IExternalProcessRunner, Whizbang.Core.Processes.ExternalProcessRunner>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgRepackTableRewriter>(sp =>
+      new PgRepackTableRewriter(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<Whizbang.Core.Processes.IExternalProcessRunner>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
+        sp.GetRequiredService<ILogger<PgRepackTableRewriter>>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Capabilities.ICapabilityProvider, PgRepackClientCapabilityProvider>(sp =>
+      new PgRepackClientCapabilityProvider(
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetRequiredService<Whizbang.Core.Processes.IExternalProcessRunner>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Capabilities.ICapabilityRequirementSource, PgRepackClientRequirementSource>(sp =>
+      new PgRepackClientRequirementSource(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
     // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
     // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>

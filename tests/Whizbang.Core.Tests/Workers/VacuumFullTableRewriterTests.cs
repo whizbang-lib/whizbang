@@ -111,9 +111,11 @@ public sealed class VacuumFullTableRewriterTests {
 
     var rewriters = provider.GetServices<ITableRewriter>().ToList();
 
-    await Assert.That(rewriters).Count().IsEqualTo(1)
+    await Assert.That(rewriters.OfType<VacuumFullTableRewriter>().Count()).IsEqualTo(1)
       .Because("AddWhizbangWorkers is idempotent; a second call must not register a second rewriter");
-    await Assert.That(rewriters[0]).IsTypeOf<VacuumFullTableRewriter>();
+    await Assert.That(rewriters.OfType<PgRepackTableRewriter>().Count()).IsEqualTo(1)
+      .Because("each strategy has one rewriter, VACUUM FULL and pg_repack (#1753)");
+    await Assert.That(rewriters).Count().IsEqualTo(2);
   }
 
   [Test]
