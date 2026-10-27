@@ -49,23 +49,12 @@ public class TransportConsumerWorkerResilienceEdgeTests {
   // ============================================================
 
   private sealed class EdgeSubscription : ISubscription {
-    private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
-    /// <summary>Completes when the retry helper hooks OnDisconnected — which happens strictly
-    /// AFTER the state transitions to Healthy, making it a deterministic "subscription
-    /// established" signal.</summary>
-    public TaskCompletionSource Hooked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsActive { get; private set; } = true;
     public bool IsDisposed { get; private set; }
     public int PauseCalls { get; private set; }
     public int ResumeCalls { get; private set; }
 
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
-      add {
-        _onDisconnected += value;
-        Hooked.TrySetResult();
-      }
-      remove => _onDisconnected -= value;
-    }
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
 
     public Task PauseAsync() {
       PauseCalls++;
@@ -89,10 +78,6 @@ public class TransportConsumerWorkerResilienceEdgeTests {
 
     public int SubscribeBatchCallCount => _subscribeBatchCallCount;
     public ConcurrentQueue<EdgeSubscription> Subscriptions { get; } = new();
-    /// <summary>Completes with the first successfully created subscription — signal-based
-    /// wait for tests whose initial subscribe attempts intentionally fail.</summary>
-    public TaskCompletionSource<EdgeSubscription> FirstSubscriptionCreated { get; } =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
 
@@ -115,7 +100,6 @@ public class TransportConsumerWorkerResilienceEdgeTests {
       _batchHandler = batchHandler;
       var sub = new EdgeSubscription();
       Subscriptions.Enqueue(sub);
-      FirstSubscriptionCreated.TrySetResult(sub);
       return Task.FromResult<ISubscription>(sub);
     }
 
@@ -377,8 +361,7 @@ public class TransportConsumerWorkerResilienceEdgeTests {
     // First subscribe attempt throws → after 1 failed attempt the state goes Failed
     // (InitialRetryAttempts=1, RetryIndefinitely=false). The health monitor (1 ms sweep)
     // resets the state and re-subscribes; the second attempt succeeds. The test waits on
-    // the subscription's OnDisconnected hook, which the retry helper wires strictly AFTER
-    // the state flips to Healthy — a deterministic completion signal.
+    // the state's own change to Healthy (SubscriptionStatusChanged), the transition it asserts.
     var transport = new EdgeTransport(failFirstBatchSubscribes: 1);
     var resilience = new SubscriptionResilienceOptions {
       InitialRetryAttempts = 1,
@@ -389,16 +372,15 @@ public class TransportConsumerWorkerResilienceEdgeTests {
     };
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = _buildWorker(transport, _oneDestination(), resilience, sp);
+    using var statuses = new SubscriptionStatusRecorder(worker);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-    // Signal-based wait: the monitor's recovery subscribe creates the FIRST successful
-    // subscription (the initial attempt threw). Then wait for its OnDisconnected hook,
-    // which the retry helper wires strictly AFTER Status flips to Healthy.
-    var recovered = await transport.FirstSubscriptionCreated.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await recovered.Hooked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // Wait on the transition asserted below: the state changing to Healthy. The initial attempt
+    // threw, so the only change to Healthy is the health monitor's recovery (#1830).
+    await statuses.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(transport.SubscribeBatchCallCount).IsGreaterThanOrEqualTo(2)
       .Because("Recovery requires a second subscribe attempt after the initial failure.");

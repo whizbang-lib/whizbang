@@ -25,8 +25,8 @@ namespace Whizbang.Core.Tests.Workers;
 /// Health-monitor internals for <see cref="TransportConsumerWorker"/>: the sweep loop's
 /// generic exception handler must contain failures raised inside a sweep (here: a logger
 /// that throws while reporting the recovery attempt) so the NEXT sweep still recovers the
-/// failed subscription. All waits are signal-based (TCS, SubscriptionsReady, OnDisconnected
-/// hook) — no test-side polling.
+/// failed subscription. All waits are signal-based (TCS, SubscriptionsReady,
+/// SubscriptionStatusChanged) — no test-side polling.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
 [Category("Workers")]
@@ -70,6 +70,7 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
       eventMarkerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance),
       controlClass: Options.Create(new ControlClassOptions()));
 
+    using var statuses = new SubscriptionStatusRecorder(worker);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
@@ -79,10 +80,9 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
     await logger.MonitorErrorLogged.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Sweep 2+: the logger no longer throws → the monitor resets the Failed state and
-    // re-subscribes. Wait on the OnDisconnected hook, which the retry helper wires
-    // strictly AFTER the state flips to Healthy — a deterministic completion signal.
-    var recovered = await transport.FirstSubscriptionCreated.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await recovered.Hooked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // re-subscribes. Wait on the transition asserted below, the state changing to Healthy;
+    // the initial attempt threw, so that change is the monitor's recovery (#1830).
+    await statuses.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(TimeSpan.FromSeconds(10));
 
     await Assert.That(logger.ThrewOnRecoveryLog).IsTrue()
       .Because("The sabotage must actually have fired inside the monitor sweep — otherwise the test proves nothing about the catch handler.");
@@ -127,21 +127,10 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
   }
 
   private sealed class MonitorSubscription : ISubscription {
-    private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
-
-    /// <summary>Completes when the retry helper hooks OnDisconnected — which happens strictly
-    /// AFTER the state transitions to Healthy, making it a deterministic "subscription
-    /// established" signal.</summary>
-    public TaskCompletionSource Hooked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsActive => true;
 
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
-      add {
-        _onDisconnected += value;
-        Hooked.TrySetResult();
-      }
-      remove => _onDisconnected -= value;
-    }
+    // This double never disconnects, so a handler the retry helper attaches has nothing to observe.
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected { add { } remove { } }
 
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
@@ -155,11 +144,6 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
     private int _subscribeBatchCallCount;
 
     public int SubscribeBatchCallCount => Volatile.Read(ref _subscribeBatchCallCount);
-
-    /// <summary>Completes with the first successfully created subscription — signal-based
-    /// wait for a test whose initial subscribe attempt intentionally fails.</summary>
-    public TaskCompletionSource<MonitorSubscription> FirstSubscriptionCreated { get; } =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
@@ -179,9 +163,7 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
       if (Interlocked.Decrement(ref _failuresRemaining) >= 0) {
         throw new InvalidOperationException("simulated subscribe failure");
       }
-      var sub = new MonitorSubscription();
-      FirstSubscriptionCreated.TrySetResult(sub);
-      return Task.FromResult<ISubscription>(sub);
+      return Task.FromResult<ISubscription>(new MonitorSubscription());
     }
 
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
