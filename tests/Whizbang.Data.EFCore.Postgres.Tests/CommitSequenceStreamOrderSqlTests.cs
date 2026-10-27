@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/197_CommitSequenceInsertionOrder.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/247_StampReadsOnlyTheBatchItStamps.sql</code-under-test>
 [Category("Shard1")]
 public class CommitSequenceStreamOrderSqlTests : EFCoreTestBase {
 

@@ -722,6 +722,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vector(n)` matches too. A real type change (`TEXT` to `INTEGER`, or a different length or precision) is still
   destructive. The existing columns are now read from `pg_attribute`. No migration. The EF Core driver does not choose
   a migration strategy from column types, so it is unaffected.
+- **The commit-order stamper drains a whole-store backlog in time proportional to its size (Fixes #1786).** After an
+  upgrade that left every historical event unstamped, the stamper's batch fell to one row per call and stayed there.
+  Two causes, both fixed. The stamp (migration 247) is now four statements that can each be planned only one way: the
+  walk reads its batch through the insert-transaction index and stops, with sorting off for it; no step joins the
+  batch's own intermediate sets (205's one statement was planned as nested loops on the small estimates an unknown
+  backlog gives, so a 1,000-row call compared about a million pairs, twice); and the update reaches each row by key.
+  The order, the visibility fence and the signature are unchanged. The batch sizing (`CommitOrderStampSizer`) tells a
+  fixed per-call cost from one that follows the size: when a halved call cost at least three quarters of the call
+  twice its size, the batch stops shrinking there, and any call well inside the budget grows the batch again, past
+  any size a slow call or a timeout backed off to, instead of the cap holding until the backlog drained.
+
 - **A rebuild of a versioned perspective no longer refuses a stream whose events were appended out of event-id
   order (Fixes #1819).** A selected-streams rebuild folds a model marked `IVersionedApplyTarget` from an empty model
   in stream-version order, so its write carries the event id of the last event by version. When that event was minted

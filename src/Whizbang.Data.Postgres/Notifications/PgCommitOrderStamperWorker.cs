@@ -604,7 +604,7 @@ public sealed partial class PgCommitOrderStamperWorker(
   static partial void LogRoleDrained(ILogger logger);
 
   /// <summary>
-  /// Halves the batch after a call that timed out (#1217) and holds growth at the new size until the backlog drains.
+  /// Halves the batch after a call that timed out (#1217); it grows again only after a call well inside the budget (#1786).
   /// </summary>
   /// <remarks>
   /// A canceled call rolled back everything it did, so the same size can never succeed: one stamper repeated a 30 s
@@ -620,7 +620,8 @@ public sealed partial class PgCommitOrderStamperWorker(
   /// <summary>
   /// Sizes the next call from the count this one returned rather than from a count of what is left: a probe for the
   /// backlog size would be another read of the set a stamp exists to avoid reading. How long the call took bounds the
-  /// size too (#1327): see <see cref="CommitOrderStampBatch.Next(int, int, int, int, int?, TimeSpan, TimeSpan)"/>.
+  /// size too (#1327), and a halving that stopped making calls cheaper stops the shrinking (#1786): see
+  /// <see cref="CommitOrderStampSizer"/>.
   /// </summary>
   private void _resizeAfter(int stamped, TimeSpan took) {
     var asked = _sizer.Size;
