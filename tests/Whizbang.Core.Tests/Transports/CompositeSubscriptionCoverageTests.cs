@@ -36,6 +36,8 @@ public class CompositeSubscriptionCoverageTests {
 
     public void Dispose() => DisposeCallCount++;
 
+    public SubscriptionDisconnectedEventArgs? Disconnection { get; set; }
+
     public void RaiseDisconnected(SubscriptionDisconnectedEventArgs args) => OnDisconnected?.Invoke(this, args);
   }
 
@@ -82,5 +84,23 @@ public class CompositeSubscriptionCoverageTests {
     await Assert.That(sender).IsSameReferenceAs(composite)
       .Because("the forwarded event must read as coming from the handle the consumer holds, not "
              + "from the internal per-namespace subscription it never sees");
+  }
+
+  /// <summary>
+  /// A namespace mirror that dropped before the composite's caller attached its handler must still read as a
+  /// disconnect of the composite (#1831), or the consumer keeps a dead mirror and reports healthy.
+  /// </summary>
+  [Test]
+  public async Task Disconnection_WhenAnUnderlyingSubscriptionRecordedOne_ReportsItAsync() {
+    var connected = new FakeSubscription();
+    var dropped = new FakeSubscription();
+    ISubscription composite = new CompositeSubscription([connected, dropped]);
+    await Assert.That(composite.Disconnection).IsNull()
+      .Because("no mirror has recorded a disconnect");
+
+    var recorded = new SubscriptionDisconnectedEventArgs { Reason = "mirror dropped" };
+    dropped.Disconnection = recorded;
+
+    await Assert.That(composite.Disconnection).IsSameReferenceAs(recorded);
   }
 }

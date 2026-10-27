@@ -200,6 +200,40 @@ public class RabbitMQSubscriptionTests {
   }
 
   [Test]
+  public async Task Disconnection_AfterAnUnexpectedChannelShutdown_HoldsTheRaisedDisconnectAsync() {
+    // A caller that attaches its handler after the channel already shut down hears nothing; the recorded
+    // disconnect is how it finds out (#1831). Read through the interface, as the retry helper reads it.
+    await using var channel = new FakeChannel();
+    using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
+    ISubscription handle = subscription;
+    await Assert.That(handle.Disconnection).IsNull()
+      .Because("a subscription that has not disconnected reports no disconnect");
+
+    var tcs = new TaskCompletionSource<SubscriptionDisconnectedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+    subscription.OnDisconnected += (_, args) => tcs.TrySetResult(args);
+    await channel.SimulateShutdownAsync(ShutdownInitiator.Peer, "connection lost");
+    var raised = await tcs.Task;
+
+    await Assert.That(handle.Disconnection).IsSameReferenceAs(raised)
+      .Because("the recorded disconnect is the one raised, so a caller that sees both treats them as one");
+
+    await channel.SimulateShutdownAsync(ShutdownInitiator.Peer, "second report");
+    await Assert.That(handle.Disconnection).IsSameReferenceAs(raised)
+      .Because("the first disconnect is the one recorded");
+  }
+
+  [Test]
+  public async Task Disconnection_AfterAnApplicationInitiatedShutdown_IsNullAsync() {
+    await using var channel = new FakeChannel();
+    using var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
+
+    await channel.SimulateShutdownAsync(ShutdownInitiator.Application, "graceful stop");
+
+    await Assert.That(((ISubscription)subscription).Disconnection).IsNull()
+      .Because("a shutdown the application asked for is not a disconnect to recover from");
+  }
+
+  [Test]
   public async Task ChannelShutdown_AfterDispose_DoesNotFireOnDisconnectedAsync() {
     var channel = new FakeChannel();
     var subscription = new RabbitMQSubscription(channel, QUEUE_NAME);
