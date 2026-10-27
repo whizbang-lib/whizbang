@@ -414,6 +414,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **pg_repack in process is budgeted per maintenance cycle, as pg_squeeze is (#1808).** With
+  `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgRepack` and `TableRewrite:PgRepack:Mode = InProcess`, the
+  boot-time `Rewrite` step no longer runs pg_repack over every queued table at once; it skips and says the maintenance
+  cycle performs it. The `online-table-rewrite` maintenance step now serves both online strategies: it takes the queued
+  tables largest bloat ratio first within `Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle`, runs only when
+  the `pg_repack` extension is Ready on every probed database and the `program/pg_repack` client is Ready on the host
+  (otherwise it logs why and keeps the queue), passes the connection to the client only through its environment, and
+  clears a request only when the re-measure shows the rewrite improved the table. `External` mode is unchanged:
+  Whizbang never starts the client.
+
 - **Statement statistics are read only while `pg_stat_statements` is Ready (#1754).** `GetExpensivePredicatesAsync`
   on the Postgres table statistics consults the capability registry for its database before reading
   `pg_stat_statements`, instead of reading it and catching every `PostgresException`. Any other state, or no

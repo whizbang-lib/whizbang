@@ -34,7 +34,9 @@ public enum TableRewriteStrategy {
   /// Online rewrite through pg_repack, which holds an ACCESS EXCLUSIVE lock only briefly at the start and the end.
   /// Chosen explicitly, it requires the pg_repack extension, so a server that cannot provide it stops start with the
   /// capability verdict's fix. Its client program runs in process or as an external job, as
-  /// <see cref="PgRepackOptions.Mode"/> says; in process the client is a probed prerequisite too.
+  /// <see cref="PgRepackOptions.Mode"/> says; in process the client is a probed prerequisite too, and the maintenance
+  /// cycle (<see cref="OnlineTableRewriteStep"/>) runs it within <see cref="MaintenanceWorkerOptions.OnlineRewriteMaxBytesPerCycle"/>,
+  /// as it runs pg_squeeze. The boot-time step does not run it.
   /// </summary>
   [RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite (pg_repack)")]
   PgRepack,

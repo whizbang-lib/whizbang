@@ -15,8 +15,8 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// In <see cref="PgRepackMode.InProcess"/> mode the client runs here, once per requested table, through
-/// <see cref="IExternalProcessRunner"/>. The work coordinator chooses the connection (the schema-initialization one,
+/// In <see cref="PgRepackMode.InProcess"/> mode the client runs here, through <see cref="IExternalProcessRunner"/>, once
+/// per requested table the maintenance cycle's <see cref="OnlineTableRewriteStep"/> takes within its byte budget. The work coordinator chooses the connection (the schema-initialization one,
 /// which owns the table, when configured), checks the table name, and re-measures afterwards
 /// (<see cref="IWorkCoordinator.RewriteTableWithAsync"/>). The connection reaches the client only as libpq
 /// environment variables (<c>PGHOST</c>, <c>PGUSER</c>, <c>PGPASSWORD</c> and the rest): process arguments are visible
