@@ -324,6 +324,47 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   }
 
   /// <summary>
+  /// Names a processor failure that stops it receiving for good, or returns <see langword="null"/> for one it recovers
+  /// from by itself (#1838).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only a failure to receive or to accept a session counts: a failed handler, settlement or lock renewal concerns one
+  /// message, and the processor keeps receiving. Of those, the ones the processor cannot get past by retrying are:
+  /// </para>
+  /// <list type="bullet">
+  /// <item><description>a <see cref="ServiceBusException"/> the SDK does not mark transient whose reason is
+  /// <see cref="ServiceBusFailureReason.MessagingEntityNotFound"/> (the topic or subscription was deleted) or
+  /// <see cref="ServiceBusFailureReason.MessagingEntityDisabled"/> (an operator disabled it). Subscribing again
+  /// provisions the entity and its filter rules when provisioning is on, and otherwise fails and retries with backoff,
+  /// so the destination reads Recovering rather than Healthy;</description></item>
+  /// <item><description>an <see cref="UnauthorizedAccessException"/>: the identity lost its rights;</description></item>
+  /// <item><description>an <see cref="ObjectDisposedException"/>: the processor or the client it receives through was
+  /// disposed underneath the subscription.</description></item>
+  /// </list>
+  /// <para>
+  /// Every other reason is left to the SDK: the transient ones (communication problems, busy, timeouts) it retries,
+  /// and this transport already answers with connection recovery and the throttle pause; the per-message ones (lock
+  /// lost, message not found, session cannot be locked) and quota exceeded clear without a new processor.
+  /// </para>
+  /// </remarks>
+  private static string? _unrecoverableProcessorFailure(ProcessErrorEventArgs args) {
+    if (args.ErrorSource is not (ServiceBusErrorSource.Receive or ServiceBusErrorSource.AcceptSession)) {
+      return null;
+    }
+
+    return args.Exception switch {
+      ServiceBusException {
+        IsTransient: false,
+        Reason: ServiceBusFailureReason.MessagingEntityNotFound or ServiceBusFailureReason.MessagingEntityDisabled
+      } entity => entity.Reason.ToString(),
+      UnauthorizedAccessException => "Unauthorized",
+      ObjectDisposedException => "the processor was disposed",
+      _ => null,
+    };
+  }
+
+  /// <summary>
   /// The subscription a destination names: its routing key, or the configured default subscription
   /// when it carries none. Every receive path, log line and session key reads it through here, so the
   /// fallback is decided in one place.
@@ -983,7 +1024,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
     // its stop/resume even after the error-handler scope (args.CancellationToken) has ended.
-    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+    sessionProcessor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination, subscription,
       () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
       () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
@@ -1334,7 +1375,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     };
 
     // CancellationToken.None is deliberate — see the session-processor attach site above.
-    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination,
+    processor.ProcessErrorAsync += args => _handleProcessorErrorAsync(args, destination, subscription,
       () => processor.StopProcessingAsync(CancellationToken.None),
       () => processor.StartProcessingAsync(CancellationToken.None));
 
@@ -1502,7 +1543,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
         // Occupancy clock + adaptive-acceptor hooks are attached by _createGovernedSessionProcessor.
 
         // CancellationToken.None is deliberate — see the batch session-processor attach site.
-        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
+        sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination, subscription,
           () => sessionProcessor.StopProcessingAsync(CancellationToken.None),
           () => sessionProcessor.StartProcessingAsync(CancellationToken.None));
 
@@ -1541,7 +1582,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        processor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination);
+        processor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination, subscription);
 
         await processor.StartProcessingAsync(cancellationToken);
       }
@@ -1927,6 +1968,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
     TransportDestination destination,
+    AzureServiceBusSubscription subscription,
     Func<Task>? stopProcessingAsync = null,
     Func<Task>? startProcessingAsync = null
   ) {
@@ -1937,6 +1979,15 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       _subscriptionOf(destination),
       args.ErrorSource
     );
+
+    // A processor that will not recover on its own is reported as a disconnect, so the consumer replaces the
+    // subscription instead of staying Healthy while nothing arrives (#1838). Not while the application has paused or
+    // disposed the subscription, or disposed this transport: those stops are its own.
+    if (!_disposed && subscription.IsActive && _unrecoverableProcessorFailure(args) is { } failure) {
+      subscription.RaiseDisconnected(
+        $"Service Bus processor for {destination.Address}/{_subscriptionOf(destination)} stopped receiving and will not recover on its own: {failure}",
+        args.Exception);
+    }
 
     if (_isConnectionError(args.Exception, out var connectionError)) {
       _logger.LogWarning(

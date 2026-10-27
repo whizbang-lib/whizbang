@@ -729,6 +729,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IPerspectiveRunner.RunRekeyedRowAsync` is a new default member; routing lives in `RebuildRowRouting`. A rebuild of
   selected streams that names a target but not its sources cannot see the events re-keyed onto it; rebuild the sources
   with it.
+- **An Azure Service Bus subscription whose processor stops for good now reports a disconnect (Fixes #1838).**
+  Nothing raised `OnDisconnected` for Azure Service Bus, so a processor that could no longer receive left its
+  destination Healthy while the service silently stopped consuming from it. The transport's processor error handler
+  now raises it, and records `Disconnection`, for a receive or session-accept failure the processor will not get past
+  by retrying: a non-transient `MessagingEntityNotFound` or `MessagingEntityDisabled`, an `UnauthorizedAccessException`,
+  or an `ObjectDisposedException` (the processor or its client disposed underneath the subscription). The consumer
+  then replaces the subscription, which provisions a deleted entity and its filter rules again when provisioning is
+  on and otherwise retries with backoff, so the destination reads Recovering. Transient failures the SDK retries
+  itself, per-message failures (lock lost, message not found, session cannot be locked), quota exceeded and errors
+  from the message handler, a settlement or a lock renewal are not disconnects. A subscription reports at most one,
+  and none while the application has paused or disposed it or disposed the transport.
 - **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
   subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
   state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure
