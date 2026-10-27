@@ -195,6 +195,35 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
   }
 
   [Test]
+  public async Task SubscriptionStatusChanged_SubscriptionDisconnectsBeforeTheHandlerIsAttached_RaisedRecoveringThenHealthyAgainAsync() {
+    // The first subscription drops inside the retry helper's attach step, before its handler is added, so the
+    // disconnect event has no listener; only the subscription's recorded Disconnection can tell the helper (#1831).
+    var disconnect = new InvalidOperationException("dropped before the handler was attached");
+    var transport = new StatusTransport(disconnectFirstWhileAttaching: disconnect);
+    var resilience = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+      HealthCheckInterval = TimeSpan.FromHours(1),
+    };
+    var worker = _buildWorker(transport, _destinations("dropped-early"), resilience);
+    using var recorder = new SubscriptionStatusRecorder(worker);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy, count: 2).WaitAsync(_guard);
+
+    var changes = recorder.Changes;
+    await Assert.That(string.Join(",", changes.Select(c => c.Status))).IsEqualTo("Healthy,Recovering,Healthy")
+      .Because("the missed disconnect is acted on right after the subscription is recorded, and the reconnect succeeds");
+    await Assert.That(changes[1].LastErrorAtRaise).IsSameReferenceAs(disconnect);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(2);
+    await Assert.That(worker.SubscriptionStates.Values.Single().Subscription).IsSameReferenceAs(transport.Subscriptions.Last())
+      .Because("the state ends on the live, reconnected subscription");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task SubscriptionStatusChanged_ConnectionRecovered_RaisedPendingWithAResetStateThenHealthyAsync() {
     var transport = new RecoverableStatusTransport(failFirstSubscribes: 1);
     var resilience = new SubscriptionResilienceOptions {
@@ -290,15 +319,22 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       controlClass: Options.Create(new ControlClassOptions()));
   }
 
-  private sealed class StatusSubscription : ISubscription {
+  private sealed class StatusSubscription(Exception? disconnectWhileAttaching = null) : ISubscription {
     private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
 
     /// <summary>Completes when a disconnect handler is attached: the precondition for a disconnect to be handled.</summary>
     public TaskCompletionSource DisconnectHandled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsActive => true;
 
+    /// <summary>The unexpected disconnect, recorded before it is raised, as a transport records it.</summary>
+    public SubscriptionDisconnectedEventArgs? Disconnection { get; private set; }
+
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
       add {
+        // Raised before the handler is added, so this disconnect has no listener.
+        if (disconnectWhileAttaching is not null) {
+          Disconnect(disconnectWhileAttaching);
+        }
         _onDisconnected += value;
         DisconnectHandled.TrySetResult();
       }
@@ -308,16 +344,20 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { }
 
-    public void Disconnect(Exception error) =>
-      _onDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+    public void Disconnect(Exception error) {
+      var args = new SubscriptionDisconnectedEventArgs {
         Reason = "simulated disconnect",
         Exception = error,
         IsApplicationInitiated = false,
-      });
+      };
+      Disconnection ??= args;
+      _onDisconnected?.Invoke(this, args);
+    }
   }
 
-  private class StatusTransport(int failFirstSubscribes = 0) : ITransport {
+  private class StatusTransport(int failFirstSubscribes = 0, Exception? disconnectFirstWhileAttaching = null) : ITransport {
     private int _failuresRemaining = failFirstSubscribes;
+    private Exception? _disconnectFirstWhileAttaching = disconnectFirstWhileAttaching;
     private int _subscribeCallCount;
 
     public int SubscribeCallCount => _subscribeCallCount;
@@ -341,7 +381,7 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
       if (Interlocked.Decrement(ref _failuresRemaining) >= 0) {
         throw new InvalidOperationException("simulated subscribe failure");
       }
-      var subscription = new StatusSubscription();
+      var subscription = new StatusSubscription(Interlocked.Exchange(ref _disconnectFirstWhileAttaching, null));
       Subscriptions.Enqueue(subscription);
       return Task.FromResult<ISubscription>(subscription);
     }
