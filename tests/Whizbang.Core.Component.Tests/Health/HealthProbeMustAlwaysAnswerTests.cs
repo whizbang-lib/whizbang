@@ -137,6 +137,29 @@ public class HealthProbeMustAlwaysAnswerTests {
       .Because("a source that blocks before it returns must block a thread of its own, not the probe");
   }
 
+  [Test]
+  public async Task ASourceThatBlocksBeforeItReturnsIsTimedOutAsync() {
+    var clock = new DeadlineClock();
+    var blocking = new BlockingSource("transport");
+    var aggregator = _aggregator(clock, blocking, new FastSource("schema", ComponentState.Operational));
+
+    try {
+      var evaluation = aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None).AsTask();
+      // The source is now blocked inside ReportAsync, with no task returned for the deadline to bound.
+      await blocking.Entered;
+      clock.Advance(_sourceTimeout);
+      var result = await evaluation;
+
+      await Assert.That(result.Components.Single(c => c.Component == "transport").State)
+        .IsEqualTo(ComponentState.Faulted)
+        .Because("a source blocked before it returns is unresponsive like any other, and is reported so");
+      await Assert.That(result.Components.Single(c => c.Component == "schema").State)
+        .IsEqualTo(ComponentState.Operational);
+    } finally {
+      blocking.Release();
+    }
+  }
+
   private static WhizbangHealthAggregator _aggregator(TimeProvider clock, params IWhizbangHealthSource[] sources)
     => new(
       sources, new WhizbangHealthOptions { SourceTimeout = _sourceTimeout },
@@ -177,6 +200,27 @@ public class HealthProbeMustAlwaysAnswerTests {
       RanOnTheCallersStack = _insideTheCall;
       return new(new ComponentHealth(ComponentState.Operational));
     }
+  }
+
+  /// <summary>Blocks its calling thread inside <c>ReportAsync</c>, before returning a task, until released.</summary>
+  private sealed class BlockingSource(string component) : IWhizbangHealthSource {
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public string Component { get; } = component;
+
+    /// <summary>Completes once the source is blocked.</summary>
+    public Task Entered => _entered.Task;
+
+    public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      // Deliberately synchronous and deaf to the token: the blocking library call this stands in for is both.
+      _release.Task.Wait(CancellationToken.None);
+      return new(new ComponentHealth(ComponentState.Operational));
+    }
+
+    /// <summary>Unblocks the source's thread.</summary>
+    public void Release() => _release.TrySetResult();
   }
 
   private sealed class HangingSource(string component) : IWhizbangHealthSource {
