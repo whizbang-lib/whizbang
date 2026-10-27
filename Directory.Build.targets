@@ -140,6 +140,6 @@
        the check would report that as an assembly identity change (CP0003) in every package. -->
   <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(IncludeBuildOutput)' != 'false' and '$(PackAsTool)' != 'true' and ('$(CI)' == 'true' or '$(WhizbangApiCheck)' == 'true')">
     <EnablePackageValidation>true</EnablePackageValidation>
-    <PackageValidationBaselineVersion>0.2623.1</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>0.2624.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 </Project>
