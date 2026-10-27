@@ -462,8 +462,9 @@ function Get-LinkedDocsPullRequests {
       The docs-site pull requests found for a pull request, read as the review check reads them: by running
       Get-DocsPullRequests.ps1 from this checkout, in its own process.
   #>
-  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number)
-  $json = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Get-DocsPullRequests.ps1') -Repository $Repository -PullRequest $Number
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number,
+    [string]$Script = (Join-Path $PSScriptRoot 'Get-DocsPullRequests.ps1'))
+  $json = & pwsh -NoProfile -File $Script -Repository $Repository -PullRequest $Number
   if ($LASTEXITCODE -ne 0) { throw "Reading the docs pull requests of #$Number failed (exit $LASTEXITCODE)." }
   ConvertFrom-DocsPullRequestsJson -Json ($json -join "`n")
 }
