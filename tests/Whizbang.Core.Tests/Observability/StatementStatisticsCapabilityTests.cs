@@ -129,7 +129,7 @@ public class StatementStatisticsCapabilityTests {
     services.AddLogging();
     services.AddSingleton<ICapabilityRegistry>(registry);
     services.AddWhizbangPostgres(
-      $"Host=localhost;Database={SCOPE};Username=unused;Password=unused", JsonContextRegistry.CreateCombinedOptions(),
+      $"Host=localhost;Database={SCOPE}", JsonContextRegistry.CreateCombinedOptions(),
       initializeSchema: false, perspectiveEntries: [], managedObjects: null);
     await using var provider = services.BuildServiceProvider();
 

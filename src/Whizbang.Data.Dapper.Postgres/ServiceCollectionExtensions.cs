@@ -521,9 +521,15 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <docs>operations/observability/metrics#table-statistics</docs>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsTableStatisticsAsync</tests>
+  /// <remarks>
+  /// Statement statistics are read only while the probe found <c>pg_stat_statements</c> Ready on this database, the
+  /// scope <see cref="ProbeDatabaseName"/> names (#1754).
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StatementStatisticsCapabilityTests.cs:ADapperHost_AsksAboutItsOwnDatabaseAsync</tests>
   private static void _addTableStatistics(IServiceCollection services, string connectionString) =>
-    services.AddWhizbangTableStatistics((_, options) => new PostgresTableStatisticsProvider(
-      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables));
+    services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
+      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables,
+      sp.GetRequiredService<Whizbang.Core.Capabilities.ICapabilityRegistry>(), ProbeDatabaseName(connectionString)));
 
   /// <summary>
   /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's

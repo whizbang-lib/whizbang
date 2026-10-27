@@ -186,7 +186,7 @@ public class PostgresDriverExtensionsTests {
     services.AddSingleton<Whizbang.Core.Capabilities.ICapabilityRegistry>(registry);
     // A context with no entities: resolving the statistics builds its model to read the default schema.
     services.AddDbContext<StatisticsWiringDbContext>(o => o.UseInMemoryDatabase("StatisticsWiring"));
-    await using var dataSource = NpgsqlDataSource.Create("Host=localhost;Database=unused;Username=unused;Password=unused");
+    await using var dataSource = NpgsqlDataSource.Create("Host=localhost;Database=unused");
     services.AddSingleton(dataSource);
     _ = new WhizbangPerspectiveBuilder(services).WithEFCore<StatisticsWiringDbContext>("orders-db").WithDriver.Postgres;
     await using var sp = services.BuildServiceProvider();
