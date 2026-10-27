@@ -26,7 +26,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// generic exception handler must contain failures raised inside a sweep (here: a logger
 /// that throws while reporting the recovery attempt) so the NEXT sweep still recovers the
 /// failed subscription. All waits are signal-based (TCS, SubscriptionsReady,
-/// SubscriptionStatusChanged) — no test-side polling.
+/// SubscriptionStatusChanged), with no test-side polling.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/TransportConsumerWorker.cs</code-under-test>
 [Category("Workers")]
