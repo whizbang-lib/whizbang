@@ -122,6 +122,21 @@ public class HealthProbeMustAlwaysAnswerTests {
       .Because("each unresponsive source is reported as faulted once its own deadline elapses");
   }
 
+  [Test]
+  public async Task NoSourceRunsOnTheProbesOwnStackAsync() {
+    // A source does not have to await anything before it hangs. A library call made synchronously, or an asynchronous
+    // one waited on with .Result, blocks inside ReportAsync before it has returned a task the deadline could bound.
+    // Called on the probe's own stack, such a source holds the probe there: no deadline is armed for it or for any
+    // source after it, and the probe never answers.
+    var source = new CallerStackSource("transport");
+    var aggregator = _aggregator(new DeadlineClock(), source);
+
+    _ = await CallerStackSource.CallAsync(() => aggregator.EvaluateAsync(HealthProbe.Liveness, CancellationToken.None));
+
+    await Assert.That(source.RanOnTheCallersStack).IsFalse()
+      .Because("a source that blocks before it returns must block a thread of its own, not the probe");
+  }
+
   private static WhizbangHealthAggregator _aggregator(TimeProvider clock, params IWhizbangHealthSource[] sources)
     => new(
       sources, new WhizbangHealthOptions { SourceTimeout = _sourceTimeout },
@@ -136,6 +151,31 @@ public class HealthProbeMustAlwaysAnswerTests {
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       Interlocked.Increment(ref _armed);
       return base.CreateTimer(callback, state, dueTime, period);
+    }
+  }
+
+  /// <summary>Records whether it was asked on the stack of the thread that called the aggregator.</summary>
+  private sealed class CallerStackSource(string component) : IWhizbangHealthSource {
+    [ThreadStatic]
+    private static bool _insideTheCall;
+
+    /// <summary>Makes the call, marking this thread as inside it until the call returns its first task.</summary>
+    public static ValueTask<AggregatedHealth> CallAsync(Func<ValueTask<AggregatedHealth>> call) {
+      _insideTheCall = true;
+      try {
+        return call();
+      } finally {
+        _insideTheCall = false;
+      }
+    }
+
+    public string Component { get; } = component;
+
+    public bool? RanOnTheCallersStack { get; private set; }
+
+    public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
+      RanOnTheCallersStack = _insideTheCall;
+      return new(new ComponentHealth(ComponentState.Operational));
     }
   }
 
