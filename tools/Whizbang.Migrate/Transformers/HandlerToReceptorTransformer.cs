@@ -527,7 +527,7 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
 
               // Get the inner argument (the actual message)
               var innerArgs = creation.ArgumentList?.Arguments;
-              var newArgList = innerArgs.HasValue && innerArgs.Value.Count > 0
+              var newArgList = innerArgs.HasValue && innerArgs.Value.Any()
                   ? SyntaxFactory.ArgumentList(innerArgs.Value)
                   : SyntaxFactory.ArgumentList();
 

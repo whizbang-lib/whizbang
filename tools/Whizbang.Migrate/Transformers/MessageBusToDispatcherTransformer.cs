@@ -279,7 +279,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
       if (paramName.Contains("messageBus", StringComparison.OrdinalIgnoreCase) ||
           paramName.Contains("MessageBus", StringComparison.Ordinal)) {
-        var newName = DISPATCHER_PARAM_NAME;
+        const string newName = DISPATCHER_PARAM_NAME;
         var newIdentifier = SyntaxFactory.Identifier(newName)
             .WithLeadingTrivia(node.Identifier.LeadingTrivia)
             .WithTrailingTrivia(node.Identifier.TrailingTrivia);

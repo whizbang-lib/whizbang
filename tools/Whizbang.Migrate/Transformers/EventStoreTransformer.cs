@@ -57,7 +57,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     newRoot = _removeSessionDeclarations(newRoot, changes);
 
     // 5. Remove SaveChangesAsync calls (each AppendAsync is atomic)
-    newRoot = _removeSaveChangesAsync(newRoot, changes);
+    newRoot = _removeSaveChangesAsyncCalls(newRoot, changes);
 
     var transformedCode = newRoot.ToFullString();
 
@@ -205,7 +205,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
           var text = inv.Expression.ToString();
           return text.Contains("ForTenant") ||
                  text.Contains("SetTenantId") ||
-                 (text.Contains("LightweightSession") && inv.ArgumentList.Arguments.Count > 0);
+                 (text.Contains("LightweightSession") && inv.ArgumentList.Arguments.Any());
         });
 
     foreach (var tenantInvocation in sessionInvocations) {
@@ -235,7 +235,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
         continue;
       }
 
-      if (name != null && name.StartsWith("Marten", StringComparison.Ordinal)) {
+      if (name?.StartsWith("Marten", StringComparison.Ordinal) == true) {
         // Replace first Marten using with Whizbang.Core.Messaging
         if (!addedWhizbangMessaging) {
           var whizbangUsing = usingDirective
@@ -301,7 +301,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     return rewriter.Visit(root);
   }
 
-  private static SyntaxNode _removeSaveChangesAsync(SyntaxNode root, List<CodeChange> changes) {
+  private static SyntaxNode _removeSaveChangesAsyncCalls(SyntaxNode root, List<CodeChange> changes) {
     var rewriter = new SaveChangesRemover(changes);
     return rewriter.Visit(root);
   }
