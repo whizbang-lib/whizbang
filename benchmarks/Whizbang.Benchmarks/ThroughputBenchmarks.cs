@@ -70,7 +70,7 @@ public class ThroughputBenchmarks {
   public async Task Throughput_InProcessTransport_100K_SmallMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "throughput-test";
+    const string topic = "throughput-test";
 
     // Subscribe
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
@@ -102,7 +102,7 @@ public class ThroughputBenchmarks {
   public async Task Throughput_InProcessTransport_50K_MediumMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "throughput-medium";
+    const string topic = "throughput-medium";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {
@@ -130,7 +130,7 @@ public class ThroughputBenchmarks {
   public async Task Throughput_InProcessTransport_10K_LargeMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "throughput-large";
+    const string topic = "throughput-large";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {
@@ -160,7 +160,7 @@ public class ThroughputBenchmarks {
     var totalMessages = publisherCount * messagesPerPublisher;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "throughput-concurrent";
+    const string topic = "throughput-concurrent";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {
@@ -239,7 +239,7 @@ public class ThroughputBenchmarks {
   [Arguments(10_000)]
   public async Task Throughput_RequestResponse_10K_RequestsAsync(int requestCount) {
     var store = new InMemoryRequestResponseStore();
-    var topic = "throughput-request-response";
+    const string topic = "throughput-request-response";
 
     // Setup response handler
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
@@ -285,7 +285,7 @@ public class ThroughputBenchmarks {
   public async Task Throughput_WithTracing_50K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "throughput-tracing";
+    const string topic = "throughput-tracing";
     var traceStore = new InMemoryTraceStore();
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
