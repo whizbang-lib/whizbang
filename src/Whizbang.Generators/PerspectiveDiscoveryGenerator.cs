@@ -197,6 +197,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return new EventValidationError(TypeNameUtilities.GetSimpleName(typeName), StreamIdErrorType.MissingStreamId);
     }
 
+    // An override is the stream id on purpose (#1833): it hides the inherited one, so the event has exactly one
+    if (StreamIdSelection.Select(namedType) is { IsOverride: true }) {
+      return null;
+    }
+
     // Get all properties with [StreamId] from the type hierarchy
     var streamKeyProperties = namedType.GetAllProperties()
         .Where(p => p.GetAttributes().Any(a =>
@@ -223,12 +228,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// Called only for an event the validation accepted: a named type (after unwrapping an array) with
-  /// exactly one public [StreamId] property in its class chain. This lookup walks the same chain and
-  /// also sees non-public properties, so it always finds one.
+  /// exactly one public [StreamId] property in its class chain, or a stream id that is an override. The choice is
+  /// <see cref="StreamIdSelection"/>'s, the one the extractor and the analyzer make, and it always finds one here.
   /// </remarks>
   private static string _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
     var namedType = (INamedTypeSymbol)(eventTypeSymbol is IArrayTypeSymbol arrayType ? arrayType.ElementType : eventTypeSymbol);
-    return namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE)!.Name;
+    return StreamIdSelection.Select(namedType)!.Property.Name;
   }
 
   /// <summary>

@@ -106,26 +106,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including inherited properties)
-    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdProperty is not null) {
-      // Check for [GenerateStreamId] on the property itself
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
-
-      return new StreamIdInfo(
-          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: streamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
-          IsPropertyValueType: streamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
-      );
-    }
-
-    // Look for [StreamId] on constructor parameters (for records)
-    return _extractStreamIdFromConstructorParameters(typeSymbol);
+    // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
+    return _selectStreamId(typeSymbol);
   }
 
   /// <summary>
@@ -165,70 +147,44 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including the inherited CompositeEventBase.StreamId).
-    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdProperty is not null) {
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
-
-      return new StreamIdInfo(
-          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: streamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
-          IsPropertyValueType: streamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
-      );
-    }
-
-    // Look for [StreamId] on constructor parameters (for record composites).
-    return _extractStreamIdFromConstructorParameters(typeSymbol);
+    // The inherited CompositeEventBase.StreamId, unless the composite overrides it or declares a nearer one.
+    return _selectStreamId(typeSymbol);
   }
 
   /// <summary>
-  /// Searches constructor parameters for the [StreamId] attribute and extracts StreamIdInfo.
-  /// Used for record types where [StreamId] is applied to constructor parameters.
+  /// The [StreamId] a message type's extractor reads, chosen by <see cref="StreamIdSelection"/> so the generator and the
+  /// WHIZ006 analyzer agree (#1512, #1833). [GenerateStreamId] is read from the parameter when the stream id came from
+  /// one, else from the property, and from the class in either case.
   /// </summary>
-  private static StreamIdInfo? _extractStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
-    foreach (var ctor in typeSymbol.Constructors) {
-      foreach (var parameter in ctor.Parameters) {
-        if (!_hasStreamIdAttributeOnParameter(parameter)) {
-          continue;
-        }
-
-        // Find corresponding property (records create properties from constructor parameters)
-        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-        if (property is null) {
-          continue;
-        }
-
-        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
-
-        return new StreamIdInfo(
-            EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-            PropertyName: property.Name,
-            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-            IsPropertyValueType: property.Type.IsValueType,
-            HasGenerate: hasGenerate,
-            OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-            PropertyLocation: LocationUtilities.FirstOrNone(property)
-        );
-      }
+  private static (IPropertySymbol Property, bool HasGenerate, bool OnlyIfEmpty)? _resolveStreamId(INamedTypeSymbol typeSymbol) {
+    var choice = StreamIdSelection.Select(typeSymbol);
+    if (choice is null) {
+      return null;
     }
-
-    return null;
+    var (hasGenerate, onlyIfEmpty) = choice.Parameter is null
+        ? _extractGenerateStreamIdInfo(choice.Property, typeSymbol)
+        : _resolveGenerateStreamIdForParameter(choice.Parameter, typeSymbol);
+    return (choice.Property, hasGenerate, onlyIfEmpty);
   }
 
   /// <summary>
-  /// Checks if a constructor parameter has the [StreamId] attribute.
+  /// Builds the extractor info for an event or composite from its chosen [StreamId].
   /// </summary>
-  private static bool _hasStreamIdAttributeOnParameter(IParameterSymbol parameter) {
-    return parameter.GetAttributes().Any(a =>
-        TypeNameUtilities.IsFullyQualifiedNamed(a.AttributeClass, StandardInterfaceNames.STREAM_ID_ATTRIBUTE));
+  private static StreamIdInfo? _selectStreamId(INamedTypeSymbol typeSymbol) {
+    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+      return null;
+    }
+    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    return new StreamIdInfo(
+        EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+        PropertyName: property.Name,
+        PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+        IsPropertyValueType: property.Type.IsValueType,
+        HasGenerate: hasGenerate,
+        OnlyIfEmpty: onlyIfEmpty,
+        IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+        PropertyLocation: LocationUtilities.FirstOrNone(property)
+    );
   }
 
   /// <summary>
@@ -274,9 +230,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if has [StreamId] anywhere (including inherited properties)
-    var streamIdOnProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (streamIdOnProperty is not null) {
+    // Has a stream id the extractor can read (an override anywhere in the chain, an inherited property, or a record parameter)
+    if (StreamIdSelection.Select(typeSymbol) is not null) {
       return null;
     }
 
@@ -313,63 +268,21 @@ public class StreamIdGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamId] on properties (including inherited properties)
-    var commandStreamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-    if (commandStreamIdProperty is not null) {
-      // Check for [GenerateStreamId] on the property or class
-      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(commandStreamIdProperty, typeSymbol);
-
-      return new CommandStreamIdInfo(
-          CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-          PropertyName: commandStreamIdProperty.Name,
-          PropertyType: TypeNameHelper.GetFullyQualifiedName(commandStreamIdProperty.Type),
-          IsPropertyValueType: commandStreamIdProperty.Type.IsValueType,
-          HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty),
-          PropertyLocation: LocationUtilities.FirstOrNone(commandStreamIdProperty)
-      );
+    // The [StreamId] the analyzer agrees on: an override, then the nearest property, then a constructor parameter
+    if (_resolveStreamId(typeSymbol) is not { } resolved) {
+      return null;
     }
-
-    // Look for [StreamId] on constructor parameters (for records)
-    return _extractCommandStreamIdFromConstructorParameters(typeSymbol);
-  }
-
-  /// <summary>
-  /// Searches constructor parameters for the [StreamId] attribute and extracts CommandStreamIdInfo.
-  /// Used for record command types where [StreamId] is applied to constructor parameters.
-  /// </summary>
-  private static CommandStreamIdInfo? _extractCommandStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
-    foreach (var ctor in typeSymbol.Constructors) {
-      foreach (var parameter in ctor.Parameters) {
-        if (!_hasStreamIdAttributeOnParameter(parameter)) {
-          continue;
-        }
-
-        // Find corresponding property (records create properties from constructor parameters)
-        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-        if (property is null) {
-          continue;
-        }
-
-        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
-
-        return new CommandStreamIdInfo(
-            CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-            PropertyName: property.Name,
-            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-            IsPropertyValueType: property.Type.IsValueType,
-            HasGenerate: hasGenerate,
-            OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
-            PropertyLocation: LocationUtilities.FirstOrNone(property)
-        );
-      }
-    }
-
-    return null;
+    var (property, hasGenerate, onlyIfEmpty) = resolved;
+    return new CommandStreamIdInfo(
+        CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+        PropertyName: property.Name,
+        PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+        IsPropertyValueType: property.Type.IsValueType,
+        HasGenerate: hasGenerate,
+        OnlyIfEmpty: onlyIfEmpty,
+        IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+        PropertyLocation: LocationUtilities.FirstOrNone(property)
+    );
   }
 
   /// <summary>

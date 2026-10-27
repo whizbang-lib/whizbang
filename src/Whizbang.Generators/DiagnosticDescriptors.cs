@@ -1044,6 +1044,27 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Generated code must name a closed type, and an open generic message type has none. The generators leave it out rather than emit code that cannot compile. A closed form handled by a receptor is routed for local dispatch only."
   );
+
+  /// <summary>
+  /// WHIZ016: Warning - <c>[StreamId(Override = true)]</c> where no base type declares a <c>[StreamId]</c>.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz016</docs>
+  /// <remarks>
+  /// The option says a derived stream id replaces an inherited one on purpose, which is what keeps WHIZ006 quiet
+  /// (#1833). With nothing inherited it replaces nothing; it is reported so it cannot linger after a base type stops
+  /// declaring a stream id. The marked property is still the stream id.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAttributeAnalyzerTests.cs:AnOverrideWithNothingToOverride_ReportsWhiz016OnTheAttributeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAttributeAnalyzerTests.cs:TheAnalyzer_DeclaresWhiz016AsAWarningAsync</tests>
+  public static readonly DiagnosticDescriptor StreamIdOverrideWithNothingToOverride = new(
+      id: "WHIZ016",
+      title: "Stream ID Override Has Nothing to Override",
+      messageFormat: "Type {0} marks '{1}' as a [StreamId] override, but no base type declares a [StreamId] to override",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "[StreamId(Override = true)] says a derived stream id replaces an inherited one on purpose. When no base type declares a [StreamId], there is nothing to replace; remove Override = true."
+  );
   /// <summary>
   /// WHIZ099: Info - MessageJsonContextGenerator ran, and how many message types it found.
   /// </summary>

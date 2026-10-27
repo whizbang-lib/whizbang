@@ -223,6 +223,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute. A key removed with nothing in its place logs event 3, naming no replacement.
 
 #### Messaging & delivery
+- **A derived type can override an inherited `[StreamId]` on purpose (#1833).** `[StreamId(Override = true)]` on a
+  property or a record primary-constructor parameter makes it the stream ID ahead of any inherited `[StreamId]`,
+  including where an inherited property used to beat a derived record's `[StreamId]` parameter, and an override on an
+  intermediate base type is inherited below it. The extractor, the perspective runner and the analyzer make the same
+  choice: hiding an inherited stream ID with an override is not reported as WHIZ006, and a perspective event whose
+  stream ID is an override is not WHIZ031. WHIZ006 is still reported for two `[StreamId]` declared on one type,
+  override or not, and for a hide without the option. A new warning, **WHIZ016**, reports an override where no base
+  type declares a `[StreamId]`. A plain `[StreamId]` is unchanged (`Override` defaults to `false`).
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
   `ReceptorPriority.FIRST`, `EARLY`, `DEFAULT`, `LATE` and `LAST` name the usual points, and a receptor that
   declares nothing runs at `DEFAULT`, the middle of the range.
