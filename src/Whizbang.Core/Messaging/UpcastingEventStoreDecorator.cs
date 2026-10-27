@@ -45,7 +45,15 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>Initializes the decorator.</remarks>
 /// <param name="inner">The underlying event store.</param>
 /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
-public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline, IStreamIdExtractor? streamIds = null) : ForwardingEventStoreDecorator(inner) {
+/// <param name="streamIds">Reads an event's <c>[StreamId]</c> before and after the pipeline; the generated registry's when null.</param>
+public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline, IStreamIdExtractor? streamIds) : ForwardingEventStoreDecorator(inner) {
+  /// <summary>Initializes the decorator with the generated stream-id registry.</summary>
+  /// <param name="inner">The underlying event store.</param>
+  /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
+  public UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline)
+    : this(inner, pipeline, streamIds: null) {
+  }
+
   // Reads an event's [StreamId] before and after the pipeline, to tell a re-key from an event that names another stream (#1798).
   private readonly IStreamIdExtractor _streamIds = streamIds ?? Registry.StreamIdExtractorRegistry.GetComposite();
   private readonly EventUpcasterPipeline _pipeline = ArgumentGuard.NotNull(pipeline);
