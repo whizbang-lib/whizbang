@@ -8,6 +8,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.Postgres.Perspectives;
@@ -60,11 +61,36 @@ public static class PerspectiveRowVersionCommands {
   }
 
   /// <summary>
+  /// Whether a write orders on the event id: a model marked <see cref="IVersionedApplyTarget"/>, written by
+  /// anything but a rebuild.
+  /// </summary>
+  /// <remarks>
+  /// A rebuild re-derives the row from every event of the stream, folded from an empty model in stream-version
+  /// order, so its write carries the event id of the stream's last event by version. Where events were appended out
+  /// of event-id order, that id sorts below the one the stored row records although the rebuild folded both, and
+  /// ordering on it refused the only write that could repair the row (#1819). The question the event-id guard asks,
+  /// "has the row already moved past this event?", has no meaning for a write that re-derived the row from every
+  /// event. A rebuild's write therefore takes the commit-sequence guard every other model's rebuild takes, on the
+  /// position a rebuild records as the highest among the events it folded (#1352). A stale read is not what either
+  /// guard stops: the checked write still refuses it on the row version, in every mode. The live apply and the
+  /// rewind keep ordering on the event id.
+  /// </remarks>
+  /// <param name="isVersionedTarget">Whether the model opts into event-id ordering.</param>
+  /// <param name="mode">The ambient processing mode of the write, null for live processing.</param>
+  /// <returns>True when the write is ordered on the event id rather than the commit sequence.</returns>
+  /// <docs>fundamentals/perspectives/versioned-apply</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedRebuildOrderingTests.cs:RebuildStreamsAsync_VersionedModelWithEventsAppendedOutOfIdOrder_WritesTheFoldedRowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRowVersionCommandsTests.cs</tests>
+  public static bool OrdersOnEventId(bool isVersionedTarget, ProcessingMode? mode) =>
+    isVersionedTarget && mode is not ProcessingMode.Rebuild;
+
+  /// <summary>
   /// The ordering guard a write is conditioned on, so an event the row has already moved past is
   /// skipped rather than applied backwards.
   /// </summary>
   /// <remarks>
-  /// A model marked <see cref="IVersionedApplyTarget"/> orders on the event id; everything else
+  /// A write that orders on the event id (see <see cref="OrdersOnEventId"/>: a model marked
+  /// <see cref="IVersionedApplyTarget"/>, outside a rebuild) is guarded on the event id; everything else
   /// orders on the commit sequence and treats an absent sequence on either side as no opinion. The
   /// guard is written against whatever expression carries the incoming metadata, which differs
   /// between the two statement shapes: <c>EXCLUDED.metadata</c> in an upsert, the bound parameter in
@@ -76,12 +102,19 @@ public static class PerspectiveRowVersionCommands {
   /// newest event first, and the late event was then reported applied while the row never received it. A stale
   /// read is not what this guard stops: the checked write refuses it on the row version.
   /// </para>
+  /// <para>
+  /// A rebuild's write is never guarded on the event id (#1819): it ends on the stream's last event by version,
+  /// whose id can sort below the stored one when events were appended out of event-id order.
+  /// </para>
   /// </remarks>
   /// <param name="qualifiedTable">The quoted, schema-qualified perspective table.</param>
   /// <param name="incoming">The SQL expression for the incoming metadata.</param>
-  /// <param name="isVersionedTarget">Whether the model opts into event-id ordering.</param>
+  /// <param name="isVersionedTarget">
+  /// Whether the write orders on the event id; callers pass <see cref="OrdersOnEventId"/>.
+  /// </param>
   /// <returns>A boolean SQL expression, true when the write may proceed.</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:TheLaterEventCommitsFirst_EveryRowStillHoldsBothEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:RebuildWriteWithAnEarlierEventId_OnVersionedTarget_LandsAsync</tests>
   public static string OrderingGuard(string qualifiedTable, string incoming, bool isVersionedTarget) {
     ArgumentException.ThrowIfNullOrWhiteSpace(qualifiedTable);
     ArgumentException.ThrowIfNullOrWhiteSpace(incoming);
