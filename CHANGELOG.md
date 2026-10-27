@@ -634,6 +634,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **The health probe's per-source deadline runs on the host's registered `TimeProvider` (#1811).** Each health source
+  is bounded by `WhizbangHealthOptions.SourceTimeout`, and that deadline always ran on the system clock, so a host or
+  test on a fake clock could not decide when it elapsed. `WhizbangHealthAggregator` gains a constructor that takes the
+  `TimeProvider`, and `AddWhizbangManagedHealth` passes the container's registered one, or `TimeProvider.System` when
+  none is registered. Behavior on the system clock is unchanged.
 - **`flush_completions` no longer deadlocks against another instance completing the same outbox rows (#1785).** The
   composite flusher behind `IWorkCoordinator.FlushCompletionsAsync` completed outbox rows and later reported outbox
   failures in the same transaction: two passes over `wh_outbox`, each in the canonical (stream_id, created_at,

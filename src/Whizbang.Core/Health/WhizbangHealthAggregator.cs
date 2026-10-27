@@ -36,6 +36,7 @@ public sealed class WhizbangHealthAggregator {
   private readonly IReadOnlyList<IWhizbangHealthSource> _sources;
   private readonly WhizbangHealthOptions _options;
   private readonly Startup.IStartupStageReporter _stages;
+  private readonly TimeProvider _timeProvider;
 
   /// <summary>Creates an aggregator over the given health sources and policy options, timed by the system clock.</summary>
   /// <param name="sources">The health sources.</param>
@@ -78,6 +79,7 @@ public sealed class WhizbangHealthAggregator {
     ArgumentNullException.ThrowIfNull(timeProvider);
     _options = options;
     _stages = stages;
+    _timeProvider = timeProvider;
   }
 
   /// <summary>Evaluates every source for the given probe and returns the aggregated (worst-wins) result.</summary>
@@ -126,7 +128,7 @@ public sealed class WhizbangHealthAggregator {
     try {
       return await source.ReportAsync(cancellationToken)
         .AsTask()
-        .WaitAsync(_options.SourceTimeout, cancellationToken)
+        .WaitAsync(_options.SourceTimeout, _timeProvider, cancellationToken)
         .ConfigureAwait(false);
     } catch (TimeoutException) {
       return new ComponentHealth(
