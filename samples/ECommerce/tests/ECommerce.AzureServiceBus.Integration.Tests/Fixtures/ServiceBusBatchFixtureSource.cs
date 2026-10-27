@@ -51,7 +51,7 @@ public sealed class ServiceBusBatchFixtureSource {
 
       // Reuse the emulator from SharedFixtureSource (already running on port 5672)
       // This avoids Docker container name conflicts
-      var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
+      var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync();
 
       // Create a lightweight fixture wrapper that doesn't start its own emulator
       _serviceBusFixture = new ServiceBusBatchFixture(0);

@@ -92,11 +92,9 @@ public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
   /// </summary>
   /// <param name="connectionString">Connection string to the shared emulator.</param>
   /// <param name="sharedClient">Shared ServiceBusClient instance.</param>
-  /// <param name="cancellationToken">Cancellation token.</param>
   public Task InitializeWithSharedEmulatorAsync(
     string connectionString,
-    ServiceBusClient sharedClient,
-    CancellationToken cancellationToken = default) {
+    ServiceBusClient sharedClient) {
 
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentNullException.ThrowIfNull(sharedClient);

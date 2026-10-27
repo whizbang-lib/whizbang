@@ -39,7 +39,7 @@ public class IEventStoreRegistrationTests {
     });
 
     // Register service instance provider
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ =>
       new TestServiceInstanceProvider(Guid.NewGuid(), "DiagnosticTest"));
 
     // IMPORTANT: Call module initializers

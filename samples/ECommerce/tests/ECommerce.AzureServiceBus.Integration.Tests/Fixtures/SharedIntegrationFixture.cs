@@ -229,7 +229,7 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
 
     // CRITICAL: Register SHARED ServiceBusClient BEFORE calling AddAzureServiceBusTransport
     // This prevents creating multiple clients and hitting connection quota
@@ -371,7 +371,7 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(_sharedInstanceId, "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 

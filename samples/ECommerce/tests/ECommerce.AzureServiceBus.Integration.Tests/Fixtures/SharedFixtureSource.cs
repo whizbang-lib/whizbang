@@ -38,10 +38,8 @@ public static class SharedFixtureSource {
   /// Initializes shared ServiceBus emulator and creates single static ServiceBusClient.
   /// Called once before any tests run.
   /// </summary>
-  /// <param name="testIndex">The test index (not used, kept for compatibility).</param>
   /// <param name="cancellationToken">Cancellation token with default timeout of 120 seconds.</param>
   public static async Task<(string ConnectionString, ServiceBusClient Client)> GetSharedResourcesAsync(
-      int testIndex,
       CancellationToken cancellationToken = default) {
 
     // If already initialized successfully, return immediately

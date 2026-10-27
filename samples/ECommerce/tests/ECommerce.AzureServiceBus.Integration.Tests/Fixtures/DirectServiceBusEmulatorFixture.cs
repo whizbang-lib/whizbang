@@ -213,33 +213,6 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     }
   }
 
-  /// <summary>
-  /// Run docker compose command ignoring errors (for cleanup operations).
-  /// </summary>
-  private async Task _runDockerComposeAsyncIgnoreErrors(string arguments, CancellationToken cancellationToken = default) {
-    if (_activeComposeFile == null) {
-      return;
-    }
-
-    try {
-      var psi = new ProcessStartInfo {
-        FileName = "docker",
-        Arguments = $"compose -f \"{_activeComposeFile}\" {arguments}",
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true
-      };
-
-      using var process = Process.Start(psi);
-      if (process != null) {
-        await process.WaitForExitAsync(cancellationToken);
-      }
-    } catch {
-      // Ignore errors during cleanup
-    }
-  }
-
   private static async Task<string?> _getContainerStateAsync(string containerName, CancellationToken ct) {
     var psi = new ProcessStartInfo {
       FileName = "docker",

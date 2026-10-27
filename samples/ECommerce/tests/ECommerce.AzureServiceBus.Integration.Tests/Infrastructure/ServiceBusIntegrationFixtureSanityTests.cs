@@ -431,7 +431,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   public async Task ServiceBus_TopicsAndSubscriptions_AreConfiguredAsync() {
     // Arrange
     _ = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    var (_, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(99);
+    var (_, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync();
 
     Console.WriteLine("[SANITY] Inspecting Service Bus emulator configuration...");
 

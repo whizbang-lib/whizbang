@@ -42,7 +42,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private readonly string _topicB = "inventory";
   private readonly int _batchIndex;
   private bool _isInitialized;
-  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
 
   // Per-test resources (created during InitializeAsync)
@@ -148,7 +147,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Create service hosts (InventoryWorker + BFF)
     // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[AspireFixture] Creating service hosts...");
-    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA);
     _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
@@ -319,8 +318,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
-    string topicA,
-    string topicB
+    string topicA
   ) {
     var builder = Host.CreateApplicationBuilder();
 
@@ -331,7 +329,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -476,7 +474,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();

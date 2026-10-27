@@ -265,7 +265,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider with unique instance ID
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
 
     // Register SHARED InProcessTransport (same instance used by both hosts)
     builder.Services.AddSingleton<ITransport>(_transport);
@@ -414,7 +414,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider with unique instance ID
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
@@ -890,7 +890,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     void WireWorker(PerspectiveWorker? worker) {
       if (worker is null) { return; }
-      void handler(PerspectiveEventProcessedEvent e) {
+      void handler(PerspectiveEventProcessedEvent _) {
         var current = Interlocked.Increment(ref completionCount);
         if (current >= expectedCompletions) { tcs.TrySetResult(true); }
       }
