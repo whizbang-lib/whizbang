@@ -61,8 +61,11 @@ public class SignalPartitionConversionTests : EFCoreTestBase {
     connection.ExecuteScalarAsync<long>(
       "INSERT INTO wh_signals (wire_name, created_at) VALUES (@name, NOW() - @age::interval) RETURNING id", new { name, age });
 
+  // A registered instance's cursor: only those hold the sweep back (#1771).
   private static Task _cursorPastEverythingAsync(NpgsqlConnection connection) =>
     connection.ExecuteAsync(
+      "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata) " +
+      "VALUES (@id, 'utest-svc', 'utest-host', 1, NOW(), NOW(), '{}'::jsonb); " +
       "INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id) VALUES (@id, (SELECT max(id) FROM wh_signals))",
       new { id = Guid.CreateVersion7() });
 

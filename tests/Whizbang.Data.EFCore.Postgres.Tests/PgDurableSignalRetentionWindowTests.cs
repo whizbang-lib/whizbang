@@ -37,8 +37,12 @@ public class PgDurableSignalRetentionWindowTests : EFCoreTestBase {
   private async Task _cursorAsync(long lastId) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
+    // The instance is registered: only a registered instance's cursor holds the sweep back (#1771).
     await using var cmd = new NpgsqlCommand(
-      "DELETE FROM wh_signal_cursors; INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id, updated_at) VALUES (@id, @last, NOW())", conn);
+      "DELETE FROM wh_signal_cursors; " +
+      "INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata) " +
+      "VALUES (@id, 'utest-svc', 'utest-host', 1, NOW(), NOW(), '{}'::jsonb); " +
+      "INSERT INTO wh_signal_cursors (instance_id, last_delivered_signal_id, updated_at) VALUES (@id, @last, NOW())", conn);
     cmd.Parameters.AddWithValue("id", Guid.CreateVersion7());
     cmd.Parameters.AddWithValue("last", lastId);
     await cmd.ExecuteNonQueryAsync();
