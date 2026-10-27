@@ -690,6 +690,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A rebuild of a versioned perspective no longer refuses a stream whose events were appended out of event-id
+  order (Fixes #1819).** A selected-streams rebuild folds a model marked `IVersionedApplyTarget` from an empty model
+  in stream-version order, so its write carries the event id of the last event by version. When that event was minted
+  before the one the stored row records, its id sorted below the stored one, the store's event-id ordering guard
+  refused the write, and the rebuild failed with "folded but left the row unchanged". A rebuild's write is no longer
+  ordered on the event id: it takes the commit-sequence guard every other model's rebuild takes, on the highest commit
+  sequence among the events it folded. The row-version check still refuses a stale read in every mode, and the live
+  apply and the rewind keep ordering on the event id. Both PostgreSQL drivers decide this through the shared
+  `PerspectiveRowVersionCommands.OrdersOnEventId`. No migration: the guard is part of each write's statement.
 - **The `wh_signals` row sweep is no longer held back by the cursor of an instance that is no longer registered
   (#1771).** The sweep deleted up to the slowest cursor in `wh_signal_cursors`, dead or alive, so an instance that
   stopped without being reaped left its cursor behind and the sweep removed nothing until the stale-instance reap

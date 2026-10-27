@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Perspectives/PerspectiveRowVersionCommands.cs</code-under-test>
 [Category("Unit")]
+[Category("Shard4")]
 public class PerspectiveRowVersionCommandsTests {
   /// <summary>A versioned model orders on the event id outside a rebuild: live processing and a rewind.</summary>
   [Test]
