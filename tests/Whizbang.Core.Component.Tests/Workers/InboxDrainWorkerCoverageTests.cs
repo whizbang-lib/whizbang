@@ -364,7 +364,7 @@ public partial class InboxDrainWorkerCoverageTests {
     await worker.StartAsync(cts.Token);
     await drain.WriteAsync(streamId);
 
-    _ = await Task.WhenAny(Task.WhenAll(inbox.ReachedCount.Task, signaled.Task), Task.Delay(TimeSpan.FromSeconds(15)));
+    await Task.WhenAll(inbox.ReachedCount.Task, signaled.Task).WaitAsync(TimeSpan.FromSeconds(15));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
 
