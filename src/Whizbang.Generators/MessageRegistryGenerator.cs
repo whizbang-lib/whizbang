@@ -88,13 +88,44 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
   private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
 
+  /// <summary>
+  /// The switch: <c>WhizbangEmitMessageRegistry</c>. The registry is IDE tooling, so the package turns it off by
+  /// default, and when it is off nothing is embedded in the assembly and the extraction target is skipped.
+  /// </summary>
+  private const string EMIT_PROPERTY = "build_property.WhizbangEmitMessageRegistry";
+
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a member-access call named SendAsync or PublishAsync.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsDispatchCallCandidate(SyntaxNode node) =>
+      node is InvocationExpressionSyntax invocation &&
+      invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+      (memberAccess.Name.Identifier.Text == "SendAsync" || memberAccess.Name.Identifier.Text == "PublishAsync");
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
-                                       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractMessageType(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -102,10 +133,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover dispatchers (SendAsync and PublishAsync calls)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var dispatchers = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
-                                       invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
-                                       (memberAccess.Name.Identifier.Text == "SendAsync" ||
-                                        memberAccess.Name.Identifier.Text == "PublishAsync"),
+        predicate: static (node, _) => IsDispatchCallCandidate(node),
         transform: static (ctx, ct) => _extractDispatcher(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -113,7 +141,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover receptors (IReceptor implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var receptors = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptor(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -121,7 +149,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Discover perspectives (IPerspectiveFor<TEvent> implementations)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspective(ctx, ct)
     ).Where(static info => info is not null)
      .Select(static (info, _) => info!);
@@ -133,21 +161,36 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       return new DocsLocation(configuredPath, projectDirectory);
     });
 
-    // Combine all discoveries + compilation (for referenced assembly versions)
+    // The referenced Whizbang packages, the one fact read from the compilation. Projected to values before the
+    // combine: combining the compilation itself would regenerate the registry on every edit, since every edit is a
+    // new compilation, while the packages it references change only when a reference does.
+    // Whether to embed the registry at all (#1609). Not set reads as on, for a project that loads the generators
+    // without the package's props; the props set it, off by default.
+    var enabled = context.AnalyzerConfigOptionsProvider.Select(static (provider, _) =>
+        !ConfigurationUtilities.IsTurnedOff(provider.GlobalOptions, EMIT_PROPERTY));
+
+    var whizbangPackages = context.CompilationProvider.Combine(enabled)
+        .Select(static (pair, _) => pair.Right ? _referencedWhizbangPackages(pair.Left) : []);
+
+    // Combine all discoveries + referenced package versions
     var allData = messageTypes.Collect()
         .Combine(dispatchers.Collect())
         .Combine(receptors.Collect())
         .Combine(perspectives.Collect())
-        .Combine(context.CompilationProvider)
-        .Combine(docsLocation);
+        .Combine(whizbangPackages)
+        .Combine(docsLocation)
+        .Combine(enabled);
 
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var (((((messages, dispatchers2), receptors2), perspectives2), compilation), docs) = data;
+          if (!data.Right) {
+            return;
+          }
+          var (((((messages, dispatchers2), receptors2), perspectives2), packages), docs) = data.Left;
           _generateMessageRegistry(ctx,
             (((messages, dispatchers2), receptors2), perspectives2),
-            compilation,
+            packages,
             PathResolver.FindDocsRepositoryPath(docs.ConfiguredPath, docs.ProjectDirectory));
         }
     );
@@ -405,10 +448,24 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     );
   }
 
+  /// <summary>
+  /// The Whizbang packages the compilation references, by package id and version prefix, in name order.
+  /// </summary>
+  /// <remarks>
+  /// An assembly version is Major.Minor.Build.Revision with no prerelease suffix, so the version is emitted as a
+  /// prefix the extension matches NuGet folders by.
+  /// </remarks>
+  private static EquatableArray<WhizbangPackageReference> _referencedWhizbangPackages(Compilation compilation) =>
+    [.. compilation.ReferencedAssemblyNames
+        .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
+        .OrderBy(a => a.Name)
+        .Select(a => new WhizbangPackageReference(
+          $"SoftwareExtravaganza.{a.Name}", $"{a.Version.Major}.{a.Version.Minor}.{a.Version.Build}"))];
+
   private static void _generateMessageRegistry(
       SourceProductionContext context,
       (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data,
-      Compilation? compilation = null,
+      EquatableArray<WhizbangPackageReference> whizbangPackages,
       string? docsPath = null) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
@@ -532,25 +589,13 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       }
     }
 
-    // Extract referenced Whizbang package versions from compilation
+    // Referenced Whizbang package versions, read from the compilation by _referencedWhizbangPackages
     var packageEntries = new StringBuilder();
-    if (compilation is not null) {
-      var whizbangAssemblies = compilation.ReferencedAssemblyNames
-          .Where(a => a.Name.StartsWith("Whizbang.", StringComparison.Ordinal))
-          .OrderBy(a => a.Name)
-          .ToList();
-
-      for (var p = 0; p < whizbangAssemblies.Count; p++) {
-        var asm = whizbangAssemblies[p];
-        var packageId = $"SoftwareExtravaganza.{asm.Name}";
-        // Assembly version is Major.Minor.Build.Revision (no prerelease suffix)
-        // Emit as "versionPrefix" so the extension can match NuGet folders by prefix
-        var ver = asm.Version;
-        var versionPrefix = $"{ver.Major}.{ver.Minor}.{ver.Build}";
-        packageEntries.Append($"    {{ \"id\": \"{packageId}\", \"versionPrefix\": \"{versionPrefix}\" }}");
-        if (p < whizbangAssemblies.Count - 1) {
-          packageEntries.AppendLine(",");
-        }
+    for (var p = 0; p < whizbangPackages.Length; p++) {
+      var package = whizbangPackages[p];
+      packageEntries.Append($"    {{ \"id\": \"{package.Id}\", \"versionPrefix\": \"{package.VersionPrefix}\" }}");
+      if (p < whizbangPackages.Length - 1) {
+        packageEntries.AppendLine(",");
       }
     }
 
@@ -590,7 +635,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     try {
       var json = File.ReadAllText(mapPath);
-      var map = JsonSerializer.Deserialize<Dictionary<string, CodeDocsEntry>>(json);
+      var map = JsonSerializer.Deserialize<Dictionary<string, CodeDocsEntry>>(json, _mapJsonOptions);
       return map?.ToDictionary(
         kvp => kvp.Key,
         kvp => kvp.Value.Docs
@@ -622,7 +667,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     try {
       var json = File.ReadAllText(mapPath);
-      var map = JsonSerializer.Deserialize<CodeTestsMapData>(json);
+      var map = JsonSerializer.Deserialize<CodeTestsMapData>(json, _mapJsonOptions);
       return map?.CodeToTests?.ToDictionary(
         kvp => kvp.Key,
         kvp => kvp.Value?.Select(t => new TestInfo(
@@ -710,7 +755,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Builds JSON test entries from test information array.
   /// </summary>
-  private static string _buildTestEntries(TestInfo[] tests, string testSnippet) {
+  private static string _buildTestEntries(EquatableArray<TestInfo> tests, string testSnippet) {
     if (tests.Length == 0) {
       return "";
     }
@@ -852,6 +897,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     return entries.ToString();
   }
 
+  /// <summary>
+  /// The docs site writes both maps with camelCase keys; the models below are PascalCase. Read case-insensitively,
+  /// or every entry deserializes empty and no registry entry is enriched (#1428).
+  /// </summary>
+  private static readonly JsonSerializerOptions _mapJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
   // Helper classes for JSON deserialization
   private sealed class CodeDocsEntry {
     public string File { get; set; } = "";
@@ -886,7 +937,7 @@ internal sealed record MessageTypeInfo(
   string FilePath,
   int LineNumber,
   string? DocsUrl,     // Documentation URL from code-docs-map.json
-  TestInfo[] Tests     // Test information from code-tests-map.json
+  EquatableArray<TestInfo> Tests     // Test information from code-tests-map.json
 );
 
 internal sealed record DispatcherLocationInfo(
@@ -896,7 +947,7 @@ internal sealed record DispatcherLocationInfo(
   string FilePath,
   int LineNumber,
   string? DocsUrl,     // Documentation URL for dispatcher class
-  TestInfo[] Tests     // Test information for dispatcher class
+  EquatableArray<TestInfo> Tests     // Test information for dispatcher class
 );
 
 internal sealed record ReceptorLocationInfo(
@@ -906,17 +957,20 @@ internal sealed record ReceptorLocationInfo(
   string FilePath,
   int LineNumber,
   string? DocsUrl,     // Documentation URL for receptor class
-  TestInfo[] Tests     // Test information for receptor class
+  EquatableArray<TestInfo> Tests     // Test information for receptor class
 );
 
 internal sealed record PerspectiveLocationInfo(
   string ClassName,
-  string[] EventTypes,
+  EquatableArray<string> EventTypes,
   string FilePath,
   int LineNumber,
   string? DocsUrl,     // Documentation URL for perspective class
-  TestInfo[] Tests     // Test information for perspective class
+  EquatableArray<TestInfo> Tests     // Test information for perspective class
 );
+
+/// <summary>A referenced Whizbang package, as the registry names it: its package id and version prefix.</summary>
+internal sealed record WhizbangPackageReference(string Id, string VersionPrefix);
 
 internal sealed record TestInfo(
   string TestFile,

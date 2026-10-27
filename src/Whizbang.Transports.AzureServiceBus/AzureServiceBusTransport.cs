@@ -23,7 +23,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <tests>No tests found</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
-public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
+public partial class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string ENVELOPE_TYPE_PROPERTY = "EnvelopeType";
 
   /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
@@ -45,12 +45,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// action from being silently treated as "process" - is otherwise unreachable.
   /// </remarks>
   internal AsbReceiveDecisionMaker DecisionMaker { get; init; } = new();
-  private readonly Whizbang.Core.Messaging.IReceptorRegistry? _receptorRegistry;
-  private readonly Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry? _perspectiveRegistry;
   private readonly Whizbang.Core.Messaging.IRawReceptorRegistry? _rawReceptorRegistry;
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
-  private readonly IMessageDiscardPolicy? _discardPolicy;
-  private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly Whizbang.Core.Routing.IPoisonMessageDetector? _poisonDetector;
 
   /// <summary>Last age-capability value reported per entity — see <c>_buildPoisonContext</c>.</summary>
@@ -139,16 +135,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     _options = options ?? new AzureServiceBusOptions();
     _timeProvider = timeProvider ?? TimeProvider.System;
     _sessionGovernor = new SessionOccupancyGovernor(_options.MaxAutoLockRenewalDuration);
-    _receptorRegistry = receptorRegistry;
-    _perspectiveRegistry = perspectiveRegistry;
+    // #1720: the receptor and perspective registries, the discard policy and the absorbed namespaces decided which
+    // received messages were dropped unstored because nothing here consumes them. Every message is stored now and the
+    // consumer decides any skip after storage, so these are no longer consulted on receive; the parameters stay so
+    // existing registrations compile.
+    _ = (receptorRegistry, perspectiveRegistry, discardPolicy, absorbedNamespaces);
     _rawReceptorRegistry = rawReceptorRegistry;
     // Slice 4 — default to the multi-pass binder so the registry-miss → binder-cascade
     // fallback works without explicit DI configuration. Tests can inject a fake.
     _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
-    _discardPolicy = discardPolicy;
     _poisonDetector = poisonDetector;
-    _absorbedNamespaces = absorbedNamespaces
-      ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Log admin client availability
     if (_adminClient != null) {
@@ -200,6 +196,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   internal Func<string, string, CancellationToken, Task<DateTimeOffset?>>? OldestEnqueuedTimeProbe { get; set; }
 
   /// <summary>
+  /// The shortest time between two warnings for a failed head peek on one entity. A peek that fails
+  /// on every duty tick (a missing permission, a deleted entity) is reported once per interval per
+  /// entity rather than on every tick.
+  /// </summary>
+  internal static readonly TimeSpan BacklogPeekFailureLogInterval = TimeSpan.FromMinutes(5);
+
+  /// <summary>When each entity's last failed head peek was logged, on <see cref="_timeProvider"/>.</summary>
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> _lastPeekFailureLogged = new(StringComparer.Ordinal);
+
+  /// <summary>
   /// Samples every subscription this transport currently consumes from (topology arc phase 10):
   /// DEPTH from the management plane, AGE from a single head peek. One management operation and
   /// one peek per entity per call — an observer of idle churn must never become idle churn.
@@ -207,7 +213,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <remarks>
   /// A failure on either read degrades that entity's sample rather than the whole pass: depth
   /// without age is still useful, and the duty reports the missing age as a capability gap instead
-  /// of silently treating an unknown age as a young one.
+  /// of silently treating an unknown age as a young one. A failed head peek is logged at Warning with the
+  /// entity and the exception, at most once per <see cref="BacklogPeekFailureLogInterval"/> per entity, so
+  /// it is never mistaken for an empty entity (#1643).
   /// </remarks>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>One sample per live subscription; empty when nothing is subscribed yet.</returns>
@@ -227,24 +235,44 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         continue;  // this entity is unreadable right now; the next tick retries.
       }
 
+      var entity = $"{topic}/{subscription}";
       DateTimeOffset? oldestEnqueued = null;
       try {
         oldestEnqueued = await _peekOldestEnqueuedTimeAsync(topic, subscription, cancellationToken)
           .ConfigureAwait(false);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Age unavailable on this surface right now — reported as a capability gap upstream.
+        // Age unavailable on this surface right now: reported as a capability gap upstream, and
+        // logged here so a failed peek can be told apart from an empty entity (#1643).
+        _logPeekFailureRateLimited(entity, depth, ex);
       }
 
       samples.Add(new Whizbang.Core.Transports.BacklogSample(
-        Entity: $"{topic}/{subscription}",
+        Entity: entity,
         Depth: depth,
         OldestAge: oldestEnqueued is { } enqueued && enqueued > DateTimeOffset.MinValue
-          ? DateTimeOffset.UtcNow - enqueued
+          ? _timeProvider.GetUtcNow() - enqueued
           : null));
     }
 
     return samples;
   }
+
+  /// <summary>
+  /// Logs a failed head peek for <paramref name="entity"/> at Warning, at most once per
+  /// <see cref="BacklogPeekFailureLogInterval"/> per entity.
+  /// </summary>
+  private void _logPeekFailureRateLimited(string entity, long depth, Exception exception) {
+    var now = _timeProvider.GetUtcNow();
+    if (_lastPeekFailureLogged.TryGetValue(entity, out var last) && now - last < BacklogPeekFailureLogInterval) {
+      return;
+    }
+    _lastPeekFailureLogged[entity] = now;
+    LogBacklogHeadPeekFailed(_logger, exception, entity, exception.GetType().Name, exception.Message, depth);
+  }
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Backlog head peek failed for {Entity} ({ExceptionType}: {ExceptionMessage}); reporting depth {Depth} with no age")]
+  private static partial void LogBacklogHeadPeekFailed(
+    ILogger logger, Exception exception, string entity, string exceptionType, string exceptionMessage, long depth);
 
   private async Task<DateTimeOffset?> _peekOldestEnqueuedTimeAsync(
       string topic, string subscription, CancellationToken cancellationToken) {
@@ -261,32 +289,24 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
-  /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
-  /// message type at any lifecycle stage, OR any local perspective Apply's it. Returns false
-  /// (drop this message) when neither registry was injected — that signals a legacy / test
-  /// configuration that should not exercise the filter.
+  /// Runs the raw receptor the decision names, if any, with the envelope's payload: once the handler has stored the
+  /// message, so a raw receptor never replaces storing it (#1720).
   /// </summary>
-  /// <remarks>
-  /// Returns null when no registries are wired so the decision-maker treats the predicate as
-  /// "filter disabled" and falls through to legacy behavior. Once registries are present, the
-  /// closure is built once and reused across receives.
-  /// </remarks>
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "The predicate is built once and answers for every later receive, so it folds both registries into one closure: every lifecycle stage of the receptor registry and every event type of the perspective registry. Returning null when neither registry is wired is what tells the decision maker the filter is off, which is a third answer rather than a false.")]
-  private Func<Type, bool>? _buildIsHandledLocally() {
-    if (_receptorRegistry is null && _perspectiveRegistry is null) {
-      return null;
-    }
+  private static Task _invokeRawReceptorAsync(AsbReceiveDecision decision, CancellationToken cancellationToken) =>
+    decision.RawReceptor is { } receptor && decision.RawPayload is { } payload
+      ? receptor.HandleAsync(payload, cancellationToken)
+      : Task.CompletedTask;
 
-    return type => {
-      if (_receptorRegistry != null) {
-        foreach (var stage in Enum.GetValues<Whizbang.Core.Messaging.LifecycleStage>()) {
-          if (_receptorRegistry.GetReceptorsFor(type, stage).Count > 0) {
-            return true;
-          }
-        }
-      }
-      return _perspectiveRegistry?.GetEventTypes().Contains(type) == true;
-    };
+  /// <summary>
+  /// Logs a message handed on as received (one this service cannot read as its typed envelope) at Information, so the
+  /// rate stays visible now that it is stored rather than dropped (#1720). No-op for a typed envelope.
+  /// </summary>
+  private void _logStoredAsReceived(AsbReceiveDecision decision, string messageId) {
+    if (decision.Reason != AsbReceiveReason.OK && _logger.IsEnabled(LogLevel.Information)) {
+      _logger.LogInformation(
+        "ASB receive stored as received. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} Detail={Description}",
+        decision.Reason, decision.EnvelopeTypeName, messageId, decision.Description);
+    }
   }
 
   /// <summary>
@@ -1217,12 +1237,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     try {
-      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      var (envelope, envelopeTypeName, decision) = await _deserializeReceivedSessionMessageAsync(args, destination);
       if (envelope is null) {
         return;
       }
 
       await batchHandler([new TransportMessage(envelope, envelopeTypeName)], args.CancellationToken);
+      // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
+      await _invokeRawReceptorAsync(decision, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       _rotateSessionIfPastBudget(args, destination);
     } catch (Exception ex) {
@@ -1366,42 +1388,52 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // The batch failed: never complete it. Abandon (or dead-letter at the delivery limit) so the
       // broker redelivers and counts the attempt (#921). A shutdown is abandoned too: the message
       // goes back at once instead of waiting out its lock.
-      foreach (var args in successfulArgs) {
+      foreach (var (args, _) in successfulArgs) {
         await _handleMessageProcessingErrorAsync(args, ex, destination);
       }
       return;
     }
 
-    await _completeAllAsync(successfulArgs);
+    await _completeAllAsync(successfulArgs, destination);
   }
 
   /// <summary>
-  /// Deserializes each pending message; the ones that fail are already dead-lettered by
-  /// _deserializeReceivedMessageAsync and are left out of both lists.
+  /// Reads each pending message; one whose body is not a readable envelope is already dead-lettered at the broker by
+  /// _deserializeReceivedMessageAsync and is left out of both lists.
   /// </summary>
-  private async Task<(List<TransportMessage> Messages, List<ProcessMessageEventArgs> Args)> _deserializePendingBatchAsync(
+  private async Task<(List<TransportMessage> Messages, List<(ProcessMessageEventArgs Args, AsbReceiveDecision Decision)> Args)> _deserializePendingBatchAsync(
     IReadOnlyList<PendingServiceBusMessage> batch,
     TransportDestination destination
   ) {
     var transportMessages = new List<TransportMessage>(batch.Count);
-    var successfulArgs = new List<ProcessMessageEventArgs>(batch.Count);
+    var successfulArgs = new List<(ProcessMessageEventArgs Args, AsbReceiveDecision Decision)>(batch.Count);
 
     // S3267: Loop contains await — LINQ doesn't support async lambdas
 #pragma warning disable S3267
     foreach (var pending in batch) {
-      var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(pending.Args, destination);
+      var (envelope, envelopeTypeName, decision) = await _deserializeReceivedMessageAsync(pending.Args, destination);
       if (envelope is not null) {
         transportMessages.Add(new TransportMessage(envelope, envelopeTypeName));
-        successfulArgs.Add(pending.Args);
+        successfulArgs.Add((pending.Args, decision));
       }
     }
 #pragma warning restore S3267
     return (transportMessages, successfulArgs);
   }
 
-  /// <summary>Completes each handled message (Service Bus has no multi-ACK).</summary>
-  private async Task _completeAllAsync(List<ProcessMessageEventArgs> handled) {
-    foreach (var args in handled) {
+  /// <summary>
+  /// Completes each handled message (Service Bus has no multi-ACK), once the raw receptor a message has, if any, has run
+  /// on the stored message (#1720). A raw receptor that throws fails only its own message, which is abandoned (or
+  /// dead-lettered at the delivery limit) instead of completed.
+  /// </summary>
+  private async Task _completeAllAsync(List<(ProcessMessageEventArgs Args, AsbReceiveDecision Decision)> handled, TransportDestination destination) {
+    foreach (var (args, decision) in handled) {
+      try {
+        await _invokeRawReceptorAsync(decision, CancellationToken.None);
+      } catch (Exception ex) {
+        await _handleMessageProcessingErrorAsync(args, ex, destination);
+        continue;
+      }
       try {
         await args.CompleteMessageAsync(args.Message, cancellationToken: CancellationToken.None);
       } catch (ServiceBusException ex) {
@@ -1550,12 +1582,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     TransportDestination destination
       ) {
     try {
-      var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(args, destination);
+      var (envelope, envelopeTypeName, decision) = await _deserializeReceivedMessageAsync(args, destination);
       if (envelope is null) {
-        return; // Message was dead-lettered by _deserializeReceivedMessageAsync
+        return; // Not a readable envelope: dead-lettered at the broker by _deserializeReceivedMessageAsync
       }
 
       await handler(envelope, envelopeTypeName, args.CancellationToken);
+      // #1720: a raw receptor runs once the handler has stored the message, never instead of storing it.
+      await _invokeRawReceptorAsync(decision, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -1580,12 +1614,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     TransportDestination destination
   ) {
     try {
-      var (envelope, envelopeTypeName) = await _deserializeReceivedSessionMessageAsync(args, destination);
+      var (envelope, envelopeTypeName, decision) = await _deserializeReceivedSessionMessageAsync(args, destination);
       if (envelope is null) {
         return;
       }
 
       await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await _invokeRawReceptorAsync(decision, args.CancellationToken);
       await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
       _rotateSessionIfPastBudget(args, destination);
 
@@ -1607,10 +1642,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Topology arc phase 8.5 — adapts a broker message into the transport-NEUTRAL poison context
   /// Core decides on, and declares this surface's age capability.
   /// <para>
-  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery, which
-  /// is what makes it the only usable signal on a session-enabled entity: a lock lost to connection
-  /// death does not increment <c>DeliveryCount</c>, so the broker's MaxDeliveryCount valve and this
-  /// transport's own <c>MaxDeliveryAttempts</c> branch are both structurally unreachable there.
+  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery. Since
+  /// issue #1663 it only REPORTS an aged message (the receive gate never quarantines on age); a
+  /// session lock-loss storm, whose <c>DeliveryCount</c> never moves, is bounded after storage by
+  /// durable observations.
   /// A real Service Bus namespace always stamps it; a message arriving without one (default) means
   /// this surface cannot do age detection at all, and says so rather than silently treating an
   /// absent stamp as an infinitely old message.
@@ -1642,6 +1677,30 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
+  /// Issue #1663: reports an aged message the receive gate accepted, so a backlog stays visible.
+  /// No-op unless the decision carries an aged-on-receive verdict, so the caller invokes it
+  /// unconditionally.
+  /// </summary>
+  private void _recordAgedOnReceive(
+      AsbReceiveDecision decision,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext,
+      TransportDestination destination,
+      string subscription) {
+    if (_poisonDetector is null || decision.PoisonVerdict is not { ShouldQuarantine: false } verdict) {
+      return;
+    }
+    _poisonDetector.RecordAgedOnReceive(
+      Whizbang.Core.Routing.PoisonQuarantineGate.Receive,
+      verdict,
+      poisonContext,
+      new Dictionary<string, object?> {
+        ["transport"] = ASB_TRANSPORT_TAG,
+        ["topic"] = destination.Address,
+        ["subscription"] = subscription,
+      });
+  }
+
+  /// <summary>
   /// Emits the quarantine telemetry for a poison dead-letter. No-op for every other DeadLetter
   /// reason, so the caller can invoke it unconditionally in the branch.
   /// </summary>
@@ -1664,7 +1723,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       });
   }
 
-  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName, AsbReceiveDecision Decision)> _deserializeReceivedMessageAsync(
     ProcessMessageEventArgs args,
     TransportDestination destination
   ) {
@@ -1687,12 +1746,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
-      _buildIsHandledLocally(),
-      _rawReceptorRegistry,
-      _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces,
+      rawReceptorRegistry: _rawReceptorRegistry,
+      typeBinder: _typeBinder,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1702,37 +1760,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             decision.Envelope.MessageId.Value
           );
         }
-        return (decision.Envelope, decision.EnvelopeTypeName);
-
-      case AsbReceiveAction.AckAndDrop:
-        // Slice 1 hotfix: do NOT dead-letter on type-resolution failures. Ack the broker so
-        // the message exits the topic; structured warning + metric so operators see the drop
-        // rate without ASB DLQ accumulation.
-        _logger.LogWarning(
-          "ASB receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
-          decision.Reason,
-          decision.EnvelopeTypeName,
-          args.Message.MessageId,
-          destination.Address,
-          subscription,
-          decision.Description
-        );
-        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
-        return (null, decision.EnvelopeTypeName);
-
-      case AsbReceiveAction.InvokeRawReceptor:
-        // Slice 5 — typed binder couldn't resolve, but a raw receptor opted in for this
-        // message type. Dispatch with the raw JsonElement payload, then ack.
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation(
-            "ASB receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} Detail={Description}",
-            decision.EnvelopeTypeName, args.Message.MessageId, decision.Description);
-        }
-        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
-          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
-        }
-        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
-        return (null, decision.EnvelopeTypeName);
+        _logStoredAsReceived(decision, args.Message.MessageId);
+        return (decision.Envelope, decision.EnvelopeTypeName, decision);
 
       case AsbReceiveAction.DeadLetter:
         _logger.LogWarning(
@@ -1744,7 +1773,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         );
         _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
-        return (null, decision.EnvelopeTypeName);
+        return (null, decision.EnvelopeTypeName, decision);
 
       default:
         throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
@@ -1758,7 +1787,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   // (Process overload moved adjacent to non-session overload above to satisfy S4136.)
   // ========================================
 
-  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedSessionMessageAsync(
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName, AsbReceiveDecision Decision)> _deserializeReceivedSessionMessageAsync(
     ProcessSessionMessageEventArgs args,
     TransportDestination destination
   ) {
@@ -1772,45 +1801,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       json,
       Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName,
       _jsonOptions,
-      _buildIsHandledLocally(),
-      _rawReceptorRegistry,
-      _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces,
+      rawReceptorRegistry: _rawReceptorRegistry,
+      typeBinder: _typeBinder,
       poisonDetector: _poisonDetector,
       poisonContext: poisonContext);
+    _recordAgedOnReceive(decision, poisonContext, destination, subscription);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
-        return (decision.Envelope, decision.EnvelopeTypeName);
-
-      case AsbReceiveAction.AckAndDrop:
-        // Slice 1 hotfix: ack + drop instead of broker DLQ on type-resolution failures.
-        // Slice 2 (discard-policy): NoLocalConsumer is a routine cross-domain drop and
-        // routes through the policy (Debug + counter) instead of WARN logspam. All
-        // other AckAndDrop reasons (genuine envelope/type failures) still warn.
-        EmitAckDropTelemetry(
-          transportLogger: _logger,
-          discardPolicy: _discardPolicy,
-          decision: decision,
-          messageId: args.Message.MessageId,
-          sessionId: args.SessionId,
-          topic: destination.Address,
-          subscription: subscription);
-        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
-        return (null, decision.EnvelopeTypeName);
-
-      case AsbReceiveAction.InvokeRawReceptor:
-        // Slice 5 — raw receptor wants this message even though the typed binder missed.
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation(
-            "ASB session-receive raw-receptor. EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Detail={Description}",
-            decision.EnvelopeTypeName, args.Message.MessageId, args.SessionId, decision.Description);
-        }
-        if (decision.RawReceptor != null && decision.RawPayload.HasValue) {
-          await decision.RawReceptor.HandleAsync(decision.RawPayload.Value, args.CancellationToken);
-        }
-        await args.CompleteMessageAsync(args.Message, args.CancellationToken);
-        return (null, decision.EnvelopeTypeName);
+        _logStoredAsReceived(decision, args.Message.MessageId);
+        return (decision.Envelope, decision.EnvelopeTypeName, decision);
 
       case AsbReceiveAction.DeadLetter:
         _logger.LogWarning(
@@ -1823,7 +1823,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         );
         _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
-        return (null, decision.EnvelopeTypeName);
+        return (null, decision.EnvelopeTypeName, decision);
 
       default:
         throw new InvalidOperationException($"Unknown AsbReceiveAction: {decision.Action}");
@@ -1909,6 +1909,21 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly AsbThrottleBackoffPolicy _throttlePolicy =
     new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(60), TimeSpan.FromMinutes(5));
 
+  // The throttle pause in progress, and what ends it when the transport is disposed: left running, it restarted the
+  // processor of a disposed transport once the pause ran out, after the host had disposed the container (#1721).
+  // The token is read once, here: a processor error raised after disposal still reads it, already canceled.
+  private readonly (CancellationTokenSource Source, CancellationToken Stopped) _throttlePauseStop = _newThrottlePauseStop();
+  private Task _throttlePause = Task.CompletedTask;
+
+  private static (CancellationTokenSource Source, CancellationToken Stopped) _newThrottlePauseStop() {
+    var source = new CancellationTokenSource();
+    return (source, source.Token);
+  }
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Throttle pause for {TopicName}/{SubscriptionName} ended by transport disposal; the processor stays stopped")]
+  private static partial void LogThrottlePauseEndedByDisposal(ILogger logger, Exception ended, string topicName, string subscriptionName);
+
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
     TransportDestination destination,
@@ -1947,14 +1962,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           _subscriptionOf(destination),
           pause.TotalSeconds);
       }
-      // CancellationToken.None throughout the detached pause is deliberate: args.CancellationToken
-      // is signaled when the processor stops — which is exactly what the pause DOES first, so
-      // flowing it here would cancel our own delay/resume and strand the processor stopped.
+      // Not args.CancellationToken: it is signaled when the processor stops, which is exactly what the pause DOES
+      // first, so flowing it here would cancel our own delay/resume and strand the processor stopped. Only disposing
+      // the transport ends the pause early, and then the processor is not restarted (#1721).
       // The pause runs on the transport's clock, like every other time this transport measures.
-      _ = Task.Run(async () => {
+      var pauseStopped = _throttlePauseStop.Stopped;
+      Volatile.Write(ref _throttlePause, Task.Run(async () => {
         try {
           await stopProcessingAsync();
-          await Task.Delay(pause, _timeProvider, CancellationToken.None);
+          await Task.Delay(pause, _timeProvider, pauseStopped);
           await startProcessingAsync();
           if (_logger.IsEnabled(LogLevel.Information)) {
             _logger.LogInformation(
@@ -1962,6 +1978,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               destination.Address,
               _subscriptionOf(destination));
           }
+        } catch (OperationCanceledException ended) when (pauseStopped.IsCancellationRequested) {
+          var subscription = _subscriptionOf(destination);
+          LogThrottlePauseEndedByDisposal(_logger, ended, destination.Address, subscription);
         } catch (Exception ex) {
           _logger.LogError(ex,
             "Throttle pause/resume failed for {TopicName}/{SubscriptionName} — the receive-liveness watchdog is the backstop",
@@ -1970,7 +1989,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         } finally {
           _throttlePolicy.EndPause();
         }
-      }, CancellationToken.None);
+      }, CancellationToken.None));
     }
   }
 
@@ -2495,6 +2514,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // Clear recovery handler to prevent memory leak
     _recoveryHandler = null;
 
+    // End a throttle pause still waiting, and wait for it, so it never restarts a processor of this transport (#1721)
+    await _throttlePauseStop.Source.CancelAsync();
+    await Volatile.Read(ref _throttlePause);
+    _throttlePauseStop.Source.Dispose();
+
     // Stop the receive-liveness loop before tearing anything else down
     if (LivenessWatchdog is not null) {
       await LivenessWatchdog.DisposeAsync();
@@ -2524,57 +2548,5 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     _senderLock.Dispose();
 
     GC.SuppressFinalize(this);
-  }
-
-  /// <summary>
-  /// Routes the ack+drop telemetry through the shared <see cref="IMessageDiscardPolicy"/>
-  /// when the reason is <see cref="AsbReceiveReason.NO_LOCAL_CONSUMER"/> — that case logs
-  /// at Debug and bumps the <c>whizbang.message.skipped</c> OTel counter. Other AckAndDrop
-  /// reasons (genuine envelope/type-resolution failures, deserialization failures) keep
-  /// the existing Warning log so they remain visible in production.
-  /// </summary>
-  /// <remarks>
-  /// Internal-static so the unit tests can exercise the level-routing without standing up
-  /// a real <c>ServiceBusClient</c>. Caller in the receive path passes
-  /// <see cref="_discardPolicy"/> — when the policy isn't wired (legacy / test configs)
-  /// the legacy Warning fires so behaviour is never silently lost.
-  /// </remarks>
-  internal static void EmitAckDropTelemetry(
-      ILogger<AzureServiceBusTransport> transportLogger,
-      IMessageDiscardPolicy? discardPolicy,
-      AsbReceiveDecision decision,
-      string? messageId,
-      string? sessionId,
-      string topic,
-      string subscription) {
-    if (decision.Reason == AsbReceiveReason.NO_LOCAL_CONSUMER
-        && discardPolicy is not null
-        && !string.IsNullOrEmpty(decision.EnvelopeTypeName)) {
-      var policyDecision = new MessageDiscardDecision(
-        ShouldDiscard: true,
-        Reason: MessageDiscardReason.NoLocalConsumer,
-        Detail: decision.Description);
-      discardPolicy.RecordDiscard(
-        gate: MessageDiscardGate.Receive,
-        decision: policyDecision,
-        payloadClrType: decision.EnvelopeTypeName,
-        additionalTags: new Dictionary<string, object?> {
-          ["topic"] = topic,
-          ["subscription"] = subscription,
-          ["message_id"] = messageId,
-          ["session_id"] = sessionId,
-        });
-      return;
-    }
-
-    transportLogger.LogWarning(
-      "ASB session-receive ack+drop. Reason={Reason} EnvelopeType={EnvelopeType} MessageId={MessageId} SessionId={SessionId} Topic={TopicName} Subscription={SubscriptionName} Detail={Description}",
-      decision.Reason,
-      decision.EnvelopeTypeName,
-      messageId,
-      sessionId,
-      topic,
-      subscription,
-      decision.Description);
   }
 }

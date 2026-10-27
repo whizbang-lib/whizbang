@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 7.0
 
 <#
@@ -236,7 +239,7 @@ function Read-UnifiedDiff {
     if ($line.StartsWith('diff --git ')) {
       $m = [regex]::Match($line, '^diff --git a/(?<a>.+) b/(?<b>.+)$')
       $file = [pscustomobject]@{
-        Path = $m.Groups['b'].Value; IsNew = $false; IsDeleted = $false
+        Path = $m.Groups['b'].Value; OldPath = $m.Groups['a'].Value; IsNew = $false; IsDeleted = $false
         Lines = [System.Collections.Generic.List[object]]::new()
       }
       $files.Add($file)
@@ -247,6 +250,7 @@ function Read-UnifiedDiff {
     if (-not $inHunk) {
       if ($line.StartsWith('new file mode')) { $file.IsNew = $true }
       elseif ($line.StartsWith('deleted file mode')) { $file.IsDeleted = $true }
+      elseif ($line.StartsWith('--- a/')) { $file.OldPath = $line.Substring(6) }
       elseif ($line.StartsWith('+++ b/')) { $file.Path = $line.Substring(6) }
     }
     $hunk = [regex]::Match($line, '^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,\d+)? @@')
@@ -344,6 +348,127 @@ function ConvertTo-EnUsSpelling {
   return $us
 }
 
+function ConvertTo-NormalizedSql {
+  <#
+  .SYNOPSIS
+      A migration's SQL with everything that changes nothing executable removed.
+  .DESCRIPTION
+      The port of Whizbang.Data.Postgres.MigrationSqlNormalizer, the form every driver hashes to decide
+      whether a migration changed. tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/MigrationSqlNormalizerTests.cs
+      and .github/scripts/tests/ReviewFindings.Tests.ps1 hold the two to the same cases.
+
+      Removed: -- line comments and /* */ block comments (nested, as PostgreSQL reads them), spaces and tabs
+      at line edges and runs of them between tokens (one space), blank lines, and the line ending
+      convention. Copied verbatim: '...' strings, E'...' strings with backslash escapes, "..." identifiers
+      and dollar-quoted bodies ($$...$$, $tag$...$tag$), so a comment marker inside a literal is text.
+  #>
+  [CmdletBinding()]
+  [OutputType([string])]
+  param([Parameter(Mandatory, Position = 0)][AllowEmptyString()][string]$Sql)
+
+  # Compiled, not interpreted: a per-character PowerShell loop costs microseconds a character, and minutes over
+  # the shipped migrations on a Windows runner (#1762).
+  if (-not ('WhizbangReview.SqlNormalizer' -as [type])) { Add-Type -TypeDefinition $script:SqlNormalizerSource }
+  return [WhizbangReview.SqlNormalizer]::Normalize($Sql)
+}
+
+# The C# normalizer, written to compile on every PowerShell 7 (no primary constructors or newer APIs).
+$script:SqlNormalizerSource = @'
+namespace WhizbangReview {
+  public static class SqlNormalizer {
+    public static string Normalize(string sql) {
+      var output = new System.Text.StringBuilder(sql.Length);
+      var pendingSpace = false;
+      var lineHasContent = false;
+      var pendingNewline = false;
+      var n = sql.Length;
+      var i = 0;
+      while (i < n) {
+        var c = sql[i];
+        var next = i + 1 < n ? sql[i + 1] : '\0';
+        int end;
+        if (c == '\n' || c == '\r') {
+          i += c == '\r' && next == '\n' ? 2 : 1;
+          pendingSpace = false;
+          if (lineHasContent) { pendingNewline = true; lineHasContent = false; }
+          continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\f' || c == '\v') { pendingSpace = true; i++; continue; }
+        if (c == '-' && next == '-') {
+          while (i < n && sql[i] != '\n' && sql[i] != '\r') { i++; }
+          continue;
+        }
+        if (c == '/' && next == '*') {
+          var depth = 0;
+          while (i < n) {
+            var after = i + 1 < n ? sql[i + 1] : '\0';
+            if (sql[i] == '/' && after == '*') { depth++; i += 2; }
+            else if (sql[i] == '*' && after == '/') { depth--; i += 2; if (depth == 0) { break; } }
+            else { i++; }
+          }
+          pendingSpace = true;
+          continue;
+        }
+        int tag;
+        if (c == '\'' || c == '"') {
+          var escapes = c == '\'' && i > 0 && (sql[i - 1] == 'E' || sql[i - 1] == 'e') && (i < 2 || !IsIdentifierChar(sql[i - 2]));
+          end = QuotedEnd(sql, i, escapes);
+        } else if (c == '$' && (tag = DollarTagLength(sql, i)) > 0) {
+          var close = sql.IndexOf(sql.Substring(i, tag), i + tag, System.StringComparison.Ordinal);
+          end = close < 0 ? n : close + tag;
+        } else {
+          end = i + 1;
+        }
+        // Content, preceded by whatever separator is pending: a line ending, or one space within a line.
+        if (pendingNewline) { output.Append('\n'); pendingNewline = false; }
+        else if (pendingSpace && lineHasContent) { output.Append(' '); }
+        pendingSpace = false;
+        lineHasContent = true;
+        output.Append(sql, i, end - i);
+        i = end;
+      }
+      return output.ToString();
+    }
+
+    // Where the quoted literal opening at At ends (its doubled quote escapes it); the text's end when unterminated.
+    private static int QuotedEnd(string sql, int at, bool escapes) {
+      var quote = sql[at];
+      var j = at + 1;
+      while (j < sql.Length) {
+        if (escapes && sql[j] == '\\') { j += 2; }
+        else if (sql[j] == quote) {
+          if (j + 1 < sql.Length && sql[j + 1] == quote) { j += 2; } else { return j + 1; }
+        } else { j++; }
+      }
+      return sql.Length;
+    }
+
+    private static bool IsIdentifierChar(char c) { return char.IsLetterOrDigit(c) || c == '_' || c == '$'; }
+
+    // The length of the $$ or $tag$ delimiter at At, or 0 when the dollar opens no quote.
+    private static int DollarTagLength(string sql, int at) {
+      if (at > 0 && IsIdentifierChar(sql[at - 1])) { return 0; }
+      var j = at + 1;
+      while (j < sql.Length && sql[j] != '$') {
+        var ch = sql[j];
+        var valid = j == at + 1 ? char.IsLetter(ch) || ch == '_' : char.IsLetterOrDigit(ch) || ch == '_';
+        if (!valid) { return 0; }
+        j++;
+      }
+      return j < sql.Length ? j - at + 1 : 0;
+    }
+  }
+}
+'@
+
+function _isInertMigrationEdit($File, [scriptblock]$ReadMigrationVersions) {
+  # True only when both sides were read and normalize to the same SQL; anything unreadable is flagged.
+  if (-not $ReadMigrationVersions) { return $false }
+  $versions = & $ReadMigrationVersions $File.OldPath $File.Path
+  if ($null -eq $versions) { return $false }
+  return (ConvertTo-NormalizedSql ([string]$versions.Old)) -ceq (ConvertTo-NormalizedSql ([string]$versions.New))
+}
+
 function Find-DiffFindings {
   <#
   .SYNOPSIS
@@ -353,11 +478,18 @@ function Find-DiffFindings {
       .github/review-checks-ignore.txt) are skipped, as is any line containing "review-checks:allow".
       Each finding's id is "rule:path:line", so a re-run on the same diff produces the same ids and a
       draft review never gets the same comment twice.
+
+      ReadMigrationVersions, when given, is called with an edited migration's old and new path and returns
+      an object with Old and New (the file's text on each side), or $null when either cannot be read. An
+      edit whose normalized SQL is unchanged (ConvertTo-NormalizedSql: comments, line-edge whitespace,
+      blank lines and line endings only) changes nothing a database executes and is not flagged. Without
+      it, or when the text cannot be read, every edit to an existing migration is flagged.
   #>
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][AllowEmptyString()][string]$DiffText,
-    [AllowEmptyCollection()][string[]]$IgnorePaths = @()
+    [AllowEmptyCollection()][string[]]$IgnorePaths = @(),
+    [scriptblock]$ReadMigrationVersions
   )
 
   foreach ($file in Read-UnifiedDiff -DiffText $DiffText) {
@@ -370,7 +502,8 @@ function Find-DiffFindings {
     $isLibrary = $path.StartsWith('src/') -and $extension -eq '.cs'
     $added = @($file.Lines | Where-Object { $_.Added -and -not $_.Text.Contains('review-checks:allow') })
 
-    if ($path -match '^src/[^/]+/Migrations/[^/]+\.sql$' -and -not $file.IsNew -and $added.Count -gt 0) {
+    if ($path -match '^src/[^/]+/Migrations/[^/]+\.sql$' -and -not $file.IsNew -and $added.Count -gt 0 -and
+      -not (_isInertMigrationEdit $file $ReadMigrationVersions)) {
       New-ReviewFinding -Id "migrations.edited:${path}:$($added[0].Line)" -Rule 'migrations.edited' -Severity blocking `
         -Path $path -Line $added[0].Line `
         -Body 'This migration already exists and is being edited. A database that has run it never runs it again, so the change would reach new databases only. Add a new migration instead.'
@@ -677,4 +810,4 @@ function _markerId([string]$Id) {
 Export-ModuleMember -Function New-ReviewFinding, Find-PullRequestTypeFindings, ConvertTo-ReviewBlock, ConvertFrom-ReviewBlock, Test-RepoRelativePath,
   Get-GateFindings, Read-UnifiedDiff, Get-DiffFiles, Get-AddedLines, Get-CommentableLines, ConvertTo-EnUsSpelling,
   Find-DiffFindings, Find-PullRequestFindings, ConvertTo-DcoFindings, Format-ReviewChecksComment,
-  Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText
+  Get-ReviewDraftPlan, Get-DraftedIds, Protect-ReviewText, ConvertTo-NormalizedSql

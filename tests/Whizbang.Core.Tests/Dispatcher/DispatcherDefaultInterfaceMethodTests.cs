@@ -201,6 +201,78 @@ public class DispatcherDefaultInterfaceMethodTests {
     await Assert.That(async () => await dispatcher.LocalSendManyAsync(untyped, options)).ThrowsExactly<NotImplementedException>();
   }
 
+  /// <summary>Each setting a default batch overload cannot honor, named as the refusal names it.</summary>
+  public static IEnumerable<Func<(string Setting, DispatchOptions Options)>> DroppedSettings() {
+    yield return () => ("CancellationToken", new DispatchOptions { CancellationToken = new CancellationTokenSource().Token });
+    yield return () => ("Timeout", new DispatchOptions { Timeout = TimeSpan.FromSeconds(5) });
+    yield return () => ("WaitForPerspectives", new DispatchOptions { WaitForPerspectives = true });
+    yield return () => ("PerspectiveWaitTimeout", new DispatchOptions { PerspectiveWaitTimeout = TimeSpan.FromSeconds(5) });
+    yield return () => ("ScheduledFor", new DispatchOptions { ScheduledFor = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero) });
+    yield return () => ("Priority", new DispatchOptions { Priority = 7 });
+    yield return () => ("MaxPayloadBytes", new DispatchOptions { MaxPayloadBytes = 1024 });
+    yield return () => ("Policy", new DispatchOptions { Policy = new Whizbang.Core.Dispatch.Policy.DispatchPolicyId(1) });
+    yield return () => ("Behaviors", new DispatchOptions { Behaviors = DispatchBehaviors.ThrowWhenNoHandler });
+    yield return () => ("BatchFailure", new DispatchOptions { BatchFailure = BatchFailureMode.ContinueAndAggregate });
+  }
+
+  public enum BatchOverload {
+    SendManyTyped,
+    SendManyUntyped,
+    PublishManyTyped,
+    PublishManyUntyped,
+    LocalSendManyTyped,
+    LocalSendManyUntyped,
+  }
+
+  [Test]
+  [MethodDataSource(nameof(DroppedSettings))]
+  public async Task BatchOverloadsWithOptions_ByDefault_RefuseASettingTheyWouldDropAsync(string setting, DispatchOptions options) {
+    // #1415: the default forwards to the overload without options, so a setting it carries would be lost
+    // without any sign. It refuses instead, naming the setting, before reaching the inner overload.
+    IDispatcher dispatcher = new MinimalDispatcher();
+
+    foreach (var overload in Enum.GetValues<BatchOverload>()) {
+      var refusal = await Assert.That(async () => await _callAsync(dispatcher, overload, options)).ThrowsExactly<NotSupportedException>()
+        .Because($"{overload} cannot honor {setting}");
+      await Assert.That(refusal!.Message).Contains(setting);
+    }
+  }
+
+  [Test]
+  public async Task BatchOverloadsWithOptions_ByDefault_RefuseNullOptionsAsync() {
+    IDispatcher dispatcher = new MinimalDispatcher();
+
+    foreach (var overload in Enum.GetValues<BatchOverload>()) {
+      await Assert.That(async () => await _callAsync(dispatcher, overload, null!)).ThrowsExactly<ArgumentNullException>()
+        .Because($"{overload} refuses null options, as the dispatcher does");
+    }
+  }
+
+  private static async Task _callAsync(IDispatcher dispatcher, BatchOverload overload, DispatchOptions options) {
+    object[] untyped = [new TestMessage(Guid.NewGuid())];
+    TestMessage[] typed = [new TestMessage(Guid.NewGuid())];
+    switch (overload) {
+      case BatchOverload.SendManyTyped:
+        await dispatcher.SendManyAsync(typed, options);
+        break;
+      case BatchOverload.SendManyUntyped:
+        await dispatcher.SendManyAsync(untyped, options);
+        break;
+      case BatchOverload.PublishManyTyped:
+        await dispatcher.PublishManyAsync(typed, options);
+        break;
+      case BatchOverload.PublishManyUntyped:
+        await dispatcher.PublishManyAsync(untyped, options);
+        break;
+      case BatchOverload.LocalSendManyTyped:
+        await dispatcher.LocalSendManyAsync(typed, options);
+        break;
+      default:
+        await dispatcher.LocalSendManyAsync(untyped, options);
+        break;
+    }
+  }
+
   [Test]
   public async Task LocalInvokeAndSyncAsync_TypedResult_WithoutAwaiterSupport_ThrowsAsync() {
     IDispatcher dispatcher = new MinimalDispatcher();

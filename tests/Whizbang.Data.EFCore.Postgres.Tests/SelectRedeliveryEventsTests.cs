@@ -29,6 +29,9 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
   private const string TENANT_A = "tenant-a";
   private const string TENANT_B = "tenant-b";
 
+  /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
+  private const int AT_MOST_ONCE_FLAG = 32;
+
   // Typed as the interface: the default-interface implementation (and later the EFCore override)
   // are both reached the way production callers reach them.
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
@@ -49,10 +52,9 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     var e1V1 = await _seedAsync(conn, stream1, version: 1, TENANT_A, "Contracts.ThingCreated");
     // At-most-once occurrence on stream 1 → excluded by the selection itself.
     var atMostOnce = await _seedAsync(conn, stream1, version: 3, TENANT_A, "Contracts.OccurrenceFired",
-      metadataJson: "{\"scheduleId\":\"s-1\",\"deliveryGuarantee\":1}");
+      flags: AT_MOST_ONCE_FLAG);
     // At-least-once occurrence → included (discriminates the guarantee filter from "any occurrence").
-    var atLeastOnce = await _seedAsync(conn, stream1, version: 4, TENANT_A, "Contracts.OccurrenceFired",
-      metadataJson: "{\"scheduleId\":\"s-2\",\"deliveryGuarantee\":0}");
+    var atLeastOnce = await _seedAsync(conn, stream1, version: 4, TENANT_A, "Contracts.OccurrenceFired");
 
     // Stream 2, tenant A — ephemeral pair: body present (in grace) vs body reaped.
     var ephemeralInGrace = await _seedAsync(conn, stream2, version: 1, TENANT_A, "Contracts.PresencePing", flags: 8);
@@ -184,7 +186,7 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
   /// <summary>Seeds one event: store pointer + (unless <paramref name="reapBody"/>) its body row.</summary>
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
-      int flags = 0, string? metadataJson = null, bool reapBody = false) {
+      int flags = 0, bool reapBody = false) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
@@ -206,7 +208,7 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
       body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+      body.Parameters.AddWithValue("meta", "{}");
       await body.ExecuteNonQueryAsync();
     }
     return eventId;

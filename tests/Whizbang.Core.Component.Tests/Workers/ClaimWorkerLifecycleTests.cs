@@ -352,9 +352,9 @@ public class ClaimWorkerLifecycleTests {
   [Test]
   [Timeout(30000)]
   public async Task PerspectiveOnlyMode_ParksInsteadOfClaimingAsync(CancellationToken testToken) {
-    // In this mode the legacy publisher is the sole poller. ClaimWorker also claiming would race
-    // it and lease orphan rows before process_work_batch sees them, breaking the event-store
-    // auto-create chain — so parking is the whole behavior.
+    // In this mode another poller is the sole claimer. ClaimWorker also claiming would race it
+    // and lease orphan rows before it sees them, so parking is the whole behavior. (The mode was
+    // added for the legacy publisher and its process_work_batch call, both since removed.)
     var coordinator = new MinimalCoordinator();
     var worker = _worker(new ControllableListener(), coordinator: coordinator, perspectiveOnly: true);
 

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Analyzer Sweep
 
 # Applies Roslynator's automated fixes to a test project and pushes the result to a branch.

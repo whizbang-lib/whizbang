@@ -187,7 +187,7 @@ public class OutboxStreamRunCoordinatorTests : EFCoreTestBase {
     await Assert.That(row.EnvelopeType).IsEqualTo("Env");
     await Assert.That(row.Error).IsEqualTo("earlier failure");
     await Assert.That(row.CommitSequence).IsEqualTo(42L);
-    await Assert.That(row.OriginServiceId).IsNotNull();
+    await Assert.That(row.OriginServiceId.HasValue).IsTrue();
     await Assert.That(row.OriginCommitSequence).IsEqualTo(7L);
     await Assert.That(row.Destination).IsNull();
     await Assert.That(row.PartitionNumber).IsNull();

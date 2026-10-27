@@ -6,7 +6,7 @@ using System.Diagnostics.Metrics;
 namespace Whizbang.Core.Observability;
 
 /// <summary>
-/// Metrics for the work coordination pipeline: process_work_batch, flush, publisher worker.
+/// Metrics for the work coordination pipeline: flush, handler commits, publisher worker, maintenance, gate.
 /// Meter name: Whizbang.WorkCoordinator
 /// </summary>
 /// <docs>operations/observability/metrics</docs>
@@ -20,44 +20,15 @@ public sealed class WorkCoordinatorMetrics {
 
   // Timing
 
-  /// <summary>Time executing process_work_batch SQL.</summary>
-  public Histogram<double> ProcessBatchDuration { get; }
-
-  /// <summary>Total FlushAsync time including lifecycle.</summary>
+  /// <summary>
+  /// Time one flush spends storing what a strategy queued (outbox and inbox rows, completions,
+  /// failures) and running its distribute lifecycle stages, in milliseconds, tagged <c>strategy</c>.
+  /// Recorded by every strategy for each flush that had work; an empty flush records nothing here
+  /// and counts in <see cref="EmptyFlushCalls"/> instead.
+  /// </summary>
   public Histogram<double> FlushDuration { get; }
 
-  // Batch composition (IN)
-
-  /// <summary>Outbox messages sent to process_work_batch.</summary>
-  public Histogram<int> BatchOutboxMessages { get; }
-
-  /// <summary>Inbox messages sent.</summary>
-  public Histogram<int> BatchInboxMessages { get; }
-
-  /// <summary>Completions sent.</summary>
-  public Histogram<int> BatchCompletions { get; }
-
-  /// <summary>Failures sent.</summary>
-  public Histogram<int> BatchFailures { get; }
-
-  // Work returned (OUT)
-
-  /// <summary>Outbox work items returned.</summary>
-  public Histogram<int> ReturnedOutboxWork { get; }
-
-  /// <summary>Inbox work items returned.</summary>
-  public Histogram<int> ReturnedInboxWork { get; }
-
-  /// <summary>Perspective work items returned.</summary>
-  public Histogram<int> ReturnedPerspectiveWork { get; }
-
   // Counters
-
-  /// <summary>Total process_work_batch calls.</summary>
-  public PassiveCounter<long> ProcessBatchCalls { get; }
-
-  /// <summary>SQL errors.</summary>
-  public PassiveCounter<long> ProcessBatchErrors { get; }
 
   /// <summary>
   /// Handler-commit batches that fell back from the bulk tier to the per-handler savepoint
@@ -77,7 +48,7 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>Total FlushAsync calls.</summary>
   public PassiveCounter<long> FlushCalls { get; }
 
-  /// <summary>Flushes with no queued work.</summary>
+  /// <summary>Flushes that found nothing queued, tagged <c>strategy</c>. Every strategy counts them.</summary>
   public PassiveCounter<long> EmptyFlushCalls { get; }
 
   // Publisher worker
@@ -131,20 +102,8 @@ public sealed class WorkCoordinatorMetrics {
     var meter = whizbangMetrics.MeterFactory.Create(METER_NAME);
     _meter = meter;
 
-    ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");
-    FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");
+    FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Time one flush spends storing queued work and running its distribute lifecycle stages; tagged by strategy");
 
-    BatchOutboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Outbox messages sent to process_work_batch");
-    BatchInboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.inbox_messages", description: "Inbox messages sent");
-    BatchCompletions = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.completions", description: "Completions sent");
-    BatchFailures = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.failures", description: "Failures sent");
-
-    ReturnedOutboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.outbox_work", description: "Outbox work items returned");
-    ReturnedInboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
-    ReturnedPerspectiveWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
-
-    ProcessBatchCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
-    ProcessBatchErrors = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
     CommitHandlerFallbacks = meter.CreatePassiveCounter<long>(
       "whizbang.work_coordinator.commit_handler.fallbacks",
       description: "Handler-commit batches that fell back from the bulk tier to the per-handler savepoint loop");
@@ -152,7 +111,7 @@ public sealed class WorkCoordinatorMetrics {
       "whizbang.work_coordinator.outbox.emission_deduplicated",
       description: "Outbox rows skipped because the same message id was already stored: republishes a retry would have produced; tagged by message_type");
     FlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
-    EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
+    EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes that found nothing queued; tagged by strategy");
 
     PublisherLeaseRenewals = meter.CreatePassiveCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
     PublisherBufferedMessages = meter.CreatePassiveCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");

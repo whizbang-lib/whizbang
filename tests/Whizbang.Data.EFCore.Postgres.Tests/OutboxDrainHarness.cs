@@ -105,7 +105,8 @@ internal static class OutboxDrainHarness {
       runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
@@ -117,6 +118,68 @@ internal static class OutboxDrainHarness {
       await Assert.That(failure.All).IsEmpty()
         .Because("the row must reach its stages; a failure here (a missing security context, say) means nothing was tested");
       return [.. publish.Published];
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  /// <summary>
+  /// Offers the leased row's stream to the REAL worker while the transport reports not ready, waits for the
+  /// worker's held-pass signal and runs <paramref name="whileHeld"/>; then reports ready, offers the stream again
+  /// (as the claim's next poll does) and waits for the row's completion (#1558). Returns the held pass and what
+  /// the fake transport published.
+  /// </summary>
+  public static async Task<(OutboxPublishHeldEvent Held, IReadOnlyList<OutboxWork> Published)> HoldThenDrainAsync(
+      IServiceProvider serviceProvider, JsonSerializerOptions jsonOptions, Guid messageId, Guid streamId,
+      int renewalLeaseSeconds, Func<Task> whileHeld) {
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new SignalingCompletionChannel();
+    var failure = new RecordingFailureChannel();
+    var publish = new SucceedingPublishStrategy(supportsBulkPublish: false);
+    publish.SetReady(false);
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var options = new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 };
+    var worker = new OutboxDrainWorker(
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      instanceProvider: serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
+      drainChannel: drainChannel,
+      completionChannel: completion,
+      failureChannel: failure,
+      schemaReadyGate: gate,
+      options: Options.Create(options),
+      jsonOptions: jsonOptions,
+      logger: NullLogger<OutboxDrainWorker>.Instance,
+      publishStrategy: publish,
+      lifecycleMessageDeserializer: serviceProvider.GetRequiredService<ILifecycleMessageDeserializer>(),
+      receptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistryQuery>(),
+      runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
+      deadLetterStore: NullDeadLetterStore.Instance,
+      generationProvider: new DefaultGenerationProvider(),
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = renewalLeaseSeconds }));
+    var held = new TaskCompletionSource<OutboxPublishHeldEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnOutboxPublishHeld += e => held.TrySetResult(e);
+
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+    ScopeContextAccessor.CurrentContext = null;
+    using var cts = new CancellationTokenSource();
+    try {
+      await worker.StartAsync(cts.Token);
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      var heldPass = await held.Task.WaitAsync(SignalTimeout);
+      await Assert.That(publish.Published).IsEmpty().Because("a transport that reported not ready is handed nothing");
+      await Assert.That(failure.All).IsEmpty().Because("a held row is not a failed publish");
+      await whileHeld();
+
+      publish.SetReady(true);
+      await drainChannel.WriteAsync(streamId, cts.Token);
+      await completion.WaitForAsync(messageId).WaitAsync(SignalTimeout);
+      await Assert.That(failure.All).IsEmpty();
+      return (heldPass, [.. publish.Published]);
     } finally {
       await cts.CancelAsync();
       await worker.StopAsync(CancellationToken.None);
@@ -155,9 +218,11 @@ internal static class OutboxDrainHarness {
   }
 
   private sealed class SucceedingPublishStrategy(bool supportsBulkPublish) : IMessagePublishStrategy {
+    private volatile bool _ready = true;
     public ConcurrentQueue<OutboxWork> Published { get; } = new();
     public bool SupportsBulkPublish => supportsBulkPublish;
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+    public void SetReady(bool ready) => _ready = ready;
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(_ready);
 
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) =>
       Task.FromResult(_succeed(work));

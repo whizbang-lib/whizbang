@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 132_StampAlwaysRingsDebounced
 -- Date: 2026-09-05
 -- Description: Every stamp that affects rows rings the owners; the debounce owns redundancy

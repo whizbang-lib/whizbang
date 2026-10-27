@@ -24,7 +24,9 @@ public sealed class JsonbPlace {
 /// <summary>A model keeping its filter values in jsonb columns as well as in its document.</summary>
 public static class JsonbExtractedItem {
   [PerspectiveStorage(FieldStorageMode.Extracted)]
-  [PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512)]
+  [PerspectiveTableStorage(DataCompression = ColumnCompression.Lz4, ToastTupleTarget = 512,
+    AutovacuumVacuumThreshold = 500, AutovacuumVacuumScaleFactor = 0, ToastAutovacuumVacuumThreshold = 300,
+    FillFactor = 90)]
   public class Model {
     [StreamId]
     public Guid Id { get; set; }

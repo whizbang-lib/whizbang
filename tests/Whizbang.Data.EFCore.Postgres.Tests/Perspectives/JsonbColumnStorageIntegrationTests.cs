@@ -50,6 +50,15 @@ public class JsonbColumnStorageIntegrationTests {
       .IsEqualTo("l").Because("the document is compressed with lz4.");
     await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
       .Contains("toast_tuple_target=512");
+    await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
+      .Contains("autovacuum_vacuum_threshold=500").And.Contains("autovacuum_vacuum_scale_factor=0");
+    await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
+      .Contains("fillfactor=90").Because("the declared fillfactor reaches the table (#1592).");
+    await Assert.That(await _pendingRewritesAsync()).DoesNotContain(TABLE)
+      .Because("a table created empty has no pages to rewrite, so setting its fillfactor queues nothing.");
+    await Assert.That(await _scalarAsync(
+        $"SELECT array_to_string(t.reloptions, ',') FROM pg_class c JOIN pg_class t ON t.oid = c.reltoastrelid WHERE c.oid = '{TABLE}'::regclass"))
+      .IsEqualTo("autovacuum_vacuum_threshold=300").Because("a toast.* setting lands on the TOAST relation (#1584).");
     await Assert.That(await _scalarAsync($"SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_{TABLE}_grid_filter_size'"))
       .Contains("pg_column_size(grid_filter) <= 4096");
   }
@@ -64,7 +73,8 @@ public class JsonbColumnStorageIntegrationTests {
       "GridFilter", "grid_filter", "x", IsIndexed: false, IsUnique: false, MaxLength: null, IsVector: false,
       VectorDimensions: null, VectorDistanceMetric: null, VectorIndexType: null, VectorIndexLists: null,
       ColumnType: "jsonb", Storage: "MAIN", MaxBytes: 4096);
-    var statements = ColumnStorageSql.ForTable(TABLE, new TableStorageInfo("lz4", 512))
+    var statements = ColumnStorageSql.ForTable(TABLE, new TableStorageInfo("lz4", 512,
+        AutovacuumVacuumThreshold: 500, AutovacuumVacuumScaleFactor: 0, ToastAutovacuumVacuumThreshold: 300, FillFactor: 90))
       .Concat(ColumnStorageSql.ForColumn(TABLE, TABLE, field));
 
     await _execAsync("""
@@ -85,6 +95,40 @@ public class JsonbColumnStorageIntegrationTests {
     await _execAsync($"ALTER TABLE {TABLE} ALTER COLUMN grid_filter SET STORAGE EXTENDED; TRUNCATE ddl_seen;");
     await _execAsync(string.Join('\n', statements));
     await Assert.That(await _scalarAsync("SELECT count(*) FROM ddl_seen WHERE tag = 'ALTER TABLE'")).IsEqualTo("1");
+  }
+
+  /// <summary>
+  /// Issue #1592: a fillfactor that changes on a table holding rows applies only to the pages written from then on,
+  /// so the schema pass queues a rewrite of the table; a start that finds the value already in place queues nothing.
+  /// </summary>
+  [Test]
+  public async Task AChangedFillFactor_OnATableWithRows_QueuesOneRewriteAsync() {
+    var id = Guid.Parse("01890000-0000-7000-8000-000000001592");
+    var model = new JsonbExtractedItem.Model { Id = id, GridFilter = new() { ["region"] = ["north"] } };
+    await using (var context = PhysicalJsonbContainmentIntegrationTests.Context(_connectionString)) {
+      await new EFCorePostgresPerspectiveStore<JsonbExtractedItem.Model>(context, TABLE)
+        .UpsertWithPhysicalFieldsAsync(id, model, new Dictionary<string, object?> { ["grid_filter"] = model.GridFilter });
+    }
+    await _execAsync($"""
+      ALTER TABLE {TABLE} SET (fillfactor = 70);
+      DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{TABLE}';
+      """);
+
+    await _initializeAsync();
+
+    await Assert.That(await _scalarAsync($"SELECT array_to_string(reloptions, ',') FROM pg_class WHERE oid = '{TABLE}'::regclass"))
+      .Contains("fillfactor=90");
+    await Assert.That(await _pendingRewritesAsync()).Contains(TABLE)
+      .Because("the rows already stored sit in pages packed to the old fillfactor until the table is rewritten.");
+
+    await _execAsync($"""
+      UPDATE wh_settings SET setting_value = '' WHERE setting_key = 'pending_table_rewrites';
+      DELETE FROM wh_schema_migrations WHERE file_name = 'perspective:{TABLE}';
+      """);
+    await _initializeAsync();
+
+    await Assert.That(await _pendingRewritesAsync()).DoesNotContain(TABLE)
+      .Because("the fillfactor is already 90, so the steady-state pass changes nothing and queues nothing.");
   }
 
   /// <summary>A budget declared with a different size replaces the constraint the earlier declaration left.</summary>
@@ -177,6 +221,9 @@ public class JsonbColumnStorageIntegrationTests {
       .IsEqualTo("System.Collections.Generic.List`1[Label]");
     await Assert.That(await _scalarAsync($"SELECT labels IS NULL FROM {SPLIT} WHERE id = '{id}'")).IsEqualTo("True");
   }
+
+  private Task<string> _pendingRewritesAsync() =>
+    _scalarAsync("SELECT coalesce(setting_value, '') FROM wh_settings WHERE setting_key = 'pending_table_rewrites'");
 
   private async Task _initializeAsync() {
     await using var context = PhysicalJsonbContainmentIntegrationTests.Context(_connectionString);

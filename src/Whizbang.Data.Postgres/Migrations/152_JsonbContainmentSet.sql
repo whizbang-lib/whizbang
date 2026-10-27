@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 152_JsonbContainmentSet
 -- Date: 2026-09-11
 -- Description: A helper for set-membership filters on perspectives. A lens filter of the form

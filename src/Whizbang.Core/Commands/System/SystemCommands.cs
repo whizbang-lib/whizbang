@@ -28,7 +28,11 @@ namespace Whizbang.Core.Commands.System;
 /// </summary>
 /// <param name="PerspectiveNames">Perspectives to rebuild. Null = all registered perspectives.</param>
 /// <param name="Mode">Rebuild mode: BlueGreen (new table + swap), InPlace (truncate + replay).</param>
-/// <param name="IncludeStreamIds">Optional: only rebuild these specific streams. Null = all streams.</param>
+/// <param name="IncludeStreamIds">Optional: only rebuild these specific streams. Null = all streams. The list travels whole
+/// to every hop (the outbox, the broadcast transport message, each receiving service's inbox), about 39 bytes of JSON
+/// per id: keep it to <see cref="DEFAULT_STREAMS_PER_COMMAND"/> (500) streams or fewer and split a larger selection
+/// with <see cref="SplitByStreams"/>. On Azure Service Bus Standard, more than about 6,500 ids exceeds the 256 KB
+/// message limit unless large-message offloading is configured. Command audit records only the list's length.</param>
 /// <param name="ExcludeStreamIds">Optional: exclude these streams from rebuild. Null = no exclusions.</param>
 /// <param name="FromEventId">Optional: start replaying from this event ID. Null = from beginning.</param>
 /// <param name="RequestId">Optional: a caller-chosen id stamped onto the rebuild's events. Supply one and the
@@ -40,6 +44,7 @@ namespace Whizbang.Core.Commands.System;
 /// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:RebuildPerspectiveCommand_SerializesCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:RebuildPerspectiveCommand_WithPerspectiveNames_CreatesCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveRebuilderIntegrationTests.cs:RebuildPerspectiveCommand_DispatchedViaInvoker_UpdatesCursorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Commands/System/RebuildPerspectiveCommandSplitTests.cs</tests>
 [PinnedId("69430ea4-edbe-4a5f-890d-cd25cfe66766")]
 public record RebuildPerspectiveCommand(
     string[]? PerspectiveNames = null,
@@ -49,7 +54,72 @@ public record RebuildPerspectiveCommand(
     long? FromEventId = null,
     Guid? RequestId = null,
     string? RequestedBy = null
-) : ICommand, Messaging.IControlPlaneMessage;
+) : ICommand, Messaging.IControlPlaneMessage, Audit.IBoundedCommandAudit {
+  private static readonly string[] _idLists = [nameof(IncludeStreamIds), nameof(ExcludeStreamIds)];
+
+  /// <summary>
+  /// The most streams one command names when <see cref="SplitByStreams"/> splits a selection, and the documented
+  /// size guidance for <see cref="IncludeStreamIds"/>: 500, the same bound a stream redelivery request uses
+  /// (<see cref="Messaging.StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST"/>), about 20 KB of ids.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/rebuild#large-stream-selections</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Commands/System/RebuildPerspectiveCommandSplitTests.cs:SplitByStreams_ByDefault_NamesAtMostTheRedeliveryBoundPerCommandAsync</tests>
+  public const int DEFAULT_STREAMS_PER_COMMAND = Messaging.StreamRedeliveryRequester.MAX_STREAMS_PER_REQUEST;
+
+  /// <summary>
+  /// The request id of chunk <paramref name="chunkIndex"/> of a request split by <see cref="SplitByStreams"/>: the
+  /// name-based (version 5) id of the chunk index within <paramref name="requestId"/>, so the same request always
+  /// splits into the same ids and each chunk is its own run.
+  /// </summary>
+  /// <param name="requestId">The caller's request id.</param>
+  /// <param name="chunkIndex">The chunk's zero-based index.</param>
+  /// <returns>The chunk's request id.</returns>
+  /// <docs>fundamentals/perspectives/rebuild#large-stream-selections</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Commands/System/RebuildPerspectiveCommandSplitTests.cs:ChunkRequestId_IsTheNameBasedIdOfTheChunkIndexWithinTheRequestAsync</tests>
+  public static Guid ChunkRequestId(Guid requestId, int chunkIndex) =>
+    ValueObjects.NameBasedGuid.V5(requestId, chunkIndex.ToString(global::System.Globalization.CultureInfo.InvariantCulture));
+
+  /// <summary>
+  /// Splits this command's stream selection into commands that each name at most
+  /// <paramref name="maxStreamsPerCommand"/> streams, so no one command carries an unbounded list through the outbox,
+  /// the transport, each receiving service's inbox and command audit (#1525).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The streams keep the order given and a stream named twice is named once. Chunk <c>i</c> carries
+  /// <see cref="ChunkRequestId"/>(<see cref="RequestId"/>, <c>i</c>) as its request id, or none when this command has
+  /// none. <see cref="ExcludeStreamIds"/> is dropped from the chunks: a command that names streams ignores it.
+  /// Every other field is copied.
+  /// </para>
+  /// <para>A command that names no streams (every stream, or an empty list) is returned unchanged, as the only element.</para>
+  /// </remarks>
+  /// <param name="maxStreamsPerCommand">The most streams one command names. Default <see cref="DEFAULT_STREAMS_PER_COMMAND"/>.</param>
+  /// <returns>The commands to send, in order.</returns>
+  /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxStreamsPerCommand"/> is less than one.</exception>
+  /// <docs>fundamentals/perspectives/rebuild#large-stream-selections</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Commands/System/RebuildPerspectiveCommandSplitTests.cs</tests>
+  public IReadOnlyList<RebuildPerspectiveCommand> SplitByStreams(int maxStreamsPerCommand = DEFAULT_STREAMS_PER_COMMAND) {
+    ArgumentOutOfRangeException.ThrowIfLessThan(maxStreamsPerCommand, 1);
+    if (IncludeStreamIds is not { Length: > 0 } include) {
+      return [this];
+    }
+    var chunks = include.Distinct().Chunk(maxStreamsPerCommand).ToArray();
+    var commands = new RebuildPerspectiveCommand[chunks.Length];
+    for (var i = 0; i < chunks.Length; i++) {
+      commands[i] = this with {
+        IncludeStreamIds = chunks[i],
+        ExcludeStreamIds = null,
+        RequestId = RequestId is { } requestId ? ChunkRequestId(requestId, i) : null,
+      };
+    }
+    return commands;
+  }
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARebuildNamingStreams_IsAuditedWithTheListLengths_AndKeepsTheRestOfTheCommandAsync</tests>
+  public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
+}
 
 /// <summary>
 /// Command to cancel an in-progress perspective rebuild.

@@ -31,11 +31,9 @@ namespace Whizbang.Core.Workers;
 /// inbox channel in that order. <see cref="InboxDispatchWorker"/> reads sequentially.
 /// </para>
 /// <para>
-/// <strong>Default disabled.</strong> The legacy <c>ClaimWorker</c> still populates
-/// <see cref="IInboxChannelWriter"/> directly from <see cref="WorkBatch.InboxWork"/>; if this
-/// drainer is also enabled while <c>claim_work</c> still projects inbox bodies, every inbox row
-/// would be enqueued twice (double dispatch). Step 5d will flip the default and drop the inbox
-/// projection together.
+/// <strong>Enabled by default</strong> (<see cref="InboxDrainWorkerOptions.Enabled"/>). <c>claim_work</c>
+/// returns only the inbox stream ids, so this drainer is the only source of inbox work for
+/// <see cref="InboxDispatchWorker"/>; disabling it stops inbox dispatch.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
@@ -552,6 +550,7 @@ public sealed partial class InboxDrainWorker(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for inbox message {row.MessageId}.");
+    MessageParseDiagnostics.Record(row.MessageId, MessageParseSource.InboxRead, MessageParseKind.Envelope);
     // Priority step 1 on the wire: the row's number is the consumer's classification, and the envelope the handler
     // and the inheritance rule read carries the same number (a fan-out hands it to every child). A row fetched
     // before the column existed keeps what its envelope stored.

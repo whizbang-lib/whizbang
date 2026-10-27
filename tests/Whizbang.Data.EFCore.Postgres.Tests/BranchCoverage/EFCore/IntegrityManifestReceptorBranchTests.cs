@@ -192,7 +192,7 @@ public class IntegrityManifestReceptorBranchTests {
     var unmetered = await _followCursorAsync(options, metrics: null, withTracker: true);
 
     await Assert.That(metered.Published.Count).IsEqualTo(1);
-    await Assert.That(_deserialize<RequestIntegrityManifest>(metered.Published[0].Envelope).ResumeAfterStreamId).IsNotNull()
+    await Assert.That(_deserialize<RequestIntegrityManifest>(metered.Published[0].Envelope).ResumeAfterStreamId.HasValue).IsTrue()
       .Because("the follow-up resumes exactly where the origin's answer stopped");
     await Assert.That(unmetered.Published.Count).IsEqualTo(1);
     await Assert.That(probe.CounterTotal(metrics.ManifestPagesFollowed.Instrument)).IsEqualTo(1);

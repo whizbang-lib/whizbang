@@ -18,6 +18,7 @@ using MigrationBootstrapRegions = shared::Whizbang.Generators.Shared.Models.Migr
 using PolymorphicModelDiscovery = shared::Whizbang.Generators.Shared.Models.PolymorphicModelDiscovery;
 using SortableExposureDiscovery = shared::Whizbang.Generators.Shared.Models.SortableExposureDiscovery;
 using TableStorageInfo = shared::Whizbang.Generators.Shared.Models.TableStorageInfo;
+using TableStorageRange = shared::Whizbang.Generators.Shared.Models.TableStorageRange;
 using TypeNameUtilities = shared::Whizbang.Generators.Shared.Utilities.TypeNameUtilities;
 using TypeSymbolExtensions = shared::Whizbang.Generators.Shared.Utilities.TypeSymbolExtensions;
 
@@ -191,6 +192,115 @@ public class SharedHelpersBranchTests {
 
     await Assert.That(TableStorageInfo.From(null)).IsNull();
     await Assert.That(TableStorageInfo.From(plain)).IsNull();
+  }
+
+  /// <summary>
+  /// #1584: a look-alike attribute whose properties have other types, or an extra property, declares nothing for
+  /// them; only a value of the declared type and range is read.
+  /// </summary>
+  [Test]
+  public async Task TableStorage_AValueOfAnotherTypeOrAnUnknownName_DeclaresNothingAsync() {
+    var model = _compile("""
+      namespace Whizbang.Core.Perspectives {
+        public sealed class PerspectiveTableStorageAttribute : System.Attribute {
+          public string ToastTupleTarget { get; set; } = "";
+          public string AutovacuumVacuumThreshold { get; set; } = "";
+          public string AutovacuumVacuumScaleFactor { get; set; } = "";
+          public int Unrelated { get; set; }
+        }
+      }
+      namespace Sample {
+        [Whizbang.Core.Perspectives.PerspectiveTableStorage(ToastTupleTarget = "1", AutovacuumVacuumThreshold = "2",
+          AutovacuumVacuumScaleFactor = "0.1", Unrelated = 3)]
+        public class Model { }
+      }
+      """).GetTypeByMetadataName("Sample.Model");
+
+    await Assert.That(TableStorageInfo.From(model)).IsEqualTo(new TableStorageInfo(null, null));
+  }
+
+  private static TableStorageInfo? _declared(string arguments) =>
+    TableStorageInfo.From(AnalyzerTestHelper.CreateCompilationWithFrameworkReferences($$"""
+      namespace Sample;
+      [Whizbang.Core.Perspectives.PerspectiveTableStorage({{arguments}})]
+      public class Model { }
+      """).GetTypeByMetadataName("Sample.Model"));
+
+  /// <summary>#1592: a fillfactor inside 10 to 100 is read, and the edges are inclusive.</summary>
+  [Test]
+  [Arguments(10)]
+  [Arguments(90)]
+  [Arguments(100)]
+  public async Task TableStorage_AFillFactorInRange_IsReadAsync(int fillFactor) {
+    await Assert.That(_declared($"FillFactor = {fillFactor}")!.FillFactor).IsEqualTo(fillFactor);
+  }
+
+  /// <summary>
+  /// #1592: a value PostgreSQL would refuse declares nothing, so the schema pass never fails on it; the analyzer
+  /// reports it as WHIZ804 instead. A negative value is the attribute's "not declared".
+  /// </summary>
+  [Test]
+  [Arguments("FillFactor = -1")]
+  [Arguments("FillFactor = 9")]
+  [Arguments("FillFactor = 101")]
+  [Arguments("ToastTupleTarget = 127")]
+  [Arguments("ToastTupleTarget = 8161")]
+  [Arguments("AutovacuumVacuumScaleFactor = 100.5")]
+  [Arguments("AutovacuumInsertScaleFactor = 101")]
+  [Arguments("ToastAutovacuumVacuumScaleFactor = 1000")]
+  public async Task TableStorage_AValueOutOfRange_DeclaresNothingAsync(string arguments) {
+    await Assert.That(_declared(arguments)).IsEqualTo(new TableStorageInfo(null, null));
+  }
+
+  [Test]
+  public async Task TableStorage_TheUpperEdges_AreReadAsync() {
+    var storage = _declared("ToastTupleTarget = 8160, AutovacuumVacuumScaleFactor = 100, AutovacuumVacuumThreshold = 0");
+
+    await Assert.That(storage).IsEqualTo(new TableStorageInfo(null, 8160, AutovacuumVacuumThreshold: 0, AutovacuumVacuumScaleFactor: 100));
+  }
+
+  /// <summary>
+  /// #1592: a range reports a declared value outside it, and nothing for a value in range, a value that declares
+  /// nothing, or a value of a type it does not read.
+  /// </summary>
+  [Test]
+  [Arguments("FillFactor", 9, true)]
+  [Arguments("FillFactor", 101, true)]
+  [Arguments("FillFactor", 10, false)]
+  [Arguments("FillFactor", -1, false)]
+  [Arguments("ToastTupleTarget", 0, false)]
+  [Arguments("ToastTupleTarget", 1, true)]
+  [Arguments("AutovacuumVacuumThreshold", 0, false)]
+  public async Task TableStorageRange_AnIntegerOutsideTheRange_IsReportedAsync(string property, int value, bool expected) {
+    var range = TableStorageRange.All.Single(r => r.Property == property);
+
+    await Assert.That(range.IsOutOfRange(value)).IsEqualTo(expected);
+  }
+
+  [Test]
+  [Arguments(100.5, true)]
+  [Arguments(100.0, false)]
+  [Arguments(0.0, false)]
+  [Arguments(-0.5, false)]
+  public async Task TableStorageRange_AScaleFactorOutsideTheRange_IsReportedAsync(double value, bool expected) {
+    await Assert.That(TableStorageRange.AutovacuumVacuumScaleFactor.IsOutOfRange(value)).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task TableStorageRange_AValueOfAnotherType_IsNotReportedAsync() {
+    await Assert.That(TableStorageRange.FillFactor.IsOutOfRange("5")).IsFalse();
+    await Assert.That(TableStorageRange.FillFactor.IsOutOfRange(null)).IsFalse();
+  }
+
+  private static readonly string[] _rangedProperties = [
+    "FillFactor", "ToastTupleTarget", "AutovacuumVacuumThreshold", "AutovacuumVacuumScaleFactor",
+    "AutovacuumInsertThreshold", "AutovacuumInsertScaleFactor", "ToastAutovacuumVacuumThreshold",
+    "ToastAutovacuumVacuumScaleFactor",
+  ];
+
+  [Test]
+  public async Task TableStorageRange_ListsEveryRangedPropertyOnceAsync() {
+    await Assert.That(TableStorageRange.All.Select(r => r.Property)).IsEquivalentTo(_rangedProperties);
   }
 
   [Test]

@@ -23,7 +23,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_GeneratesGetAllFiltersMethod_ForDiagnosticsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_UsesAssemblySpecificNamespace_AvoidingConflictsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_ReportsErrorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_EmitsNoMappingForItAsync</tests>
 /// Discovers ICommand implementations with TopicFilter attributes
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.
@@ -33,36 +33,41 @@ namespace Whizbang.Generators;
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassOrRecordCandidate(SyntaxNode node) =>
+      (node is ClassDeclarationSyntax or RecordDeclarationSyntax) && ((TypeDeclarationSyntax)node).AttributeLists.Any();
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
     var topicFilters = context.SyntaxProvider.CreateSyntaxProvider(
         // Syntactic filtering: Classes/records with attributes (cheap, filters ~99% of nodes)
-        predicate: static (node, _) =>
-            (node is ClassDeclarationSyntax or RecordDeclarationSyntax) &&
-            ((TypeDeclarationSyntax)node).AttributeLists.Any(),
+        predicate: static (node, _) => IsAttributedClassOrRecordCandidate(node),
 
         // Semantic analysis: Extract topic filter info (expensive, only on filtered nodes)
         transform: static (ctx, ct) => _extractTopicFilters(ctx, ct)
     ).Where(static infos => infos is { Length: > 0 });
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndFilters = context.CompilationProvider.Combine(topicFilters.Collect());
+    var compilationAndFilters = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(topicFilters.Collect());
 
     // Generate registry
     context.RegisterSourceOutput(
         compilationAndFilters,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var allFilters = data.Right;
 
           // Flatten array of arrays to single list
           var filters = allFilters
-              .Where(f => f.HasValue)
-              .SelectMany(f => f!.Value)
+              .SelectMany(static f => f!)
               .ToImmutableArray();
 
-          _generateRegistry(ctx, compilation, filters);
+          _generateRegistry(ctx, compilationAssemblyName, filters);
         }
     );
   }
@@ -72,7 +77,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// Returns array of TopicFilterInfo for all [TopicFilter] attributes found.
   /// Returns null if class doesn't implement ICommand or has no TopicFilter attributes.
   /// </summary>
-  private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
+  private static EquatableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
@@ -115,11 +120,11 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     foreach (var attr in topicFilterAttrs) {
       var filterString = _extractFilterString(attr);
       if (filterString is not null) {
-        filters.Add(new TopicFilterInfo(commandType, filterString));
+        filters.Add(new TopicFilterInfo(commandType, filterString, LocationUtilities.ApplicationOrFallback(attr, Location.None, cancellationToken)));
       }
     }
 
-    return filters.Count > 0 ? filters.ToImmutable() : null;
+    return filters.Count > 0 ? [.. filters] : null;
   }
 
   /// <summary>
@@ -178,7 +183,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<TopicFilterInfo> filters) {
 
     if (filters.IsEmpty) {
@@ -194,7 +199,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     foreach (var filter in filters) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TopicFilterDiscovered,
-          Location.None,
+          filter.Location,
           TypeNameUtilities.GetSimpleName(filter.CommandType),
           filter.Filter
       ));
@@ -206,7 +211,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
         .ToDictionary(g => g.Key, g => g.Select(f => f.Filter).ToArray());
 
     // Generate registry source code
-    var assemblyName = compilation.AssemblyName ?? "Generated";
+    var assemblyName = compilationAssemblyName ?? "Generated";
     var namespaceName = $"{assemblyName}.Generated";
 
     var sb = new StringBuilder();

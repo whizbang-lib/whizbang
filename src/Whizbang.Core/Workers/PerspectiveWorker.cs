@@ -105,7 +105,11 @@ public partial class PerspectiveWorker(
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag that only tests ever drained.
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
     storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);
@@ -328,7 +332,8 @@ public partial class PerspectiveWorker(
   }
 
   /// <inheritdoc />
-  public override Task StopAsync(CancellationToken cancellationToken) {
+  /// <remarks>Once the worker has stopped it waits for the detached lifecycle stages it started (#1721).</remarks>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
     if (_perspectiveSignalSubscribed) {
       _perspectiveNotificationListener.OnSignal -= _onPerspectiveSignal;
       _perspectiveSignalSubscribed = false;
@@ -337,7 +342,8 @@ public partial class PerspectiveWorker(
       wake.Timer.Dispose();
     }
     _collectiveHoldWakes.Clear();
-    return base.StopAsync(cancellationToken);
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
   private readonly LeaseRenewalWorkerOptions _leaseRenewalOptions = leaseRenewalOptions.Value;
   private readonly IDeadLetterStore _deadLetterStore = deadLetterStore;
@@ -1426,7 +1432,7 @@ public partial class PerspectiveWorker(
             _metrics?.Errors.Add(1);
             if (upcomingEvents is { Count: > 0 }) {
               var failedEventIds = upcomingEvents.ConvertAll(e => e.MessageId.Value);
-              _syncEventTracker.MarkProcessedByPerspective(failedEventIds, perspectiveName);
+              _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)failedEventIds, perspectiveName);
             }
             var failure = new PerspectiveCursorFailure {
               StreamId = streamId,
@@ -1872,7 +1878,7 @@ public partial class PerspectiveWorker(
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      scope, workCoordinator, streamIds, cancellationToken);
+      scope, workCoordinator, streamIds, lifecycleCoordinator, cancellationToken);
     if (fetchResult is null) {
       return;
     }
@@ -1904,6 +1910,7 @@ public partial class PerspectiveWorker(
       AsyncServiceScope scope,
       IWorkCoordinator workCoordinator,
       List<Guid> streamIds,
+      ILifecycleCoordinator? lifecycleCoordinator,
       CancellationToken cancellationToken) {
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();
 
@@ -1959,11 +1966,19 @@ public partial class PerspectiveWorker(
       return null;
     }
 
+    // #1759: a row in the cooldown cache was applied by an earlier session of its stream and is only waiting for its
+    // completion to delete it; the cooldown partition below would discard it after parsing. Parse only the rest. Every
+    // row stays in the lookup, so a perspective whose own row is cooled still sees it as cooled.
+    var rowsToParse = _rowsOutsideCooldown(rawEvents, _recentlyProcessedEventCache, lifecycleCoordinator);
+    if (rowsToParse.Count == 0) {
+      return null;
+    }
+
     // Deserialize raw events into typed envelopes (AOT-safe).
     var eventTypes = _eventTypeProvider.GetEventTypes();
     List<MessageEnvelope<IEvent>> typedEvents;
     try {
-      typedEvents = eventStore.DeserializeStreamEvents(rawEvents, eventTypes);
+      typedEvents = eventStore.DeserializeStreamEvents(rowsToParse, eventTypes);
     } catch (Exception ex) {
 #pragma warning disable CA1848
       _logger.LogError(ex, "Drain mode: DeserializeStreamEvents threw {ExceptionType}: {Message}", ex.GetType().Name, ex.Message);
@@ -1973,7 +1988,7 @@ public partial class PerspectiveWorker(
 
     if (typedEvents.Count == 0) {
 #pragma warning disable CA1848
-      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rawEvents.Count);
+      _logger.LogWarning("Drain mode: DeserializeStreamEvents returned 0 typed events from {RawCount} raw events", rowsToParse.Count);
 #pragma warning restore CA1848
       return null;
     }
@@ -1983,6 +1998,39 @@ public partial class PerspectiveWorker(
     // (get_stream_events joins perspective_events × event_store). Each row has a unique EventWorkId
     // that must be completed individually.
     return (typedEvents, rawEvents.ToLookup(r => r.EventId));
+  }
+
+  /// <summary>
+  /// #1759: the fetched rows a drain session still has to parse: every row whose event_work_id is not in the cooldown
+  /// cache, or every row when cooldown is off. A cached row was applied by an earlier session of its stream (ClaimWorker
+  /// re-sends every stream it still leases, and the refetch loop re-reads a stream) and only waits for its completion.
+  /// </summary>
+  /// <remarks>
+  /// A skipped row's perspective completion is signaled again on the lifecycle coordinator, as the cooldown path
+  /// after parsing did (<see cref="_signalCooldownSkippedEvents"/>), so the WhenAll gate's bookkeeping never depends
+  /// on whether the event was parsed. The signal needs only the row's event id and perspective name.
+  /// </remarks>
+  /// <param name="rawEvents">The rows the session fetched.</param>
+  /// <param name="cache">The cooldown cache, or <see langword="null"/> when cooldown is off.</param>
+  /// <param name="lifecycleCoordinator">The batch's lifecycle coordinator, when one is registered.</param>
+  /// <returns>The rows to parse, in fetch order.</returns>
+  /// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/DrainRowsOutsideCooldownTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Diagnostics/MessageParseCountFlowTests.cs:LocalPublish_ASecondDrainSession_ParsesNothingForRowsInCooldownAsync</tests>
+  internal static List<StreamEventData> _rowsOutsideCooldown(
+      List<StreamEventData> rawEvents, RecentlyProcessedEventCache? cache, ILifecycleCoordinator? lifecycleCoordinator) {
+    if (cache is null) {
+      return rawEvents;
+    }
+    var rowsToParse = new List<StreamEventData>(rawEvents.Count);
+    foreach (var raw in rawEvents) {
+      if (!cache.WasRecentlyProcessed(raw.EventWorkId)) {
+        rowsToParse.Add(raw);
+      } else if (raw.PerspectiveName is { } perspectiveName) {
+        lifecycleCoordinator?.SignalPerspectiveComplete(raw.EventId, perspectiveName);
+      }
+    }
+    return rowsToParse;
   }
 
   /// <summary>
@@ -2261,7 +2309,7 @@ public partial class PerspectiveWorker(
     await using var refetchScope = _scopeFactory.CreateAsyncScope();
     var refetchWorkCoordinator = refetchScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var fetchResult = await _tryFetchAndDeserializeDrainModeEventsAsync(
-      refetchScope, refetchWorkCoordinator, [streamId], ct);
+      refetchScope, refetchWorkCoordinator, [streamId], sharedContext.LifecycleCoordinator, ct);
     if (fetchResult is null) {
       return null;
     }
@@ -2601,9 +2649,9 @@ public partial class PerspectiveWorker(
           // reads this as "the read model has it", which a failure must never claim (#959). Marked before
           // the processed release, so anything that observes the release has seen the mark decided.
           if (result.Status == PerspectiveProcessingStatus.Completed) {
-            _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
+            _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
           }
-          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+          _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
         }
 
         // Belt-and-suspenders sweep — when the runner short-circuits its batch
@@ -3020,6 +3068,7 @@ public partial class PerspectiveWorker(
   /// rows are cached.
   /// </para>
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerPartlyCooledEventDrainTests.cs:Drain_EventWithCooledRowForOnePerspectiveAndFreshRowForAnother_AppliesOnlyTheFreshOneAndLogsTheCooledRowAsync</tests>
   internal static (List<MessageEnvelope<IEvent>> cooled, List<MessageEnvelope<IEvent>> fresh) _partitionByCooldown(
       IReadOnlyList<MessageEnvelope<IEvent>> filteredEvents,
       ILookup<Guid, StreamEventData> rawByEventId,
@@ -3251,8 +3300,8 @@ public partial class PerspectiveWorker(
   /// rows — post-burst idle cycles leave completions stuck in "Sent" state
   /// until ResetStale resets them (5–60 min backoff), producing repeating
   /// "Perspective batch: completed=N" log entries that resend the same
-  /// completions indefinitely. Matches the bug fixed in
-  /// WorkCoordinatorPublisherWorker.</para>
+  /// completions indefinitely. Matches the bug fixed in the legacy
+  /// WorkCoordinatorPublisherWorker (since removed).</para>
   ///
   /// <para>Fix: acknowledge the local sent-count captured at submission time. The
   /// SQL's perspective_completions_processed is just
@@ -3374,7 +3423,7 @@ public partial class PerspectiveWorker(
       List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>> groupedWork) {
 
 #pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
-    _logger.LogDebug("ProcessWorkBatchAsync returned: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+    _logger.LogDebug("Perspective channel batch: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
       workBatch.PerspectiveWork.Count, groupedWork.Count);
     foreach (var g in groupedWork) {
       _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
@@ -3874,15 +3923,24 @@ public partial class PerspectiveWorker(
   /// The collectives this sink run applies and the work rows it completes when they do, or null when the run has to
   /// wait its turn. #963: the stream's queue, in commit order, when the engine provides one. Collectives sharing an
   /// ordering key share this stream, and the queue is what keeps them in line; without it the stream is read after
-  /// its cursor.
+  /// its cursor. #1524: an engine that provides the head of the queue is asked for the head and for the rows it
+  /// names, never for the whole queue, which on a busy key costs the queue's length on every run.
   /// </summary>
   private async Task<CollectiveSinkBatch?> _loadCollectiveSinkBatchAsync(
       IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId,
       Guid[] sinkWorkIds, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+    var head = await _readCollectiveQueueHeadAsync(workCoordinator, streamId, sinkWorkIds, cancellationToken).ConfigureAwait(false);
+    if (head is not null) {
+      return await _takeCollectiveQueueHeadAsync(
+        new CollectiveQueueView(head, (workIds, eventIds) => workCoordinator.FetchCollectiveSinkQueueMembersAsync(streamId, workIds, eventIds, cancellationToken)),
+        sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+    }
     var queue = await workCoordinator.FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
     if (queue is not null) {
       return await _takeCollectiveQueueHeadAsync(
-        queue, sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
+        new CollectiveQueueView(queue, (workIds, eventIds) => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>>(
+          [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))])),
+        sinkWorkIds, workCoordinator, eventStore, typeProvider, streamId, cancellationToken).ConfigureAwait(false);
     }
     var events = await eventStore.GetEventsBetweenPolymorphicAsync(
       streamId, lastProcessedEventId, Guid.Empty, typeProvider.GetEventTypes(), cancellationToken)
@@ -3891,11 +3949,34 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// The head of the stream's queue for this run (#1524), or null when the engine does not provide one. The walk goes
+  /// past the rows this run holds and stops at the first it does not; when that row is one this worker already applied
+  /// (its completion not yet written), it is behind the run rather than ahead of it, so the walk goes past it too.
+  /// </summary>
+  private async Task<IReadOnlyList<CollectiveSinkQueueEntry>?> _readCollectiveQueueHeadAsync(
+      IWorkCoordinator workCoordinator, Guid streamId, Guid[] sinkWorkIds, CancellationToken cancellationToken) {
+    var through = new HashSet<Guid>(sinkWorkIds);
+    while (true) {
+      var head = await workCoordinator.FetchCollectiveSinkQueueHeadAsync(streamId, through, cancellationToken).ConfigureAwait(false);
+      if (head is null || head.Count == 0) {
+        return head;
+      }
+      var last = head[^1].EventWorkId;
+      if (through.Contains(last) || !_processedEventCache.Contains(last)) {
+        return head;
+      }
+      through.Add(last);
+    }
+  }
+
+  /// <summary>
   /// The collectives this run applies from its stream's queue (#963), in queue order, and the work rows it completes
-  /// when they apply. The queue is the stream's unprocessed collectives in commit order; this run takes the leading
-  /// rows it holds and stops at the first it does not, because a collective ahead of it (leased elsewhere, or backing
-  /// off after a failure) has to apply first. Returns null when the head of the queue is not this run's, so nothing
-  /// applies and nothing is completed: the held rows are offered again once the one ahead has applied.
+  /// when they apply. <c>view.Queue</c> is the stream's unprocessed collectives in commit order, or at least the
+  /// head of them (#1524); this run takes the leading rows it holds and stops at the first it does not, because a
+  /// collective ahead of it (leased elsewhere, or backing off after a failure) has to apply first. Returns null when
+  /// the head of the queue is not this run's, so nothing applies and nothing is completed: the held rows are offered
+  /// again once the one ahead has applied. Whether a row anywhere in the queue is still queued is asked of
+  /// <c>view.MembersOf</c>, by work id or by event.
   /// </summary>
   /// <remarks>
   /// A leased row the queue no longer holds was already applied and completed; it is completed again, with no apply,
@@ -3904,8 +3985,10 @@ public partial class PerspectiveWorker(
   /// committed after one with a greater id is still applied, and in its place.
   /// </remarks>
   private async Task<CollectiveSinkBatch?> _takeCollectiveQueueHeadAsync(
-      IReadOnlyList<CollectiveSinkQueueEntry> queue, Guid[] sinkWorkIds, IWorkCoordinator workCoordinator,
-      IEventStore eventStore, IEventTypeProvider typeProvider, Guid streamId, CancellationToken cancellationToken) {
+      CollectiveQueueView view,
+      Guid[] sinkWorkIds, IWorkCoordinator workCoordinator, IEventStore eventStore, IEventTypeProvider typeProvider,
+      Guid streamId, CancellationToken cancellationToken) {
+    var (queue, membersOf) = view;
     var held = new HashSet<Guid>(sinkWorkIds);
     // A row this worker already applied is still in the queue until its completion flushes; it is behind us, not
     // ahead, so it neither blocks the queue nor applies again.
@@ -3918,17 +4001,18 @@ public partial class PerspectiveWorker(
       head.Add(entry);
     }
 
-    var queued = new HashSet<Guid>(pending.Select(e => e.EventWorkId));
+    var heldQueued = (await membersOf(sinkWorkIds, []).ConfigureAwait(false))
+      .Select(e => e.EventWorkId).Where(id => !_processedEventCache.Contains(id)).ToHashSet();
     // Held rows behind one this run does not hold wait for the run that holds it, which is usually this pod's next.
     _settleHeldBackSinkRows(streamId, sinkWorkIds,
-      [.. sinkWorkIds.Where(id => queued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
-    if (head.Count == 0 && sinkWorkIds.Any(queued.Contains)) {
+      [.. sinkWorkIds.Where(id => heldQueued.Contains(id) && !head.Exists(e => e.EventWorkId == id))]);
+    if (head.Count == 0 && heldQueued.Count > 0) {
       LogCollectiveSinkWaitingItsTurn(_logger, streamId, pending[0].EventId);
       return null;
     }
 
     // Rows this run holds that the queue does not were applied already; completing them is harmless and stops a loop.
-    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !queued.Contains(id))).ToArray();
+    var completed = head.Select(e => e.EventWorkId).Concat(sinkWorkIds.Where(id => !heldQueued.Contains(id))).ToArray();
     if (head.Count == 0) {
       return new CollectiveSinkBatch([], completed);
     }
@@ -3946,8 +4030,26 @@ public partial class PerspectiveWorker(
         workIdByEventId[entry.EventId] = entry.EventWorkId;
       }
     }
-    return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, [.. pending.Select(e => e.EventId)]);
+
+    // #1003: a collective waits for a predecessor still queued on this stream, wherever it is in the queue.
+    var predecessors = envelopes
+      .Select(e => ((ICollectiveEvent)e.Payload).PredecessorId)
+      .OfType<Guid>().ToHashSet();
+    var queuedEventIds = pending.Select(e => e.EventId).ToHashSet();
+    if (predecessors.Count > 0) {
+      queuedEventIds.UnionWith((await membersOf([], predecessors).ConfigureAwait(false))
+        .Where(e => !_processedEventCache.Contains(e.EventWorkId)).Select(e => e.EventId));
+    }
+    return new CollectiveSinkBatch(envelopes, completed, workIdByEventId, queuedEventIds);
   }
+
+  /// <summary>
+  /// A sink stream's queue as one run sees it (#1524): its rows in apply order (the whole queue, or at least its head),
+  /// and the lookup that says which named rows, by work id or by event, are still queued anywhere in it.
+  /// </summary>
+  private readonly record struct CollectiveQueueView(
+      IReadOnlyList<CollectiveSinkQueueEntry> Queue,
+      Func<IReadOnlyCollection<Guid>, IReadOnlyCollection<Guid>, Task<IReadOnlyList<CollectiveSinkQueueEntry>>> MembersOf);
 
   /// <summary>The collectives a sink run applied, in order, and what each one's specs changed (#1045).</summary>
   private readonly record struct AppliedCollectives(
@@ -4573,8 +4675,8 @@ public partial class PerspectiveWorker(
       // Marked applied before the processed release (#959; see the drain-mode site). Only a committed apply
       // reaches here with events: they are loaded for a Completed result alone, and the collective sink, which
       // marks under its own name, reports only an apply that committed.
-      _syncEventTracker.MarkApplied(processedEventIds, perspectiveName);
-      _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+      _syncEventTracker.MarkApplied((IEnumerable<Guid>)processedEventIds, perspectiveName);
+      _syncEventTracker.MarkProcessedByPerspective((IEnumerable<Guid>)processedEventIds, perspectiveName);
     } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
       _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}",
@@ -4715,7 +4817,7 @@ public partial class PerspectiveWorker(
         batchProcessedEvents, lifecycleCoordinator, groupedWork, scopedProvider, cancellationToken);
     } else if (receptorInvoker is not null) {
       await _firePostLifecycleFallbackAsync(
-        batchProcessedEvents, receptorInvoker, scopedProvider, _detachedTasks.Add, batchIsNewByEventId, cancellationToken);
+        batchProcessedEvents, receptorInvoker, scopedProvider, DetachedWork.Track, batchIsNewByEventId, cancellationToken);
     }
   }
 
@@ -4863,7 +4965,7 @@ public partial class PerspectiveWorker(
         LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
-    _detachedTasks.Add(task);
+    DetachedWork.Track(task);
   }
 
   /// <summary>
@@ -4871,7 +4973,7 @@ public partial class PerspectiveWorker(
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -5865,9 +5967,7 @@ public class PerspectiveWorkerOptions {
   /// <summary>
   /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
   /// After this, the instance's message leases are released and its stream ownership no longer
-  /// blocks other instances from claiming fresh work. See
-  /// <see cref="WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds"/> for
-  /// the full rationale and tuning guidance.
+  /// blocks other instances from claiming fresh work.
   /// </summary>
   public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 
@@ -5985,7 +6085,7 @@ public class PerspectiveWorkerOptions {
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.
-  /// Controls exponential backoff when ProcessWorkBatchAsync fails.
+  /// Controls exponential backoff for completions left in 'Sent' status without acknowledgement.
   /// </summary>
   public WorkerRetryOptions RetryOptions { get; set; } = new();
 }

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 106_InstanceEvictionFencing.sql
 -- Date: 2026-08-15
 -- Description: cleanup_stale_instances deletes a stale instance's row and releases its work, but

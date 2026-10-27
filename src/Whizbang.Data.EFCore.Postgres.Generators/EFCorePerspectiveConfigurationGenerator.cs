@@ -35,6 +35,22 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a class declaration with at least one attribute and a base list.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { AttributeLists.Count: > 0, BaseList.Types.Count: > 0 };
+
+  /// <summary>
   /// Initializes the incremental generator by discovering perspectives and registering source generation.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedCode_ImplementsIDiagnosticsInterfaceAsync</tests>
@@ -56,13 +72,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Discover classes implementing IPerspectiveFor<TModel>
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover DbContexts with [WhizbangDbContext] attribute to extract schema
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0, BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsAttributedClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractDbContextSchema(ctx, ct)
     ).Where(static schema => schema is not null);
 
@@ -124,7 +140,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       List<PerspectiveInfo> allPerspectives,
       IDbProviderLimits limits) {
 
-    return [.. allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits))];
+    var valid = allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits)).ToList();
+    foreach (var collision in PerspectiveTableNaming.Collisions(
+        valid.Select(p => (p.TableName, p.ModelTypeName.Replace(GLOBAL_PREFIX, ""), p.ModelLocation)))) {
+      context.ReportDiagnostic(collision);
+    }
+    return [.. valid];
   }
 
   /// <summary>
@@ -137,12 +158,18 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var hasError = false;
 
-    // Validate table name
-    var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
-    if (tableError is not null) {
+    // Validate table name: a manual one must be a valid perspective table name (WHIZ824), and any must fit (WHIZ820)
+    if (perspective.IsManualTableName && !PerspectiveTableNaming.IsValidManualName(perspective.TableName)) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          PerspectiveTableNaming.InvalidManualTableName,
+          perspective.ModelLocation,
+          perspective.ModelTypeName.Replace(GLOBAL_PREFIX, ""),
+          perspective.TableName));
+      hasError = true;
+    } else if (IdentifierValidation.ValidateTableName(perspective.TableName, limits) is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TableNameExceedsLimit,
-          Location.None,
+          perspective.ModelLocation,
           perspective.ModelTypeName,
           perspective.TableName,
           IdentifierValidation.GetByteCount(perspective.TableName),
@@ -180,7 +207,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     if (columnError is not null) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ColumnNameExceedsLimit,
-          Location.None,
+          perspective.ModelLocation,
           field.PropertyName,
           perspective.ModelTypeName,
           field.ColumnName,
@@ -197,7 +224,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       if (indexError is not null) {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.IndexNameExceedsLimit,
-            Location.None,
+            perspective.ModelLocation,
             indexName,
             field.PropertyName,
             perspective.ModelTypeName,
@@ -352,8 +379,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    // Use GetTableBaseName to handle nested types correctly (e.g., ActiveJobTemplate.Model -> ActiveJobTemplateModel)
-    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
@@ -363,10 +388,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     return new PerspectiveCandidate(
         ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
-        TableBaseName: tableBaseName,
+        // The rule both drivers share (#1719): the model's [PerspectiveTable] name, or its generated base name.
+        TableSource: PerspectiveTableNaming.From(modelType),
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
+        ModelLocation: LocationUtilities.FirstOrNone(modelType)
     );
   }
 
@@ -377,17 +404,20 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       PerspectiveCandidate candidate,
       TableNameConfig config) {
 
-    // Generate table name using shared utility with configurable suffix stripping
-    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+    // The manual name as written, or the generated one under the build's suffix settings
+    var tableName = candidate.TableSource.TableName(config);
 
     return new PerspectiveInfo(
         ModelTypeName: candidate.ModelTypeName,
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        BuildsDataIndex: candidate.BuildsDataIndex);
+        BuildsDataIndex: candidate.BuildsDataIndex,
+        ModelLocation: candidate.ModelLocation,
+        IsManualTableName: candidate.TableSource.IsManual);
   }
 
+  private const string GLOBAL_PREFIX = "global::";
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
@@ -735,7 +765,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Normalize the type name
     // An enumeration is stored as its underlying number, so its column is typed from that scalar.
     var typeName = (field.EnumScalarType ?? field.TypeName)
-        .Replace("global::", "")
+        .Replace(GLOBAL_PREFIX, "")
         .TrimEnd('?');
 
     return EFCoreColumnTypeFor(typeName);
@@ -792,7 +822,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // If the model says Guid (non-nullable), the shadow property should also be Guid.
     // If the model says Guid? (nullable), the shadow property should also be Guid?.
     var typeName = field.TypeName
-        .Replace("global::", "");
+        .Replace(GLOBAL_PREFIX, "");
 
     return typeName;
   }
@@ -850,14 +880,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Reports the WHIZ701 perspective discovery diagnostic.
   /// </summary>
   private static void _reportPerspectiveDiscoveryDiagnostic(SourceProductionContext context, int perspectiveCount) {
-    var debugDescriptor = new DiagnosticDescriptor(
-        id: "WHIZ701",
-        title: "EF Core Perspective Discovery",
-        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
-    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectiveCount));
+    context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.EFCorePerspectiveDiscovery, Location.None, perspectiveCount));
   }
 
   /// <summary>

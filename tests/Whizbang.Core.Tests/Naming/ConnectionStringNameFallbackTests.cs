@@ -60,6 +60,43 @@ public class ConnectionStringNameFallbackTests {
     await Assert.That(logged[0]).Contains("orders-db").And.Contains("ConnectionStrings:db");
   }
 
+  /// <summary>
+  /// A key present with an empty value (an appsettings placeholder, or an environment variable set to nothing) holds
+  /// no connection string, so it does not count as configured: the service keeps reading the legacy name it actually
+  /// has a connection under, rather than switching to an empty one.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task BlankDbKeys_DoNotCountAsConfigured_SoTheLegacyNameIsStillUsedAsync(string blank) {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["ConnectionStrings:db"] = blank,
+        ["ConnectionStrings:db-direct"] = blank,
+        ["ConnectionStrings:db-init"] = blank,
+        ["ConnectionStrings:orders-db"] = "Host=h",
+      })
+      .Build();
+
+    var name = WhizbangNamingConvention.ResolveConnectionStringName(configuration, "db", "orders-db");
+
+    await Assert.That(name).IsEqualTo("orders-db");
+  }
+
+  /// <summary>The same for the legacy name: a blank legacy key is nothing to fall back to.</summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task ABlankLegacyKey_IsNothingToFallBackToAsync(string blank) {
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:orders-db"] = blank })
+      .Build();
+
+    var name = WhizbangNamingConvention.ResolveConnectionStringName(configuration, "db", "orders-db");
+
+    await Assert.That(name).IsEqualTo("db");
+  }
+
   [Test]
   public async Task OnlyTheLegacyName_WithoutALogger_IsStillUsedAsync() {
     var name = WhizbangNamingConvention.ResolveConnectionStringName(_config("orders-db"), "db", "orders-db");

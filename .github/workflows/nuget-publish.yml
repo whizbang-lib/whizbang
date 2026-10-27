@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: NuGet Publish
 
 # Canonical explicit-version publish pipeline: build + pack at the given version from the given
@@ -134,11 +137,18 @@ jobs:
             exit 1
           fi
 
+      - name: Generate the software bill of materials
+        uses: ./.github/actions/package-sbom
+        with:
+          version: ${{ inputs.version }}
+
       - name: Upload packages artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-packages-publish-${{ github.run_id }}
-          path: ./packages/*.nupkg
+          path: |
+            ./packages/*.nupkg
+            ./packages/*.cdx.json
 
   # The tag step needs the release app, whose secrets live in the release-app environment (#1466). Minting
   # its token here, before anything is pushed, fails a run that could not tag BEFORE the packages are
@@ -181,6 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # GitHub release creation (only job that needs write); the tag goes through the app
+      id-token: write   # the tag's Sigstore signature (gitsign), keyless
     steps:
       # The release app pushes the tag: the tag ruleset lets only that app create v* tags, and GitHub Actions
       # cannot be a ruleset bypass actor. Workflows: GitHub refuses an app a ref whose commit changes
@@ -233,20 +244,26 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create Tag if Missing
+      - name: Check whether the tag exists
+        id: tag
         env:
           VERSION: ${{ inputs.version }}
         run: |
           TAG="v$VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
             echo "Tag $TAG already exists"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "Created tag: $TAG"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # Signed keylessly with Sigstore (#1438): see SECURITY.md, "Verifying a Release".
+      - name: Create and push the signed tag
+        if: steps.tag.outputs.exists == 'false'
+        uses: ./.github/actions/signed-tag
+        with:
+          tag: v${{ inputs.version }}
+          message: Release v${{ inputs.version }}
 
       # Created as a draft, then published in the step below. GitHub only accepts asset uploads
       # while a release is unpublished, and this repository has immutable releases on, so creating
@@ -268,6 +285,7 @@ jobs:
           files: |
             ./packages/*.nupkg
             ./packages/*.sha256
+            ./packages/*.cdx.json
             ./attestations/*
           fail_on_unmatched_files: false
           draft: true

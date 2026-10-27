@@ -73,18 +73,17 @@ public class AzureServiceBusAmqpPropertyIntegrationTests(ServiceBusEmulatorFixtu
   }
 
   /// <summary>
-  /// Receives one message and settles it. Completing matters: an unsettled message has its lock
-  /// expire and is redelivered, which inflates the DeliveryCount that the lock-loss spike tests
-  /// on this same subscription assert on exactly.
+  /// Receives until the <paramref name="published"/> message arrives, settling it and anything
+  /// received ahead of it. Completing matters: an unsettled message has its lock expire and is
+  /// redelivered, which inflates the DeliveryCount that the lock-loss spike tests on this same
+  /// subscription assert on exactly.
   /// </summary>
-  private async Task<ServiceBusReceivedMessage?> _receiveAsync() {
+  private async Task<ServiceBusReceivedMessage> _receiveAsync(MessageEnvelope<TestMessage> published) {
     var receiver = _fixture.Client.CreateReceiver(TOPIC, SUBSCRIPTION);
     await using (receiver) {
-      var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(15));
-      if (msg is not null) {
-        await receiver.CompleteMessageAsync(msg);
-      }
-      return msg;
+      var (message, _) = await CorrelatedReceive.UntilAsync(
+        receiver, published.MessageId.Value.ToString(), TimeSpan.FromSeconds(15));
+      return message;
     }
   }
 
@@ -113,11 +112,12 @@ public class AzureServiceBusAmqpPropertyIntegrationTests(ServiceBusEmulatorFixtu
     var metadata = doc.RootElement.EnumerateObject()
       .ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
 
-    await transport.PublishAsync(_envelope(), new TransportDestination(TOPIC, Metadata: metadata));
+    var envelope = _envelope();
+    await transport.PublishAsync(envelope, new TransportDestination(TOPIC, Metadata: metadata));
 
-    var received = await _receiveAsync();
-    await Assert.That(received).IsNotNull();
-    var props = received!.ApplicationProperties;
+    var received = await _receiveAsync(envelope);
+    await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
+    var props = received.ApplicationProperties;
 
     await Assert.That(props["str"]).IsEqualTo("hello");
 
@@ -154,10 +154,11 @@ public class AzureServiceBusAmqpPropertyIntegrationTests(ServiceBusEmulatorFixtu
     var metadata = doc.RootElement.EnumerateObject()
       .ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
 
-    await transport.PublishAsync(_envelope(), new TransportDestination(TOPIC, Metadata: metadata));
+    var envelope = _envelope();
+    await transport.PublishAsync(envelope, new TransportDestination(TOPIC, Metadata: metadata));
 
-    var received = await _receiveAsync();
-    await Assert.That(received).IsNotNull();
-    await Assert.That(received!.SessionId).IsNotNull();
+    var received = await _receiveAsync(envelope);
+    await Assert.That(received.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
+    await Assert.That(received.SessionId).IsNotNull();
   }
 }

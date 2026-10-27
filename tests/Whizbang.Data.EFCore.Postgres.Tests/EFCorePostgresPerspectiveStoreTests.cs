@@ -457,7 +457,7 @@ public class EFCorePostgresPerspectiveStoreTests {
         .FirstOrDefaultAsync(r => r.Id == streamId);
 
     await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Data.DeletedAt).IsNotNull();
+    await Assert.That(row!.Data.DeletedAt.HasValue).IsTrue();
     // Verify timestamp is within 1 second of expected value
     var difference = Math.Abs((row.Data.DeletedAt!.Value - deletedAt).TotalSeconds);
     await Assert.That(difference).IsLessThanOrEqualTo(1);
@@ -486,7 +486,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     // Verify soft-deleted record exists
     var beforePurge = await store.GetByStreamIdAsync(streamId);
     await Assert.That(beforePurge).IsNotNull();
-    await Assert.That(beforePurge!.DeletedAt).IsNotNull();
+    await Assert.That(beforePurge!.DeletedAt.HasValue).IsTrue();
 
     // Act - hard delete
     await store.PurgeAsync(streamId);
@@ -581,7 +581,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
     await Assert.That(row).IsNotNull();
     var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
-    await Assert.That(expiresAt).IsNotNull()
+    await Assert.That(expiresAt.HasValue).IsTrue()
       .Because("A TtlRow perspective stamps the expires_at shadow property on upsert.");
     var expected = DateTime.UtcNow.AddSeconds(3600);
     await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
@@ -615,7 +615,7 @@ public class EFCorePostgresPerspectiveStoreTests {
 
     var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
     var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
-    await Assert.That(expiresAt).IsNotNull();
+    await Assert.That(expiresAt.HasValue).IsTrue();
     var expected = eventTime.AddSeconds(3600);
     await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(1)
       .Because("expires_at anchors to the applied event's time + TTL — deterministic under replay, "
@@ -635,7 +635,7 @@ public class EFCorePostgresPerspectiveStoreTests {
 
     var row = await context.Set<PerspectiveRow<TtlRowStoreModel>>().FirstOrDefaultAsync(r => r.Id == testId);
     var expiresAt = (DateTime?)context.Entry(row!).Property("expires_at").CurrentValue;
-    await Assert.That(expiresAt).IsNotNull();
+    await Assert.That(expiresAt.HasValue).IsTrue();
     var expected = DateTime.UtcNow.AddSeconds(3600);
     await Assert.That(Math.Abs((expiresAt!.Value - expected).TotalSeconds)).IsLessThanOrEqualTo(60)
       .Because("with no event timestamp (default metadata), the anchor falls back to now + TTL.");

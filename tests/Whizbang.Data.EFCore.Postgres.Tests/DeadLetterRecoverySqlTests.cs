@@ -82,8 +82,15 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     await Assert.That(recovered).IsTrue();
     await Assert.That(await _outboxRowExistsAsync(conn, originalMessageId)).IsTrue()
       .Because("recovery re-inserts the row into wh_outbox with the original message_id");
-    var status = await _readRecoveryStatusAsync(conn, dlqId);
-    await Assert.That(status).IsEqualTo(3).Because("recovered_at is set + status=Recovered");
+    await Assert.That(await _readRecoveryStatusAsync(conn, dlqId)).IsEqualTo(1)
+      .Because("the store claims the dead letter (Recovering); it reads Recovered once the message is published (#1722)");
+    await using (var complete = conn.CreateCommand()) {
+      complete.CommandText = "SELECT complete_outbox_published(ARRAY[@id]::uuid[])";
+      complete.Parameters.AddWithValue("id", originalMessageId);
+      await complete.ExecuteScalarAsync();
+    }
+    await Assert.That(await _readRecoveryStatusAsync(conn, dlqId)).IsEqualTo(3)
+      .Because("the published message settles its dead letter Recovered");
   }
 
   /// <summary>
@@ -116,7 +123,10 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Mirror invariant for inbox recovery.
+  /// The inbox case of the Empty-stream invariant. Since 231 (#1664) an inbox dead letter no longer re-enters through
+  /// <c>recover_dead_letter</c>: the recovery worker re-enters it through <c>store_inbox_messages</c> with the row a
+  /// delivery of its envelope is built as, whose stream is the envelope's and never Empty. What remains for this
+  /// function is to write nothing at all for such a row, so it can never re-emit the Empty stream it recorded.
   /// </summary>
   [Test]
   public async Task RecoverDeadLetter_InboxRowWithEmptyStreamId_NormalizesToNullAsync() {
@@ -127,10 +137,12 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
 
     var recovered = await _callRecoverAsync(conn, dlqId);
 
-    await Assert.That(recovered).IsTrue();
-    var recoveredStreamId = await _readInboxStreamIdAsync(conn, originalMessageId);
-    await Assert.That(recoveredStreamId).IsNull()
-      .Because("Inbox path same as outbox — Empty stream_id MUST be normalized to NULL on recovery.");
+    await Assert.That(recovered).IsFalse()
+      .Because("an inbox dead letter re-enters through the inbox's arrival path, not through this function");
+    await Assert.That(await _readInboxStreamIdAsync(conn, originalMessageId)).IsNull()
+      .Because("no inbox row is written, so the recorded Empty stream cannot be re-emitted");
+    await Assert.That(await _readRecoveryStatusAsync(conn, dlqId)).IsEqualTo(0)
+      .Because("the row stays due for the recovery that re-enters it");
   }
 
   /// <summary>
@@ -353,8 +365,9 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
   // itself: store_inbox_messages upserts wh_message_deduplication and increments observation_count
   // on every arrival, and PoisonMessageDetector acts on that count.
   //
-  // recover_dead_letter re-drives a message by INSERTing straight into wh_inbox. That bypasses
-  // store_inbox_messages, so the arrival it creates is never counted. A message can therefore be
+  // recover_dead_letter used to re-drive a message by INSERTing straight into wh_inbox. That bypassed
+  // store_inbox_messages, so the arrival it created was never counted (231 re-enters it through
+  // store_inbox_messages itself, which counts it like every arrival). A message can therefore be
   // recovered without limit: each pass re-delivers it, no pass is observed, and the detector that
   // exists to stop exactly this never sees a single redelivery. The loop is unbounded by
   // construction, and raising MaxRecoveryAttempts cannot help because the count it reads is reset
@@ -375,7 +388,7 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var (dlqId, messageId) = await _moveToDlqWithMessageIdAsync(conn, sourceTable: "wh_inbox");
 
-    await _callRecoverAsync(conn, dlqId);
+    await _reenterAsync(messageId, dlqId);
 
     // Recovery re-delivered the message. That arrival must be observable, or nothing downstream
     // can ever conclude "this message keeps coming back".
@@ -392,14 +405,14 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     var (dlqId, messageId) = await _moveToDlqWithMessageIdAsync(conn, sourceTable: "wh_inbox");
 
     // First recovery re-delivers it.
-    await _callRecoverAsync(conn, dlqId);
+    await _reenterAsync(messageId, dlqId);
     var afterFirst = await _observationCountAsync(conn, messageId);
 
     // The message fails again and is dead-lettered again. The framework records this as a NEW row,
     // which is exactly why the per-row attempt counter cannot see the cycle.
     var secondDlqId = await _redeadLetterAsync(conn, messageId);
 
-    await _callRecoverAsync(conn, secondDlqId);
+    await _reenterAsync(messageId, secondDlqId);
     var afterSecond = await _observationCountAsync(conn, messageId);
 
     // The count must ACCUMULATE across recoveries. If each pass resets it, the loop is unbounded
@@ -407,6 +420,25 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     await Assert.That(afterSecond.HasValue).IsTrue();
     await Assert.That(afterSecond!.Value).IsGreaterThan(afterFirst ?? 0)
       .Because("each recovery is another re-delivery of the same message and must add to its history");
+  }
+
+  /// <summary>
+  /// Re-enters an inbox dead letter as the recovery worker does: through store_inbox_messages, naming the dead letter.
+  /// </summary>
+  private async Task _reenterAsync(Guid messageId, Guid dlqId) {
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    await coordinator.StoreInboxMessagesAsync([new Whizbang.Core.Messaging.InboxMessage {
+      MessageId = messageId,
+      HandlerName = "RecoveredHandler",
+      Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format("Test.Message, Test"),
+      StreamId = messageId,
+      MessageType = "Test.Message, Test",
+      Priority = 150,
+      RecoveredFromDeadLetterId = dlqId,
+    }], partitionCount: 100);
   }
 
   /// <summary>

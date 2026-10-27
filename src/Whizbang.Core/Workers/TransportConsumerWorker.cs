@@ -50,6 +50,12 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDropGateTests.cs:BatchHandler_CompositeWireType_NotDroppedByNoConsumerGateAsync</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerUnstorableMessageTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
+  /// <summary>
+  /// The active body cleanups this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag nothing ever added to.
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -57,7 +63,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly HashSet<string> _ownedDomains;
   private readonly string? _serviceName;
   private readonly IReceptorRegistryQuery _receptorRegistry;
@@ -115,8 +120,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
   private CancellationTokenSource? _linkedCts;
   // Single source of truth for partition count across this service. Read from
-  // WorkCoordinatorPublisherOptions so all three call sites — this consumer,
-  // WorkBatchCoordinator, and WorkCoordinatorPublisherWorker — agree by construction.
+  // ClaimWorkerOptions so all three call sites (this consumer, ClaimWorker, and the
+  // startup partition recompute) agree by construction.
   private readonly int _partitionCount;
   // Control class (topology arc phase 9): non-durable receive is a migration step consulted LIVE
   // off the shared options instance, so a rollback is a configuration edit, not a redeploy.
@@ -478,12 +483,13 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
   /// <summary>
   /// Handles a received message using the inbox/work-coordinator pattern.
-  /// Messages are stored in the inbox via process_work_batch for atomic deduplication.
+  /// Messages are stored in the inbox via store_inbox_messages for atomic deduplication.
   /// Perspectives are processed asynchronously by PerspectiveWorker.
   /// </summary>
   /// <summary>
-  /// Batch handler: ONE scope, serialize all N, ONE process_work_batch, return → transport ACKs.
-  /// Processing (Process, PostInbox, completion) deferred to WorkCoordinatorPublisherWorker.
+  /// Batch handler: ONE scope, serialize all N, ONE store_inbox_messages call, return → transport ACKs.
+  /// Processing (Process, PostInbox, completion) is deferred: ClaimWorker leases the stored rows'
+  /// streams, InboxDrainWorker fetches them, and InboxDispatchWorker processes them.
   /// </summary>
   /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
@@ -526,7 +532,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Ensure event type set is built before echo check (lazy, one-time init).
     _ensureKnownEventTypesInitialized(scope.ServiceProvider);
 
-    // Collect inbox messages for direct INSERT (bypasses full process_work_batch)
+    // Collect inbox messages for one direct INSERT (store_inbox_messages)
     var inboxMessages = new List<InboxMessage>(messages.Count);
     // Active-cleanup claims accumulated by the rehydrator; fired post-commit
     // so a failed inbox INSERT doesn't leave bodies stranded in the store.
@@ -535,29 +541,19 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // batch fails once the rest are stored, so none of them is ever reported to the transport as handled.
     List<Guid>? uncustodied = null;
     foreach (var msg in messages) {
-      // Slice 3 of pump-then-process.md (Half A): drop messages whose inner type has NO
-      // consumer on this service BEFORE serialization runs. Mirror of the gate added to
-      // ServiceBusConsumerWorker. The post-build _filterInboxMessagesByKnownEventTypes
-      // stays as defense-in-depth — broader registry coverage here catches lifecycle
-      // receptors and tag-attribute consumers the IEventTypeProvider list misses.
-      //
-      // Gate consults BOTH the compile-time IReceptorRegistryQuery AND the runtime
-      // IReceptorRegistry. Without the runtime branch, services whose source-generated
-      // contribution lists no compile-time consumer for a type would silently drop messages
-      // even when a runtime receptor is listening (integration-test wait helpers, dynamic
-      // registrations). Worse than the lifecycle-gate version of this bug because dropping
-      // here means no inbox row gets written at all — no downstream anything can recover.
-      // EXEMPTION — body-offload (claim-check): an offloaded message's wire type is the internal
-      // MessageEnvelope<BodyClaimEnvelopePayload>, which NO service registers a consumer for. Running
-      // this no-consumer gate against the claim would drop EVERY offloaded message here — before
-      // rehydration, with no inbox row written, unrecoverable. Skip the gate for claims; the real
-      // type is restored by BodyClaimRehydrator in _tryBuildInboxMessageFromTransportAsync below.
-      // EXEMPTION — composites: a composite is wire-only (IMessage, never IEvent), so NO service
-      // registers a consumer for the composite type itself; its consumers are registered for the
-      // INNER events, which only become addressable once the dispatch seam fans it out (see the
-      // fan-out note below). Running the gate against the composite drops the ENTIRE bundle here,
-      // before any inbox row is written — unrecoverable, and only visible at Debug. See
+      // #1720: every message is stored, and a skip is decided with the row, never instead of it. A message whose inner
+      // type has no consumer on this service (no inbox handler, lifecycle receptor, perspective or runtime receptor)
+      // used to be dropped here, before serialization, with no row anywhere; it is now stored already settled, naming
+      // the reason (InboxMessage.DiscardedOnReceive), so the skip is durable and inspectable and the row is never
+      // claimed, copied or dispatched. The gate consults BOTH the compile-time IReceptorRegistryQuery AND the runtime
+      // IReceptorRegistry, so a runtime receptor (integration-test waits, dynamic registrations) keeps the message.
+      // EXEMPTION, body-offload (claim-check): an offloaded message's wire type is the internal
+      // MessageEnvelope<BodyClaimEnvelopePayload>, which NO service registers a consumer for; its real type is restored
+      // by BodyClaimRehydrator in _tryBuildInboxMessageFromTransportAsync below.
+      // EXEMPTION, composites: a composite is wire-only, so NO service consumes the composite type itself; its
+      // consumers are registered for the INNER events, addressable once the dispatch seam fans it out. See
       // CompositeInboxFanout.IsCompositeWireType.
+      string? discardedOnReceive = null;
       if (!string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
         var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
@@ -565,8 +561,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
             && !_receptorRegistry.HasAnyConsumer(innerMessageType)
             && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
             && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
-          _metrics?.InboxMessagesDeduplicated.Add(1);
-          continue;
+          discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
+          _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType));
         }
       }
 
@@ -577,7 +573,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // receive-boundary extension of the rule DeadLetterDropPolicy already applies at the
       // dead-letter boundary. The comparison is not skipped — it MOVES here, at the same
       // lifecycle stage the durable path fires it at, so control receptors are unchanged.
-      if (_controlClass.NonDurableReceive
+      if (discardedOnReceive is null
+          && _controlClass.NonDurableReceive
           && _controlClassResolver is not null
           && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
           && _controlClassResolver.IsControlClass(EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType))) {
@@ -585,7 +582,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         continue;
       }
 
-      var (inboxMessage, cleanupClaim, unstorable) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
+      var (inboxMessage, cleanupClaim, unstorable) = await _tryBuildInboxMessageFromTransportAsync(
+        msg, discardedOnReceive, scope.ServiceProvider, cancellationToken);
       if (unstorable is not null
           && !await _giveDeadLetterCustodyAsync(workCoordinator, unstorable, destination, cancellationToken)) {
         uncustodied ??= [];
@@ -632,12 +630,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       IWorkCoordinator workCoordinator,
       CancellationToken cancellationToken) {
 
-    // Direct INSERT into wh_inbox — bypasses process_work_batch entirely.
-    // Event storage + perspective creation happens on next tick via self-healing
-    // (Phase 5 claims → Phase 4.5B stores events → Phase 4.6/4.7 creates perspectives).
-    // PartitionCount is sourced from WorkCoordinatorPublisherOptions — the single source
-    // of truth across this service's TransportConsumerWorker, WorkBatchCoordinator, and
-    // WorkCoordinatorPublisherWorker — preventing the partition mismatch wedge.
+    // Direct INSERT into wh_inbox via store_inbox_messages; nothing else runs in the call.
+    // Event storage + perspective creation happen when ClaimWorker's claim_work claims the
+    // rows (its _emit_event_store_chain_for_inbox step).
+    // PartitionCount is sourced from ClaimWorkerOptions, the single source of truth across
+    // this service's TransportConsumerWorker, ClaimWorker, and startup partition recompute,
+    // preventing the partition mismatch wedge.
     //
     // Topology arc phase 8.5 — poison detection LAYER 2. When a detector is wired, use the store
     // overload that also reports durable REDELIVERY OBSERVATIONS. This is not a second query: the
@@ -677,7 +675,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // delete failures fall back to the provider's storage-level TTL (the default
     // ActiveCleanup=false path).
     if (pendingCleanupClaims is { Count: > 0 }) {
-      _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
+      DetachedWork.Track(_fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken));
     }
   }
 
@@ -828,19 +826,20 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim, UnstorableMessage? Unstorable)>
       _tryBuildInboxMessageFromTransportAsync(
-      TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
+      TransportMessage msg, string? discardedOnReceive, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
     var envelopeType = msg.EnvelopeType;
     var envelope = msg.Envelope;
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    if (_shouldDiscardForeignTarget(envelope, messageType, messageTypeTag)) {
-      return (null, null, null);
-    }
-
-    if (_shouldDiscardOwnedEcho(envelope, envelopeType, messageType, messageTypeTag)) {
-      return (null, null, null);
+    // #1720: a message for another service, or this service's own echo, is stored settled with the reason, never
+    // dropped unstored. A message already skipped for having no consumer keeps that reason.
+    if (discardedOnReceive is null) {
+      discardedOnReceive = _foreignTargetDiscard(envelope, messageType) ?? _ownedEchoDiscard(envelope, envelopeType, messageType);
+      if (discardedOnReceive is not null) {
+        _countDiscard(discardedOnReceive, messageType);
+      }
     }
 
     // Body-offload claim rehydrate: when the transport handed us a claim
@@ -880,6 +879,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       _populateDeliveredAtTimestamp(envelope, envelopeType);
       var inboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
+      if (discardedOnReceive is not null) {
+        LogStoredSettledOnReceive(_logger, envelope.MessageId.Value, messageType, discardedOnReceive);
+        inboxMessage = inboxMessage with { DiscardedOnReceive = discardedOnReceive };
+      }
       return (inboxMessage, cleanupClaim, null);
     } catch (Exception ex) {
       // Never a silent skip (#915): a message that cannot become an inbox row is dead-lettered with
@@ -964,35 +967,40 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   }
 
   /// <summary>
+  /// Counts a skip under its reason where it is decided (#1720), so the count holds whether the row is then stored
+  /// settled or, when it cannot be built, given dead-letter custody.
+  /// </summary>
+  private void _countDiscard(string reason, string messageType) =>
+    _metrics?.InboxMessagesDiscarded.Add(1,
+      new KeyValuePair<string, object?>("reason", reason),
+      new KeyValuePair<string, object?>("message_type", messageType));
+
+  /// <summary>
   /// Owned events are ALWAYS echo (only the owning service publishes events in its namespace).
   /// Owned commands may come from other services, so the last-hop service name distinguishes
   /// echo from cross-service delivery.
   /// </summary>
-  private bool _shouldDiscardOwnedEcho(
-      IMessageEnvelope envelope,
-      string? envelopeType,
-      string messageType,
-      KeyValuePair<string, object?> messageTypeTag) {
+  /// <returns>The reason to store the message settled (<see cref="InboxReceiveDiscard.OWNED_ECHO"/> or
+  /// <see cref="InboxReceiveDiscard.SELF_ECHO"/>), or <see langword="null"/> when it is not an echo (#1720).</returns>
+  private string? _ownedEchoDiscard(IMessageEnvelope envelope, string? envelopeType, string messageType) {
     // A copy whose local handling this service deferred to its delivery (a scheduled publish) comes back to be
     // handled here, so it is not an echo (#1401)
     if (_ownedDomains.Count == 0 || envelopeType is null || envelope.DispatchContext.LocalDeferred) {
-      return false;
+      return null;
     }
     var ns = TypeNameFormatter.GetPayloadNamespace(envelopeType);
     if (!_isOwnedNamespace(ns)) {
-      return false;
+      return null;
     }
     if (_isKnownEventType(envelopeType)) {
       LogOwnedEventEchoDiscarded(_logger, messageType);
-      _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-      return true;
+      return InboxReceiveDiscard.OWNED_ECHO;
     }
     if (_serviceName is not null && _isSelfEcho(envelope)) {
       LogSelfEchoDiscarded(_logger, messageType, _serviceName);
-      _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-      return true;
+      return InboxReceiveDiscard.SELF_ECHO;
     }
-    return false;
+    return null;
   }
 
   /// <summary>
@@ -1006,34 +1014,35 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// </summary>
   /// <docs>fundamentals/messaging/directed-messages</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
-  private bool _shouldDiscardForeignTarget(
-      IMessageEnvelope envelope,
-      string messageType,
-      KeyValuePair<string, object?> messageTypeTag) {
+  /// <returns><see cref="InboxReceiveDiscard.FOREIGN_TARGET"/> when the message is directed at another service, so
+  /// it is stored settled (#1720); otherwise <see langword="null"/>.</returns>
+  private string? _foreignTargetDiscard(IMessageEnvelope envelope, string messageType) {
     var target = envelope.Target;
     if (target is null || _serviceName is null
         || string.Equals(target, _serviceName, StringComparison.Ordinal)) {
-      return false;
+      return null;
     }
     LogForeignTargetDiscarded(_logger, messageType, target, _serviceName);
-    _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
-    return true;
+    return InboxReceiveDiscard.FOREIGN_TARGET;
   }
 
   /// <summary>
-  /// Pre-filter: drops events this service has no perspectives or receptors for. Commands are
-  /// always kept because they're routed to a specific service on purpose.
+  /// Pre-filter: an event of a type this service did not know when it started receiving is stored settled with
+  /// <see cref="InboxReceiveDiscard.UNKNOWN_EVENT_TYPE"/> rather than processed (#1720: it used to be removed before the
+  /// store, leaving no row). Commands are always processed because they're routed to a specific service on purpose.
   /// </summary>
   private void _filterInboxMessagesByKnownEventTypes(List<InboxMessage> inboxMessages) {
     if (_knownEventTypeNames is null || _knownEventTypeNames.Count == 0) {
       return;
     }
-    var beforeCount = inboxMessages.Count;
-    inboxMessages.RemoveAll(msg => msg.IsEvent
-      && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType)));
-    var filtered = beforeCount - inboxMessages.Count;
-    if (filtered > 0) {
-      _metrics?.InboxMessagesDeduplicated.Add(filtered);
+    for (var i = 0; i < inboxMessages.Count; i++) {
+      var msg = inboxMessages[i];
+      if (msg.IsEvent && msg.DiscardedOnReceive is null
+          && !_knownEventTypeNames.Contains(EventTypeMatchingHelper.NormalizeTypeName(msg.MessageType))) {
+        LogStoredSettledOnReceive(_logger, msg.MessageId, msg.MessageType, InboxReceiveDiscard.UNKNOWN_EVENT_TYPE);
+        _countDiscard(InboxReceiveDiscard.UNKNOWN_EVENT_TYPE, TypeNameFormatter.GetSimpleName(msg.MessageType));
+        inboxMessages[i] = msg with { DiscardedOnReceive = InboxReceiveDiscard.UNKNOWN_EVENT_TYPE };
+      }
     }
   }
 
@@ -1103,7 +1112,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -1189,17 +1198,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       jsonEnvelope = serialized.JsonEnvelope;
     }
 
-    // Determine if message is an event using IEventTypeProvider
-    // This is more reliable than "payload is IEvent" when payload is JsonElement
-    var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
-    if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
-    } else {
-      // Fallback to runtime check if provider not available
-      isEvent = payload is IEvent;
-    }
+    // The event catalog decides by name (reliable for a JsonElement payload); the payload's marker is the
+    // fallback for a host with no catalog. Shared with dead-letter recovery (#1664).
+    var isEvent = ReceivedInboxMessageBuilder.ClassifiesAsEvent(scopeServiceProvider, messageTypeName, payload);
 
     // Diagnostic: an EVENT whose wire type name is absent from the catalog union means its flags
     // (and TTL) cannot be derived on this service — warn once per type so the exact name that
@@ -1301,6 +1302,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     await base.StopAsync(cancellationToken);
     linkedCts?.Dispose();
+
+    // The active body cleanups still running finish before the host disposes the container (#1721)
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -1325,7 +1329,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
-    Message = "Owned event echo discarded: {MessageType} (owned events never arrive from external services)"
+    Message = "Owned event echo stored settled without processing: {MessageType} (owned events never arrive from external services)"
   )]
   private static partial void LogOwnedEventEchoDiscarded(ILogger logger, string messageType);
 
@@ -1334,7 +1338,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
-    Message = "Self-echo discarded: {MessageType} from {ServiceName}"
+    Message = "Self-echo stored settled without processing: {MessageType} from {ServiceName}"
   )]
   private static partial void LogSelfEchoDiscarded(ILogger logger, string messageType, string serviceName);
 
@@ -1343,9 +1347,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerDirectedTargetTests.cs</tests>
   [LoggerMessage(
     Level = LogLevel.Debug,
-    Message = "Directed message discarded: {MessageType} targeted at {Target} — this service is {ServiceName}"
+    Message = "Directed message stored settled without processing: {MessageType} targeted at {Target}, this service is {ServiceName}"
   )]
   private static partial void LogForeignTargetDiscarded(ILogger logger, string messageType, string target, string serviceName);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Received message {MessageId} ({MessageType}) stored settled without processing: {Reason}"
+  )]
+  private static partial void LogStoredSettledOnReceive(ILogger logger, Guid messageId, string messageType, string reason);
 
   /// <summary>Logs that a message which could not become an inbox row was given dead-letter custody.</summary>
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>

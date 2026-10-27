@@ -38,7 +38,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
     // Discover types with [GraphQLLens] attribute
     // Syntactic filtering: only look at interfaces/classes with attributes
     var lenses = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => _isPotentialGraphQLLens(node),
+        predicate: static (node, _) => IsGraphQLLensCandidate(node),
         transform: static (ctx, ct) => _extractLensInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -52,7 +52,9 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// <summary>
   /// Syntactic predicate: quickly filter to types that might have [GraphQLLens].
   /// </summary>
-  private static bool _isPotentialGraphQLLens(SyntaxNode node) {
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsGraphQLLensCandidate(SyntaxNode node) {
     // Look for interfaces or classes with at least one attribute
     return node switch {
       InterfaceDeclarationSyntax { AttributeLists.Count: > 0 } => true,

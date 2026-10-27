@@ -32,7 +32,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     var messageId = _idProvider.NewGuid();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []);
     return new InboxMessage {
       MessageId = messageId,

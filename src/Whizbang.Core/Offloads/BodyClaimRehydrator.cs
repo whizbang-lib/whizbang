@@ -145,6 +145,7 @@ public static class BodyClaimRehydrator {
         "Deserialized rehydrated body but result is null or wrong shape; expected IMessageEnvelope.",
         rawBody: System.Text.Encoding.UTF8.GetString(downloaded.Span));
     }
+    MessageParseDiagnostics.Record(rehydrated.MessageId.Value, MessageParseSource.OffloadRehydration, MessageParseKind.Envelope);
 
     // Observe the rehydration (bounded dimensions: message type + namespace — never message IDs).
     var metrics = serviceProvider.GetService<TransportMetrics>();

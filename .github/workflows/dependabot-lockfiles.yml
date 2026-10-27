@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Dependabot lock files
 
 # Dependabot's NuGet updater bumps Directory.Packages.props and the packages.lock.json of each project

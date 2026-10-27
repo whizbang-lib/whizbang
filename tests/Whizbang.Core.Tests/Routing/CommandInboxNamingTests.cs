@@ -217,7 +217,7 @@ public class CommandInboxNamingTests {
       "inbox.myapp.orders.commands",
       "myapp.orders.commands.placeorder",
       new Dictionary<string, JsonElement> {
-        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement
+        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("true")
       });
 
     await Assert.That(CommandInboxNaming.RequiresProvisionedEntity(destination)).IsTrue();
@@ -229,7 +229,7 @@ public class CommandInboxNamingTests {
       "inbox.myapp.orders.commands",
       null,
       new Dictionary<string, JsonElement> {
-        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("false").RootElement
+        [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonElement.Parse("false")
       });
     var noMetadata = new TransportDestination("inbox");
 

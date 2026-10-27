@@ -74,9 +74,27 @@ public sealed partial class MaintenanceWorker(
     LogStopped(_logger);
   }
 
+  /// <summary>
+  /// Whether this instance runs the sweep: always, unless role assignment manages the maintainer duty, in
+  /// which case only on its holder (#1377).
+  /// </summary>
+  private static bool _isThisInstancesTurn(IServiceProvider services) =>
+    services.GetService<Startup.DutyHolderWorker>() is not { } holder
+    || !holder.Roles.Contains(Startup.StartupDuties.MAINTAINER, StringComparer.Ordinal)
+    || holder.Holds(Startup.StartupDuties.MAINTAINER);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Maintenance cycle skipped: another instance holds the maintainer duty")]
+  private static partial void LogSkippedNotMaintainer(ILogger logger);
+
   internal async Task RunMaintenanceOnceAsync(CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var sp = scope.ServiceProvider;
+    // The sweep is fleet-wide work on shared tables: with the maintainer duty assigned, its holder does it
+    // once, rather than every instance sweeping the same rows (#1377), as the vacuum already does
+    if (!_isThisInstancesTurn(sp)) {
+      LogSkippedNotMaintainer(_logger);
+      return;
+    }
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
     if (_housekeeping is null) {
@@ -197,19 +215,12 @@ public sealed partial class MaintenanceWorker(
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Sonar", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One maintenance cycle: each guarded task is a documented sweep and their order is the contract.")]
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
-    // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,
-    // not from this process's options, and nothing used to write it — so enabling debug retention
-    // marked rows that the sweep then deleted anyway. Synced every cycle rather than at startup so
-    // a configuration change takes effect without a restart, and so a stale value cannot outlive
-    // the option that set it.
-    try {
-      await coordinator.SyncDebugRetentionSettingAsync(_coordinatorDebugMode(sp), ct).ConfigureAwait(false);
-    } catch (OperationCanceledException) {
-      throw;
-    } catch (Exception ex) {
-      // Never fail a maintenance cycle over a settings write; the sweep keeps its previous value.
-      LogDebugRetentionSyncFailed(_logger, ex);
-    }
+    // Publish debug retention and every configured retention window BEFORE the sweep reads them. The sweep
+    // decides from stored settings, not from this process's options, and nothing used to write them, so
+    // enabling debug retention marked rows the sweep then deleted, and every other window needed hand-written
+    // SQL. One write per cycle rather than at startup, so a configuration change takes effect without a
+    // restart and a stale value cannot outlive the option that set it.
+    await _syncRetentionSettingsAsync(coordinator, sp, ct).ConfigureAwait(false);
 
     // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
     // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
@@ -220,7 +231,7 @@ public sealed partial class MaintenanceWorker(
     // archive each ephemeral body before Task 8 deletes it. Its preserve-work commits before the subsequent
     // PerformMaintenanceAsync (a separate call), satisfying the "durable before delete" ordering. Returns the
     // targets so PostDestruction can fire after the delete. Inert without a registered hook.
-    var destructionTargets = await _runPreDestructionHooksAsync(coordinator, sp, ct);
+    var destruction = await _runPreDestructionHooksAsync(coordinator, sp, ct);
 
     // Stream-integrity convergence gauges. Deliberately folded into THIS cycle rather than given
     // their own timer: a standalone collector would be one more background service acquiring a
@@ -275,7 +286,7 @@ public sealed partial class MaintenanceWorker(
       ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
     // E2 PostDestruction hooks — detached, after the reap committed.
-    await _firePostDestructionHooksAsync(sp, destructionTargets, ct);
+    await _firePostDestructionHooksAsync(sp, destruction, ct);
 
     // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
     // documented the table as periodically cleaned, but no production path ever called it, so the
@@ -790,19 +801,32 @@ public sealed partial class MaintenanceWorker(
   // are logged, never fatal (the retry policy lands in a later increment). Returns the targets so the
   // detached PostDestruction step can fire after the reap. The hook's Cancel/Defer decision is captured and
   // logged; ENFORCEMENT (holding the body / rescheduling) lands in the next increment via a SQL hold-gate.
-  private async Task<IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget>> _runPreDestructionHooksAsync(
+  /// <summary>The events about to be reaped this cycle, and those loaded for the destruction-stage receptors (#1381).</summary>
+  private sealed record DestructionBatch(
+      IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> Targets,
+      IReadOnlyList<Whizbang.Core.Observability.MessageEnvelope<IEvent>> Envelopes) {
+    public static readonly DestructionBatch None = new([], []);
+  }
+
+  private async Task<DestructionBatch> _runPreDestructionHooksAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
-    if (hook is null) {
-      return [];
+    // The destruction-stage receptors run beside the hook (#1381); with neither, nothing is read
+    var stageTypes = Whizbang.Core.Lifecycle.DestructionStageReceptors.TypesWithReceptors(sp);
+    if (hook is null && stageTypes.Count == 0) {
+      return DestructionBatch.None;
     }
     var targets = await coordinator.GetEphemeralBodiesAboutToReapAsync(ct);
     if (targets.Count == 0) {
-      return targets;
+      return DestructionBatch.None;
     }
     // Batched: fire the hook ONCE for the whole set of about-to-reap events, then HONOR its decision.
     try {
-      var result = await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+      // Loaded before the delete: the Post stages run after the data is gone
+      var envelopes = await Whizbang.Core.Lifecycle.DestructionStageReceptors.LoadAsync(sp, targets, stageTypes, ct).ConfigureAwait(false);
+      var result = hook is null
+        ? Whizbang.Core.Lifecycle.DestructionResult.Proceed()
+        : await hook.OnBeforeDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
       LogPreDestruction(_logger, targets.Count, result.Cancel, result.DeferUntil.HasValue);
       if (result.Cancel || result.DeferUntil.HasValue) {
         // E2-3: hold the whole batch — Cancel keeps it far-future, Defer holds it to that instant. Task 8
@@ -813,10 +837,12 @@ public sealed partial class MaintenanceWorker(
         }
         var until = result.DeferUntil ?? DateTimeOffset.MaxValue;
         await coordinator.HoldEphemeralDestructionAsync(eventIds, until, ct).ConfigureAwait(false);
-        return [];
+        return DestructionBatch.None;
       }
-      // Proceed: no hold — the reap deletes the batch, and PostDestruction fires for it.
-      return targets;
+      // Proceed: the Pre stages run, then the reap deletes the batch and PostDestruction fires for it. A
+      // throwing Pre Inline receptor takes the failure path below, as a throwing hook does
+      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePreAsync(sp, envelopes, ct).ConfigureAwait(false);
+      return new DestructionBatch(targets, envelopes);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
@@ -841,27 +867,27 @@ public sealed partial class MaintenanceWorker(
         _ => "held for retry",
       };
       LogPreDestructionFailed(_logger, ex, targets.Count, attempt, _options.MaxDestructionRetries, outcome);
-      return [];
+      return DestructionBatch.None;
     }
   }
 
   // E2 PostDestruction: fire the registered IDestructionHook's detached post-hook ONCE for the reaped batch,
   // after the reap committed. Failure is logged, never fatal.
-  private async Task _firePostDestructionHooksAsync(
-      IServiceProvider sp, IReadOnlyList<Whizbang.Core.Messaging.EphemeralDestructionTarget> targets, CancellationToken ct) {
-    if (targets.Count == 0) {
+  private async Task _firePostDestructionHooksAsync(IServiceProvider sp, DestructionBatch batch, CancellationToken ct) {
+    if (batch.Targets.Count == 0) {
       return;
     }
     var hook = sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>();
-    if (hook is null) {
-      return;
-    }
     try {
-      await hook.OnAfterDestructionAsync(_destructionContext(targets), ct).ConfigureAwait(false);
+      if (hook is not null) {
+        await hook.OnAfterDestructionAsync(_destructionContext(batch.Targets), ct).ConfigureAwait(false);
+      }
+      // The Post stages get the envelopes loaded before the delete: the stored data is gone now (#1381)
+      await Whizbang.Core.Lifecycle.DestructionStageReceptors.FirePostAsync(sp, batch.Envelopes, ct).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       throw;
     } catch (Exception ex) {
-      LogPostDestructionFailed(_logger, ex, targets.Count);
+      LogPostDestructionFailed(_logger, ex, batch.Targets.Count);
     }
   }
 
@@ -890,9 +916,34 @@ public sealed partial class MaintenanceWorker(
     sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>()
       ?.Value.DebugMode ?? false;
 
+  // A host that never registered the ephemeral options has no opinion on its keys: unset leaves them alone.
+  private static Whizbang.Core.Configuration.EphemeralOptions _ephemeralOptions(IServiceProvider sp) =>
+    sp.GetService<IOptions<Whizbang.Core.Configuration.EphemeralOptions>>()?.Value
+      ?? new Whizbang.Core.Configuration.EphemeralOptions();
+
+  /// <summary>
+  /// Publishes debug retention and each configured retention window in one write. Best-effort: the sweep decides
+  /// from what is stored, so a failed write means it keeps the previous values, which is never a reason to lose
+  /// the cycle. The warning names the keys that were not published. Cancellation is shutdown and propagates.
+  /// </summary>
+  private async Task _syncRetentionSettingsAsync(IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    string? keys = null;
+    try {
+      // Resolved inside the guard: options that fail validation are reported here rather than failing the cycle.
+      var settings = RetentionSettingsBridge.SettingsFor(
+        _coordinatorDebugMode(sp), _options.Retention, _ephemeralOptions(sp), _options.Partitioning);
+      keys = string.Join(", ", settings.Select(s => s.Key));
+      await coordinator.SyncRetentionSettingsAsync(settings, ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogRetentionSettingsSyncFailed(_logger, keys ?? "none; settings not resolved", ex);
+    }
+  }
+
   [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
-    Message = "Failed to publish the debug-retention setting to the store; the maintenance sweep keeps its previous value. If debug retention was just enabled, completed rows may still be purged.")]
-  static partial void LogDebugRetentionSyncFailed(ILogger logger, Exception ex);
+    Message = "Failed to publish database-side settings to wh_settings (keys: {Keys}); the maintenance sweep keeps the values already stored. If debug retention was just enabled, completed rows may still be purged; a retention window just changed in configuration is not yet in effect.")]
+  static partial void LogRetentionSettingsSyncFailed(ILogger logger, string keys, Exception ex);
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Information,
     Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s) and {PendingPerspectiveRows} pending perspective event(s). The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
@@ -968,7 +1019,7 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
-    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; the post-ready Rewrite step performs it on the next boot as Whizbang:Workers:Maintenance:TableRewriteStrategy and AllowTableRewrite decide (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
@@ -1077,6 +1128,15 @@ public sealed class MaintenanceWorkerOptions {
   /// call time, so enabling this cannot trigger a rewrite of a table that is already lean.
   /// </remarks>
   public bool AllowTableRewrite { get; set; }
+
+  /// <summary>
+  /// How the post-ready <c>Rewrite</c> step reclaims the space of recorded tables
+  /// (<c>Whizbang:Workers:Maintenance:TableRewriteStrategy</c>). Default <see cref="Workers.TableRewriteStrategy.Auto"/>:
+  /// <c>VACUUM FULL</c> at boot when <see cref="AllowTableRewrite"/> permits it, otherwise detect and report, and
+  /// never an online rewrite. <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> requires the pg_squeeze extension.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
+  public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
 
   /// <summary>
   /// Whether an instance that takes the maintainer duty over from another instance (a hand-off, or a
@@ -1210,4 +1270,20 @@ public sealed class MaintenanceWorkerOptions {
 
   /// <summary>Minimum hours between settled folds service-wide (fleet watermark). Default 24.</summary>
   public int SettledFoldClaimWindowHours { get; set; } = 24;
+
+  /// <summary>
+  /// Retention windows the sweep reads from <c>wh_settings</c>, published by each cycle, under
+  /// <c>Whizbang:Workers:Maintenance:Retention</c>. Every window is unset by default, which leaves the stored value alone.
+  /// </summary>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RetentionSettingsBindingTests.cs:MaintenanceRetention_BindsFromItsEnvironmentVariablesAsync</tests>
+  public MaintenanceRetentionOptions Retention { get; set; } = new();
+
+  /// <summary>
+  /// The built-in partition manager, under <c>Whizbang:Workers:Maintenance:Partitioning</c>: off by default, three
+  /// intervals created ahead. See <see cref="MaintenancePartitioningOptions"/>.
+  /// </summary>
+  /// <docs>operations/infrastructure/partitioned-ledgers#enabling-it</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PartitioningOptionsTests.cs:Partitioning_BindsFromItsEnvironmentVariablesAsync</tests>
+  public MaintenancePartitioningOptions Partitioning { get; set; } = new();
 }

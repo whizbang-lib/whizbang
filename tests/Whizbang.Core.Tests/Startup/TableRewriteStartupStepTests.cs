@@ -7,8 +7,10 @@ using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Startup;
+using Whizbang.Core.Tests.Capabilities;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Startup;
@@ -57,10 +59,55 @@ public class TableRewriteStartupStepTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     var provider = services.BuildServiceProvider();
+    var options = Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow });
     return new TableRewriteStartupStep(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new MaintenanceWorkerOptions { AllowTableRewrite = allow }),
+      rewriters: [new VacuumFullTableRewriter(options)],
+      options: options,
+      capabilities: null,
       logger: NullLogger<TableRewriteStartupStep>.Instance);
+  }
+
+  /// <summary>A rewriter that records what it was offered, under any strategy name.</summary>
+  private sealed class RecordingRewriter(string strategy, double? ratioAfter = 1.0, bool canRun = true) : ITableRewriter {
+    public List<string> Rewritten { get; } = [];
+    public string Strategy { get; } = strategy;
+    public bool CanRun { get; } = canRun;
+    public string CannotRunReason => $"{Strategy} is not usable here";
+    public Task<double?> RewriteAsync(IWorkCoordinator coordinator, string tableName, CancellationToken cancellationToken) {
+      Rewritten.Add(tableName);
+      return Task.FromResult(ratioAfter);
+    }
+  }
+
+  private static TableRewriteStartupStep _stepWith(
+      RewriteCoordinator? coordinator, TableRewriteStrategy strategy, params ITableRewriter[] rewriters) =>
+    _stepWith(coordinator, strategy, capabilities: null, rewriters);
+
+  private static TableRewriteStartupStep _stepWith(
+      RewriteCoordinator? coordinator, TableRewriteStrategy strategy, ICapabilityRegistry? capabilities,
+      params ITableRewriter[] rewriters) {
+    var services = new ServiceCollection();
+    if (coordinator is not null) {
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+    }
+    var provider = services.BuildServiceProvider();
+    return new TableRewriteStartupStep(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      rewriters: rewriters,
+      options: Options.Create(new MaintenanceWorkerOptions { TableRewriteStrategy = strategy, AllowTableRewrite = true }),
+      capabilities: capabilities,
+      logger: NullLogger<TableRewriteStartupStep>.Instance);
+  }
+
+  /// <summary>A registry whose pg_squeeze reads the given state on each database.</summary>
+  private static async Task<CapabilityRegistry> _squeezeAsync(params CapabilityState[] perDatabase) {
+    var provider = new FakeCapabilityProvider("postgres", [.. perDatabase.Select((_, i) => $"db-{i}")],
+      FakeCapabilityProvider.Describe("postgres", "pg_squeeze"));
+    var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    registry.Record([.. registry.Statuses.Select((status, i) => status with { State = perDatabase[i] })]);
+    return registry;
   }
 
   [Test]
@@ -74,7 +121,16 @@ public class TableRewriteStartupStepTests {
       .Because("nobody blocks on a VACUUM FULL");
     await Assert.That(descriptor.Blocking).IsFalse()
       .Because("deliberately unbounded work must never gate Ready");
-    await Assert.That(descriptor.DependsOn).Contains(FrameworkStartupSteps.MIGRATE);
+    await Assert.That(descriptor.DependsOn).IsEquivalentTo([FrameworkStartupSteps.MIGRATE])
+      .Because("without a capability registry there is no Capabilities step to wait for");
+  }
+
+  [Test]
+  public async Task Descriptor_WithACapabilityRegistry_RunsAfterTheCapabilitiesStepAsync() {
+    var descriptor = _stepWith(new RewriteCoordinator(), TableRewriteStrategy.Auto, await _squeezeAsync(CapabilityState.Ready)).Descriptor;
+
+    await Assert.That(descriptor.DependsOn).IsEquivalentTo([FrameworkStartupSteps.MIGRATE, CapabilitiesStartupStep.STEP_NAME])
+      .Because("the step reads whether pg_squeeze is usable, which only the Capabilities step has probed");
   }
 
   [Test]
@@ -85,6 +141,9 @@ public class TableRewriteStartupStepTests {
     var report = await _stepOver(coordinator, allow: false).ExecuteAsync(CancellationToken.None);
 
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason)
+      .IsEqualTo("Auto detects and reports only: VACUUM FULL is not permitted (Whizbang:Workers:Maintenance:AllowTableRewrite = false)")
+      .Because("the operator reads this reason to learn which switch holds the rewrite back");
     await Assert.That(coordinator.Rewritten).IsEmpty()
       .Because("the framework cannot know how large a consumer's table is; taking an ACCESS "
              + "EXCLUSIVE lock unattended must be opted into — same permission, new window");
@@ -133,5 +192,142 @@ public class TableRewriteStartupStepTests {
              + "table still owes one");
     await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
     await Assert.That(report.Reason).Contains("left queued");
+  }
+  [Test]
+  public async Task RewriteThatReclaimsNothingMeasurable_LeavesTheRequestQueuedAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: true) },
+      RatioAfterRewrite = null,   // not rewritten, for example a table the role does not own
+    };
+    var report = await _stepOver(coordinator).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Rewritten).Contains("wh_event_store");
+    await Assert.That(coordinator.Cleared).IsEmpty()
+      .Because("no measurement after the rewrite is no evidence it worked");
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+    await Assert.That(report.Reason).IsEqualTo("rewrote 0 table(s); 1 ineffective, left queued for the next boot");
+  }
+
+  [Test]
+  public async Task ResolvesTheRewriterByStrategyNameAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var other = new RecordingRewriter("Other");
+    var chosen = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.VacuumFull, other, chosen).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(chosen.Rewritten).IsEquivalentTo(["wh_outbox"])
+      .Because("the step hands each owed table to the rewriter of the selected strategy");
+    await Assert.That(other.Rewritten).IsEmpty()
+      .Because("a registered rewriter of another strategy is never called, wherever it is registered");
+    await Assert.That(coordinator.Rewritten).IsEmpty()
+      .Because("the rewrite goes through the rewriter, not straight to the coordinator");
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(report.Reason).IsEqualTo("rewrote 1 table(s)");
+  }
+
+  [Test]
+  public async Task PgSqueeze_HasNoRewriterInThisVersion_AndSaysSoAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.PgSqueeze, await _squeezeAsync(CapabilityState.Ready), vacuum)
+      .ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo(
+      "PgSqueeze: online rewrite through pg_squeeze; no table rewriter is registered for it, so requested tables stay queued");
+    await Assert.That(vacuum.Rewritten).IsEmpty()
+      .Because("an explicit online choice is never replaced by a blocking rewrite, though AllowTableRewrite is true");
+    await Assert.That(coordinator.Rewritten).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  [Test]
+  public async Task Auto_WithPgSqueezeUsable_NamesTheOptIn_AndStartsNoOnlineRewriteAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var squeeze = new RecordingRewriter(TableRewriteStrategies.PG_SQUEEZE);
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.Auto,
+      await _squeezeAsync(CapabilityState.Ready, CapabilityState.Provisionable), squeeze, vacuum).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(squeeze.Rewritten).IsEmpty().Because("Auto never starts an online rewrite (decision 1, #1671)");
+    await Assert.That(vacuum.Rewritten).IsEquivalentTo(["wh_outbox"]).Because("AllowTableRewrite is true");
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Completed);
+  }
+
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task Auto_ReportsPgSqueezeUsable_OnlyWhenItIsUsableOnEveryDatabaseAsync(bool everyDatabase) {
+    var registry = everyDatabase
+      ? await _squeezeAsync(CapabilityState.Ready, CapabilityState.Ready)
+      : await _squeezeAsync(CapabilityState.Ready, CapabilityState.NotPermitted);
+    var step = new TableRewriteStartupStep(
+      new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), [],
+      Options.Create(new MaintenanceWorkerOptions()), registry, NullLogger<TableRewriteStartupStep>.Instance);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason!.Contains("pg_squeeze is usable", StringComparison.Ordinal)).IsEqualTo(everyDatabase);
+  }
+
+  [Test]
+  public async Task Auto_WithARegistryThatProbesNoPostgres_DoesNotReportPgSqueezeUsableAsync() {
+    var registry = new CapabilityRegistry([new FakeCapabilityProvider("broker", ["vhost-a"], FakeCapabilityProvider.Describe("broker", "x"))],
+      NullLogger<CapabilityRegistry>.Instance);
+    var step = new TableRewriteStartupStep(
+      new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), [],
+      Options.Create(new MaintenanceWorkerOptions()), registry, NullLogger<TableRewriteStartupStep>.Instance);
+
+    var report = await step.ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Reason).DoesNotContain("pg_squeeze");
+  }
+
+  [Test]
+  public async Task None_RewritesNothing_WhateverIsPermittedAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.None, vacuum).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).StartsWith("None: no table is rewritten");
+    await Assert.That(vacuum.Rewritten).IsEmpty();
+  }
+
+  [Test]
+  public async Task SelectedRewriterThatCannotRun_SkipsWithItsReasonBeforeTouchingTheDatabaseAsync() {
+    var cannot = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL, canRun: false);
+
+    // No coordinator registered: a skip that resolved one first would report the wrong reason.
+    var report = await _stepWith(coordinator: null, TableRewriteStrategy.VacuumFull, cannot).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo("VacuumFull is not usable here");
+    await Assert.That(cannot.Rewritten).IsEmpty();
+  }
+
+  [Test]
+  public async Task Constructor_RejectsMissingArgumentsAsync() {
+    var scopeFactory = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    var options = Options.Create(new MaintenanceWorkerOptions());
+    var logger = NullLogger<TableRewriteStartupStep>.Instance;
+
+    await Assert.That(() => new TableRewriteStartupStep(null!, [], options, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new TableRewriteStartupStep(scopeFactory, null!, options, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new TableRewriteStartupStep(scopeFactory, [], null!, null, logger)).Throws<ArgumentNullException>();
+    await Assert.That(() => new TableRewriteStartupStep(scopeFactory, [], options, null, null!)).Throws<ArgumentNullException>();
   }
 }

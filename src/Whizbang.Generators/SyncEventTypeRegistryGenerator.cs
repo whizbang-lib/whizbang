@@ -36,23 +36,31 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <summary>
+  /// Syntax predicate: admits a class declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover classes with [AwaitPerspectiveSync] attribute
     var syncMappings = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedClassCandidate(node),
         transform: static (ctx, ct) => _extractSyncMappings(ctx, ct)
     ).Where(static mappings => mappings?.Length > 0);
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndMappings = context.CompilationProvider.Combine(syncMappings.Collect());
+    var compilationAndMappings = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(syncMappings.Collect());
 
     context.RegisterSourceOutput(
         compilationAndMappings,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var allMappings = data.Right;
-          _generateSyncEventTypeRegistry(ctx, compilation, allMappings!);
+          _generateSyncEventTypeRegistry(ctx, compilationAssemblyName, allMappings!);
         }
     );
   }
@@ -61,7 +69,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   /// Extracts event type to perspective mappings from [AwaitPerspectiveSync] attributes.
   /// Returns null if no [AwaitPerspectiveSync] attributes are found.
   /// </summary>
-  private static SyncTypeMapping[]? _extractSyncMappings(
+  private static EquatableArray<SyncTypeMapping>? _extractSyncMappings(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -116,10 +124,10 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateSyncEventTypeRegistry(
       SourceProductionContext context,
-      Compilation compilation,
-      ImmutableArray<SyncTypeMapping[]> allMappings) {
+      string? compilationAssemblyName,
+      ImmutableArray<EquatableArray<SyncTypeMapping>> allMappings) {
 
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = compilationAssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Flatten and group by event type

@@ -275,7 +275,7 @@ public class OutboxDrainWorkerStreamRunTests {
   private static OutboxBatchRow _row(Guid messageId, Guid? streamId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -492,7 +492,8 @@ public class OutboxDrainWorkerStreamRunTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
     foreach (var offer in offers) {
       channel.TryWrite(offer);
     }

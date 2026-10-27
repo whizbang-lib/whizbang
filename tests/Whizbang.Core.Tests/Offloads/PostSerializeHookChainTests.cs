@@ -74,14 +74,14 @@ public class PostSerializeHookChainTests {
   public async Task RunAsync_MetadataMerges_AndOverridesEarlierKeysAsync() {
     var sizeHook = new TestHook(order: 100, onRun: ctx => new PostSerializeResult {
       AdditionalDestinationMetadata = new Dictionary<string, JsonElement> {
-        ["whizbang.body-size"] = JsonDocument.Parse("8").RootElement,
+        ["whizbang.body-size"] = JsonElement.Parse("8"),
       }
     });
     var offloadHook = new TestHook(order: 1000, onRun: ctx => new PostSerializeResult {
       NewSerializedBytes = "CLAIM"u8.ToArray(),
       AdditionalDestinationMetadata = new Dictionary<string, JsonElement> {
-        ["whizbang.body-size"] = JsonDocument.Parse("5").RootElement,    // override sizeHook's value
-        ["whizbang.is-claim"] = JsonDocument.Parse("true").RootElement,
+        ["whizbang.body-size"] = JsonElement.Parse("5"),    // override sizeHook's value
+        ["whizbang.is-claim"] = JsonElement.Parse("true"),
       }
     });
     var chain = new PostSerializeHookChain([sizeHook, offloadHook]);

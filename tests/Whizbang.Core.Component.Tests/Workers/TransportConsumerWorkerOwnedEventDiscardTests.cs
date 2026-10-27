@@ -74,7 +74,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
-      .Because("Owned event from this service should be discarded (always echo)");
+      .Because("Owned event from this service should be discarded (always echo)"
+      + " (#1720: it is never processed; named by its bare type, as here, its row cannot be built, so it goes to dead-letter custody rather than being stored settled)");
   }
 
   /// <summary>
@@ -127,7 +128,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
-      .Because("Owned events are always echo regardless of hop service name");
+      .Because("Owned events are always echo regardless of hop service name"
+      + " (#1720: it is never processed; named by its bare type, as here, its row cannot be built, so it goes to dead-letter custody rather than being stored settled)");
   }
 
   // ========================================
@@ -154,7 +156,8 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     await worker.StopAsync();
     await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
-      .Because("Owned command from this service is self-echo and should be discarded");
+      .Because("Owned command from this service is self-echo and should be discarded"
+      + " (#1720: it is never processed; named by its bare type, as here, its row cannot be built, so it goes to dead-letter custody rather than being stored settled)");
   }
 
   /// <summary>
@@ -181,7 +184,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     await worker.StopAsync();
 
     // The echo discard is what this test is about, and every discard is counted: the message
-    // arrived (received=1) and the echo check let it through (no deduplicated count). A regression
+    // arrived (received=1) and the echo check let it through (no discarded count). A regression
     // that treated cross-service commands as self-echo would swallow real work silently.
     await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
@@ -213,7 +216,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     await worker.StopAsync();
 
     // Non-owned events are never discarded by the echo check — an over-broad namespace match
-    // here would drop every other service's events on the floor, counted as deduplicated.
+    // here would drop every other service's events on the floor, counted as discarded.
     await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
@@ -253,7 +256,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
   /// <summary>
   /// The pass-through verdict, stated in the only place it is observable: the transport counted
-  /// the message as received, and the echo discard — which increments the deduplicated counter on
+  /// the message as received, and the echo check, which increments the discarded counter on
   /// every drop — counted nothing. Asserting the received leg too keeps the "no discard" leg from
   /// passing vacuously when a message never reached the handler at all.
   /// </summary>
@@ -264,12 +267,12 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     await Assert.That(received).IsEqualTo(1d)
       .Because("the message must reach the receive path — otherwise 'not discarded' proves nothing");
 
-    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_deduplicated")
+    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_discarded")
       .Where(m => m.Value > 0)
       .ToList();
     await Assert.That(discarded).IsEmpty()
       .Because("the echo check must NOT discard this message — every discard increments the "
-             + "deduplicated counter, so a non-zero series here is a swallowed message");
+             + "discarded counter, so a non-zero series here is a message settled unprocessed");
   }
 
   private static TestWorkerWrapper _createWorker(

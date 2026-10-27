@@ -31,18 +31,38 @@ public class RabbitMQPoisonQuarantineTests {
   #region Layer 1 — age quarantine to the dead-letter exchange
 
   [Test]
-  public async Task Deliver_AgedMessage_NacksWithoutRequeueToTheDeadLetterExchangeAsync() {
-    // The lock: an aged message is quarantined with requeue:false, which is RabbitMQ's route to
-    // the per-namespace DLQ the existing dead-letter drainer replays. Requeueing it would put the
-    // hostage message straight back in the loop this phase exists to break.
-    var (channel, handled) = await _subscribeAsync(_detector(ageThreshold: TimeSpan.FromMinutes(30)));
+  [Arguments(false)]
+  [Arguments(true)]
+  public async Task Deliver_AgedMessage_IsAcceptedAndReportedAsync(bool redelivered) {
+    // Issue #1663: the receive gate never quarantines on age. A first delivery that waited in a
+    // backlog and an aged redelivery are both handed to the handler (which stores them); the loop a
+    // redelivery may belong to is bounded after storage by durable observations (layer 2).
+    var detector = new RecordingPoisonDetector(_detector(ageThreshold: TimeSpan.FromMinutes(30)));
+    var (channel, handled) = await _subscribeAsync(detector);
+    var (properties, body) = _wireMessage(publishedAt: _now - TimeSpan.FromHours(4));
+
+    await RabbitTestWire.DeliverAsync(channel, properties, body, deliveryTag: 1, redelivered: redelivered);
+
+    await Assert.That(channel.NackAttempts).IsEmpty()
+      .Because("an aged message is a backlog until its stored history says otherwise");
+    await Assert.That(handled).Count().IsEqualTo(1);
+    await Assert.That(detector.AgedOnReceive).Count().IsEqualTo(1);
+    await Assert.That(detector.AgedOnReceive[0].Gate).IsEqualTo(PoisonQuarantineGate.Receive);
+    await Assert.That(detector.AgedOnReceive[0].Tags!["transport"]).IsEqualTo("rabbitmq");
+    await Assert.That(detector.AgedOnReceive[0].Tags!.ContainsKey("queue")).IsTrue();
+  }
+
+  [Test]
+  public async Task Deliver_DetectorQuarantines_NacksWithoutRequeueToTheDeadLetterExchangeAsync() {
+    // The quarantine mechanism stays for any detector that does quarantine (a custom one): requeue
+    // false is RabbitMQ's route to the per-namespace DLQ; requeue true would re-arm the loop.
+    var (channel, handled) = await _subscribeAsync(new RecordingPoisonDetector(new QuarantineEverything()));
     var (properties, body) = _wireMessage(publishedAt: _now - TimeSpan.FromHours(4));
 
     await RabbitTestWire.DeliverAsync(channel, properties, body, deliveryTag: 1, redelivered: true);
 
     await Assert.That(channel.NackAttempts).Count().IsEqualTo(1);
-    await Assert.That(channel.NackAttempts[0].Requeue).IsFalse()
-      .Because("requeue:false is the route to the DLX; requeue:true re-arms the storm");
+    await Assert.That(channel.NackAttempts[0].Requeue).IsFalse();
     await Assert.That(channel.AckAttempts).IsEmpty();
     await Assert.That(handled).IsEmpty();
   }
@@ -230,4 +250,45 @@ public class RabbitMQPoisonQuarantineTests {
 /// <summary>TimeProvider pinned to a fixed instant so age assertions are deterministic.</summary>
 internal sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider {
   public override DateTimeOffset GetUtcNow() => now;
+}
+
+/// <summary>
+/// Delegates every decision to a detector and records the aged-on-receive calls, so a transport
+/// test can assert the backlog was reported with the right gate and tags (issue #1663).
+/// </summary>
+internal sealed class RecordingPoisonDetector(IPoisonMessageDetector inner) : IPoisonMessageDetector {
+  public List<(PoisonQuarantineGate Gate, PoisonVerdict Verdict, IReadOnlyDictionary<string, object?>? Tags)> AgedOnReceive { get; } = [];
+
+  public PoisonVerdict Evaluate(PoisonEvaluationContext context) => inner.Evaluate(context);
+
+  public void RecordQuarantine(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) =>
+    inner.RecordQuarantine(gate, verdict, context, additionalTags);
+
+  public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) =>
+    inner.ReportAgeCapability(transport, entity, canSupplyTrustworthyAge);
+
+  public void RecordAgedOnReceive(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+    if (verdict.Reason == PoisonQuarantineReason.AgedOnReceive) {
+      AgedOnReceive.Add((gate, verdict, additionalTags));
+    }
+    inner.RecordAgedOnReceive(gate, verdict, context, additionalTags);
+  }
+}
+
+/// <summary>A custom detector that quarantines every message, to lock the native quarantine mechanism.</summary>
+internal sealed class QuarantineEverything : IPoisonMessageDetector {
+  public PoisonVerdict Evaluate(PoisonEvaluationContext context) =>
+    PoisonVerdict.Quarantine(PoisonQuarantineReason.ObservationCountExceeded, "custom policy");
+
+  public void RecordQuarantine(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+  }
+
+  public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) {
+  }
 }

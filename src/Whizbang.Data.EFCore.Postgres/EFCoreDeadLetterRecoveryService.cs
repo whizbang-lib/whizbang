@@ -12,6 +12,13 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// EFCore + Npgsql implementation of <see cref="IDeadLetterRecoveryService"/>. Thin
 /// wrapper over the 6 recovery SQL functions in migration 051.
 /// </summary>
+/// <param name="dbContext">The context whose connection the recovery functions run on.</param>
+/// <param name="gate">The gate bounding concurrent coordinator calls, when one is registered.</param>
+/// <param name="partitionCount">
+/// The partition count every arrival is stored with (<see cref="Whizbang.Core.Workers.ClaimWorkerOptions.PartitionCount"/>),
+/// which a recovered outbox or perspective row is stored with too as it re-enters through its store (#1722). When
+/// absent, the claim's default.
+/// </param>
 /// <docs>operations/dead-letter-queue/recovery</docs>
 [SuppressMessage("csharpsquid", "S2077:Formatting SQL queries is security-sensitive",
   Justification = "The only interpolated value is a schema-qualified SQL identifier (\"schema\".fn) " +
@@ -19,10 +26,12 @@ namespace Whizbang.Data.EFCore.Postgres;
     "identifiers cannot be parameterized; there is no injection vector. All row values are @parameters.")]
 public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   TDbContext dbContext,
-  WorkCoordinatorGate? gate = null
+  WorkCoordinatorGate? gate = null,
+  int? partitionCount = null
 ) : IDeadLetterRecoveryService where TDbContext : DbContext {
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly WorkCoordinatorGate? _gate = gate;
+  private readonly int _partitionCount = partitionCount ?? new Whizbang.Core.Workers.ClaimWorkerOptions().PartitionCount;
 
   // The DLQ functions are created in the service schema (__SCHEMA__.<fn>, migration 051). Callers
   // must schema-qualify them the same way EFCoreWorkCoordinator qualifies its SQL — a bare call only
@@ -274,6 +283,12 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// An outbox or perspective dead letter re-enters through its store, stored with this service's partition count
+  /// (#1722); the store claims the dead letter, and the completion settles it.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredOutboxDeadLetterPublishTests.cs:ARecoveredOutboxEvent_IsPublishedAsTheEventItWasStoredAs_AndReadsRecoveredOncePublishedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredPerspectiveDeadLetterApplyTests.cs:ARecoveredPerspectiveWorkRow_IsApplied_AndReadsRecoveredOnceAppliedAsync</tests>
   public async Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();
@@ -281,10 +296,34 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("recover_dead_letter")}(@id)";
+    cmd.CommandText = $"SELECT {_fn("wh_recover_dead_letter")}(@id, @partitions)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("partitions", NpgsqlTypes.NpgsqlDbType.Integer) { Value = _partitionCount });
     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
     return result is bool b && b;
+  }
+
+  /// <inheritdoc />
+  public async Task<DeadLetterRedelivery?> ReadRedeliveryAsync(Guid deadLetterId, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT source_table, source_id, message_type, (envelope -> 'event_data')::text FROM {_fn("wh_dead_letters")} "
+      + "WHERE dead_letter_id = @id AND source_table IN ('wh_inbox', 'broker') AND envelope -> 'event_data' IS NOT NULL";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    if (!await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      return null;
+    }
+    return new DeadLetterRedelivery(
+      DeadLetterId: deadLetterId,
+      SourceTable: reader.GetString(0),
+      SourceId: reader.GetGuid(1),
+      MessageType: reader.GetString(2),
+      EnvelopeJson: reader.GetString(3));
   }
 
   /// <inheritdoc />

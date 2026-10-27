@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 138_BoundedInboxAcquisitionIndex
 -- Date: 2026-09-06
 -- Description: Inbox acquisition is index-bounded and deterministic.

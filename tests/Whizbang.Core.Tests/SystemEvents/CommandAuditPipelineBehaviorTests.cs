@@ -298,7 +298,7 @@ public class CommandAuditPipelineBehaviorTests {
   }
 
   [AuditEvent(Exclude = true)]
-  private sealed record ExcludedCommand {
+  internal sealed record ExcludedCommand {
     public required string Name { get; init; }
   }
 

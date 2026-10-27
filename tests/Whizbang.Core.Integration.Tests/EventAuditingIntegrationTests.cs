@@ -205,8 +205,11 @@ public class EventAuditingIntegrationTests {
 
   [Test]
   public async Task EventAuditing_SerializesOriginalEventBody_Async() {
-    // Arrange
-    var services = _createServices(options => options.EnableEventAudit());
+    // Arrange - the body is kept only when asked for (#1588)
+    var services = _createServices(options => {
+      options.EnableEventAudit();
+      options.AuditBodyDefault = AuditBodyDefault.Include;
+    });
     var emitter = services.GetRequiredService<ISystemEventEmitter>();
     var capturedEvents = services.GetRequiredService<CapturedSystemEvents>();
 
@@ -222,7 +225,7 @@ public class EventAuditingIntegrationTests {
     await Assert.That(audited).IsNotNull();
 
     // Deserialize and verify
-    var bodyJson = audited!.OriginalBody.GetRawText();
+    var bodyJson = audited!.OriginalBody!.Value.GetRawText();
     await Assert.That(bodyJson).Contains(orderId.ToString());
     await Assert.That(bodyJson).Contains("cust-123");
     await Assert.That(bodyJson).Contains("99.99");

@@ -114,7 +114,7 @@ Assert.That(awaiter.IsSignaled).IsTrue();
 
 ### Key Features
 
-- **Warmup Pattern**: TransportTestHarness sends messages until one is received
+- **Warmup Pattern**: TransportTestHarness publishes one warmup message and waits for the subscriber to signal it arrived (no initial delay, no resend: the subscription is durable once subscribe returns)
 - **Discriminating Awaiters**: Distinguishes warmup messages from test messages
 - **Auto-cleanup**: Disposes subscriptions on disposal
 - **Thread-safe**: All awaiters use `RunContinuationsAsynchronously`
@@ -269,11 +269,11 @@ Assert.That(awaiter.InvocationCount).IsEqualTo(1);
 | Stage | Timing | Blocking | Common Use |
 |-------|--------|----------|------------|
 | `ImmediateAsync` | After command handler returns | No | Verify command was handled |
-| `PreDistributeInline` | Before ProcessWorkBatchAsync | Yes | Pre-distribution hooks |
-| `PreDistributeAsync` | Before ProcessWorkBatchAsync | No | Async pre-distribution |
-| `DistributeAsync` | Parallel with ProcessWorkBatchAsync | No | Parallel processing |
-| `PostDistributeAsync` | After ProcessWorkBatchAsync | No | Async post-distribution |
-| `PostDistributeInline` | After ProcessWorkBatchAsync | Yes | Verify distribution complete |
+| `PreDistributeInline` | Before the flush's database call (planned) | Yes | Pre-distribution hooks |
+| `PreDistributeAsync` | Before the flush's database call (planned) | No | Async pre-distribution |
+| `DistributeAsync` | Parallel with the flush's database call (planned) | No | Parallel processing |
+| `PostDistributeAsync` | After the flush's database call (planned) | No | Async post-distribution |
+| `PostDistributeInline` | After the flush's database call (planned) | Yes | Verify distribution complete |
 | `PreOutboxInline` | Before transport publish | Yes | Pre-publish hooks |
 | `PreOutboxAsync` | Parallel with transport publish | No | Async pre-publish |
 | `PostOutboxAsync` | After transport publish | No | Async post-publish |

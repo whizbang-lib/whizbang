@@ -1,7 +1,10 @@
-# The pipeline, the gates and the build inputs: changing any of these needs a build admin's approval,
-# because the rulesets on develop, main and release/** require a code owner's review (GOVERNANCE.md,
-# "Roles"). Maintainers and committers can propose such a change; a build admin approves it.
-# GitHub reads this file from the base branch, so a pull request cannot loosen it for itself.
+# The pipeline, the gates and the build inputs: changing any of these needs a build admin's approval of
+# the pull request's latest commit, unless a build admin opened it (GOVERNANCE.md, "Roles"). The rulesets
+# do not require a code owner's review, since an author cannot approve their own pull request; the
+# Gate · Pipeline owner check (.github/scripts/Test-PipelineOwner.ps1) reads this file instead.
+# Maintainers and committers can propose such a change; a build admin approves it. The gate reads this
+# file from the base branch, so a pull request cannot loosen it for itself. Patterns are plain paths: a
+# wildcard fails the gate rather than being guessed at.
 # Every pattern must match a file (.github/scripts/tests/CodeOwners.Tests.ps1).
 
 /.github/                   @whizbang-lib/build-admins

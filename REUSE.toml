@@ -1,0 +1,53 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+#
+# Licensing for files that do not carry the header themselves (REUSE 3.3, https://reuse.software).
+# Source code (C#, SQL, PowerShell, shell, YAML, TypeScript, JavaScript, SCSS, Python) carries
+# the two-line header in the file, and `reuse lint` (Gate · License headers) fails a new one without it.
+# Only file kinds with no useful place for a header, and the exceptions below, are listed here.
+# There is deliberately no catch-all: a new kind of source file must get a header or an entry.
+version = 1
+
+# Documentation, data, project files and images.
+[[annotations]]
+path = [
+  "**/*.md", "**/*.json", "**/*.txt", "**/*.csv", "**/*.tsv",
+  "**/*.csproj", "**/*.props", "**/*.targets", "**/*.sln", "**/*.slnx",
+  "**/*.config", "**/*.runsettings", "**/*.xml", "**/*.http", "**/*.html",
+  "**/*.png", "**/*.svg", "**/*.ico", "**/*.snk",
+  "**/.editorconfig", "**/.gitignore", ".gitattributes", ".github/CODEOWNERS", "LICENSE",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"
+
+# Source generator templates and resources: their text is copied into the code a consumer's build
+# generates, so a header in them would put this project's copyright notice in someone else's code.
+[[annotations]]
+path = ["src/*.Generators/Templates/**", "src/*.Generators/Resources/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"
+
+# Generated (rewritten by scripts/Build-Logo.ps1) and line-sensitive test fixtures (the coverage
+# gate's tests assert on line numbers in these files).
+[[annotations]]
+path = ["**/*.Generated.cs", ".github/scripts/tests/shapes/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"
+
+# Package-manager lock files: pnpm rewrites the whole file on every install and update (Dependabot
+# included) and drops any header, so the header lives here instead.
+[[annotations]]
+path = ["**/pnpm-lock.yaml"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"
+
+# Retired test files kept in the tree but not compiled.
+[[annotations]]
+path = ["**/*.bak", "**/*.bak2", "**/*.bak3", "**/*.needs-rewrite", "samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests/kill"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "whizbang-lib contributors"
+SPDX-License-Identifier = "MIT"

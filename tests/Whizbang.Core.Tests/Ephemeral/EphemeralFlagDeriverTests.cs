@@ -31,7 +31,7 @@ public class EphemeralFlagDeriverTests {
     public EphemeralInfo? Resolve(string clrTypeName) => null;
 
     public EphemeralInfo? Resolve(Type type) =>
-      _ephemeral.Contains(type) ? new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.InMemory) : null;
+      _ephemeral.Contains(type) ? new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.TtlRow) : null;
     public bool IsEphemeral(string clrTypeName) => false;
 
     public bool IsEphemeral(Type type) => _ephemeral.Contains(type);

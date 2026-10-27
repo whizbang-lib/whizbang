@@ -21,7 +21,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests.BranchCoverage;
 /// tags written when a tracer is listening, the initialization verification paths, the
 /// correlation-filter outcomes as a tracer sees them, a destination with no routing key, metadata
 /// values AMQP cannot carry natively, a perspective-only receive filter, a recovery with no handler,
-/// and a backlog peek over an empty entity.
+/// and a backlog peek over an empty entity and over a held one.
 /// </summary>
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusTransport.cs</code-under-test>
 [Timeout(10_000)]
@@ -230,11 +230,11 @@ public class AsbTransportBranchCoverageTests {
   }
 
   /// <summary>
-  /// A message dropped on a routing-key-less subscription is attributed to the default subscription
-  /// in the drop warning, so the drop can be traced to the entity it came from.
+  /// A message dead-lettered on a routing-key-less subscription (its body is not a readable envelope, #1720) is
+  /// attributed to the default subscription in the warning, so it can be traced to the entity it came from.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_NoRoutingKey_AttributesTheDropToTheDefaultSubscriptionAsync() {
+  public async Task ProcessMessage_NoRoutingKey_AttributesTheDeadLetterToTheDefaultSubscriptionAsync() {
     var logger = new RecordingTransportLogger();
     var client = new RaisableServiceBusClient();
     var transport = _receivingTransport(client, logger, enableSessions: false);
@@ -244,9 +244,10 @@ public class AsbTransportBranchCoverageTests {
     await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
       AsbTransportTestData.RawMessage("{}", "Unknown.Contracts.Nothing, Unknown.Contracts"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("an unresolvable type is acked and dropped, not redelivered");
-    await Assert.That(logger.Contains(LogLevel.Warning, "Subscription=fallback-sub")).IsTrue();
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("a body that is not a readable envelope is dead-lettered, never acked and dropped");
+    await Assert.That(receiver.Completed).IsEmpty();
+    await Assert.That(logger.Contains(LogLevel.Warning, $"{TOPIC}/fallback-sub")).IsTrue();
   }
 
   /// <summary>
@@ -348,36 +349,6 @@ public class AsbTransportBranchCoverageTests {
   }
 
   // ========================================
-  // RECEIVE FILTER WITH RECEPTORS ONLY
-  // ========================================
-
-  /// <summary>
-  /// With a receptor registry and no perspective registry, a payload no receptor handles is dropped
-  /// at receive: the missing perspective registry counts as "nothing applies it", not as an error.
-  /// </summary>
-  [Test]
-  public async Task ProcessMessage_ReceptorRegistryOnly_UnhandledPayloadIsAckedAndDroppedAsync() {
-    var client = new RaisableServiceBusClient();
-    var transport = new AzureServiceBusTransport(
-      client,
-      AsbTransportTestData.CombinedOptions,
-      new AzureServiceBusOptions { AutoProvisionInfrastructure = false, EnableSessions = false },
-      NullLogger<AzureServiceBusTransport>.Instance,
-      receptorRegistry: new StubReceptorRegistry(null));
-    var handlerInvoked = false;
-    await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
-      new TransportDestination(TOPIC, SUBSCRIPTION));
-    var receiver = new RecordingTransportReceiver();
-
-    await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
-      AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
-
-    await Assert.That(handlerInvoked).IsFalse();
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
-  }
-
-  // ========================================
   // LIVENESS RECOVERY AND BACKLOG PEEK
   // ========================================
 
@@ -435,6 +406,39 @@ public class AsbTransportBranchCoverageTests {
     await Assert.That(samples[0].OldestAge).IsNull();
     await Assert.That(client.Receiver.PeekCalls).IsEqualTo(1)
       .Because("the age comes from a real head peek when no probe seam is installed");
+  }
+
+  /// <summary>
+  /// An entity whose head peek finds a message reports the age of that message: the time since the
+  /// broker enqueued it. Without this outcome every backlog would look brand new, which is the one
+  /// thing the sample exists to disprove.
+  /// </summary>
+  [Test]
+  public async Task PeekBacklogsAsync_HeldEntityHead_ReportsTheAgeOfTheHeadMessageAsync() {
+    // The age is read from the transport's clock, so a fake clock fixes it exactly: the head was
+    // enqueued 42 minutes before the clock's now.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+    var enqueued = clock.GetUtcNow().AddMinutes(-42);
+    var client = new HeadPeekClient(ServiceBusModelFactory.ServiceBusReceivedMessage(enqueuedTime: enqueued));
+    var transport = new AzureServiceBusTransport(
+      client,
+      AsbTransportTestData.CombinedOptions,
+      new AzureServiceBusOptions(),
+      NullLogger<AzureServiceBusTransport>.Instance,
+      new RecordingProvisioningAdminClient { ActiveMessageCountResult = 5 },
+      timeProvider: clock);
+    transport.LivenessWatchdog!.Track(TOPIC, SUBSCRIPTION);
+
+    var samples = await transport.PeekBacklogsAsync(CancellationToken.None);
+
+    await Assert.That(samples).Count().IsEqualTo(1);
+    await Assert.That(samples[0].Depth).IsEqualTo(5L);
+    // HasValue, not IsNotNull: TUnit's IsNotNull passes on a null Nullable<T>.
+    await Assert.That(samples[0].OldestAge.HasValue).IsTrue()
+      .Because("a head message was found, so the entity has an age");
+    await Assert.That(samples[0].OldestAge!.Value).IsEqualTo(TimeSpan.FromMinutes(42))
+      .Because("the age is the transport clock's now minus the head message's enqueued time");
+    await Assert.That(client.Receiver.PeekCalls).IsEqualTo(1);
   }
 
   // ========================================
@@ -553,9 +557,9 @@ sealed file class ReleaseCountingSessionEventArgs() : ProcessSessionMessageEvent
   }
 }
 
-/// <summary>A client whose receivers find an empty entity head.</summary>
-sealed file class HeadPeekClient : ServiceBusClient {
-  public EmptyHeadReceiver Receiver { get; } = new();
+/// <summary>A client whose receivers find the given entity head: none by default, as on an empty entity.</summary>
+sealed file class HeadPeekClient(ServiceBusReceivedMessage? head = null) : ServiceBusClient {
+  public HeadPeekReceiver Receiver { get; } = new(head);
 
   public override string FullyQualifiedNamespace => "peek.servicebus.windows.net";
 
@@ -564,13 +568,13 @@ sealed file class HeadPeekClient : ServiceBusClient {
   public override ServiceBusReceiver CreateReceiver(string topicName, string subscriptionName) => Receiver;
 }
 
-/// <summary>A receiver whose head peek returns no message.</summary>
-sealed file class EmptyHeadReceiver : ServiceBusReceiver {
+/// <summary>A receiver whose head peek returns the given message, or no message when there is none.</summary>
+sealed file class HeadPeekReceiver(ServiceBusReceivedMessage? head) : ServiceBusReceiver {
   public int PeekCalls { get; private set; }
 
   public override Task<ServiceBusReceivedMessage> PeekMessageAsync(long? fromSequenceNumber = default, CancellationToken cancellationToken = default) {
     PeekCalls++;
-    return Task.FromResult<ServiceBusReceivedMessage>(null!);
+    return Task.FromResult(head!);
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2215:Dispose methods should call base class dispose", Justification = "Base ServiceBusReceiver.DisposeAsync() calls CloseAsync which fails on mocking-constructor instances; this fake holds nothing")]

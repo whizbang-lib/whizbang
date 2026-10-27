@@ -1,7 +1,11 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # The pipeline and build files are owned by the build-admins team (.github/CODEOWNERS), and the
-# rulesets require a code owner's approval, so only a build admin can change them (GOVERNANCE.md).
+# Gate · Pipeline owner check requires a build admin's approval of a change to them by anyone else, so
+# only a build admin can change them (GOVERNANCE.md, .github/scripts/Test-PipelineOwner.ps1).
 
 BeforeAll {
   $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path

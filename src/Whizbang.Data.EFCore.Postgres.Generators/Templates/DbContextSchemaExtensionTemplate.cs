@@ -42,14 +42,16 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   ///
   /// Steps:
   /// 1. Fast path: bulk-query existing per-object hashes to detect changes without acquiring a lock
-  /// 2. Slow path: acquire transaction-level advisory lock, re-check hashes, run only changed phases
+  /// 2. Slow path: one transaction per step, each taking the transaction-level advisory lock at its start and
+  ///    re-checking its own ledger row under it. The first step re-checks the hashes and records what the pass owes.
   /// 3. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.) - generated at runtime from C# definitions
-  /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch) with hash tracking
-  /// 5. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
+  /// 4. Executes PostgreSQL migrations (creates functions like claim_work), one step per file with its ledger row
+  /// 5. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables), one step per table
   /// 6. Adds composite PK and FK constraints
   /// 7. Registers perspective associations (populates wh_message_associations for event routing)
-  /// 8. Reconciles perspective registry (CLR type → table name mappings)
-  /// 9. Runs database maintenance (outside transaction/lock)
+  /// 8. Reconciles the perspective and message type registries
+  /// A failure rolls back only the step that failed; the next attempt resumes at it. Every step is logged as
+  /// "Migration X of Y" with its outcome, and the pass ends with one summary line.
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
@@ -141,11 +143,17 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         if (canElect
             && serviceProvider?.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
                is Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider) {
+          // #1636: Elect is entered before the registration, so the row records it from the moment it exists.
+          await Whizbang.Data.Postgres.SchemaInitializationStages.ElectingAsync(serviceProvider, cancellationToken);
           staging = await Whizbang.Data.Postgres.MigratorDutyStaging.ElectAsync(
             serviceProvider.GetService(typeof(Whizbang.Core.Startup.IDutyElector))
               as Whizbang.Core.Startup.IDutyElector,
-            ct => Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
-              segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct),
+            async ct => {
+              await Whizbang.Data.Postgres.SchemaBootstrapPhase.RegisterInstanceAsync(
+                segmentConnectionFactory, "__SCHEMA__", instanceProvider, cancellationToken: ct);
+              // The row exists now: the stage held until it did is written.
+              await Whizbang.Data.Postgres.SchemaInitializationStages.RegisteredAsync(serviceProvider, ct);
+            },
             "__SCHEMA__", logger, cancellationToken);
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -156,6 +164,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           + "under the advisory lock alone", "__SCHEMA__");
       }
     }
+
+    // #1636: the election's outcome, or Elect skipped when no election was held.
+    await Whizbang.Data.Postgres.SchemaInitializationStages.ElectedAsync(serviceProvider, staging, cancellationToken);
 
     // Released when this method returns, however it returns. A duty still held by an instance that
     // has finished, or failed, would leave every other instance waiting on it indefinitely.
@@ -267,6 +278,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         if (isWaiter
             || await Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)) {
           // Another instance is doing the schema work; this one waits for it, and says so first.
+          await Whizbang.Data.Postgres.SchemaInitializationStages.MigratingAsync(
+            serviceProvider, "waiting for the instance migrating the schema", cancellationToken);
           await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
           var waitOutcome = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
             ct => _isSchemaCurrentAsync(waitConnection, ct),
@@ -303,6 +316,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // No max attempt limit — loops until cancellationToken fires (host shutdown).
     // Backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter.
     var retryAttempt = 0;
+    TimeSpan? plannedRetryDelay = null;
     while (true) {
       cancellationToken.ThrowIfCancellationRequested();
 
@@ -387,6 +401,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
                   if (logger is not null) {
                     Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
                   }
+                  await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+                    serviceProvider, "the schema is already current", cancellationToken);
                   break; // Exit retry loop — no changes, no lock needed
                 }
               }
@@ -405,246 +421,112 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
-        // SLOW PATH: Hash mismatch or first run — acquire lock and run DDL.
-        // Uses pg_try_advisory_xact_lock (transaction-level, non-blocking) with exponential backoff.
-        // Transaction-level locks are PgBouncer-safe: PgBouncer pins the backend connection
-        // for the duration of the transaction, and the lock auto-releases on commit/rollback.
+        // SLOW PATH: one transaction per step (#1637).
+        //
+        // The core tables, each migration file with its ledger row, each perspective table, the constraints, the
+        // associations and the registries each commit on their own, under the schema lock taken at the start of the
+        // step's transaction (pg_try_advisory_xact_lock: transaction-scoped, so PgBouncer-safe and released by the
+        // step's commit or rollback). A failure rolls back only the step that failed, and the retry resumes there.
+        // Every step re-checks its own ledger row under the lock, so neither a retry nor a second instance that takes
+        // the lock between two of this one's steps applies a committed step again. The first step begins the pass:
+        // it re-checks the hashes under the lock and records what the pass owes (see SchemaPassLedger).
         // ═══════════════════════════════════════════════════════════════════════════
         if (logger is not null) {
           Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiringAdvisoryLock(logger, lockId, "__SCHEMA__");
         }
 
-        // Use raw ADO.NET transaction instead of dbContext.Database.BeginTransactionAsync().
-        // EF Core's NpgsqlRetryingExecutionStrategy blocks user-initiated transactions via
-        // BeginTransactionAsync (it can't retry them). Since we have our own outer retry loop,
-        // we bypass the strategy by starting the transaction on the raw connection and telling
-        // EF Core to use it via UseTransactionAsync.
-        System.Data.Common.DbTransaction? dbTransaction = null;
-        // Set when the instance that won the lock finished the work while this one waited. There is
-        // then no DDL left to apply and no reason to take the lock at all.
-        var anotherInstanceMigrated = false;
-        {
-          var lockAttempt = 0;
-          var baseDelayMs = 100;
-          var maxDelayMs = 20_000;
-          while (true) {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Begin a raw ADO.NET transaction to pin the PgBouncer backend connection
-            // and scope the advisory lock to this transaction
-            dbTransaction = await connection.BeginTransactionAsync(cancellationToken);
-            await dbContext.Database.UseTransactionAsync(dbTransaction, cancellationToken);
-
-            // pg_try_advisory_xact_lock returns boolean: true if lock acquired, false if held.
-            // Transaction-level: auto-releases on commit/rollback (no manual unlock needed).
-            // Winning it is what makes this instance the migrator; exactly one can.
-            await using (var lockCmd = connection.CreateCommand()) {
-              lockCmd.CommandText = $"SELECT pg_try_advisory_xact_lock({lockId})";
-              var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
-              if (lockResult is true) {
-                break; // Lock acquired, transaction is active
-              }
-            }
-
-            // Lock not acquired — rollback to give the pooled backend up. Held outside a
-            // transaction, a client connection pins no server connection at all under transaction
-            // pooling, which is why the wait below happens here rather than between attempts.
-            await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
-            await dbTransaction.RollbackAsync(CancellationToken.None);
-            await dbTransaction.DisposeAsync();
-            dbTransaction = null;
-
-            await Whizbang.Data.Postgres.SchemaInitializationObservers.LockContendedAsync(serviceProvider, "__SCHEMA__", cancellationToken);
-
-            // Another instance IS the migrator, so wait for its result instead of queuing behind
-            // it. Contending would win nothing this instance wants: the prize is the in-lock hash
-            // re-check finding the work already done, and the cost is a transaction per attempt
-            // per replica. The wait ends early if the migrator dies, which the lock's own
-            // disappearance reports with no deadline to tune.
-            var deferral = await Whizbang.Data.Postgres.SchemaMigrationDeferral.DeferAsync(
-              ct => _isSchemaCurrentAsync(connection, ct),
-              ct => Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(connection, lockId, ct),
-              TimeProvider.System,
-              "__SCHEMA__",
-              logger,
-              cancellationToken);
-
-            if (deferral == Whizbang.Data.Postgres.SchemaDeferralOutcome.AnotherInstanceMigrated) {
-              anotherInstanceMigrated = true;
-              break;
-            }
-
-            // The migrator is gone and the schema is still behind, so this instance takes over.
-            // Backing off first keeps a fleet that all noticed the same death from converging on
-            // the same instant.
-            lockAttempt++;
-            // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
-            var delay = Math.Min(baseDelayMs * (1 << Math.Min(lockAttempt - 1, 20)), maxDelayMs);
-            var jitter = rng.Next(0, delay / 2);
-            var totalDelay = delay + jitter;
-
-            if (logger is not null) {
-              Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AdvisoryLockRetry(logger, lockId, lockAttempt, totalDelay);
-            }
-
-            await Task.Delay(totalDelay, cancellationToken);
-          }
-        }
-
-        if (anotherInstanceMigrated) {
-          if (logger is not null) {
-            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
-          }
-          break; // Exit the retry loop — the migrator's commit serves this instance too
-        }
-
-        if (logger is not null) {
-          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiredAdvisoryLock(logger, lockId, "__SCHEMA__");
-        }
-
+        // Set command timeout to 10 minutes for DDL operations.
+        // Multiple services may be running DDL concurrently (different schemas)
+        // and lock contention on catalog tables can cause delays.
+        dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(_schemaCommandTimeoutSeconds));
         try {
-          // Re-check hashes inside the lock — another pod may have just completed initialization
-          // while we were waiting for the lock. This prevents redundant DDL execution.
-          // Uses a SAVEPOINT to isolate the query: if wh_schema_migrations doesn't exist yet,
-          // the failed SELECT would mark the PostgreSQL transaction as aborted. Rolling back to
-          // the savepoint restores the transaction to a usable state.
-          try {
-            await using (var spCmd = connection.CreateCommand()) {
-              spCmd.CommandText = "SAVEPOINT hash_recheck";
-              await spCmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-            var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
-            await using (var spCmd = connection.CreateCommand()) {
-              spCmd.CommandText = "RELEASE SAVEPOINT hash_recheck";
-              await spCmd.ExecuteNonQueryAsync(cancellationToken);
-            }
-            (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
-            if (duplicateSweepPending || staleDefinitionSweepPending) {
-              // Another instance completing initialization does not clear stale duplicate
-              // overloads or a stale function definition — only the sweeps do, and they run
-              // through ExecuteMigrationsAsync.
-              infraChanged = true;
-            }
-
-            if (!infraChanged && !perspChanged && !associationsChanged) {
-              await dbTransaction!.CommitAsync(cancellationToken);
-              await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
-              if (logger is not null) {
-                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
-                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
+          var steps = new Whizbang.Data.EFCore.Postgres.SchemaStepRunner(
+            dbContext, lockId, "__SCHEMA__", ct => _isSchemaCurrentAsync(connection, ct), serviceProvider, logger,
+            TimeProvider.System) {
+            RetryDelayFor = ex => {
+              // A failed step says whether the initializer will retry, and when: the delay is decided here and the
+              // retry below waits exactly that long.
+              if (!_isRetryableError(ex)) {
+                return null;
               }
-              break; // Exit retry loop — another pod handled it
-            }
-          } catch {
-            // Tracking tables don't exist yet — rollback to savepoint to restore transaction state,
-            // then run everything
-            try {
-              await using var spCmd = connection.CreateCommand();
-              spCmd.CommandText = "ROLLBACK TO SAVEPOINT hash_recheck";
-              await spCmd.ExecuteNonQueryAsync(CancellationToken.None);
-            } catch { /* best effort */ }
-            infraChanged = true;
-            perspChanged = true;
-            associationsChanged = true;
-          }
+              plannedRetryDelay = _initializationRetryDelay(retryAttempt + 1, rng);
+              return plannedRetryDelay;
+            },
+          };
 
-          // Set command timeout to 10 minutes for DDL operations.
-          // Multiple services may be running DDL concurrently (different schemas)
-          // and lock contention on catalog tables can cause delays.
-          dbContext.Database.SetCommandTimeout(TimeSpan.FromSeconds(_schemaCommandTimeoutSeconds));
+          var pass = await _beginPassAsync(
+            steps, connection, duplicateSweepPending || staleDefinitionSweepPending, logger, cancellationToken);
+          if (pass is null) {
+            // Nothing owed: another instance finished while this one waited, or before it took the lock.
+            if (logger is not null) {
+              Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaInitializedByOtherInstance(logger, "__SCHEMA__");
+            }
+            await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+              serviceProvider, "another instance migrated the schema", cancellationToken);
+            break;
+          }
 
           logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__, infra={InfraChanged}, persp={PerspChanged})...",
-            "__DBCONTEXT_CLASS__", infraChanged, perspChanged);
+            "__DBCONTEXT_CLASS__", pass.Infra, pass.Persp);
+          steps.BeginPass(pass.TotalSteps);
+          await Whizbang.Data.Postgres.SchemaInitializationStages.ApplyingAsync(serviceProvider, pass.TotalSteps, cancellationToken);
 
-          if (infraChanged) {
-            // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
-            logger?.LogDebug("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
-            phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, "completed"));
+          // Step 1: core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+          phaseSw.Restart();
+          var coreRan = await _runRecordedStepAsync(steps, connection, pass, _coreStep,
+            ct => ExecuteCoreInfrastructureTablesAsync(dbContext, logger, ct), cancellationToken);
+          phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, coreRan ? "completed" : "skipped (hash match)"));
 
-            // Step 2: Create PostgreSQL functions and migration tracking tables
-            // Must run before perspectives so tracking tables exist for per-perspective hash detection
-            logger?.LogDebug("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            migrationsApplied = await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
-            phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, "completed"));
-          } else {
-            phases.Add(("CoreInfrastructure", 0, "skipped (hash match)"));
-            phases.Add(("Migrations", 0, "skipped (hash match)"));
-          }
+          // Step 2: each migration file, with its ledger row in the same transaction. Before the perspectives, so the
+          // tracking tables and functions they use exist.
+          phaseSw.Restart();
+          migrationsApplied = await ExecuteMigrationsAsync(dbContext, steps, pass, logger, cancellationToken);
+          phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, pass.Infra ? "completed" : "skipped (hash match)"));
 
-          if (infraChanged || perspChanged) {
-            // Step 3: Create perspective tables with per-perspective hash tracking
-            logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            await ExecutePerspectiveTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
-            phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
-          } else {
-            phases.Add(("PerspectiveTables", 0, "skipped (hash match)"));
-          }
+          // Step 3: a model whose table name changed has its table renamed in place, before the next step creates
+          // the new name as an empty table (#1719).
+          phaseSw.Restart();
+          var renamesRan = await _runRecordedStepAsync(steps, connection, pass, _perspectiveRenamesStep,
+            ct => FollowPerspectiveTableRenamesAsync(connection, logger, ct), cancellationToken);
+          phases.Add(("PerspectiveRenames", phaseSw.ElapsedMilliseconds, renamesRan ? "completed" : "skipped (hash match)"));
 
-          if (infraChanged) {
-            // Step 4: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
-            logger?.LogDebug("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
-            phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, "completed"));
-          } else {
-            phases.Add(("Constraints", 0, "skipped (hash match)"));
-          }
+          // Step 3b: each perspective table, hash-tracked one by one.
+          phaseSw.Restart();
+          await ExecutePerspectiveTablesAsync(dbContext, steps, pass, segmentConnectionFactory, logger, cancellationToken);
+          phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, pass.RunPerspectives ? "completed" : "skipped (hash match)"));
 
-          if (infraChanged || perspChanged || associationsChanged) {
-            // Step 5: Register perspective associations (populates wh_message_associations for event routing).
-            // Gated additionally on associationsChanged so adding/removing an Apply(TEvent) method on a
-            // perspective triggers re-registration even when perspective table DDL is unchanged.
-            logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
+          // Step 4: constraints (composite PKs, FKs) that TableDefinition doesn't support yet.
+          phaseSw.Restart();
+          var constraintsRan = await _runRecordedStepAsync(steps, connection, pass, _constraintsStep,
+            ct => ExecuteConstraintsAsync(dbContext, logger, ct), cancellationToken);
+          phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, constraintsRan ? "completed" : "skipped (hash match)"));
+
+          // Step 5: perspective associations (wh_message_associations, for event routing), then the associations-set hash, so
+          // adding or removing an Apply(TEvent) method re-registers even when no table changed.
+          phaseSw.Restart();
+          var associationsRan = await _runRecordedStepAsync(steps, connection, pass, _associationsStep, async _ => {
             #region REGISTER_ASSOCIATIONS
             #endregion
-            // Record the current associations-set hash so subsequent startups can short-circuit
-            // when nothing has changed. Resolves the version id lazily in case the infra phase
-            // was skipped (hash match on migrations, so _upsertVersionAsync wasn't called above).
-            if (_associationsHash.Length > 0) {
-              try {
-                var assocVersionId = await _upsertVersionAsync(connection, cancellationToken);
-                await _upsertMigrationAsync(
-                    connection, _associationsHashKey, _associationsHash, assocVersionId,
-                    status: 1, desc: "Associations registered",
-                    executionOrder: 9000, owner: "association", cancellationToken);
-              } catch (Exception ex) {
-                logger?.LogDebug(ex, "Could not record associations hash row — tracking tables may be unavailable");
-              }
-            }
-            phases.Add(("Associations", phaseSw.ElapsedMilliseconds, "completed"));
+            await _recordAssociationsHashAsync(connection, pass, cancellationToken);
+          }, cancellationToken);
+          phases.Add(("Associations", phaseSw.ElapsedMilliseconds, associationsRan ? "completed" : "skipped (hash match)"));
 
-            // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
-            logger?.LogDebug("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
-            phases.Add(("Registry", phaseSw.ElapsedMilliseconds, "completed"));
+          // Step 6: the perspective registry (CLR type → table name, for drift detection) and the message type registry
+          // (pinned ids and CLR type names).
+          phaseSw.Restart();
+          var registriesRan = await _runRecordedStepAsync(steps, connection, pass, _registriesStep, async ct => {
+            await ReconcilePerspectiveRegistryAsync(dbContext, logger, ct);
+            await ReconcileMessageTypeRegistryAsync(dbContext, serviceProvider, logger, ct);
+          }, cancellationToken);
+          phases.Add(("Registries", phaseSw.ElapsedMilliseconds, registriesRan ? "completed" : "skipped (hash match)"));
 
-            // Step 7: Reconcile message type registry (pinned ids + CLR type names for all IMessage/IPerspectiveFor types)
-            logger?.LogDebug("Reconciling message type registry for {DbContext}...", "__DBCONTEXT_CLASS__");
-            phaseSw.Restart();
-            await ReconcileMessageTypeRegistryAsync(dbContext, serviceProvider, logger, cancellationToken);
-            phases.Add(("MessageTypeRegistry", phaseSw.ElapsedMilliseconds, "completed"));
-          } else {
-            phases.Add(("Associations", 0, "skipped (hash match)"));
-            phases.Add(("Registry", 0, "skipped (hash match)"));
-            phases.Add(("MessageTypeRegistry", 0, "skipped (hash match)"));
+          if (steps.CompletedElsewhere) {
+            // Another instance finished the pass while this one waited for a step's lock; its commits serve this one.
+            await Whizbang.Data.Postgres.SchemaInitializationStages.MigrationNotNeededAsync(
+              serviceProvider, "another instance finished the pass", cancellationToken);
+            break;
           }
-
-          // Commit transaction — this automatically releases the advisory lock
-          await dbTransaction!.CommitAsync(cancellationToken);
-          await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
-
-          if (logger is not null) {
-            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.TransactionCommitted(logger, lockId, "__SCHEMA__");
-          }
-
-          // Reset command timeout to default
-          dbContext.Database.SetCommandTimeout(null);
+          steps.CompletePass();
 
           sw.Stop();
           var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
@@ -658,32 +540,21 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           // connections with correct OID mappings. This only runs once at startup.
           Npgsql.NpgsqlConnection.ClearAllPools();
           logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
-        } catch {
-          // Rollback on failure — this automatically releases the advisory lock
-          try {
-            await dbContext.Database.UseTransactionAsync(null, CancellationToken.None);
-            if (dbTransaction is not null) {
-              await dbTransaction.RollbackAsync(CancellationToken.None);
-              await dbTransaction.DisposeAsync();
-            }
-          } catch { /* best effort rollback */ }
-
+        } finally {
           // Reset command timeout to default
           try { dbContext.Database.SetCommandTimeout(null); } catch { /* best effort */ }
-
-          throw;
         }
 
         break; // Success — exit outer retry loop
       } catch (Exception ex) when (_isRetryableError(ex)) {
         retryAttempt++;
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter
-        var delay = Math.Min(1000 * (1 << Math.Min(retryAttempt - 1, 20)), 180_000);
-        var jitter = rng.Next(0, Math.Min(delay / 4, 5000));
-        var totalDelay = delay + jitter;
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter. A failed step already said
+        // when the retry would come, and it comes then.
+        var totalDelay = plannedRetryDelay ?? _initializationRetryDelay(retryAttempt, rng);
+        plannedRetryDelay = null;
 
         if (logger is not null) {
-          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.InitializationRetry(logger, "__SCHEMA__", retryAttempt, totalDelay, ex.Message);
+          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.InitializationRetry(logger, "__SCHEMA__", retryAttempt, (int)totalDelay.TotalMilliseconds, ex.Message);
         }
 
         // A transient failure can leave a DEAD transaction enlisted on the context — rolling back
@@ -720,6 +591,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // has statistics for each new index's expression rather than a default that can make it ignore the
     // index until autovacuum next analyzes the table (#1004). Outside the transaction and the lock, and
     // never fatal: a table left unanalyzed is found by the maintenance step.
+    await Whizbang.Data.Postgres.SchemaInitializationStages.ConvergingAsync(serviceProvider, cancellationToken);
     await _analyzeNewlyIndexedTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
 
     // The managed-object reconcile runs at every start, the fast path included: an object retired by a release
@@ -828,6 +700,14 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       System.Threading.CancellationToken cancellationToken) {
     var segments = Whizbang.Data.Postgres.MigrationBatchRegions.Segment(sql);
 
+    // The migration runs with current_schema() resolving to the schema it migrates, and only the
+    // migration: shipped guards compare table_schema = current_schema(), and shipped files are never
+    // edited, so this is what makes a re-run on upgrade find what the earlier run created. Restored
+    // after, because the same transaction goes on to the next migration and the perspective DDL.
+    var migrationConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+    var previousSearchPath = await Whizbang.Data.Postgres.MigrationSearchPath.EnterAsync(
+      migrationConnection, "__SCHEMA__", cancellationToken);
+
     // The overwhelming majority of migrations carry no marker and come back as one plain segment,
     // which is sent exactly as it was before this path existed.
     foreach (var segment in segments) {
@@ -872,6 +752,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
           migrationName, totalRows, pass, segment.BatchSize);
       }
     }
+
+    await Whizbang.Data.Postgres.MigrationSearchPath.ExitAsync(migrationConnection, previousSearchPath, cancellationToken);
   }
 
   /// <summary>
@@ -1098,22 +980,22 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Bulk-queries all per-object hashes from wh_schema_migrations.
   /// Used by the fast path to detect changes without acquiring a lock.
   /// </summary>
-  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy)>> _bulkGetHashesAsync(
+  private static async Task<System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)>> _bulkGetHashesAsync(
       Npgsql.NpgsqlConnection connection, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
     // The joined library_version is what lets the applier tell an upgrade from a downgrade —
     // the content hash alone only says "different", never which side is newer.
     cmd.CommandText = @"
-      SELECT m.file_name, m.content_hash, m.owner, v.library_version
+      SELECT m.file_name, m.content_hash, m.owner, v.library_version, m.status
       FROM __QUOTED_SCHEMA__.wh_schema_migrations m
       LEFT JOIN __QUOTED_SCHEMA__.wh_schema_versions v ON v.id = m.version_id";
     cmd.CommandTimeout = 30;
-    var results = new System.Collections.Generic.List<(string, string, string, string?)>();
+    var results = new System.Collections.Generic.List<(string, string, string, string?, short)>();
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
       var owner = reader.IsDBNull(2) ? "whizbang" : reader.GetString(2);
       var appliedBy = reader.IsDBNull(3) ? null : reader.GetString(3);
-      results.Add((reader.GetString(0), reader.GetString(1), owner, appliedBy));
+      results.Add((reader.GetString(0), reader.GetString(1), owner, appliedBy, reader.GetInt16(4)));
     }
     return results;
   }
@@ -1123,12 +1005,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Partitions by owner column to determine infrastructure vs perspective vs association changes independently.
   /// </summary>
   private static (bool InfraChanged, bool PerspChanged, bool AssociationsChanged) _compareHashes(
-      System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy)> existingRows) {
+      System.Collections.Generic.List<(string FileName, string Hash, string Owner, string? AppliedBy, short Status)> existingRows) {
     var infraHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
     var perspHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
     var associationHashes = new System.Collections.Generic.Dictionary<string, (string Hash, string? AppliedBy)>();
-    foreach (var (fileName, hash, owner, appliedBy) in existingRows) {
-      if (owner == "perspective") {
+    // A step this context's pass still owes (a pass part way through, here or on another instance) is a change like
+    // any other: the slow path resumes it.
+    var stepsOutstanding = false;
+    foreach (var (fileName, hash, owner, appliedBy, status) in existingRows) {
+      if (owner == Whizbang.Data.Postgres.SchemaPassLedger.STEP_OWNER) {
+        stepsOutstanding |= fileName.StartsWith(_stepKeyPrefix, StringComparison.Ordinal)
+          && Whizbang.Data.Postgres.SchemaPassLedger.IsOutstanding(status);
+      } else if (owner == "perspective") {
         perspHashes[fileName] = (hash, appliedBy);
       } else if (owner == "association") {
         associationHashes[fileName] = (hash, appliedBy);
@@ -1138,12 +1026,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
 
     // Compare infrastructure migrations
-    var infraChanged = false;
+    var infraChanged = stepsOutstanding;
     var migrations = GetMigrationScripts();
     foreach (var (name, sql) in migrations) {
-      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-      var hash = Convert.ToHexStringLower(
-          System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
+      var hash = _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
       if (!infraHashes.TryGetValue(name, out var existing)) {
         infraChanged = true;
         break;
@@ -1227,12 +1113,12 @@ BEGIN
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 ";
-    try {
-      await dbContext.Database.ExecuteSqlRawAsync(BackwardCompatRenames, cancellationToken);
-    } catch (Exception ex) {
-      // Non-critical — log and continue (fresh databases won't have the old table)
-      logger?.LogDebug(ex, "Backward-compat rename completed or skipped");
-    }
+    // Non-critical: logged and passed over (fresh databases won't have the old table), under a savepoint so a failure
+    // here does not leave the step's transaction aborted for the tables after it.
+    await _underSavepointAsync(
+      (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "whizbang_compat_renames",
+      () => dbContext.Database.ExecuteSqlRawAsync(BackwardCompatRenames, cancellationToken),
+      ex => logger?.LogDebug(ex, "Backward-compat rename completed or skipped"), cancellationToken);
 
     // Generate schema SQL at runtime from C# definitions
     var schemaConfig = new SchemaConfiguration(
@@ -1252,92 +1138,101 @@ END $$;
   }
 
   /// <summary>
-  /// Executes perspective table DDL with per-perspective hash tracking.
-  /// Each perspective is individually hash-checked and tracked in wh_schema_migrations.
-  /// Unchanged perspectives are skipped; changed perspectives are re-executed.
-  /// Falls back to bulk execution if hash tracking is unavailable.
+  /// Applies the perspective tables, each in a step of its own with its ledger row (<c>perspective:&lt;table&gt;</c>)
+  /// in the same transaction. An entry whose hash the pass found current is counted as skipped without taking the
+  /// lock; one it found changed is re-checked under the lock, so an instance that finds another already applied it
+  /// does nothing. A context with no per-perspective entries applies its whole script as one step.
   /// </summary>
   private static async Task ExecutePerspectiveTablesAsync(
     __DBCONTEXT_FQN__ dbContext,
+    Whizbang.Data.EFCore.Postgres.SchemaStepRunner steps,
+    SchemaPass pass,
     Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
     ILogger? logger,
     CancellationToken cancellationToken) {
 
+    var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
     // Per-perspective SQL entries embedded by source generator
     var perspectiveEntries = GetPerspectiveEntries();
 
     if (perspectiveEntries.Length == 0) {
-      // Fall back to bulk schema for backward compat (no per-perspective entries)
-      const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
-      if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
-        try {
-          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
-        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-          logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
+      // Backward compat: the whole perspective script as one step, recorded like the core tables.
+      await _runRecordedStepAsync(steps, connection, pass, _perspectiveTablesStep, async ct => {
+        const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
+        if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
+          // __ENSURE_REQUIRED_EXTENSIONS__
+          await _underSavepointAsync(connection, "whizbang_perspective_tables",
+            () => _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, ct),
+            ex => {
+              if (ex is Npgsql.PostgresException { SqlState: "42P07" } existing) {
+                logger?.LogDebug("Perspective tables already exist (expected): {Table}", existing.TableName ?? "unknown");
+              } else {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+              }
+            }, ct);
         }
-      }
-      return;
-    }
-
-    // Use per-perspective hash tracking
-    var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
-    int? versionId = null;
-
-    try {
-      versionId = await _upsertVersionAsync(connection, cancellationToken);
-    } catch {
-      // Tracking tables not available — fall back to bulk execution
-      const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
-      if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
-        try {
-          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
-        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-          logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
-        }
-      }
+      }, cancellationToken);
       return;
     }
 
     int executionOrder = 1000; // Start after infrastructure migrations
     foreach (var (name, sql) in perspectiveEntries) {
       executionOrder++;
+      if (steps.CompletedElsewhere) {
+        return;
+      }
       var perspectiveKey = $"perspective:{name}";
+      if (!pass.PerspectivesToRun.Contains(perspectiveKey)) {
+        steps.Skip(perspectiveKey);
+        continue;
+      }
+
+      var order = executionOrder;
       var hash = Convert.ToHexStringLower(
           System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql)));
+      string? existingHash = null;
+      await steps.RunAsync(perspectiveKey,
+        async ct => {
+          if (!pass.Tracked) {
+            return false;
+          }
+          existingHash = await _getExistingHashAsync(connection, perspectiveKey, ct);
+          return existingHash == hash;
+        },
+        async ct => {
+          if (pass.Tracked) {
+            // Same rule as infrastructure migrations: an older build never overwrites a newer one's DDL.
+            var perspAppliedBy = await _getExistingVersionAsync(connection, perspectiveKey, ct);
+            if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", perspAppliedBy, out var perspRefusal)) {
+              logger?.LogWarning("Perspective {Perspective}: not applied: {Reason}", name, perspRefusal);
+              return;
+            }
+          }
 
-      var existingHash = await _getExistingHashAsync(connection, perspectiveKey, cancellationToken);
+          var tableExisted = false;
+          await _underSavepointAsync(connection, "whizbang_perspective",
+            () => _applySchemaSqlAsync(dbContext, segmentConnectionFactory, sql, logger, ct),
+            ex => {
+              if (ex is Npgsql.PostgresException { SqlState: "42P07" } existing) {
+                tableExisted = true;
+                logger?.LogDebug("Perspective table already exists (expected): {Table}", existing.TableName ?? "unknown");
+              } else {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+              }
+            }, ct);
+          if (!pass.Tracked) {
+            return;
+          }
 
-      if (existingHash == hash) {
-        await _updateMigrationStatusAsync(connection, perspectiveKey, versionId.Value, 3, "Skipped (hash unchanged)", cancellationToken);
-        logger?.LogDebug("Perspective {Perspective}: skipped (hash unchanged)", name);
-        continue;
-      }
-
-      // Same rule as infrastructure migrations: an older build never overwrites a newer one's DDL.
-      var perspAppliedBy = await _getExistingVersionAsync(connection, perspectiveKey, cancellationToken);
-      if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", perspAppliedBy, out var perspRefusal)) {
-        logger?.LogWarning("Perspective {Perspective}: not applied — {Reason}", name, perspRefusal);
-        continue;
-      }
-
-      var isUpdate = existingHash != null;
-
-      try {
-        await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, sql, logger, cancellationToken);
-
-        var status = isUpdate ? 2 : 1;
-        var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
-
-        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, status, desc, executionOrder, "perspective", cancellationToken);
-        logger?.LogDebug("Perspective {Perspective}: {Status}", name, desc);
-      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-        await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, 3, "Skipped (table already exists)", executionOrder, "perspective", cancellationToken);
-        logger?.LogDebug("Perspective table already exists (expected): {Table}", ex.TableName ?? "unknown");
-      } catch (Exception ex) {
-        try { await _upsertMigrationAsync(connection, perspectiveKey, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, "perspective", cancellationToken); } catch { /* best effort */ }
-        logger?.LogError(ex, "Failed to create perspective table for {Perspective}", name);
-        throw;
-      }
+          var isUpdate = existingHash != null;
+          var (status, desc) = tableExisted
+            ? (3, "Skipped (table already exists)")
+            : (isUpdate ? 2 : 1, isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply");
+          await _upsertMigrationAsync(connection, perspectiveKey, hash, pass.VersionId, status, desc, order, "perspective", ct);
+          logger?.LogDebug("Perspective {Perspective}: {Status}", name, desc);
+        },
+        pass.Tracked ? (ex, ct) => _recordFailureAsync(connection, perspectiveKey, hash, pass.VersionId, order, "perspective", ex, ct) : null,
+        cancellationToken);
     }
   }
 
@@ -1386,6 +1281,17 @@ END $$;
       await dbContext.Database.CloseConnectionAsync();
     }
   }
+
+  /// <summary>
+  /// The capabilities this context's schema requires, in force whatever configuration says: pgvector for every
+  /// vector column, explicitly, because the column cannot exist without it; and pg_trgm (or any other optional
+  /// extension) for every perspective whose schema has a block needing it, implicitly, because the schema pass skips
+  /// the block. The generated registration puts them in force as a requirement source, and the data source passes
+  /// them to the extension helper so a refusal names the columns.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/vector-fields#pgvector-extension</docs>
+  public static System.Collections.Generic.IReadOnlyList<global::Whizbang.Core.Capabilities.ActiveCapabilityRequirement> GetCapabilityRequirements() =>
+    global::Whizbang.Data.Postgres.PostgresSchemaRequirements.From(__VECTOR_COLUMNS__, GetPerspectiveEntries());
 
   /// <summary>
   /// Returns per-perspective (name, sql) entries for individual hash tracking.
@@ -1462,40 +1368,541 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   ON __QUOTED_SCHEMA__.wh_perspective_cursors(status) WHERE (status & 4) = 4; -- Failed flag
 ";
 
-    try {
-      await dbContext.Database.ExecuteSqlRawAsync(Constraints, cancellationToken);
-      logger?.LogDebug("Database constraints added successfully");
-    } catch (Npgsql.PostgresException ex) {
-      // Constraints might already exist - log as debug, not error
-      logger?.LogDebug("Constraint operation completed (some constraints may already exist): {Message}", ex.MessageText);
-    } catch (Exception ex) {
-      logger?.LogWarning(ex, "Failed to add some database constraints (constraints may already exist)");
-      // Don't throw - constraints might already exist from previous runs
+    // Under a savepoint: a constraint that cannot be added is passed over (it might already exist from previous runs)
+    // without leaving the step's transaction aborted, which would roll back everything the step committed with it.
+    await _underSavepointAsync(
+      (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "whizbang_constraints",
+      async () => {
+        await dbContext.Database.ExecuteSqlRawAsync(Constraints, cancellationToken);
+        logger?.LogDebug("Database constraints added successfully");
+      },
+      ex => {
+        if (ex is Npgsql.PostgresException pg) {
+          // Constraints might already exist - log as debug, not error
+          logger?.LogDebug("Constraint operation completed (some constraints may already exist): {Message}", pg.MessageText);
+        } else {
+          logger?.LogWarning(ex, "Failed to add some database constraints (constraints may already exist)");
+        }
+      }, cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies the migration files the pass planned, each in a step of its own with its ledger row in the same
+  /// transaction; every other file is counted as skipped without taking the lock.
+  /// Status: 1=Applied, 2=Updated, 3=Skipped, -1=Failed.
+  /// </summary>
+  /// <remarks>
+  /// A planned file is re-checked under the lock: its hash already current means a retry, or another instance, applied
+  /// it since the plan was made, and nothing runs. A file planned although its hash was current (the redefinition
+  /// closure, or a sweep) was recorded with the pending hash when the pass began, so the same check covers it.
+  /// </remarks>
+  private static async Task<int> ExecuteMigrationsAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    Whizbang.Data.EFCore.Postgres.SchemaStepRunner steps,
+    SchemaPass pass,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+    var applied = 0;
+    int executionOrder = 0;
+    foreach (var (name, sql) in GetMigrationScripts()) {
+      executionOrder++;
+      if (steps.CompletedElsewhere) {
+        break;
+      }
+      if (!pass.MigrationsToRun.TryGetValue(name, out var reason)) {
+        steps.Skip(name);
+        continue;
+      }
+
+      var order = executionOrder;
+      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+      var hash = _migrationHash(transformedSql);
+      string? existingHash = null;
+      var ran = false;
+      await steps.RunAsync(name,
+        async ct => {
+          if (!pass.Tracked) {
+            return false;
+          }
+          existingHash = await _getExistingHashAsync(connection, name, ct);
+          return existingHash == hash;
+        },
+        async ct => {
+          ran = await _applyMigrationAsync(dbContext, connection, pass, name, transformedSql, hash, existingHash, reason, order, logger, ct);
+        },
+        pass.Tracked ? (ex, ct) => _recordFailureAsync(connection, name, hash, pass.VersionId, order, "whizbang", ex, ct) : null,
+        cancellationToken);
+      if (ran) {
+        applied++;
+      }
+    }
+
+    return applied;
+  }
+
+  /// <summary>
+  /// One migration file and its ledger row, inside the file's step. False when nothing was applied: the file is a newer
+  /// build's, or its function already exists.
+  /// </summary>
+  private static async Task<bool> _applyMigrationAsync(
+      __DBCONTEXT_FQN__ dbContext,
+      Npgsql.NpgsqlConnection connection,
+      SchemaPass pass,
+      string name,
+      string transformedSql,
+      string hash,
+      string? existingHash,
+      string? reason,
+      int executionOrder,
+      ILogger? logger,
+      CancellationToken ct) {
+    if (pass.Tracked) {
+      // Never replace a newer build's definition with this build's older one. The hash test only says the content
+      // differs; it cannot say which side is newer.
+      var appliedBy = await _getExistingVersionAsync(connection, name, ct);
+      if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", appliedBy, out var refusal)) {
+        logger?.LogWarning("Migration {Migration}: not applied: {Reason}", name, refusal);
+        return false;
+      }
+    }
+
+    var isUpdate = existingHash != null;
+    logger?.LogDebug("Executing migration: {Migration}{UpdateFlag}", name, isUpdate ? " (updated)" : "");
+    var functionExisted = false;
+    // Under a savepoint so 42723 (the function already exists) can be recorded as a skip in the same transaction.
+    await _underSavepointAsync(connection, "whizbang_migration",
+      () => _executeMigrationBodyAsync(dbContext, transformedSql, name, logger, ct),
+      ex => {
+        if (ex is Npgsql.PostgresException { SqlState: "42723" } existing) {
+          functionExisted = true;
+          logger?.LogDebug("Function already exists (expected): {Message}", existing.MessageText);
+        } else {
+          System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(ex);
+        }
+      }, ct);
+    if (!pass.Tracked) {
+      return !functionExisted;
+    }
+
+    if (functionExisted) {
+      await _upsertMigrationAsync(connection, name, hash, pass.VersionId, 3, "Skipped (function already exists)", executionOrder, "whizbang", ct);
+      return false;
+    }
+
+    var desc = existingHash == Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH
+      ? $"Re-applied ({reason ?? "marked to run again"})"
+      : isUpdate ? $"Updated from hash {_hashPrefix(existingHash!)}..." : "First apply";
+    await _upsertMigrationAsync(connection, name, hash, pass.VersionId, isUpdate ? 2 : 1, desc, executionOrder, "whizbang", ct);
+    logger?.LogDebug("Migration {Migration}: {Status}", name, desc);
+    return true;
+  }
+
+  private static string _hashPrefix(string hash) => hash.Length > 8 ? hash[..8] : hash;
+
+  private static string _contentHash(string text) =>
+    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+
+  /// <summary>
+  /// A migration's ledger hash: its normalized SQL, so an edit that changes nothing executable (a comment, a header,
+  /// whitespace) is not a change. The same function the Dapper driver and the bootstrap closure hash with, over the
+  /// schema-substituted text, so the drivers agree.
+  /// </summary>
+  private static string _migrationHash(string transformedSql) =>
+    Whizbang.Data.Postgres.MigrationSqlNormalizer.ContentHash(transformedSql);
+
+  /// <summary>
+  /// The pre-migration hash rewrite (#1648), the first thing the pass does under the schema lock: every ledger row
+  /// whose hash is the raw-text hash of its file as shipped, which is what earlier releases recorded, takes the file's
+  /// normalized hash, so a file that did not change is not applied again. A row matching neither form belongs to a
+  /// file that really changed and is left for the plan to apply. A distinct step so the startup phases can move it;
+  /// nothing to latch, since once no row holds a legacy hash the statement updates nothing.
+  /// </summary>
+  private static async Task _rewriteLegacyMigrationHashesAsync(
+      Npgsql.NpgsqlConnection connection, ILogger? logger, CancellationToken ct) {
+    var versionId = await _upsertVersionAsync(connection, ct);
+    await Whizbang.Data.Postgres.MigrationHashUpgrade.RewriteLegacyHashesAsync(
+      connection, "__SCHEMA__", GetHashedMigrationTexts(), versionId, logger, ct);
+  }
+
+  /// <summary>
+  /// Records a failed step's ledger row once its transaction has rolled back, with no transaction open, so the record
+  /// is not lost with the work. Status -1 and the error; the row keeps a hash that is not the file's (the pending hash
+  /// when it had none), so the failure never makes the step look current, and a row another instance has since
+  /// brought current is left alone.
+  /// </summary>
+  private static async Task _recordFailureAsync(
+      Npgsql.NpgsqlConnection connection, string fileName, string hash, int versionId, int executionOrder, string owner,
+      Exception failure, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO __QUOTED_SCHEMA__.wh_schema_migrations AS m (file_name, content_hash, version_id, status, status_description, execution_order, owner)
+      VALUES (@name, @pending, @versionId, -1, @desc, @execOrder, @owner)
+      ON CONFLICT (file_name) DO UPDATE SET
+        status = -1, status_description = EXCLUDED.status_description, updated_at = NOW()
+      WHERE m.content_hash <> @hash";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("pending", Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH);
+    cmd.Parameters.AddWithValue("hash", hash);
+    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.Parameters.AddWithValue("desc", "Failed: " + Whizbang.Data.EFCore.Postgres.SchemaStepRunner.FailureText(failure));
+    cmd.Parameters.AddWithValue("execOrder", executionOrder);
+    cmd.Parameters.AddWithValue("owner", owner);
+    cmd.CommandTimeout = 30;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // The pass, one transaction per step (#1637)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  private const string _coreStep = "core-infrastructure";
+  private const string _perspectiveTablesStep = "perspective-tables";
+  private const string _perspectiveRenamesStep = "perspective-renames";
+  private const string _constraintsStep = "constraints";
+  private const string _associationsStep = "associations";
+  private const string _registriesStep = "registries";
+  private static readonly string _stepKeyPrefix = Whizbang.Data.Postgres.SchemaPassLedger.StepKey("__DBCONTEXT_CLASS__", "");
+
+  /// <summary>What the step that begins a pass decided, read by every step after it.</summary>
+  private sealed class SchemaPass {
+    /// <summary>False when the ledger could not be created: every step then runs, and nothing is recorded.</summary>
+    public bool Tracked { get; init; }
+    public bool Infra { get; init; }
+    public bool Persp { get; init; }
+    public int VersionId { get; set; }
+    /// <summary>This context's step rows when the pass began, by step: the fingerprint each carries and its status.</summary>
+    public System.Collections.Generic.Dictionary<string, (string Fingerprint, short Status)> StepRows { get; } = new(StringComparer.Ordinal);
+    /// <summary>The steps the ledger's hashes say this pass needs.</summary>
+    public System.Collections.Generic.List<string> NeededSteps { get; } = new();
+    /// <summary>The steps with no ledger row of their own that this pass runs.</summary>
+    public System.Collections.Generic.IReadOnlySet<string> StepsToRun { get; set; } = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+    /// <summary>The migration files this pass runs, with why a file whose hash was current runs again.</summary>
+    public System.Collections.Generic.Dictionary<string, string?> MigrationsToRun { get; } = new(StringComparer.Ordinal);
+    /// <summary>The hash each file's ledger row carried when the pass began.</summary>
+    public System.Collections.Generic.Dictionary<string, string> RecordedHashes { get; } = new(StringComparer.Ordinal);
+    /// <summary>The perspective entries this pass applies, by ledger key.</summary>
+    public System.Collections.Generic.HashSet<string> PerspectivesToRun { get; } = new(StringComparer.Ordinal);
+    public bool RunPerspectives { get; init; }
+    /// <summary>Every step of the pass, so each can be logged as one of them.</summary>
+    public int TotalSteps => GetMigrationScripts().Length + Math.Max(GetPerspectiveEntries().Length, 1) + 5;
+  }
+
+  /// <summary>
+  /// The first step: under the schema lock, re-check the hashes (another instance may have finished while this one
+  /// waited) and, when anything is owed, record what the pass owes before any of it runs. Null when nothing is.
+  /// </summary>
+  private static async Task<SchemaPass?> _beginPassAsync(
+      Whizbang.Data.EFCore.Postgres.SchemaStepRunner steps,
+      Npgsql.NpgsqlConnection connection,
+      bool sweepPending,
+      ILogger? logger,
+      CancellationToken cancellationToken) {
+    SchemaPass? pass = null;
+    var outcome = await steps.RunAsync("pass",
+      async ct => {
+        pass = await _planPassAsync(connection, sweepPending, logger, ct);
+        return pass is null;
+      },
+      ct => _recordPassAsync(connection, pass!, ct),
+      null,
+      cancellationToken);
+    return outcome == Whizbang.Data.EFCore.Postgres.SchemaStepOutcome.Applied ? pass : null;
+  }
+
+  /// <summary>What the pass owes, read under the lock; null when nothing is.</summary>
+  private static async Task<SchemaPass?> _planPassAsync(
+      Npgsql.NpgsqlConnection connection, bool sweepPending, ILogger? logger, CancellationToken ct) {
+    if (!await _ensureTrackingTablesAsync(connection, logger, ct)) {
+      // No ledger: every step runs, as every step always did without one.
+      var untracked = new SchemaPass { Tracked = false, Infra = true, Persp = true, RunPerspectives = true };
+      untracked.StepsToRun = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal) {
+        _coreStep, _perspectiveRenamesStep, _perspectiveTablesStep, _constraintsStep, _associationsStep, _registriesStep,
+      };
+      foreach (var (name, _) in GetMigrationScripts()) {
+        untracked.MigrationsToRun[name] = null;
+      }
+      foreach (var (name, _) in GetPerspectiveEntries()) {
+        untracked.PerspectivesToRun.Add($"perspective:{name}");
+      }
+      return untracked;
+    }
+
+    // Before any hash is read: rows an earlier release recorded over the raw text move onto normalized hashes.
+    await _rewriteLegacyMigrationHashesAsync(connection, logger, ct);
+
+    var rows = await _bulkGetHashesAsync(connection, ct);
+    var (infra, persp, associations) = _compareHashes(rows);
+    infra |= sweepPending;
+    if (!infra && !persp && !associations) {
+      return null;
+    }
+
+    var pass = new SchemaPass { Tracked = true, Infra = infra, Persp = persp, RunPerspectives = infra || persp };
+    var appliedBy = new System.Collections.Generic.Dictionary<string, string?>(StringComparer.Ordinal);
+    foreach (var (fileName, hash, owner, version, status) in rows) {
+      if (owner == Whizbang.Data.Postgres.SchemaPassLedger.STEP_OWNER) {
+        if (fileName.StartsWith(_stepKeyPrefix, StringComparison.Ordinal)) {
+          pass.StepRows[fileName[_stepKeyPrefix.Length..]] = (hash, status);
+        }
+        continue;
+      }
+      pass.RecordedHashes[fileName] = hash;
+      appliedBy[fileName] = version;
+    }
+
+    if (infra) {
+      pass.NeededSteps.Add(_coreStep);
+      pass.NeededSteps.Add(_constraintsStep);
+    }
+    if (pass.RunPerspectives) {
+      pass.NeededSteps.Add(_perspectiveRenamesStep);
+    }
+    if (pass.RunPerspectives && GetPerspectiveEntries().Length == 0) {
+      pass.NeededSteps.Add(_perspectiveTablesStep);
+    }
+    pass.NeededSteps.Add(_associationsStep);
+    pass.NeededSteps.Add(_registriesStep);
+
+    if (infra) {
+      await _planMigrationsAsync(connection, pass, appliedBy, logger, ct);
+    }
+    if (pass.RunPerspectives) {
+      foreach (var (name, sql) in GetPerspectiveEntries()) {
+        var key = $"perspective:{name}";
+        if (!pass.RecordedHashes.TryGetValue(key, out var recorded) || recorded != _contentHash(sql)) {
+          pass.PerspectivesToRun.Add(key);
+        }
+      }
+    }
+    return pass;
+  }
+
+  /// <summary>
+  /// Which migration files the pass runs: the new and changed ones, the files the duplicate-overload and
+  /// stale-definition sweeps put back, and every later file the redefinition closure pulls in after them.
+  /// </summary>
+  private static async Task _planMigrationsAsync(
+      Npgsql.NpgsqlConnection connection,
+      SchemaPass pass,
+      System.Collections.Generic.Dictionary<string, string?> appliedBy,
+      ILogger? logger,
+      CancellationToken ct) {
+    var migrations = GetMigrationScripts();
+    var toRun = new System.Collections.Generic.List<string>();
+    var reasons = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+    var orderedObjects = new System.Collections.Generic.List<(string Name, System.Collections.Generic.IReadOnlyCollection<string> Objects)>();
+    // A file a newer build recorded is that build's to apply, and does not pull anything in after it either.
+    bool mayApply(string name) {
+      if (!appliedBy.TryGetValue(name, out var version)
+          || Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", version, out var refusal)) {
+        return true;
+      }
+      logger?.LogWarning("Migration {Migration}: not applied: {Reason}", name, refusal);
+      return false;
+    }
+
+    foreach (var (name, sql) in migrations) {
+      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+      if ((!pass.RecordedHashes.TryGetValue(name, out var recorded) || recorded != _migrationHash(transformedSql)) && mayApply(name)) {
+        toRun.Add(name);
+      }
+      orderedObjects.Add((name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(transformedSql).Objects));
+    }
+
+    // Duplicate-overload sweep: force the files defining a duplicated framework function back into the run. Their
+    // drop_all_overloads clears every overload; the closure below then re-runs any LATER file defining the same object,
+    // so the database ends on each object's last-word definition.
+    var duplicateOverloadNames = await _getDuplicateFrameworkOverloadNamesAsync(connection, ct);
+    if (duplicateOverloadNames.Count > 0) {
+      foreach (var (name, objects) in orderedObjects) {
+        if (!toRun.Contains(name) && objects.Any(duplicateOverloadNames.Contains) && mayApply(name)) {
+          toRun.Add(name);
+          reasons[name] = "duplicate overload sweep";
+          logger?.LogWarning(
+            "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects}, left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
+            name, string.Join(", ", objects.Where(duplicateOverloadNames.Contains)));
+        }
+      }
+    }
+
+    // Stale-definition sweep: the hashes above describe the FILES; this compares the DATABASE. For each framework
+    // function the deployed body must match its last-word migration's body; a mismatch or a missing function puts that
+    // last-word file back into the run. Self-limiting: a database that matches its files re-runs nothing.
+    foreach (var staleFile in await _getStaleFunctionDefinitionFilesAsync(connection, migrations, logger, ct)) {
+      if (!toRun.Contains(staleFile) && mayApply(staleFile)) {
+        toRun.Add(staleFile);
+        reasons[staleFile] = "stale definition";
+      }
+    }
+
+    // Redefinition closure: re-running an earlier definition without re-running its last word would leave the
+    // database on the earlier version, so every LATER file defining the same object runs after it.
+    var closure = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
+    foreach (var (name, _) in migrations) {
+      if (!closure.Contains(name)) {
+        continue;
+      }
+      if (!toRun.Contains(name)) {
+        if (!mayApply(name)) {
+          continue;
+        }
+        reasons[name] = "redefinition closure";
+        logger?.LogInformation(
+          "Migration {Migration}: re-running via redefinition closure: an earlier migration defining the same SQL object(s) is re-running, so this later definition must re-apply after it.",
+          name);
+      }
+      pass.MigrationsToRun[name] = reasons.GetValueOrDefault(name);
     }
   }
 
   /// <summary>
-  /// Executes PostgreSQL migration scripts with hash-based change detection.
-  /// Migrations are embedded as string constants for AOT compatibility.
-  /// Uses wh_schema_migrations table to track content hashes and skip unchanged migrations.
-  /// Status: 1=Applied, 2=Updated, 3=Skipped, -1=Failed.
+  /// Records what the pass owes, in the first step's transaction and before any of it runs: the step rows this pass
+  /// needs, the pending hash on every file it runs although its hash is current, and the skip on every file it does not
+  /// run. A failure part way through therefore loses none of the plan. A pass that continues one part way through
+  /// records no skips: its beginning did, and the rest it does not run are the ones the pass has since applied.
   /// </summary>
-  private static async Task<int> ExecuteMigrationsAsync(
-    __DBCONTEXT_FQN__ dbContext,
-    ILogger? logger,
-    CancellationToken cancellationToken) {
+  private static async Task _recordPassAsync(Npgsql.NpgsqlConnection connection, SchemaPass pass, CancellationToken ct) {
+    if (!pass.Tracked) {
+      return;
+    }
 
-    // Migration scripts are embedded below by the source generator
-    var migrations = GetMigrationScripts();
-    var applied = 0;
-    var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+    pass.VersionId = await _upsertVersionAsync(connection, ct);
+    var fingerprint = _passFingerprint();
+    var decided = Whizbang.Data.Postgres.SchemaPassLedger.Plan(pass.StepRows, pass.NeededSteps, fingerprint);
+    foreach (var step in decided.ToMark) {
+      await _recordStepAsync(connection, step, fingerprint, pass.VersionId, Whizbang.Data.Postgres.SchemaPassLedger.PENDING, "Pending", ct);
+    }
+    pass.StepsToRun = decided.ToRun;
 
-    // Try to set up hash-based migration tracking. If tracking tables can't be created,
-    // fall back to executing all migrations without tracking (backwards compatible).
-    int? versionId = null;
-    try {
-      // Create migration tracking tables (idempotent)
+    // A pass of this build part way through, continued by a retry or by another instance that took the lock between
+    // two of its steps: its beginning recorded the skips, and every file or table it will not run now is one the pass
+    // has since applied. Recording a skip over those would leave the ledger saying they were never applied (#1687).
+    var recordSkips = !decided.Continues;
+
+    if (pass.Infra) {
+      foreach (var (name, sql) in GetMigrationScripts()) {
+        var recorded = pass.RecordedHashes.GetValueOrDefault(name);
+        if (pass.MigrationsToRun.TryGetValue(name, out var reason)) {
+          if (recorded == _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"))) {
+            await _markPendingAsync(connection, name, pass.VersionId, reason ?? "marked to run again", ct);
+            pass.RecordedHashes[name] = Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH;
+          }
+        } else if (recordSkips && recorded is not null) {
+          await _updateMigrationStatusAsync(connection, name, pass.VersionId, 3, "Skipped (hash unchanged)", ct);
+        }
+      }
+    }
+
+    if (recordSkips && pass.RunPerspectives) {
+      foreach (var (name, _) in GetPerspectiveEntries()) {
+        var key = $"perspective:{name}";
+        if (!pass.PerspectivesToRun.Contains(key) && pass.RecordedHashes.ContainsKey(key)) {
+          await _updateMigrationStatusAsync(connection, key, pass.VersionId, 3, "Skipped (hash unchanged)", ct);
+        }
+      }
+    }
+  }
+
+  /// <summary>Marks a file whose hash is current to run again, by replacing its hash with the pending one.</summary>
+  private static async Task _markPendingAsync(
+      Npgsql.NpgsqlConnection connection, string fileName, int versionId, string reason, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      UPDATE __QUOTED_SCHEMA__.wh_schema_migrations
+      SET content_hash = @pending, status = 0, status_description = @desc, version_id = @versionId, updated_at = NOW()
+      WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("pending", Whizbang.Data.Postgres.SchemaPassLedger.PENDING_HASH);
+    cmd.Parameters.AddWithValue("desc", $"Pending re-run ({reason})");
+    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.CommandTimeout = 30;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  /// <summary>
+  /// A step with no ledger row of its own, in a transaction of its own: skipped (counted, without the lock) when the
+  /// pass does not owe it, re-checked under the lock when it does, and recorded as applied in the same transaction as
+  /// its work. True when it ran.
+  /// </summary>
+  private static async Task<bool> _runRecordedStepAsync(
+      Whizbang.Data.EFCore.Postgres.SchemaStepRunner steps,
+      Npgsql.NpgsqlConnection connection,
+      SchemaPass pass,
+      string step,
+      Func<CancellationToken, Task> applyAsync,
+      CancellationToken cancellationToken) {
+    if (steps.CompletedElsewhere) {
+      return false;
+    }
+    if (!pass.StepsToRun.Contains(step)) {
+      steps.Skip(step);
+      return false;
+    }
+
+    var outcome = await steps.RunAsync(step,
+      ct => pass.Tracked ? _isStepDoneAsync(connection, step, ct) : Task.FromResult(false),
+      async ct => {
+        await applyAsync(ct);
+        if (pass.Tracked) {
+          await _recordStepAsync(connection, step, _passFingerprint(), pass.VersionId, Whizbang.Data.Postgres.SchemaPassLedger.APPLIED, "Applied", ct);
+        }
+      },
+      pass.Tracked ? (ex, ct) => _recordStepFailureAsync(connection, step, ex, ct) : null,
+      cancellationToken);
+    return outcome == Whizbang.Data.EFCore.Postgres.SchemaStepOutcome.Applied;
+  }
+
+  private static async Task<bool> _isStepDoneAsync(Npgsql.NpgsqlConnection connection, string step, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"SELECT status FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", _stepKey(step));
+    cmd.CommandTimeout = 30;
+    return await cmd.ExecuteScalarAsync(ct) is short status && !Whizbang.Data.Postgres.SchemaPassLedger.IsOutstanding(status);
+  }
+
+  private static async Task _recordStepAsync(
+      Npgsql.NpgsqlConnection connection, string step, string fingerprint, int versionId, short status, string desc, CancellationToken ct) {
+    await _upsertMigrationAsync(connection, _stepKey(step), fingerprint, versionId, status, desc, 8000,
+      Whizbang.Data.Postgres.SchemaPassLedger.STEP_OWNER, ct);
+  }
+
+  /// <summary>A failed step's row, after its transaction rolled back: still owed, now with the error.</summary>
+  private static async Task _recordStepFailureAsync(Npgsql.NpgsqlConnection connection, string step, Exception failure, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      UPDATE __QUOTED_SCHEMA__.wh_schema_migrations
+      SET status = -1, status_description = @desc, updated_at = NOW()
+      WHERE file_name = @name AND status <= 0";
+    cmd.Parameters.AddWithValue("name", _stepKey(step));
+    cmd.Parameters.AddWithValue("desc", "Failed: " + Whizbang.Data.EFCore.Postgres.SchemaStepRunner.FailureText(failure));
+    cmd.CommandTimeout = 30;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  private static string _stepKey(string step) => _stepKeyPrefix + step;
+
+  /// <summary>Records the associations-set hash so later starts can tell the set has not changed.</summary>
+  private static async Task _recordAssociationsHashAsync(Npgsql.NpgsqlConnection connection, SchemaPass pass, CancellationToken ct) {
+    if (_associationsHash.Length > 0 && pass.Tracked) {
+      await _upsertMigrationAsync(
+          connection, _associationsHashKey, _associationsHash, pass.VersionId,
+          status: 1, desc: "Associations registered",
+          executionOrder: 9000, owner: "association", ct);
+    }
+  }
+
+  /// <summary>
+  /// Creates the ledger tables when they are missing, under a savepoint: false when they cannot be, and the pass then
+  /// runs untracked.
+  /// </summary>
+  private static async Task<bool> _ensureTrackingTablesAsync(Npgsql.NpgsqlConnection connection, ILogger? logger, CancellationToken ct) {
+    var tracked = true;
+    await _underSavepointAsync(connection, "whizbang_tracking", async () => {
       await using var createCmd = connection.CreateCommand();
+      // The owner column is added only when missing: ADD COLUMN IF NOT EXISTS takes an exclusive lock on the table
+      // even when the column is there.
       createCmd.CommandText = @"
         CREATE TABLE IF NOT EXISTS __QUOTED_SCHEMA__.wh_schema_versions (
           id SERIAL PRIMARY KEY,
@@ -1517,148 +1924,73 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
-        ALTER TABLE __QUOTED_SCHEMA__.wh_schema_migrations ADD COLUMN IF NOT EXISTS owner VARCHAR(20) NOT NULL DEFAULT 'whizbang';";
+        DO $$ BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = '__QUOTED_SCHEMA__.wh_schema_migrations'::regclass AND attname = 'owner' AND NOT attisdropped
+          ) THEN
+            ALTER TABLE __QUOTED_SCHEMA__.wh_schema_migrations ADD COLUMN owner VARCHAR(20) NOT NULL DEFAULT 'whizbang';
+          END IF;
+        END $$;";
       createCmd.CommandTimeout = 30;
-      await createCmd.ExecuteNonQueryAsync(cancellationToken);
-
-      versionId = await _upsertVersionAsync(connection, cancellationToken);
-    } catch (Exception ex) {
+      await createCmd.ExecuteNonQueryAsync(ct);
+    }, ex => {
       logger?.LogDebug(ex, "Migration tracking tables could not be initialized, running without tracking");
-      versionId = null;
+      tracked = false;
+    }, ct);
+    return tracked;
+  }
+
+  /// <summary>
+  /// Runs work that may fail without failing its step under a savepoint, so a failure it handles does not leave the
+  /// step's transaction aborted for everything after it. <paramref name="onFailure"/> may rethrow.
+  /// </summary>
+  private static async Task _underSavepointAsync(
+      Npgsql.NpgsqlConnection connection, string name, Func<Task> work, Action<Exception> onFailure, CancellationToken ct) {
+    await _executeOnConnectionAsync(connection, "SAVEPOINT " + name, ct);
+    try {
+      await work();
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      await _executeOnConnectionAsync(connection, "ROLLBACK TO SAVEPOINT " + name, ct);
+      onFailure(ex);
+      return;
     }
+    await _executeOnConnectionAsync(connection, "RELEASE SAVEPOINT " + name, ct);
+  }
 
-    // Redefinition-closure pre-pass: determine which migrations WILL run (new or hash-drifted),
-    // then expand that set to every LATER migration defining any of the same SQL objects. Several
-    // files may redefine one function over time; re-running an earlier definition without re-running
-    // its last word leaves the database on the earlier version — every statement succeeds while the
-    // object is silently generations old. The closure makes the last word run last, always.
-    System.Collections.Generic.IReadOnlySet<string>? closureNames = null;
-    var hashCache = new System.Collections.Generic.Dictionary<string, (string Hash, string? ExistingHash)>(StringComparer.Ordinal);
-    if (versionId.HasValue) {
-      var toRun = new System.Collections.Generic.List<string>();
-      var orderedObjects = new System.Collections.Generic.List<(string Name, System.Collections.Generic.IReadOnlyCollection<string> Objects)>();
-      foreach (var (name, sql) in migrations) {
-        var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-        var hash = Convert.ToHexStringLower(
-            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
-        var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
-        hashCache[name] = (hash, existingHash);
-        if (existingHash != hash) {
-          toRun.Add(name);
-        }
-        orderedObjects.Add((name, Whizbang.Data.Postgres.MigrationObjectExtractor.Extract(transformedSql).Objects));
-      }
-      // Duplicate-overload sweep: force the files defining a duplicated framework function back
-      // into the run. Their drop_all_overloads clears every overload; the closure below then
-      // re-runs any LATER file defining the same object, so the database ends on each object's
-      // last-word definition — the same guarantee ordinary replays get.
-      var duplicateOverloadNames = await _getDuplicateFrameworkOverloadNamesAsync(connection, cancellationToken);
-      if (duplicateOverloadNames.Count > 0) {
-        foreach (var (name, objects) in orderedObjects) {
-          if (!toRun.Contains(name) && objects.Any(duplicateOverloadNames.Contains)) {
-            toRun.Add(name);
-            logger?.LogWarning(
-              "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects} — left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
-              name, string.Join(", ", objects.Where(duplicateOverloadNames.Contains)));
-          }
-        }
-      }
+  private static async Task _executeOnConnectionAsync(Npgsql.NpgsqlConnection connection, string sql, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = sql;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
 
-      // Stale-definition sweep: the hashes above describe the FILES; this compares the DATABASE. A
-      // replay that predates the redefinition closure could re-run an earlier definer after the last
-      // word, leaving a function generations old while every hash says "unchanged" forever (nothing
-      // re-runs the last word because its file never changed). For each framework function, the
-      // deployed body must match its last-word migration's body; a mismatch or a missing function
-      // puts that last-word file back into the run. Self-limiting: a database that matches its
-      // files pays one catalog query per startup and re-runs nothing.
-      var staleDefinitionFiles = await _getStaleFunctionDefinitionFilesAsync(connection, migrations, logger, cancellationToken);
-      foreach (var staleFile in staleDefinitionFiles) {
-        if (!toRun.Contains(staleFile)) {
-          toRun.Add(staleFile);
-        }
-      }
+  private static string? _fingerprint;
 
-      closureNames = Whizbang.Data.Postgres.MigrationRedefinitionClosure.Expand(orderedObjects, toRun);
-      foreach (var pulledIn in closureNames) {
-        if (!toRun.Contains(pulledIn)) {
-          logger?.LogInformation(
-            "Migration {Migration}: re-running via redefinition closure — an earlier migration defining the same SQL object(s) is re-running, so this later definition must re-apply after it.",
-            pulledIn);
-        }
-      }
+  /// <summary>A hash over everything this build applies, which tells a pass of this build from any other.</summary>
+  private static string _passFingerprint() =>
+    _fingerprint ??= Whizbang.Data.Postgres.SchemaPassLedger.Fingerprint(_fingerprintParts());
+
+  private static System.Collections.Generic.IEnumerable<string> _fingerprintParts() {
+    yield return "__LIBRARY_VERSION__";
+    yield return "__APPLICATION_VERSION__";
+    yield return _contentHash(PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(
+      new SchemaConfiguration(InfrastructurePrefix: "wh_", PerspectivePrefix: "wh_per_", SchemaName: "__SCHEMA__")));
+    foreach (var (name, sql) in GetMigrationScripts()) {
+      yield return name;
+      yield return _migrationHash(_transformMigrationSql(sql, "__SCHEMA__"));
     }
-
-    // Execute migrations with optional hash-based change detection
-    int executionOrder = 0;
-    foreach (var (name, sql) in migrations) {
-      executionOrder++;
-      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
-
-      // If tracking is available, check hash before executing
-      if (versionId.HasValue) {
-        var (hash, existingHash) = hashCache[name];
-        var inClosure = closureNames is not null && closureNames.Contains(name);
-
-        if (existingHash == hash && !inClosure) {
-          await _updateMigrationStatusAsync(connection, name, versionId.Value, 3, "Skipped (hash unchanged)", cancellationToken);
-          logger?.LogDebug("Migration {Migration}: skipped (hash unchanged)", name);
-          continue;
-        }
-
-        // Never replace a newer build's definition with this build's older one. The hash test
-        // above only says the content differs; it cannot say which side is newer, and migration
-        // files are edited in place, so an instance from the previous version would otherwise
-        // re-apply its own older copy over the newer one and silently downgrade the schema.
-        var appliedBy = await _getExistingVersionAsync(connection, name, cancellationToken);
-        if (!Whizbang.Data.Postgres.MigrationVersionGuard.MayApply("__LIBRARY_VERSION__", appliedBy, out var refusal)) {
-          logger?.LogWarning("Migration {Migration}: not applied — {Reason}", name, refusal);
-          continue;
-        }
-
-        var isUpdate = existingHash != null;
-
-        try {
-          logger?.LogDebug("Executing migration: {Migration}{UpdateFlag}", name, isUpdate ? " (updated)" : "");
-
-          var migSw = System.Diagnostics.Stopwatch.StartNew();
-          await _executeMigrationBodyAsync(dbContext, transformedSql, name, logger, cancellationToken);
-          migSw.Stop();
-          applied++;
-
-          var status = isUpdate ? 2 : 1;
-          var desc = existingHash == hash
-            ? "Re-applied (redefinition closure)"
-            : isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
-
-          await _upsertMigrationAsync(connection, name, hash, versionId.Value, status, desc, executionOrder, "whizbang", cancellationToken);
-          logger?.LogDebug("Migration {Migration}: {Status} in {ElapsedMs}ms", name, desc, migSw.ElapsedMilliseconds);
-        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
-          await _upsertMigrationAsync(connection, name, hash, versionId.Value, 3, "Skipped (function already exists)", executionOrder, "whizbang", cancellationToken);
-          logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
-        } catch (Exception ex) {
-          try { await _upsertMigrationAsync(connection, name, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, "whizbang", cancellationToken); } catch { /* best effort */ }
-          logger?.LogError(ex, "Failed to execute migration {Migration}", name);
-          throw;
-        }
-      } else {
-        // No tracking — execute directly (original behavior)
-        try {
-          logger?.LogDebug("Executing migration: {Migration}", name);
-          var migSw = System.Diagnostics.Stopwatch.StartNew();
-          await _executeMigrationBodyAsync(dbContext, transformedSql, name, logger, cancellationToken);
-          migSw.Stop();
-          applied++;
-          logger?.LogDebug("Migration {Migration}: {ElapsedMs}ms", name, migSw.ElapsedMilliseconds);
-        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
-          logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
-        } catch (Exception ex) {
-          logger?.LogError(ex, "Failed to execute migration {Migration}", name);
-          throw;
-        }
-      }
+    foreach (var (name, sql) in GetPerspectiveEntries()) {
+      yield return name;
+      yield return _contentHash(sql);
     }
+    yield return _associationsHash;
+  }
 
-    return applied;
+  /// <summary>How long the initializer waits before attempt <paramref name="attempt"/> after a transient failure.</summary>
+  /// <remarks>Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 180s cap + jitter.</remarks>
+  private static TimeSpan _initializationRetryDelay(int attempt, Random rng) {
+    var delay = Math.Min(1000 * (1 << Math.Min(attempt - 1, 20)), 180_000);
+    return TimeSpan.FromMilliseconds(delay + rng.Next(0, Math.Min(delay / 4, 5000)));
   }
 
   private static async Task<int> _upsertVersionAsync(Npgsql.NpgsqlConnection connection, CancellationToken ct) {
@@ -1738,12 +2070,21 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
+  private static (string Name, string Sql)[]? _migrationScripts;
+  private static (string Name, string Sql)[]? _bootstrapMigrationScripts;
+
   /// <summary>
   /// Returns migration scripts as (name, sql) tuples.
   /// Scripts are embedded by the source generator.
   /// </summary>
+  /// <remarks>
+  /// Each text is embedded as a UTF-8 literal, which the compiler keeps out of the capped
+  /// user-string heap, and decoded here. The list is decoded on first use and kept, as the string
+  /// literals it replaces were loaded once; a race on first use decodes the same list twice and
+  /// keeps either.
+  /// </remarks>
   private static (string Name, string Sql)[] GetMigrationScripts() {
-    return new[] {
+    return _migrationScripts ??= new[] {
       #region MIGRATIONS
       // Migration scripts will be embedded here by the source generator
       #endregion
@@ -1751,15 +2092,25 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
   }
 
   /// <summary>
+  /// Each migration with the text its ledger hash is computed over: the embedded text with the schema substituted.
+  /// </summary>
+  /// <remarks>
+  /// Internal rather than private so a test can stand a database on the hashes an earlier release recorded from the
+  /// real texts; a test that rebuilt them would prove its own copy and say nothing about what ships.
+  /// </remarks>
+  internal static (string Name, string Text)[] GetHashedMigrationTexts() =>
+    GetMigrationScripts().Select(m => (m.Name, _transformMigrationSql(m.Sql, "__SCHEMA__"))).ToArray();
+
+  /// <summary>
   /// The marked regions of the migrations that have to exist before a migrator can be elected.
   /// </summary>
   /// <remarks>
   /// A subset of <see cref="GetMigrationScripts"/>, not a replacement for any of it. The bootstrap
   /// only makes objects exist and records nothing; the ordinary pass still applies and records these
-  /// same files afterwards.
+  /// same files afterward. Decoded once and kept, as <see cref="GetMigrationScripts"/> is.
   /// </remarks>
   private static (string Name, string Sql)[] GetBootstrapMigrationScripts() {
-    return new[] {
+    return _bootstrapMigrationScripts ??= new[] {
       #region BOOTSTRAP_MIGRATIONS
       // Bootstrap regions will be embedded here by the source generator
       #endregion
@@ -1806,7 +2157,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
 
   /// <summary>
   /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
-  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox".
+  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox"
+  /// where SQL names an object, never inside a string literal, quoted identifier or comment.
   /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
   /// Schema names are quoted to handle PostgreSQL reserved keywords (e.g., "user").
   /// </summary>
@@ -1830,119 +2182,42 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return transformedSql;
     }
 
-    // List of Whizbang infrastructure table names to qualify
-    var tableNames = new[] {
-      "wh_inbox",
-      "wh_outbox",
-      "wh_event_store",
-      "wh_events", // Alias for wh_event_store
-      "wh_receptor_processing",
-      "wh_perspective_cursors",
-      "wh_perspective_events",
-      "wh_message_associations",
-      "wh_request_response",
-      "wh_service_instances",
-      "wh_partition_assignments",
-      "wh_message_deduplication",
-      "wh_sequences",
-      "wh_active_streams",
-      "wh_event_sequence" // Sequence name
-    };
+    // Bare framework names are qualified in the library, which is shared with its tests.
+    return Whizbang.Data.Postgres.MigrationSchemaQualifier.Qualify(transformedSql, quotedSchema);
+  }
 
-    // Replace each table name with schema-qualified version
-    // Use word boundaries (\b) to avoid replacing column names or partial matches
-    // First, protect RENAME TO targets by replacing them with a placeholder
-    // PostgreSQL RENAME TO requires an unqualified name, so these must NOT be schema-qualified
-    var renameToPlaceholders = new System.Collections.Generic.Dictionary<string, string>();
-    transformedSql = System.Text.RegularExpressions.Regex.Replace(
-      transformedSql,
-      @"(RENAME\s+TO\s+)(\w+)",
-      m => {
-        var placeholder = $"__RENAME_TARGET_{renameToPlaceholders.Count}__";
-        renameToPlaceholders[placeholder] = m.Groups[2].Value;
-        return m.Groups[1].Value + placeholder;
-      },
-      System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-      System.TimeSpan.FromSeconds(5)
-    );
-
-    foreach (var tableName in tableNames) {
-      // Pattern: tableName NOT preceded by period (to avoid replacing already-qualified names)
-      // Matches: "FROM wh_inbox", "ALTER TABLE wh_inbox", etc.
-      // Does NOT match: "inventory.wh_inbox", "wh_inbox_id" (column name)
-      // RENAME TO targets are protected by placeholders above
-      // Uses quoted schema to handle PostgreSQL reserved keywords (e.g., "user")
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
-        $"{quotedSchema}.$1",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
+  /// <summary>
+  /// Renames each perspective table whose model the registry maps to a different name, through
+  /// wh_follow_perspective_table_renames, before the perspective tables are created (#1719): the reconcile that runs
+  /// after them can no longer rename into a name the pass has just created. A model with a table under both names
+  /// keeps both, with a warning naming the model and the two tables.
+  /// </summary>
+  private static async Task FollowPerspectiveTableRenamesAsync(
+    Npgsql.NpgsqlConnection connection,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
+    if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {
+      return;
     }
 
-    // Restore RENAME TO placeholders
-    foreach (var (placeholder, original) in renameToPlaceholders) {
-      transformedSql = transformedSql.Replace(placeholder, original);
+    await using var command = connection.CreateCommand();
+    command.CommandText = @"
+      SELECT o_action, o_clr_type_name, o_old_table_name, o_new_table_name
+      FROM __QUOTED_SCHEMA__.wh_follow_perspective_table_renames(@p_perspectives::JSONB, @p_service_name)";
+    command.Parameters.AddWithValue("p_perspectives", PerspectiveRegistryJson);
+    command.Parameters.AddWithValue("p_service_name", "__SERVICE_NAME__");
+    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      if (reader.GetString(0) == "renamed") {
+        logger?.LogInformation("Renamed the perspective table of {ClrType} from {OldTable} to {NewTable}, keeping its rows",
+          reader.GetString(1), reader.GetString(2), reader.GetString(3));
+      } else {
+        logger?.LogWarning(
+          "The perspective table of {ClrType} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it",
+          reader.GetString(1), reader.GetString(2), reader.GetString(3));
+      }
     }
-
-    // List of Whizbang PostgreSQL function names to qualify
-    // CRITICAL: Functions are database-wide in PostgreSQL. When multiple schemas share the same database,
-    // they must have schema-qualified function names to avoid overwriting each other's functions.
-    var functionNames = new[] {
-      "register_message_associations",
-      "reconcile_perspective_registry",
-      "process_work_batch",
-      "process_inbox_batch",
-      "process_outbox_batch",
-      "process_perspectives_batch",
-      "perform_maintenance"
-    };
-
-    // Replace function names in CREATE/DROP/CALL statements
-    // This ensures each schema has its own function instance (e.g., inventory.register_message_associations)
-    // Use quotedSchema to handle PostgreSQL reserved keywords (e.g., "user")
-    foreach (var functionName in functionNames) {
-      // Pattern 1: "CREATE [OR REPLACE] FUNCTION functionName(" → "CREATE [OR REPLACE] FUNCTION "schema".functionName("
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b(\s*\()",
-        $"$1{quotedSchema}.{functionName}$2",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] "schema".functionName"
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION "schema".functionName"
-      // This handles GRANT/REVOKE statements for function permissions
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"((?:GRANT|REVOKE)\s+.*\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-
-      // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION "schema".functionName"
-      // This handles COMMENT statements for function documentation
-      transformedSql = System.Text.RegularExpressions.Regex.Replace(
-        transformedSql,
-        $@"(COMMENT\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-        System.TimeSpan.FromSeconds(5)
-      );
-    }
-
-    return transformedSql;
   }
 
   /// <summary>
@@ -1956,7 +2231,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     CancellationToken cancellationToken) {
 
     // Perspective metadata JSON embedded by source generator
-    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"..."}]
+    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"...","PerspectiveName":"..."}]
     const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
 
     if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {
@@ -1964,7 +2239,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       return;
     }
 
-    try {
+    // Under a savepoint, so a reconcile that fails is reported without aborting the step's transaction.
+    await _underSavepointAsync((Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "whizbang_perspective_registry", async () => {
       // Note: __QUOTED_SCHEMA__ includes double quotes for PostgreSQL reserved keyword safety (e.g., "user")
       var sql = @"
         SELECT * FROM __QUOTED_SCHEMA__.reconcile_perspective_registry(
@@ -2039,10 +2315,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
       logger?.LogDebug("Perspective registry reconciliation complete: {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drift} drift warnings",
         insertedCount, updatedCount, renamedCount, driftCount);
 
-    } catch (Exception ex) {
-      logger?.LogWarning(ex, "Failed to reconcile perspective registry (function may not exist yet)");
+    }, ex => {
       // Don't throw - registry reconciliation is informational, not critical
-    }
+      logger?.LogWarning(ex, "Failed to reconcile perspective registry (function may not exist yet)");
+    }, cancellationToken);
   }
 
   /// <summary>
@@ -2079,7 +2355,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     // (same definition the Dapper/EFCore populators use — one payload shape, no duplication).
     var json = MessageTypeRegistryJson.Serialize(entries);
 
-    try {
+    // Under a savepoint, so a reconcile that fails is reported without aborting the step's transaction.
+    await _underSavepointAsync((Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection(), "whizbang_message_type_registry", async () => {
       var sql = @"SELECT * FROM __QUOTED_SCHEMA__.reconcile_message_type_registry(@p_entries::JSONB)";
 
       var connection = dbContext.Database.GetDbConnection();
@@ -2144,10 +2421,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
         entries.Count, pinned, unpinned, insertedCount, updatedCount, renamedCount, driftCount);
 
       typeRegistryMetrics?.Record(renamedCount, driftCount);
-    } catch (Exception ex) {
-      logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
+    }, ex => {
       // Don't throw — reconciliation is informational, not critical for startup.
-    }
+      logger?.LogWarning(ex, "Failed to reconcile message type registry (function may not exist yet)");
+    }, cancellationToken);
   }
 
   /// <summary>

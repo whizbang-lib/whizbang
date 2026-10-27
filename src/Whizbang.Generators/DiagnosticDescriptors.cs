@@ -10,11 +10,22 @@ namespace Whizbang.Generators;
 /// </summary>
 /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs</tests>
 public static class DiagnosticDescriptors {
+  /// <summary>
+  /// Diagnostic IDs that were declared but never reported and have been retired (#1427). A retired ID is
+  /// never given a new meaning, so a suppression or a search for it can never match something else.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs:RetiredDiagnosticIds_AreNeverDeclaredAgainAsync</tests>
+  public static readonly System.Collections.Immutable.ImmutableArray<string> RETIRED_IDS = [
+    "WHIZ003", "WHIZ005", "WHIZ020", "WHIZ023", "WHIZ042", "WHIZ050", "WHIZ051", "WHIZ052", "WHIZ057", "WHIZ803",
+  ];
+
   private const string CATEGORY = "Whizbang.SourceGeneration";
 
   /// <summary>
   /// WHIZ001: Info - Receptor discovered during source generation.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz001</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ReportsDiscoveredReceptorsAsync</tests>
   public static readonly DiagnosticDescriptor ReceptorDiscovered = new(
       id: "WHIZ001",
       title: "Receptor Discovered",
@@ -30,6 +41,8 @@ public static class DiagnosticDescriptors {
   /// Only shows if BOTH IReceptor AND IPerspectiveFor are absent.
   /// Example: BFF with 5 IPerspectiveFor implementations but no IReceptor should NOT warn.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz002</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithNoReceptors_GeneratesInfoAsync</tests>
   public static readonly DiagnosticDescriptor NoReceptorsFound = new(
       id: "WHIZ002",
       title: "No Message Handlers Found",
@@ -41,21 +54,10 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ003: Error - Invalid receptor implementation detected.
-  /// </summary>
-  public static readonly DiagnosticDescriptor InvalidReceptor = new(
-      id: "WHIZ003",
-      title: "Invalid Receptor Implementation",
-      messageFormat: "Invalid receptor '{0}': {1}",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Error,
-      isEnabledByDefault: true,
-      description: "The receptor implementation has errors and cannot be registered."
-  );
-
-  /// <summary>
   /// WHIZ004: Info - Stream ID property discovered on command.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz004</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorCoverageTests.cs:Generator_CommandWithGuidStreamIdProperty_GeneratesCommandExtractorsAsync</tests>
   public static readonly DiagnosticDescriptor CommandStreamIdDiscovered = new(
       id: "WHIZ004",
       title: "Command Stream ID Discovered",
@@ -66,22 +68,12 @@ public static class DiagnosticDescriptors {
       description: "A stream ID property was discovered on a command and will be accessible via PolicyContext."
   );
 
-  /// <summary>
-  /// WHIZ005: Error - [StreamId] must be on Guid property or type with .Value property.
-  /// </summary>
-  public static readonly DiagnosticDescriptor StreamIdMustBeGuid = new(
-      id: "WHIZ005",
-      title: "Stream ID Must Be Guid",
-      messageFormat: "[StreamId] on {0}.{1} must be of type Guid, Guid?, or a type with a .Value property returning Guid",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Error,
-      isEnabledByDefault: true,
-      description: "The [StreamId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
-  );
 
   /// <summary>
   /// WHIZ006: Warning - Multiple [StreamId] attributes on same type.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz006</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAttributeAnalyzerTests.cs:TwoStreamIds_ReportWhiz006OnTheSecondNamingTheOneUsedAsync</tests>
   public static readonly DiagnosticDescriptor MultipleStreamIdAttributes = new(
       id: "WHIZ006",
       title: "Multiple Stream ID Attributes",
@@ -95,6 +87,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ007: Info - Perspective discovered during source generation.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz007</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_GeneratesDiagnosticForDiscoveredPerspectiveAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveDiscovered = new(
       id: "WHIZ007",
       title: "Perspective Discovered",
@@ -102,12 +96,14 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective implementation was discovered and will be registered."
+      description: "A perspective implementation was discovered and will be registered. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
   /// WHIZ008: Warning - Perspective model may exceed JSONB size thresholds.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz008</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithLargePerspective_GeneratesSizeWarningAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveSizeWarning = new(
       id: "WHIZ008",
       title: "Perspective Model Size Warning",
@@ -119,21 +115,25 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ009: Warning - IEvent or ICommand implementation missing [StreamId] attribute.
+  /// WHIZ009: Warning - IEvent implementation missing [StreamId] attribute (commands are not checked).
   /// </summary>
+  /// <docs>operations/diagnostics/whiz009</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNoStreamIds_OnEvent_ReportsWarningAsync</tests>
   public static readonly DiagnosticDescriptor MissingStreamIdAttribute = new(
       id: "WHIZ009",
       title: "Missing StreamId Attribute",
-      messageFormat: "Type '{0}' implements {1} but has no property or parameter marked with [StreamId]. Stream ID resolution will fail at runtime.",
+      messageFormat: "Event '{0}' has no property or parameter marked with [StreamId]. Stream ID resolution will fail at runtime.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "All IEvent and ICommand implementations should have exactly one property or constructor parameter marked with [StreamId] to identify the stream."
+      description: "Every IEvent implementation should have exactly one property or constructor parameter marked with [StreamId] to identify the stream. Commands are not checked."
   );
 
   /// <summary>
   /// WHIZ010: Info - StreamId property discovered during source generation.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz010</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorCoverageTests.cs:Generator_EventRecordWithStreamIdOnParameter_GeneratesExtractorAsync</tests>
   public static readonly DiagnosticDescriptor StreamIdDiscovered = new(
       id: "WHIZ010",
       title: "StreamId Discovered",
@@ -147,32 +147,38 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ013: Error - [GenerateStreamId] on an init-only [StreamId] property is a silent no-op.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz013</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/DiagnosticLocationTests.cs:Whiz013_IsReportedAtThePropertyAsync</tests>
   public static readonly DiagnosticDescriptor GenerateStreamIdOnInitOnly = new(
       id: "WHIZ013",
       title: "GenerateStreamId requires a settable StreamId",
-      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property — so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
+      messageFormat: "Type '{0}' has [GenerateStreamId] on the init-only property '{1}'. The framework mints the id at dispatch and writes it back through a generated setter, which cannot target an init-only property, so the id would silently stay empty and dispatch would fail at the outbox. Change '{1}' to a mutable 'get; set;' property.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Applies to every message kind (IEvent, ICommand, collective events)."
+      description: "[GenerateStreamId] auto-generates the stream id at dispatch; the value is written back via a generated SetStreamId writer that only targets mutable Guid properties. An init-only [StreamId] makes the attribute a silent no-op. Checked on events and commands."
   );
 
   /// <summary>
   /// WHIZ011: Info - Message type discovered for JSON serialization.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz011</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_ReportsDiagnostic_ForDiscoveredMessageTypeAsync</tests>
   public static readonly DiagnosticDescriptor JsonSerializableTypeDiscovered = new(
       id: "WHIZ011",
       title: "JSON Serializable Type Discovered",
-      messageFormat: "Found {1} type '{0}' - adding to JsonSerializerContext for AOT-compatible serialization",
+      messageFormat: "Found {1} '{0}' - adding to JsonSerializerContext for AOT-compatible serialization",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A message type (ICommand or IEvent) was discovered and will be included in the generated JsonSerializerContext."
+      description: "A message type (ICommand or IEvent), or a type a message carries, was discovered and will be included in the generated JsonSerializerContext. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
-  /// WHIZ012: Info - Perspective invoker routing generated for event type.
+  /// WHIZ012: Info - Perspective invoker routing generated, reported once per perspective with the events it routes.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz012</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/DiagnosticLocationTests.cs:InformationalDiagnostics_HaveNoLocationAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveInvokerGenerated = new(
       id: "WHIZ012",
       title: "Perspective Invoker Routing Generated",
@@ -180,25 +186,14 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued."
-  );
-
-  /// <summary>
-  /// WHIZ020: Info - WhizbangId discovered during source generation.
-  /// </summary>
-  public static readonly DiagnosticDescriptor WhizbangIdDiscovered = new(
-      id: "WHIZ020",
-      title: "WhizbangId Discovered",
-      messageFormat: "Found [WhizbangId] on {0} in namespace {1}",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "A strongly-typed ID was discovered and will be generated with UUIDv7 support."
+      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
   /// WHIZ021: Warning - [WhizbangId] on non-partial struct.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz021</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithNonPartialStruct_ProducesDiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdMustBePartial = new(
       id: "WHIZ021",
       title: "WhizbangId Must Be Partial",
@@ -212,6 +207,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ022: Info - Topic filter discovered for command.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz022</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_ReportsEachDiscoveredFilterAtItsAttributeAsync</tests>
   public static readonly DiagnosticDescriptor TopicFilterDiscovered = new(
       id: "WHIZ022",
       title: "Topic Filter Discovered",
@@ -223,21 +220,10 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ023: Warning - Enum filter has no Description attribute, using symbol name.
-  /// </summary>
-  public static readonly DiagnosticDescriptor EnumFilterNoDescription = new(
-      id: "WHIZ023",
-      title: "Enum Filter No Description",
-      messageFormat: "Enum value '{0}.{1}' has no [Description] attribute. Using enum symbol name '{1}' as filter.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "An enum-based topic filter has no Description attribute, so the enum symbol name will be used as the filter string."
-  );
-
-  /// <summary>
   /// WHIZ024: Warning - Duplicate WhizbangId type name in different namespace.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz024</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/DiagnosticLocationTests.cs:Whiz024_IsReportedAtTheAttributeAsync</tests>
   public static readonly DiagnosticDescriptor WhizbangIdDuplicateName = new(
       id: "WHIZ024",
       title: "Duplicate WhizbangId Type Name",
@@ -251,6 +237,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ025: Warning - TopicFilter attribute on non-ICommand type.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz025</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/TopicFilterTargetAnalyzerTests.cs:ATopicFilterOnAnEvent_ReportsWhiz025Async</tests>
   public static readonly DiagnosticDescriptor TopicFilterOnNonCommand = new(
       id: "WHIZ025",
       title: "TopicFilter On Non-Command",
@@ -264,6 +252,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ026: Info - No topic filters found in assembly.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz026</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_ReportsNoFiltersFoundWithoutALocationAsync</tests>
   public static readonly DiagnosticDescriptor NoTopicFiltersFound = new(
       id: "WHIZ026",
       title: "No Topic Filters Found",
@@ -271,12 +261,14 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "The source generator did not find any commands with [TopicFilter] attributes."
+      description: "The source generator did not find any commands with [TopicFilter] attributes. Reported without a location, because it concerns the whole compilation rather than any one declaration."
   );
 
   /// <summary>
   /// WHIZ027: Info - Perspective runner generated for perspective with model.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz027</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_GeneratesDiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveRunnerGenerated = new(
       id: "WHIZ027",
       title: "Perspective Runner Generated",
@@ -284,12 +276,14 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveModel<TModel>."
+      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveFor, IPerspectiveWithActionsFor or IGlobalPerspectiveFor. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
   /// WHIZ028: Info - Perspective runner registry generated.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz028</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/CompilationNoticeDiagnosticTests.cs:Whiz028_ReportsTheRunnerCountAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveRunnerRegistryGenerated = new(
       id: "WHIZ028",
       title: "Perspective Runner Registry Generated",
@@ -297,13 +291,14 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker."
+      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
   /// WHIZ030: Error - Event type used in perspective is missing [StreamId] attribute.
   /// </summary>
   /// <docs>operations/diagnostics/whiz030</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_EventMissingStreamId_ReportsWHIZ030DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamId = new(
       id: "WHIZ030",
       title: "Perspective Event Missing StreamId",
@@ -318,6 +313,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ031: Error - Event type has multiple [StreamId] attributes.
   /// </summary>
   /// <docs>operations/diagnostics/whiz031</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_EventWithMultipleStreamIds_ReportsWHIZ031DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamIds = new(
       id: "WHIZ031",
       title: "Multiple StreamId Attributes",
@@ -371,11 +367,11 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor UserServiceDiscovered = new(
       id: "WHIZ040",
       title: "User Service Discovered",
-      messageFormat: "Registered {0} '{1}' as scoped service implementing '{2}'",
+      messageFormat: "Registered {0} '{1}' as transient service implementing '{2}'",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container."
+      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   /// <summary>
@@ -391,23 +387,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated."
-  );
-
-  /// <summary>
-  /// WHIZ042: Info - No user services found in the compilation.
-  /// Reports when no lens or perspective services are discovered.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz042</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
-  public static readonly DiagnosticDescriptor NoUserServicesFound = new(
-      id: "WHIZ042",
-      title: "No User Services Found",
-      messageFormat: "No user-defined lens or perspective services were found for service registration",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "The source generator did not find any user-defined interfaces extending ILensQuery or IPerspectiveFor."
+      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated. It is informational and reported without a location, so it does not surface as an issue on every declaration in an IDE or a code-quality tool; turn it off for a project in .globalconfig or NoWarn."
   );
 
   // ========================================
@@ -415,47 +395,10 @@ public static class DiagnosticDescriptors {
   // ========================================
 
   /// <summary>
-  /// WHIZ050: Warning - Public API has no associated tests.
-  /// </summary>
-  public static readonly DiagnosticDescriptor PublicApiMissingTests = new(
-      id: "WHIZ050",
-      title: "Public API Missing Tests",
-      messageFormat: "Public {0} '{1}' has no associated tests. Consider adding test coverage or marking with [ExcludeFromCodeCoverage].",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "A public API member has no associated tests in the code-tests mapping."
-  );
-
-  /// <summary>
-  /// WHIZ051: Warning - &lt;tests&gt; XML tag references non-existent test.
-  /// </summary>
-  public static readonly DiagnosticDescriptor InvalidTestReference = new(
-      id: "WHIZ051",
-      title: "Invalid Test Reference",
-      messageFormat: "&lt;tests&gt; tag on '{0}' references test '{1}' which was not found. Verify test file path and method name.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "The &lt;tests&gt; XML documentation tag references a test that does not exist."
-  );
-
-  /// <summary>
-  /// WHIZ052: Info - Test link discovered between code and test.
-  /// </summary>
-  public static readonly DiagnosticDescriptor TestLinkDiscovered = new(
-      id: "WHIZ052",
-      title: "Test Link Discovered",
-      messageFormat: "Found test link: {0}.{1} ← {2} (via {3})",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Info,
-      isEnabledByDefault: true,
-      description: "A code-to-test link was discovered through convention, semantic analysis, or XML tag."
-  );
-
-  /// <summary>
   /// WHIZ053: Info - Failed to load code-docs-map.json for VSCode tooling.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz053</docs>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/MessageRegistryGeneratorCoverageTests.cs:MessageRegistryGenerator_MalformedMapFiles_ReportsInfoDiagnosticsAndStillGeneratesAsync</tests>
   public static readonly DiagnosticDescriptor FailedToLoadDocsMap = new(
       id: "WHIZ053",
       title: "Failed to Load Documentation Map",
@@ -469,6 +412,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ054: Info - Failed to load code-tests-map.json for VSCode tooling.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz054</docs>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/MessageRegistryGeneratorCoverageTests.cs:MessageRegistryGenerator_MalformedMapFiles_ReportsInfoDiagnosticsAndStillGeneratesAsync</tests>
   public static readonly DiagnosticDescriptor FailedToLoadTestsMap = new(
       id: "WHIZ054",
       title: "Failed to Load Tests Map",
@@ -536,7 +481,7 @@ public static class DiagnosticDescriptors {
   public static readonly DiagnosticDescriptor NonSerializableNestedProperty = new(
       id: "WHIZ063",
       title: "Nested type contains non-serializable property",
-      messageFormat: "Nested type '{0}' (used by '{1}.{2}') contains non-serializable property '{3}' of type '{4}'",
+      messageFormat: "Nested type '{0}' (used by '{1}') contains non-serializable property '{2}' of type '{3}'",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -552,6 +497,7 @@ public static class DiagnosticDescriptors {
   /// Will be upgraded to Error after Phase 5 migration is complete.
   /// </summary>
   /// <docs>operations/diagnostics/whiz055</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidUsageAnalyzerTests.cs:Analyzer_GuidNewGuid_ReportsWHIZ055WarningAsync</tests>
   public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
       id: "WHIZ055",
       title: "Guid.NewGuid() Usage",
@@ -567,6 +513,7 @@ public static class DiagnosticDescriptors {
   /// Will be upgraded to Error after Phase 5 migration is complete.
   /// </summary>
   /// <docs>operations/diagnostics/whiz056</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidUsageAnalyzerTests.cs:Analyzer_GuidCreateVersion7_ReportsWHIZ056WarningAsync</tests>
   public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
       id: "WHIZ056",
       title: "Guid.CreateVersion7() Usage",
@@ -578,23 +525,10 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ057: Warning - Raw Guid parameter where IWhizbangId expected.
-  /// </summary>
-  /// <docs>operations/diagnostics/whiz057</docs>
-  public static readonly DiagnosticDescriptor RawGuidWhereIdExpected = new(
-      id: "WHIZ057",
-      title: "Raw Guid Parameter",
-      messageFormat: "Consider using a strongly-typed ID instead of raw Guid for parameter '{0}'. Raw Guid loses metadata about precision and ordering.",
-      category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
-      isEnabledByDefault: true,
-      description: "Raw Guid parameters lose metadata about precision and ordering. Consider using IWhizbangId or a strongly-typed ID generated with [WhizbangId]."
-  );
-
-  /// <summary>
   /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
   /// </summary>
   /// <docs>operations/diagnostics/whiz058</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_InterceptedCall_ReportsWHIZ058DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor GuidCallIntercepted = new(
       id: "WHIZ058",
       title: "Guid Call Intercepted",
@@ -609,6 +543,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ059: Info - Guid interception suppressed via attribute or pragma.
   /// </summary>
   /// <docs>operations/diagnostics/whiz059</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/GuidInterceptorGeneratorTests.cs:Generator_SuppressedCall_ReportsWHIZ059DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor GuidInterceptionSuppressed = new(
       id: "WHIZ059",
       title: "Guid Interception Suppressed",
@@ -631,6 +566,7 @@ public static class DiagnosticDescriptors {
   /// Future: Handlers can be decorated with [RpcKey] and RPC calls can specify which handler to use.
   /// </summary>
   /// <docs>operations/diagnostics/whiz080</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithMultipleRpcHandlers_NoWarningWhenDisabledAsync</tests>
   public static readonly DiagnosticDescriptor MultipleHandlersForRpcMessage = new(
       id: "WHIZ080",
       title: "Multiple Handlers for RPC Message",
@@ -642,13 +578,14 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
-  // Physical Field Diagnostics (WHIZ801-809)
+  // Physical Field and Table Storage Diagnostics (WHIZ801-809)
   // ========================================
 
   /// <summary>
   /// WHIZ801: Error - [VectorField] can only be applied to float[] properties.
   /// </summary>
   /// <docs>operations/diagnostics/whiz801</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFieldAnalyzerTests.cs:AVectorFieldOnAnotherType_ReportsWhiz801Async</tests>
   public static readonly DiagnosticDescriptor VectorFieldInvalidType = new(
       id: "WHIZ801",
       title: "VectorField Invalid Type",
@@ -663,6 +600,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ802: Error - [VectorField] dimensions must be positive.
   /// </summary>
   /// <docs>operations/diagnostics/whiz802</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFieldAnalyzerTests.cs:AVectorFieldWithNonPositiveDimensions_ReportsWhiz802Async</tests>
   public static readonly DiagnosticDescriptor VectorFieldInvalidDimensions = new(
       id: "WHIZ802",
       title: "VectorField Invalid Dimensions",
@@ -674,27 +612,29 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ803: Warning - [PhysicalField] on complex type may not benefit from indexing.
+  /// WHIZ804: Error - A [PerspectiveTableStorage] value is outside the range PostgreSQL accepts.
   /// </summary>
-  /// <docs>operations/diagnostics/whiz803</docs>
-  public static readonly DiagnosticDescriptor PhysicalFieldComplexType = new(
-      id: "WHIZ803",
-      title: "PhysicalField Complex Type",
-      messageFormat: "[PhysicalField] on {0}.{1} with type {2} may not benefit from indexing. Consider using simple types.",
+  /// <docs>operations/diagnostics/whiz804</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveTableStorageAnalyzerTests.cs:AValueOutOfRange_ReportsWhiz804Async</tests>
+  public static readonly DiagnosticDescriptor TableStorageValueOutOfRange = new(
+      id: "WHIZ804",
+      title: "Table storage value out of range",
+      messageFormat: "[PerspectiveTableStorage] on '{0}' sets {1} = {2}, which PostgreSQL does not accept: the range is {3} to {4}. Use a value in the range, or a negative value to keep the server's setting.",
       category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
+      defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Physical fields work best with simple types (string, int, decimal, bool, Guid). Complex types may not benefit from database indexing."
+      description: "A perspective table's storage parameters are set by the schema pass at startup, and PostgreSQL refuses a value outside its range, which would fail the pass. The schema generators leave such a value out, and this diagnostic reports it where it is declared. fillfactor accepts 10 to 100, toast_tuple_target 128 to 8160, and each autovacuum scale factor 0 to 100."
   );
 
   /// <summary>
   /// WHIZ805: Warning - Split mode with no [PhysicalField] is equivalent to JsonOnly.
   /// </summary>
   /// <docs>operations/diagnostics/whiz805</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFieldAnalyzerTests.cs:ASplitModelWithNoPhysicalField_ReportsWhiz805Async</tests>
   public static readonly DiagnosticDescriptor SplitModeNoPhysicalFields = new(
       id: "WHIZ805",
       title: "Split Mode No Physical Fields",
-      messageFormat: "Perspective '{0}' uses Split mode but has no [PhysicalField] or [VectorField] attributes. This is equivalent to JsonOnly mode.",
+      messageFormat: "Model '{0}' is stored Split but has no [PhysicalField] or [VectorField] property, so it is stored exactly as JsonOnly. Mark the fields that need columns, or use JsonOnly.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
@@ -705,6 +645,7 @@ public static class DiagnosticDescriptors {
   /// WHIZ807: Info - Model has physical field(s) discovered.
   /// </summary>
   /// <docs>operations/diagnostics/whiz807</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PhysicalFieldDiscoveryTests.cs:Generator_ReportsDiagnostic_WhenPhysicalFieldsDiscoveredAsync</tests>
   public static readonly DiagnosticDescriptor PhysicalFieldsDiscovered = new(
       id: "WHIZ807",
       title: "Physical Fields Discovered",
@@ -758,7 +699,7 @@ public static class DiagnosticDescriptors {
   /// Reports when a base class or interface is discovered with derived types
   /// that will be registered for polymorphic JSON serialization.
   /// </summary>
-  /// <docs>extending/source-generators/polymorphic-serialization</docs>
+  /// <docs>operations/diagnostics/whiz072</docs>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithPolymorphicBase_ReportsWHIZ072DiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PolymorphicBaseTypeDiscovered = new(
       id: "WHIZ072",
@@ -885,7 +826,7 @@ public static class DiagnosticDescriptors {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance — an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
+      description: "A malformed pinned-type ledger is treated as 'no baseline', which silently disables rename governance: an un-acknowledged rename could then slip through and break deserialization of stored events. The build is not failed (a broken ledger shouldn't block compilation), but the corruption is surfaced so it can be fixed rather than drifting undetected.",
       customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
@@ -964,15 +905,35 @@ public static class DiagnosticDescriptors {
   );
 
   // ==========================================================================
-  // WHIZ200: Perspective sync in receptor safety
+  // WHIZ180: Audit settings the generator cannot register
   // ==========================================================================
 
   /// <summary>
-  /// WHIZ200: Error — WaitForStreamAsync/WaitAsync called inside an Inline-stage receptor.
+  /// WHIZ180: Warning - an event type carries [AuditEvent] but generated code cannot name it, so its audit settings are
+  /// not registered.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz180</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/AuditEventRegistryGeneratorTests.cs:Generator_AnUnreachableType_IsReportedNotRegisteredAsync</tests>
+  public static readonly DiagnosticDescriptor AuditEventTypeNotRegistrable = new(
+      id: "WHIZ180",
+      title: "Audit settings of an unreachable event type are not registered",
+      messageFormat: "{0} carries [AuditEvent], but generated code cannot name it, so audit decisions will treat it as unattributed. Make it internal or public, or register it with AuditEventRegistry.Register.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Audit decisions read each event type's [AuditEvent] from a registry the generator fills at module load, because Whizbang.Core reads no attribute by reflection. A private or protected nested type cannot be named from the generated registration."
+  );
+
+  // ==========================================================================
+  // WHIZ900: Perspective sync in receptor safety
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ900: Error: WaitForStreamAsync/WaitAsync called inside an Inline-stage receptor.
   /// This will deadlock the work coordinator because the single-threaded coordinator cannot
   /// process perspective commits while blocked by the synchronous wait.
   /// </summary>
-  /// <docs>operations/diagnostics/whiz200</docs>
+  /// <docs>operations/diagnostics/whiz900</docs>
   /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveSyncInReceptorAnalyzerTests.cs</tests>
   public static readonly DiagnosticDescriptor PerspectiveSyncInInlineReceptor = new(
       id: "WHIZ900",
@@ -981,13 +942,14 @@ public static class DiagnosticDescriptors {
       category: "Whizbang.ReceptorSafety",
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
+      description: "Calling WaitForStreamAsync, WaitAsync or WaitForAppliedAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead. IsCaughtUpAsync does not wait and is not reported."
   );
 
   /// <summary>
   /// WHIZ014: Warning — a discovered receptor takes a constructor parameter dependency injection is
   /// very unlikely to supply, so registering it risks an un-constructible descriptor.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz014</docs>
   /// <remarks>
   /// <para>
   /// Deliberately a HEURISTIC, and deliberately a warning. A source generator cannot know what a
@@ -1009,7 +971,6 @@ public static class DiagnosticDescriptors {
   /// intact.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/receptors/receptors#manual-construction</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorRegistrationSuppressionTests.cs</tests>
   public static readonly DiagnosticDescriptor ReceptorLikelyNotInjectable = new(
       id: "WHIZ014",
@@ -1018,12 +979,14 @@ public static class DiagnosticDescriptors {
       category: "Whizbang.ReceptorSafety",
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic — a generator cannot know what an application registers — so it warns rather than errors."
+      description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic (a generator cannot know what an application registers), so it warns rather than errors."
   );
 
   /// <summary>
   /// WHIZ500: Warning - a service constructed inside a DI factory omits an injectable parameter.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz500</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/DiFactoryConstructionAnalyzerTests.cs:OmittingAnOptionalDependencyInsideAFactoryIsReportedAsync</tests>
   /// <remarks>
   /// The container is not building this object; the registration is. Anything the author does not
   /// pass is defaulted by the compiler, so the dependency is null at run time with no error
@@ -1043,6 +1006,8 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ501: Info - a constructor declares an optional injected (interface-typed) parameter.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz501</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/OptionalInjectedParameterAnalyzerTests.cs:AnOptionalInterfaceParameterIsReportedAsync</tests>
   /// <remarks>
   /// This declaration is what makes silent omission possible at a construction site. Reported as
   /// information rather than a warning because the existing surface is large, and a rule that turns
@@ -1057,4 +1022,43 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Make the parameter required and register a default with TryAdd, so a construction site cannot drop the dependency and a missing registration fails loudly instead of silently."
   );
+
+  /// <summary>
+  /// WHIZ015: Warning - a message type is generic, so the generators skip it.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz015</docs>
+  /// <remarks>
+  /// An open generic type has no closed form generated code can name, so the dispatcher, the message
+  /// catalog, the topic registry and the serialization context leave it out (#1481). Before this, the
+  /// generators emitted the open type literally and the project failed to build with errors pointing
+  /// into generated files. A closed form a receptor handles is still routed for local dispatch, but it
+  /// has no generated serializer, so it cannot cross a transport.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/GenericMessageTypeAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor GenericMessageType = new(
+      id: "WHIZ015",
+      title: "Generic message types are not supported",
+      messageFormat: "Message type '{0}' is generic, so the source generators skip it: it is not in the message catalog, the topic registry or the serialization context, and it cannot be sent across a transport. Declare a non-generic message type instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Generated code must name a closed type, and an open generic message type has none. The generators leave it out rather than emit code that cannot compile. A closed form handled by a receptor is routed for local dispatch only."
+  );
+  /// <summary>
+  /// WHIZ099: Info - MessageJsonContextGenerator ran, and how many message types it found.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz099</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NoMessageTypes_ReportsDiagnosticWithZeroCountAsync</tests>
+  public static readonly DiagnosticDescriptor MessageJsonContextRunning = new(
+      id: "WHIZ099",
+      title: "MessageJsonContextGenerator Running",
+      messageFormat: "MessageJsonContextGenerator invoked for assembly '{0}' with {1} message type(s)",
+      category: "Whizbang.SourceGeneration",
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Reports that the generator ran and how many message types it found. It is reported without a location "
+          + "because it is about the whole compilation, not one declaration; turn it off for a project in "
+          + ".globalconfig or NoWarn."
+  );
+
 }

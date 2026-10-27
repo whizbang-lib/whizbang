@@ -25,7 +25,7 @@ public class ReceivedInboxMessageBuilderBranchCoverageTests {
   public async Task ExtractStreamId_EnvelopeWithNullHops_FallsBackToTheMessageIdAsync() {
     var messageId = MessageId.New();
     // The same constructor JSON deserialization uses; it stores the hop list it is handed.
-    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonDocument.Parse("{}").RootElement, hops: null!);
+    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonElement.Parse("{}"), hops: null!);
 
     var streamId = ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
 
@@ -46,7 +46,7 @@ public class ReceivedInboxMessageBuilderBranchCoverageTests {
   [Test]
   public async Task Classify_WithAReceiveHook_ShowsItTheReceivedEnvelopeAsync() {
     var messageId = MessageId.New();
-    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonDocument.Parse("{}").RootElement, hops: []);
+    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonElement.Parse("{}"), hops: []);
     await using var scope = new ServiceCollection()
       .AddSingleton(new Whizbang.Core.Priority.PriorityHookChain([], [new ByMessageIdHook(messageId)], []))
       .BuildServiceProvider();

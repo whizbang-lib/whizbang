@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 103_ReapPerspectiveRowCaps
 -- Purpose:  Bound CARDINALITY, not just age. Time-based retention never limits how many rows a
 --           scope accumulates — a heavy tenant or user can hold thousands all created inside the

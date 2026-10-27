@@ -114,7 +114,7 @@ public interface IWorkCoordinatorStrategy {
 /// <tests>tests/Whizbang.Core.Tests/Messaging/FlushApiTests.cs:Strategy_Default_IsScopedAsync</tests>
 public enum WorkCoordinatorStrategy {
   /// <summary>
-  /// Immediate strategy - calls process_work_batch immediately for each operation.
+  /// Immediate strategy - flushes queued work to the database immediately for each operation.
   /// Lowest latency, highest database load.
   /// </summary>
   Immediate,
@@ -186,8 +186,6 @@ public class WorkCoordinatorOptions {
   /// Grace period before a non-heartbeating instance is abandoned, in seconds (default: 30).
   /// With ~1 s ticks, 30 missed heartbeats prove an instance is dead. After this, the instance's
   /// message leases are released and its stream ownership no longer blocks cross-instance claims.
-  /// See <see cref="Whizbang.Core.Workers.WorkCoordinatorPublisherOptions.AbandonStaleInstanceThresholdSeconds"/>
-  /// for the full rationale and tuning guidance.
   /// </summary>
   public int AbandonStaleInstanceThresholdSeconds { get; set; } = 30;
 

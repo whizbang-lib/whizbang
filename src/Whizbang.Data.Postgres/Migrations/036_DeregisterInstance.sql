@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 036_DeregisterInstance.sql
 -- Date: 2026-04-12
 -- Description: Creates deregister_instance function for graceful shutdown.

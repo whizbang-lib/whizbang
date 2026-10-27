@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 193_DigestLaneDiscovery.sql
 -- Date: 2026-10-07
 -- Description: close_digest_epochs finds its lanes without reading the event store (#1215).

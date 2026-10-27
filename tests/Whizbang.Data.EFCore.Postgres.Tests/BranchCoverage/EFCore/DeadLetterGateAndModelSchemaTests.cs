@@ -60,7 +60,7 @@ public class DeadLetterGateAndModelSchemaTests : EFCoreTestBase {
 
     var recovery = new EFCoreDeadLetterRecoveryService<BareContext>(ctx);
     await Assert.That(await recovery.RecoverAsync((Guid)TrackedGuid.New())).IsFalse()
-      .Because("the unqualified recover_dead_letter must be found and answer for an unknown id");
+      .Because("the unqualified wh_recover_dead_letter must be found and answer for an unknown id");
 
     var store = new EFCoreDeadLetterStore<BareContext>(ctx);
     var moved = await store.MoveAsync(
@@ -88,16 +88,16 @@ public class DeadLetterGateAndModelSchemaTests : EFCoreTestBase {
     await Assert.That(() => new EFCoreClaimedEmissionStore(null!)).Throws<ArgumentNullException>();
   }
 
-  // recover_dead_letter answering NULL (a replaced or broken function) must read as "not
-  // recovered", never as a cast failure out of the recovery scan; the reset count likewise reads
-  // a NULL as zero rows reset.
+  // wh_recover_dead_letter (what RecoverAsync calls since #1722) answering NULL (a replaced or broken
+  // function) must read as "not recovered", never as a cast failure out of the recovery scan; the
+  // reset count likewise reads a NULL as zero rows reset.
   [Test]
   public async Task RecoveryService_NullScalarAnswers_ReadAsFalseAndZeroAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     await using (var replace = conn.CreateCommand()) {
       replace.CommandText = """
-        CREATE OR REPLACE FUNCTION recover_dead_letter(p_dead_letter_id UUID)
+        CREATE OR REPLACE FUNCTION wh_recover_dead_letter(p_dead_letter_id UUID, p_partition_count INTEGER)
         RETURNS BOOLEAN AS $$ SELECT NULL::boolean $$ LANGUAGE sql;
         CREATE OR REPLACE FUNCTION reset_dead_letters_for_generation(
           p_current_generation TEXT, p_stagger_minutes INTEGER DEFAULT 0)

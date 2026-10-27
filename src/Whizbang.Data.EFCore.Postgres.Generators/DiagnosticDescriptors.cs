@@ -11,15 +11,18 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 internal static class DiagnosticDescriptors {
   private const string CATEGORY = "Whizbang.EFCore";
+  private const string GENERATOR_CATEGORY = "Whizbang.Generator";
 
   /// <summary>
   /// WHIZ810: Warning - Perspective model contains Dictionary property.
   /// EF Core's ComplexProperty().ToJson() does not support Dictionary types.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz810</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveModelDictionaryAnalyzerTests.cs:PerspectiveModel_WithDictionary_ReportsDiagnosticAsync</tests>
   public static readonly DiagnosticDescriptor PerspectiveModelDictionaryProperty = new(
       id: "WHIZ810",
       title: "Perspective model contains Dictionary property",
-      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use List<{4}> with Key/Value properties instead.",
+      messageFormat: "Property '{0}' on perspective model '{1}' uses Dictionary<{2}, {3}> which is not supported by EF Core's ComplexProperty().ToJson(). Use a List of a class with Key ({2}) and Value ({3}) properties instead.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
@@ -29,6 +32,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ812: Warning - a perspective model declares a JSON converter that nothing will consult.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz812</docs>
   /// <remarks>
   /// A perspective's document is stored with <c>ComplexProperty().ToJson()</c> and read by Entity
   /// Framework's own materializer, which never consults a <see cref="System.Text.Json.Serialization.JsonConverterAttribute"/>.
@@ -40,7 +44,6 @@ internal static class DiagnosticDescriptors {
   /// at startup, journaled, which also repairs the form for anything reading the column directly.
   /// </para>
   /// </remarks>
-  /// <docs>fundamentals/perspectives/stored-form-migrations#json-converter</docs>
   /// <tests>tests/Whizbang.Generators.Tests/DeclaredJsonConverterIgnoredTests.cs</tests>
   public static readonly DiagnosticDescriptor PerspectiveModelJsonConverterIgnored = new(
       id: "WHIZ812",
@@ -88,21 +91,23 @@ internal static class DiagnosticDescriptors {
   /// WHIZ811: Info - Perspective model contains polymorphic type property.
   /// The model uses JSONB storage with System.Text.Json polymorphic serialization.
   /// </summary>
-  /// <docs>fundamentals/perspectives/polymorphic-types</docs>
+  /// <docs>operations/diagnostics/whiz811</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveModelPolymorphicAnalyzerTests.cs:PerspectiveModel_WithAbstractClassProperty_ReportsWHIZ811Async</tests>
   public static readonly DiagnosticDescriptor PerspectiveModelPolymorphicProperty = new(
       id: "WHIZ811",
       title: "Perspective model contains polymorphic type",
-      messageFormat: "Property '{0}' on perspective model '{1}' is abstract type '{2}'. Consider using [PolymorphicDiscriminator] on a discriminator property for efficient type-based queries.",
+      messageFormat: "Property '{0}' on perspective model '{1}' is polymorphic type '{2}'. Consider adding a [PolymorphicDiscriminator] property to '{1}' for efficient type-based queries.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "Abstract types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
+      description: "Abstract and [JsonPolymorphic] types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
   );
 
   /// <summary>
   /// WHIZ400: Error - Invalid type argument for ILensQuery Query/GetByIdAsync methods.
   /// The type argument must be one of the interface's type parameters.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz400</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs:Query_WithInvalidType_ReportsWHIZ400Async</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs:GetByIdAsync_WithInvalidType_ReportsWHIZ400Async</tests>
   public static readonly DiagnosticDescriptor InvalidLensQueryTypeArgument = new(
@@ -118,7 +123,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ401: Warning - Multi-model ILensQuery references unknown perspective model.
   /// </summary>
-  /// <docs>diagnostics/WHIZ401</docs>
+  /// <docs>operations/diagnostics/whiz401</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_UnknownModel_ReportsWHIZ401Async</tests>
   public static readonly DiagnosticDescriptor MultiLensQueryUnknownModel = new(
       id: "WHIZ401",
@@ -133,7 +138,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ402: Info - Multi-model ILensQuery auto-detected.
   /// </summary>
-  /// <docs>diagnostics/WHIZ402</docs>
+  /// <docs>operations/diagnostics/whiz402</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQueryConstructorParam_GeneratesRegistrationAsync</tests>
   public static readonly DiagnosticDescriptor MultiLensQueryDiscovered = new(
       id: "WHIZ402",
@@ -147,22 +152,23 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ820: Error - Table name exceeds database provider limit.
   /// </summary>
-  /// <docs>diagnostics/WHIZ820</docs>
+  /// <docs>operations/diagnostics/whiz820</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongTableName_EmitsWHIZ820ErrorAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveTableNamingDiagnosticsTests.cs:EFCoreGenerator_WithAManualNameOverTheLimit_ReportsWHIZ820NamingTheAttributeAsync</tests>
   public static readonly DiagnosticDescriptor TableNameExceedsLimit = new(
       id: "WHIZ820",
       title: "Table name exceeds database limit",
-      messageFormat: "Perspective model '{0}' generates table name '{1}' ({2} bytes) which exceeds {3} limit of {4} bytes. Shorten the model name or configure suffix stripping.",
+      messageFormat: "Perspective model '{0}' generates table name '{1}' ({2} bytes) which exceeds {3} limit of {4} bytes. Shorten the model name, configure suffix stripping, or name the table with [PerspectiveTable].",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "The generated table name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Consider shortening the model name, enabling suffix stripping, or using a custom table name."
+      description: "The table name, generated or set with [PerspectiveTable], exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Shorten the model name, enable suffix stripping, or name the table with [PerspectiveTable(\"wh_per_...\")]."
   );
 
   /// <summary>
   /// WHIZ821: Error - Column name exceeds database provider limit.
   /// </summary>
-  /// <docs>diagnostics/WHIZ821</docs>
+  /// <docs>operations/diagnostics/whiz821</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongColumnName_EmitsWHIZ821ErrorAsync</tests>
   public static readonly DiagnosticDescriptor ColumnNameExceedsLimit = new(
       id: "WHIZ821",
@@ -177,7 +183,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ822: Error - Index name exceeds database provider limit.
   /// </summary>
-  /// <docs>diagnostics/WHIZ822</docs>
+  /// <docs>operations/diagnostics/whiz822</docs>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:Generator_WithLongIndexName_EmitsWHIZ822ErrorAsync</tests>
   public static readonly DiagnosticDescriptor IndexNameExceedsLimit = new(
       id: "WHIZ822",
@@ -192,7 +198,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ830: Error - A stored-form declaration the generator cannot turn into SQL.
   /// </summary>
-  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <docs>operations/diagnostics/whiz830</docs>
   /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationItCannotGenerate_IsWHIZ830_AndEmitsNothingAsync</tests>
   public static readonly DiagnosticDescriptor StoredFormCannotBeGenerated = new(
       id: "WHIZ830",
@@ -207,7 +213,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ831: Warning - A custom stored-form migration that never runs.
   /// </summary>
-  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <docs>operations/diagnostics/whiz831</docs>
   /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationInsideACollectionElement_IsWHIZ832_AndAnOrphanMigrationWHIZ831Async</tests>
   public static readonly DiagnosticDescriptor StoredFormMigrationNeverRuns = new(
       id: "WHIZ831",
@@ -222,7 +228,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ832: Warning - A stored-form declaration inside an element of a collection.
   /// </summary>
-  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <docs>operations/diagnostics/whiz832</docs>
   /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:ADeclarationInsideACollectionElement_IsWHIZ832_AndAnOrphanMigrationWHIZ831Async</tests>
   public static readonly DiagnosticDescriptor StoredFormInsideCollection = new(
       id: "WHIZ832",
@@ -237,7 +243,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ833: Warning - Two custom stored-form migrations of one table state the same order.
   /// </summary>
-  /// <docs>fundamentals/perspectives/stored-form-migrations#diagnostics</docs>
+  /// <docs>operations/diagnostics/whiz833</docs>
   /// <tests>tests/Whizbang.Generators.Tests/StoredFormMigrationGenerationTests.cs:TwoMigrationsOfOneTableSharingAnOrder_AreWHIZ833_OncePerSharedOrderAsync</tests>
   public static readonly DiagnosticDescriptor StoredFormMigrationOrderShared = new(
       id: "WHIZ833",
@@ -248,4 +254,45 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Custom stored-form migrations of one table run in the Order their authors state. Two with the same Order still run in a stable order, their classes' full names, but that order is an accident of naming rather than a decision; renaming a class would change it."
   );
+  /// <summary>
+  /// WHIZ701: Info - perspectives discovered for the EF Core model configuration.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz701</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/CompilationNoticeDiagnosticTests.cs:Whiz701_ReportsThePerspectiveCountAsync</tests>
+  public static readonly DiagnosticDescriptor EFCorePerspectiveDiscovery = new(
+      id: "WHIZ701",
+      title: "EF Core Perspective Discovery",
+      messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
+      category: GENERATOR_CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Reports how many perspectives the generator configures in the EF Core model. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn.");
+
+  /// <summary>
+  /// WHIZ702: Info - the embedded migration files the generated DbContext will apply.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz702</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/CompilationNoticeDiagnosticTests.cs:Whiz702_ReportsTheMigrationFilesFoundAsync</tests>
+  public static readonly DiagnosticDescriptor EFCoreMigrationFilesDiscovery = new(
+      id: "WHIZ702",
+      title: "EF Core Migration Files Discovery",
+      messageFormat: "Found {0} migration files in {1} (prefix: {2}): {3}",
+      category: GENERATOR_CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Reports the embedded migration files the generated DbContext applies at startup. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn.");
+
+  /// <summary>
+  /// WHIZ703: Info - no DbContext opted in with [WhizbangDbContext], so no partial class is generated.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz703</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/CompilationNoticeDiagnosticTests.cs:Whiz703_ReportsThatNoDbContextWasFoundAsync</tests>
+  public static readonly DiagnosticDescriptor NoWhizbangDbContextFound = new(
+      id: "WHIZ703",
+      title: "No DbContext Found",
+      messageFormat: "Could not find any DbContext classes with [WhizbangDbContext] attribute. Partial class generation requires explicit opt-in.",
+      category: GENERATOR_CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "No DbContext carries [WhizbangDbContext], which is expected in a library project; partial class generation requires that opt-in. It is reported without a location because it is about the whole compilation, not one declaration; turn it off for a project in .globalconfig or NoWarn.");
 }

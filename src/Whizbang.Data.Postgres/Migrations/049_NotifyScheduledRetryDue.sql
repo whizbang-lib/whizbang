@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 049_NotifyScheduledRetryDue.sql
 -- Date: 2026-06-03 (v0.502 slice B.4 — NOTIFY-first scheduled retries)
 -- Description: Low-cadence helper that finds rows whose retry-after timestamp has elapsed

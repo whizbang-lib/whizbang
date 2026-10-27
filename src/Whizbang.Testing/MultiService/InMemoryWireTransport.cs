@@ -84,6 +84,7 @@ public sealed class InMemoryWireTransport : ITransport {
         _wireOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
       var received = JsonSerializer.Deserialize(bytes, jsonEnvelopeTypeInfo)
         ?? throw new InvalidOperationException("Wire deserialization produced a null envelope.");
+      MessageParseDiagnostics.Record(received.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
       await handler([new TransportMessage(received, wireEnvelopeType)], cancellationToken);
     }
   }

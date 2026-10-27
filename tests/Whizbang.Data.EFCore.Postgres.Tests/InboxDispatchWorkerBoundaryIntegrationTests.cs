@@ -226,7 +226,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       };
       await Assert.That(childEnvelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
         .Because("At the worker boundary (no ambient), the child must inherit correlation from the CARRIED inbound hop, not fabricate a fresh root (the production signature).");
-      await Assert.That(childEnvelope.GetCausationId()).IsNotNull()
+      await Assert.That(childEnvelope.GetCausationId().HasValue).IsTrue()
         .Because("Causation must survive the boundary on the carried hop, not be left ca=None.");
       await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")
         .Because("Tenant scope must survive the boundary on the carried hop, with no manual attach.");
@@ -333,7 +333,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       };
       await Assert.That(childEnvelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
         .Because("Through the detached Task.Run hop (ambient absent), the child must inherit correlation from the carried inbound hop, not fabricate a fresh root.");
-      await Assert.That(childEnvelope.GetCausationId()).IsNotNull()
+      await Assert.That(childEnvelope.GetCausationId().HasValue).IsTrue()
         .Because("Causation must survive the detached boundary on the carried hop.");
       await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")
         .Because("Tenant scope must survive the detached boundary on the carried hop.");
@@ -440,7 +440,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
       };
       await Assert.That(childEnvelope.GetCorrelationId()).IsEqualTo(expectedCorrelation)
         .Because("A collective event emitted at the worker boundary must inherit correlation from the carried hop (the lineage bug a consumer worked around by fabricating fresh).");
-      await Assert.That(childEnvelope.GetCausationId()).IsNotNull()
+      await Assert.That(childEnvelope.GetCausationId().HasValue).IsTrue()
         .Because("Causation must survive onto the collective event's store hop.");
       await Assert.That(childEnvelope.GetCurrentScope()?.Scope?.TenantId).IsEqualTo("tenant-456")
         .Because("The collective event's STORE-hop scope must inherit the tenant from the carried hop — no manual attach — so a consumer can drop its ForCurrentTenant lineage workaround.");
@@ -477,7 +477,7 @@ public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
         workChannelWriter: null,
         options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
         logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
-        inboxChannelWriter: new InboxChannelWriter()));
+        inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();                  // IDispatcher, IReceptorInvoker

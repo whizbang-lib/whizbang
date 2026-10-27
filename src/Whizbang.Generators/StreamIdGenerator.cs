@@ -27,26 +27,31 @@ public class StreamIdGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_COMMAND_TYPE = "__COMMAND_TYPE__";
   private const string TYPE_STRING = "string";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IEvent types with [StreamId] attribute
     var eventsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover IEvent types WITHOUT [StreamId] for diagnostics
     var eventsWithoutStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _findEventWithoutStreamId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover ICommand types with [StreamId] attribute
     var commandsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCommandStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -54,14 +59,13 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // [StreamId] (via CompositeEventBase) — the stream its fanned-out inner events inherit. The extractor
     // must resolve it via the object-typed resolver so producer-side fan-out routes children correctly.
     var compositesWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
-                                    || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCompositeStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate extractor methods from collected events, commands, and composites
     // Combine compilation with discovered types to get assembly name for namespace
-    var compilationAndData = context.CompilationProvider
+    var compilationAndData = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
         .Combine(eventsWithStreamId.Collect())
         .Combine(eventsWithoutStreamId.Collect())
         .Combine(commandsWithStreamId.Collect())
@@ -70,12 +74,12 @@ public class StreamIdGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndData,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left.Left;
+          var compilationAssemblyName = data.Left.Left.Left.Left;
           var withStreamId = data.Left.Left.Left.Right;
           var withoutStreamId = data.Left.Left.Right;
           var commandsWithId = data.Left.Right;
           var compositesWithId = data.Right;
-          _generateStreamIdExtractors(ctx, compilation, withStreamId!, withoutStreamId!, commandsWithId!, compositesWithId!);
+          _generateStreamIdExtractors(ctx, compilationAssemblyName, withStreamId!, withoutStreamId!, commandsWithId!, compositesWithId!);
         }
     );
   }
@@ -115,7 +119,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: streamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
       );
     }
 
@@ -172,7 +177,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: streamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(streamIdProperty)
       );
     }
 
@@ -208,7 +214,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
             IsPropertyValueType: property.Type.IsValueType,
             HasGenerate: hasGenerate,
             OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+            PropertyLocation: LocationUtilities.FirstOrNone(property)
         );
       }
     }
@@ -319,7 +326,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           IsPropertyValueType: commandStreamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
           OnlyIfEmpty: onlyIfEmpty,
-          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty)
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty),
+          PropertyLocation: LocationUtilities.FirstOrNone(commandStreamIdProperty)
       );
     }
 
@@ -355,7 +363,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
             IsPropertyValueType: property.Type.IsValueType,
             HasGenerate: hasGenerate,
             OnlyIfEmpty: onlyIfEmpty,
-            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property),
+            PropertyLocation: LocationUtilities.FirstOrNone(property)
         );
       }
     }
@@ -370,7 +379,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 #pragma warning disable S3776
   private static void _generateStreamIdExtractors(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<StreamIdInfo> eventsWithStreamId,
       ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId,
       ImmutableArray<CommandStreamIdInfo> commandsWithStreamId,
@@ -378,7 +387,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 #pragma warning restore S3776
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
@@ -454,7 +463,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
         var simpleName = info.EventType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
       }
     }
 
@@ -462,7 +471,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
       if (info.HasGenerate && info.IsPropertyInitOnly && _isGuidProperty(info.PropertyType)) {
         var simpleName = info.CommandType.Split('.')[^1].Replace(PLACEHOLDER_GLOBAL, "");
         context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, Location.None, simpleName, info.PropertyName));
+            DiagnosticDescriptors.GenerateStreamIdOnInitOnly, info.PropertyLocation, simpleName, info.PropertyName));
       }
     }
   }

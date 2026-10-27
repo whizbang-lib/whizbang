@@ -95,7 +95,7 @@ public class MessageTypeCatalogFingerprintTests {
       namespace MyApp;
       public record OrderPlaced(int OrderId) : IEvent;
       public record InvoiceRaised(int InvoiceId) : IEvent;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public record UserIsTyping(int UserId) : IEvent;
 """);
     var sourcedA = _extract(code, "MyApp.OrderPlaced", "SettingsHash");

@@ -124,7 +124,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
       var jsonEnv = new MessageEnvelope<JsonElement> {
         DispatchContext = envelope.DispatchContext,
         MessageId = envelope.MessageId,
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = envelope.Hops?.ToList() ?? [],
       };
       return new SerializedEnvelope(jsonEnv, $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core", aqn);
@@ -204,7 +204,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -439,7 +439,7 @@ public class InboxDispatchWorkerBranchCoverageTests {
     var integrityMetrics = new StreamIntegrityMetrics(new WhizbangMetrics(factory));
     var bundle = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.New() };
     for (var i = 0; i < 2; i++) {
-      bundle.InnerPayloads.Add(JsonDocument.Parse("{}").RootElement);
+      bundle.InnerPayloads.Add(JsonElement.Parse("{}"));
       bundle.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
       bundle.InnerEventIds.Add((Guid)TrackedGuid.New());
     }
@@ -613,6 +613,50 @@ public class InboxDispatchWorkerBranchCoverageTests {
     await Assert.That(invoker.Invocations).Contains(LifecycleStage.PreInboxInline);
     await Assert.That(invoker.Invocations).DoesNotContain(LifecycleStage.PreInboxDetached)
       .Because("the runtime registry answers only for the inline stage");
+  }
+
+  /// <summary>
+  /// #1393: with no PostInboxDetached receptor, ImmediateDetached ran inline in the inbox unit of work, so its exception
+  /// failed the message. It now starts after the handler in a scope of its own, and a failure is only logged.
+  /// </summary>
+  [Test]
+  [Timeout(60_000)]
+  public async Task ImmediateDetached_WithOnlyAnInlineHandler_RunsOutsideTheUnitOfWorkAndNeverFailsTheMessageAsync(CancellationToken ct) {
+    var parts = new WorkerParts {
+      ReceptorRegistry = new EmptyReceptorRegistryQuery(),
+      RuntimeRegistry = new AnyTypeRuntimeReceptorRegistry(LifecycleStage.PostInboxInline),
+    };
+    var detached = new SignallingThrowingInvoker(LifecycleStage.ImmediateDetached);
+    await using var sp = new ServiceCollection().AddScoped<IReceptorInvoker>(_ => detached).BuildServiceProvider();
+    var worker = parts.Build(sp);
+    var work = _makeWork();
+    var unitOfWork = new SignallingThrowingInvoker(LifecycleStage.ImmediateDetached);
+
+    await worker.InvokeInboxLifecycleStageAsync(
+      work, work.Envelope, unitOfWork,
+      LifecycleStage.PostInboxDetached, LifecycleStage.PostInboxInline,
+      "PostInbox", CancellationToken.None);
+    await detached.Reached.Task.WaitAsync(ct);
+
+    await Assert.That(unitOfWork.Invocations).IsEquivalentTo([LifecycleStage.PostInboxInline])
+      .Because("the unit of work runs the handler's inline stage and nothing detached");
+    await Assert.That(parts.Failure.All).IsEmpty()
+      .Because("a detached stage's exception never fails the message");
+  }
+
+  /// <summary>Records each stage; signals and throws at <paramref name="throwAt"/>.</summary>
+  private sealed class SignallingThrowingInvoker(LifecycleStage throwAt) : IReceptorInvoker {
+    public ConcurrentQueue<LifecycleStage> Invocations { get; } = new();
+    public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage,
+        ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      Invocations.Enqueue(stage);
+      if (stage != throwAt) {
+        return ValueTask.CompletedTask;
+      }
+      Reached.TrySetResult();
+      throw new InvalidOperationException("an ImmediateDetached receptor failed");
+    }
   }
 
   // ============================================================

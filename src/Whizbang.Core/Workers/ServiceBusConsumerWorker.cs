@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Background service that subscribes to messages from Azure Service Bus and invokes local perspectives.
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
-/// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
+/// Events from remote services are stored in inbox via store_inbox_messages and perspectives are invoked with ordering guarantees.
 /// </summary>
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
@@ -72,7 +72,11 @@ public partial class ServiceBusConsumerWorker(
   private readonly IEventMarkerResolver _eventMarkerResolver = eventMarkerResolver;
   private readonly IEphemeralModeResolver _ephemeralModeResolver = ephemeralModeResolver;
   private readonly IServiceScopeFactory _scopeFactory = ArgumentGuard.NotNull(scopeFactory);
-  private readonly ConcurrentBag<Task> _detachedTasks = [];
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish
+  /// while the services they resolve are still alive (#1721). Replaces a bag that only tests ever drained.
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
   private readonly ILogger<ServiceBusConsumerWorker> _logger = ArgumentGuard.NotNull(logger);
   private readonly OrderedStreamProcessor _orderedProcessor = ArgumentGuard.NotNull(orderedProcessor);
   private readonly ILifecycleMessageDeserializer _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
@@ -231,22 +235,18 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-    // Slice 3 of pump-then-process.md (Half A): drop messages whose type has NO consumer
-    // anywhere on this service — no inbox handler, no lifecycle receptor, no perspective,
-    // no tag-attribute. They cannot do useful work, so the inbox row + dispatch path are
-    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the BFF
-    // pattern where many cross-service events flow through with no local consumer.
-    // Null registry → legacy behavior (always store) for back-compat in test harnesses.
-    // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we
-    // skip the gate in that case rather than misclassifying — never drop a message
-    // because of a registry-side parse miss.
-    // EXEMPTION — body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>,
-    // which no service consumes. Dropping it here would kill every offloaded message before rehydration.
-    // Skip the gate for claims; BodyClaimRehydrator restores the original type downstream.
-    // EXEMPTION — composites: a composite is wire-only, so nothing consumes the composite type
-    // itself; its consumers are registered for the INNER events, which only become addressable
-    // after the dispatch seam fans it out. Dropping here loses the whole bundle before any inbox
-    // row is written. See CompositeInboxFanout.IsCompositeWireType.
+    // #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
+    // perspective or tag-attribute) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
+    // skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped here, unstored,
+    // and the transport then completed it with the broker. Null registry: legacy behavior (always process) for test
+    // harnesses. EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; the gate is skipped then
+    // rather than misclassifying.
+    // EXEMPTION, body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>, which no
+    // service consumes; BodyClaimRehydrator restores the original type downstream.
+    // EXEMPTION, composites: a composite is wire-only, so nothing consumes the composite type itself; its consumers are
+    // registered for the INNER events, addressable after the dispatch seam fans it out. See
+    // CompositeInboxFanout.IsCompositeWireType.
+    string? discardedOnReceive = null;
     if (!string.IsNullOrWhiteSpace(envelopeType)
         && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
@@ -255,7 +255,7 @@ public partial class ServiceBusConsumerWorker(
           && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
           && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
-        return;
+        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
       }
     }
 
@@ -274,7 +274,7 @@ public partial class ServiceBusConsumerWorker(
       LogProcessingMessage(_logger, envelope.MessageId);
 
       // Serialize and deduplicate via per-message flush
-      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, discardedOnReceive, strategy, scopedProvider, ct);
 
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
@@ -330,9 +330,16 @@ public partial class ServiceBusConsumerWorker(
   /// Serializes envelope to InboxMessage and flushes through work coordinator for deduplication.
   /// </summary>
   private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
-    IMessageEnvelope envelope, string? envelopeType,
+    IMessageEnvelope envelope, string? envelopeType, string? discardedOnReceive,
     IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
     var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+    if (discardedOnReceive is not null) {
+      // #1720: stored settled, never claimed or dispatched, and counted under the reason.
+      newInboxMessage = newInboxMessage with { DiscardedOnReceive = discardedOnReceive };
+      scopedProvider.GetService<TransportMetrics>()?.InboxMessagesDiscarded.Add(1,
+        new KeyValuePair<string, object?>("reason", discardedOnReceive),
+        new KeyValuePair<string, object?>("message_type", newInboxMessage.MessageType));
+    }
     strategy.QueueInboxMessage(newInboxMessage);
     LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
     var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
@@ -359,6 +366,7 @@ public partial class ServiceBusConsumerWorker(
       // Type to ask about. Loss is bounded: PostInbox below already deserializes
       // unconditionally, so worst-case we go from 1 to 2 parses per message.
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
       // Slice 4-symmetry gate: skip PreInbox firing when neither stage has receptors —
@@ -428,6 +436,7 @@ public partial class ServiceBusConsumerWorker(
 
     foreach (var work in myWork) {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
       var lifecycleContext = new LifecycleExecutionContext {
         CurrentStage = LifecycleStage.PostInboxDetached,
@@ -444,8 +453,10 @@ public partial class ServiceBusConsumerWorker(
       lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
       await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
 
-      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
-        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, _detachedTasks.Add, ct);
+      // Not for an event something in this service applies later: the collective sink fires these for a
+      // collective event once its apply commits (#1676).
+      if (ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, message, scopedProvider)) {
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, DetachedWork.Track, ct);
       }
     }
   }
@@ -515,7 +526,7 @@ public partial class ServiceBusConsumerWorker(
         LogDetachedStageError(_logger, ex, stage, envelope.MessageId.Value);
       }
     }, ct);
-    _detachedTasks.Add(task);
+    DetachedWork.Track(task);
   }
 
   /// <summary>
@@ -523,7 +534,7 @@ public partial class ServiceBusConsumerWorker(
   /// Used for graceful shutdown and testing.
   /// </summary>
   internal async ValueTask DrainDetachedAsync() {
-    await Task.WhenAll(_detachedTasks).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
   private static Task _fireDetachedStageStaticAsync(
@@ -564,33 +575,6 @@ public partial class ServiceBusConsumerWorker(
     Message = "Detached lifecycle stage {Stage} failed for message {MessageId}"
   )]
   private static partial void LogDetachedStageError(ILogger logger, Exception ex, LifecycleStage stage, Guid? messageId);
-
-  /// <summary>
-  /// Checks if the given message type is an event type that has NO associated perspectives.
-  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
-  /// Events without perspectives need PostLifecycle fired here immediately.
-  /// </summary>
-  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      // No perspectives registered at all - all events are "without perspectives"
-      return true;
-    }
-
-    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-
-    var perspectives = registry.GetRegisteredPerspectives();
-    foreach (var perspective in perspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
-        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
-          return false; // This event type has at least one perspective
-        }
-      }
-    }
-
-    return true; // No perspectives handle this event type
-  }
 
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
@@ -648,17 +632,9 @@ public partial class ServiceBusConsumerWorker(
       // because the transport's metadata is authoritative
     }
 
-    // Determine if message is an event using IEventTypeProvider
-    // This is more reliable than "payload is IEvent" when payload is JsonElement
-    var isEvent = false;
-    var eventTypeProvider = scopeServiceProvider.GetRequiredService<IEventTypeProvider>();
-    if (eventTypeProvider.IsAvailable) {
-      var eventTypes = eventTypeProvider.GetEventTypes();
-      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
-    } else {
-      // Fallback to runtime check if provider not available
-      isEvent = payload is IEvent;
-    }
+    // The event catalog decides by name (reliable for a JsonElement payload); the payload's marker is the
+    // fallback for a host with no catalog. Shared with dead-letter recovery (#1664).
+    var isEvent = ReceivedInboxMessageBuilder.ClassifiesAsEvent(scopeServiceProvider, messageTypeName, payload);
 
     var streamId = _extractStreamId(envelope);
     var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
@@ -719,6 +695,9 @@ public partial class ServiceBusConsumerWorker(
     await _streamSerializer.FlushAndStopAsync(cancellationToken).ConfigureAwait(false);
 
     await base.StopAsync(cancellationToken);
+
+    // The detached lifecycle stages still running finish before the host disposes the container (#1721)
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   // ========================================
@@ -889,7 +868,7 @@ public partial class ServiceBusConsumerWorker(
   [LoggerMessage(
     EventId = 26,
     Level = LogLevel.Debug,
-    Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
+    Message = "ServiceBus message {MessageId} of unsubscribed type {EnvelopeType} stored settled without processing: no consumer registered on this service"
   )]
   static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
 }

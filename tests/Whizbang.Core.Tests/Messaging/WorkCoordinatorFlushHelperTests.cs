@@ -14,6 +14,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -51,6 +52,37 @@ public class WorkCoordinatorFlushHelperTests {
     await Assert.That(coordinator.StoreOutboxCallCount).IsEqualTo(1);
     await Assert.That(coordinator.LastStoredOutbox.Length).IsEqualTo(2);
     await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// A flush its caller awaits asks the store to raise a WHIZ133 refusal rather than dead-letter it (#1546), so
+  /// every outbox message it stores carries the request. The audit records riding along are not events and are
+  /// never refused, so they are stored as they were queued.
+  /// </summary>
+  [Test]
+  public async Task RaiseOnMixedStream_EveryOutboxMessageAsksTheStoreToRaiseItsRefusalAsync() {
+    var coordinator = new CapturingWorkCoordinator();
+    var audit = _outbox();
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: coordinator, outboxMessages: [_outbox(), _outbox()], pendingAudit: [audit], raiseOnMixedStream: true), default);
+
+    bool[] raised = [true, true, false];
+    await Assert.That(coordinator.LastStoredOutbox.Select(m => m.RaiseOnMixedStream)).IsEquivalentTo(raised);
+    await Assert.That(coordinator.LastStoredOutbox[2]).IsSameReferenceAs(audit);
+  }
+
+  /// <summary>A background flush leaves the request off, so the store dead-letters a refusal and keeps the rest.</summary>
+  [Test]
+  public async Task WithoutRaiseOnMixedStream_StoresTheQueuedMessagesAsTheyAreAsync() {
+    var coordinator = new CapturingWorkCoordinator();
+    var queued = _outbox();
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: coordinator, outboxMessages: [queued]), default);
+
+    await Assert.That(coordinator.LastStoredOutbox[0]).IsSameReferenceAs(queued);
+    await Assert.That(coordinator.LastStoredOutbox[0].RaiseOnMixedStream).IsFalse();
   }
 
   [Test]
@@ -345,6 +377,35 @@ public class WorkCoordinatorFlushHelperTests {
 
   // ===== Helpers =====
 
+  [Test]
+  public async Task AFlush_RecordsItsDurationTaggedWithTheStrategyAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: new CapturingWorkCoordinator(), outboxMessages: [_outbox()], metrics: metrics, strategy: "scoped"), default);
+
+    var durations = helper.GetByName("whizbang.work_coordinator.flush.duration");
+    await Assert.That(durations).Count().IsEqualTo(1)
+      .Because("#1535: flush.duration was declared and documented and nothing recorded it");
+    await Assert.That(durations[0].Tags["strategy"]).IsEqualTo("scoped");
+  }
+
+  [Test]
+  public async Task AnEmptyFlush_RecordsNoDurationAsync() {
+    using var factory = new TestMeterFactory();
+    var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _ctx(coordinator: new CapturingWorkCoordinator(), metrics: metrics, strategy: "scoped"), default);
+
+    await Assert.That(helper.Measurements.Where(m => m.Value > 0 || m.InstrumentName.Contains(".duration", StringComparison.Ordinal)))
+      .IsEmpty()
+      .Because("an empty flush sends nothing; the strategies count it as flush.empty_calls instead");
+  }
+
   private static FlushContext _ctx(
     IWorkCoordinator? coordinator = null,
     IServiceScopeFactory? scopeFactory = null,
@@ -357,7 +418,10 @@ public class WorkCoordinatorFlushHelperTests {
     MessageFailure[]? inboxFailures = null,
     IWorkChannelWriter? workChannelWriter = null,
     OutboxMessage[]? pendingAudit = null,
-    bool skipLifecycle = true
+    bool skipLifecycle = true,
+    WorkCoordinatorMetrics? metrics = null,
+    string strategy = "",
+    bool raiseOnMixedStream = false
   ) => new(
     coordinator,
     scopeFactory,
@@ -375,7 +439,10 @@ public class WorkCoordinatorFlushHelperTests {
     LifecycleMetrics: null,
     WorkChannelWriter: workChannelWriter,
     PendingAuditMessages: pendingAudit,
-    SkipLifecycle: skipLifecycle);
+    SkipLifecycle: skipLifecycle,
+    Metrics: metrics,
+    Strategy: strategy,
+    RaiseOnMixedStream: raiseOnMixedStream);
 
   private static OutboxMessage _outbox() {
     var id = Guid.CreateVersion7();
@@ -432,7 +499,7 @@ public class WorkCoordinatorFlushHelperTests {
     public MessageDispatchContext DispatchContext { get; } = new() { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");
     object IMessageEnvelope.Payload => Payload;
     public void AddHop(MessageHop hop) => Hops.Add(hop);
     public DateTimeOffset GetMessageTimestamp() => Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;

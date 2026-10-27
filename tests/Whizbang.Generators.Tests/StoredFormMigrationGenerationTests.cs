@@ -227,11 +227,14 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(inCollection).Count().IsEqualTo(1);
     await Assert.That(inCollection[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
     await Assert.That(inCollection[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("Lines");
+    await Assert.That(DiagnosticSourceText.Of(inCollection[0])).IsEqualTo("Sku")
+      .Because("it is reported at the declaration, so it can be suppressed there (#1429)");
     await Assert.That(code).DoesNotContain("Sku");
 
     var orphan = diagnostics.Where(d => d.Id == "WHIZ831").ToList();
     await Assert.That(orphan).Count().IsEqualTo(1);
     await Assert.That(orphan[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("TestApp.Orphan");
+    await Assert.That(DiagnosticSourceText.Of(orphan[0])).IsEqualTo("Orphan");
     await Assert.That(diagnostics.Where(d => d.Id == "WHIZ830")).IsEmpty();
   }
 
@@ -783,6 +786,8 @@ public class StoredFormMigrationGenerationTests {
     await Assert.That(shared[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
     var message = shared[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
     await Assert.That(message).Contains("TestApp.C_Tied, TestApp.D_Tied");
+    await Assert.That(DiagnosticSourceText.Of(shared[0])).IsEqualTo("C_Tied")
+      .Because("it is reported at the first of the classes it names (#1429)");
     await Assert.That(message).Contains("TestApp.OModel");
     await Assert.That(message).Contains("20");
   }

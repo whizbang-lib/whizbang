@@ -115,7 +115,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [
       new MessageHop {
         Type = HopType.Current,
@@ -240,9 +240,9 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
 
       await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
         .Because("Even with drops mixed in, the surviving messages still bulk-insert as one call.");
-      await Assert.That(coordinator.StoreInboxBatchSizes).IsEquivalentTo([7])
-        .Because("3 of 10 messages are dropped; the bulk insert carries the remaining 7.");
-      await Assert.That(coordinator.StoredInboxCount).IsEqualTo(7);
+      await Assert.That(coordinator.StoreInboxBatchSizes).IsEquivalentTo([10])
+        .Because("3 of 10 messages are skipped, and stored settled in the same bulk insert (#1720).");
+      await Assert.That(coordinator.StoredMessages.Count(m => m.DiscardedOnReceive is null)).IsEqualTo(7);
     }
   }
 
@@ -268,9 +268,9 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
 
       await cts.CancelAsync();
 
-      await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(0)
-        .Because("All-dropped batch must skip the bulk-insert call entirely.");
-      await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0);
+      await Assert.That(coordinator.StoreInboxCallCount).IsEqualTo(1)
+        .Because("an all-skipped batch is still stored, settled, in one bulk insert (#1720).");
+      await Assert.That(coordinator.StoredMessages.All(m => m.DiscardedOnReceive is not null)).IsTrue();
     }
   }
 

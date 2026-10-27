@@ -58,12 +58,12 @@ public class AsbReceiveDecisionMakerCoverageTests {
 
   // A binder-bound type that is LOADABLE but whose JsonTypeInfo comes back tied to the wrong
   // JsonSerializerOptions is the same "not servable" shape as a metadata miss. If this
-  // InvalidOperationException ever escaped Decide instead of degrading to ack+drop, the transport
+  // InvalidOperationException ever escaped Decide instead of degrading to dead-letter, the transport
   // would abandon the delivery and the broker would redeliver the same undeserializable message
   // forever -- the exact abandon-loop the sibling NotSupportedException test already pins for the
   // metadata-miss case.
   [Test]
-  public async Task Decide_BinderBindsButResolverReturnsForeignOptionsTypeInfo_ReturnsAckAndDropAsync() {
+  public async Task Decide_BinderBindsButResolverReturnsForeignOptionsTypeInfo_ReturnsDeadLetterAsync() {
     var foreignOptions = new JsonSerializerOptions { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
     var foreignTypeInfo = foreignOptions.GetTypeInfo(typeof(string));
     var badOptions = new JsonSerializerOptions {
@@ -77,12 +77,11 @@ public class AsbReceiveDecisionMakerCoverageTests {
 
     var decision = decider.Decide(
       props, """{"p":1}""", _resolveAlwaysNull, badOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: null,
       typeBinder: binder);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop)
-      .Because("an unservable bound type must degrade to ack+drop, never escape Decide as an unhandled exception");
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter)
+      .Because("an unservable bound type must degrade to dead-letter, never escape Decide as an unhandled exception");
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
@@ -90,31 +89,30 @@ public class AsbReceiveDecisionMakerCoverageTests {
   // type name isn't generic-shaped at all, there is no inner name to extract and therefore nothing
   // that could ever match a registered receptor. If this early return regressed into calling the
   // registry with a nonsensical key (or worse, throwing), a message with a malformed EnvelopeType
-  // property would crash the receive path instead of degrading to the same ack+drop every other
+  // property would crash the receive path instead of degrading to the same dead-letter every other
   // unbindable message gets.
   [Test]
-  public async Task Decide_TypeInfoMisses_EnvelopeTypeNameNotGeneric_FallsThroughToAckAndDropAsync() {
+  public async Task Decide_TypeInfoMisses_EnvelopeTypeNameNotGeneric_FallsThroughToDeadLetterAsync() {
     var rawRegistry = new RawReceptorRegistry([]);
     var decider = new AsbReceiveDecisionMaker();
     var props = _withEnvelopeType("PlainNonGenericEnvelopeTypeName");
 
     var decision = decider.Decide(
       props, """{"p":{}}""", _resolveAlwaysNull, _jsonOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: rawRegistry);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop)
-      .Because("with no inner type name to extract, there is nothing a raw receptor could ever match -- the probe must still degrade to ack+drop rather than stall or throw");
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter)
+      .Because("with no inner type name to extract, there is nothing a raw receptor could ever match -- the probe must still degrade to dead-letter rather than stall or throw");
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 
   // The registry has a receptor matching the envelope's inner type, but the envelope body never
   // carried a "p" (payload) property -- valid JSON, wrong shape. If this null-payload guard
-  // regressed, InvokeRawReceptor would be handed a raw receptor with no payload to give it,
+  // regressed, a raw receptor would be handed no payload to give it,
   // crashing (or silently no-op'ing) the receptor's handler instead of the message safely
-  // degrading to ack+drop.
+  // degrading to dead-letter.
   [Test]
-  public async Task Decide_TypeInfoMisses_RawReceptorRegistered_BodyMissingPayloadProperty_FallsThroughToAckAndDropAsync() {
+  public async Task Decide_TypeInfoMisses_RawReceptorRegistered_BodyMissingPayloadProperty_FallsThroughToDeadLetterAsync() {
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
     var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
     var rawRegistry = new RawReceptorRegistry([receptor]);
@@ -123,11 +121,10 @@ public class AsbReceiveDecisionMakerCoverageTests {
 
     var decision = decider.Decide(
       props, """{"id":"01234567-89ab-7def-0123-456789abcdef"}""", _resolveAlwaysNull, _jsonOptions,
-      isHandledLocally: null,
       rawReceptorRegistry: rawRegistry);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop)
-      .Because("a matched receptor with no payload to hand it must still degrade to ack+drop, not fabricate an InvokeRawReceptor decision with a null payload");
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter)
+      .Because("a body that is not a readable envelope cannot be stored, so it is dead-lettered whether or not a raw receptor matches (#1720)");
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
   }
 }

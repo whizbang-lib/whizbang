@@ -60,13 +60,14 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
       new TransportMessage(_createJsonEnvelope(MessageId.New()), _envelopeTypeFor(typeof(FilterCoverageKnownEvent)))
     ]);
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
+    await Assert.That(coordinator.StoredMessages.Count(m => m.DiscardedOnReceive is null)).IsEqualTo(1)
       .Because("the consumed type has to reach the inbox even though the message before it in the "
         + "same batch was skipped — the gate drops one message, not the batch");
-    var dedup = metricHelper.GetByName("whizbang.transport.inbox.messages_deduplicated");
-    await Assert.That(dedup).Count().IsEqualTo(1)
-      .Because("exactly the unconsumed message is counted as deduplicated");
-    await Assert.That(dedup[0].Value).IsEqualTo(1d);
+    await Assert.That(coordinator.StoredMessages.Count(m => m.DiscardedOnReceive == InboxReceiveDiscard.NO_LOCAL_CONSUMER)).IsEqualTo(1)
+      .Because("the unconsumed message is stored settled, so its skip is durable (#1720)");
+    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_discarded");
+    await Assert.That(discarded.Where(m => m.Tags.GetValueOrDefault("reason") == InboxReceiveDiscard.NO_LOCAL_CONSUMER).Sum(m => m.Value)).IsEqualTo(1d)
+      .Because("exactly the unconsumed message is counted, under its reason, not as a duplicate");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

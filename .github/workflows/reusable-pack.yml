@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Pack (Reusable)
 
 # Packs an ALREADY-BUILT tree into NuGet packages at a given version, without rebuilding, so the
@@ -75,6 +78,11 @@ jobs:
           # real check that every package was produced.
           dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
 
+      - name: Generate the software bill of materials
+        uses: ./.github/actions/package-sbom
+        with:
+          version: ${{ inputs.version }}
+
       - name: Verify the package set
         uses: ./.github/actions/verify-packages
         with:
@@ -85,5 +93,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}
-          path: ./packages/*.nupkg
+          path: |
+            ./packages/*.nupkg
+            ./packages/*.cdx.json
           retention-days: ${{ inputs.retention-days }}

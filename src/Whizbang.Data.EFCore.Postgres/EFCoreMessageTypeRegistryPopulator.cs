@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// directly against each DbContext's connection. This DI-registered populator exists for
 /// explicit invocation (admin commands, tooling) — it is not auto-run.
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Populator runs once at startup; structured logging cost is negligible.")]
 [SuppressMessage("Performance", "CA1873:Avoid potentially expensive argument evaluation when logging", Justification = "Populator runs once at startup; argument evaluation cost is negligible.")]
 public sealed class EFCoreMessageTypeRegistryPopulator : IMessageTypeRegistryPopulator {

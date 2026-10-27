@@ -26,6 +26,7 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="eventMessage">The domain event outbox message.</param>
   /// <param name="options">System event options controlling audit behavior.</param>
   /// <param name="logger">Optional logger; a resolution failure is logged rather than silently defaulting.</param>
+  /// <param name="auditDecisionHook">The registered decision hook; null behaves as no opinion.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
   public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
@@ -58,16 +59,8 @@ public static partial class AuditOutboxMessageBuilder {
       }
     }
 
-    // Extract correlation ID from envelope hops
-    string? correlationId = null;
-    if (eventMessage.Metadata.Hops is { Count: > 0 }) {
-      var firstHop = eventMessage.Metadata.Hops[0];
-      if (firstHop.Metadata != null &&
-          firstHop.Metadata.TryGetValue("CorrelationId", out var corrElem) &&
-          corrElem.ValueKind == JsonValueKind.String) {
-        correlationId = corrElem.GetString();
-      }
-    }
+    var correlationId = _correlationIdOf(eventMessage);
+    var attribute = eventType is null ? null : AuditEligibility.AttributeOf(eventType);
 
     // Build the EventAudited payload
     var auditEvent = new EventAudited {
@@ -75,14 +68,20 @@ public static partial class AuditOutboxMessageBuilder {
       OriginalEventId = eventMessage.MessageId,
       OriginalEventType = eventTypeName,
       OriginalStreamId = eventMessage.StreamId?.ToString() ?? string.Empty,
-      OriginalStreamPosition = 0, // Position not available from outbox message
-      OriginalBody = eventMessage.Envelope.Payload,
+      // The event has no version yet: the emit chain assigns it when the event is stored. 0 here, and
+      // store_outbox_messages fills the stored version in (migration 216).
+      OriginalStreamPosition = 0,
+      // The body only when kept (#1588); otherwise the record points at the event.
+      OriginalBody = AuditEligibility.IncludesBody(eventType, options.AuditBodyDefault) ? eventMessage.Envelope.Payload : null,
       Timestamp = DateTimeOffset.UtcNow,
       ActivityName = auditDecision.Name,
       ActivityDescription = auditDecision.Description,
       TenantId = eventMessage.Scope?.TenantId,
       UserId = eventMessage.Scope?.UserId,
       CorrelationId = correlationId,
+      CausationId = eventMessage.Envelope.GetCausationId()?.ToString(),
+      AuditReason = attribute?.Reason,
+      AuditLevel = attribute?.Level ?? Whizbang.Core.Audit.AuditLevel.Info,
       Scope = scope
     };
 
@@ -137,7 +136,9 @@ public static partial class AuditOutboxMessageBuilder {
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
       Priority = options.AuditPriority,
-      StreamId = auditEvent.Id,
+      // The tenant's audit ledger: one deterministic stream per tenant, so a tenant's records are one
+      // orderable ledger and a fold of them inherits it (see AuditLedger).
+      StreamId = AuditLedger.StreamFor(eventMessage.Scope?.TenantId),
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
       Scope = eventMessage.Scope,
       MessageType = TypeNameFormatter.AssemblyQualifiedName(auditEventType)
@@ -174,4 +175,19 @@ public static partial class AuditOutboxMessageBuilder {
   private static string _extractFullTypeName(string messageType) =>
     TypeNameFormatter.GetFullName(messageType);
 
+  /// <summary>
+  /// The correlation id from the envelope hops: the first hop's metadata dictionary (older producers) or the hop's
+  /// own correlation (the envelope's accessor), whichever is present.
+  /// </summary>
+  private static string? _correlationIdOf(OutboxMessage eventMessage) {
+    if (eventMessage.Metadata.Hops is { Count: > 0 }) {
+      var firstHop = eventMessage.Metadata.Hops[0];
+      if (firstHop.Metadata != null &&
+          firstHop.Metadata.TryGetValue("CorrelationId", out var corrElem) &&
+          corrElem.ValueKind == JsonValueKind.String) {
+        return corrElem.GetString();
+      }
+    }
+    return eventMessage.Envelope.GetCorrelationId()?.ToString();
+  }
 }

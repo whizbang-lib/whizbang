@@ -245,6 +245,33 @@ public interface IWorkCoordinator {
     => Task.CompletedTask;
 
   /// <summary>
+  /// Publishes the host's database-side settings (debug retention and every configured retention window) to the
+  /// store in one write, where the maintenance sweep reads them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Called once per maintenance cycle, before the sweep, with what
+  /// <see cref="Whizbang.Core.Workers.RetentionSettingsBridge.SettingsFor"/> returns: <c>debug_mode</c> always, and
+  /// each retention option that is set. An option left unset is absent, so the stored value stands.
+  /// </para>
+  /// <para>
+  /// The default hands the <c>debug_mode</c> entry to <see cref="SyncDebugRetentionSettingAsync"/> and ignores the
+  /// rest, so an engine that implements only that method keeps its debug retention. Engines with a settings table
+  /// override this to write every entry.
+  /// </para>
+  /// </remarks>
+  /// <param name="settings">The settings to write, each key at most once.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the settings are stored.</returns>
+  /// <docs>operations/configuration/configuration-reference#database-side-settings</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:AnEngineThatOnlySyncsDebugMode_StillReceivesItAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerRetentionSyncTests.cs:TheDefaultSync_WithNoDebugEntry_DoesNothingAsync</tests>
+  Task SyncRetentionSettingsAsync(IReadOnlyList<Whizbang.Core.Workers.RetentionSetting> settings, CancellationToken cancellationToken = default)
+    => Whizbang.Core.Workers.RetentionSettingsBridge.DebugModeIn(settings) is bool debugMode
+      ? SyncDebugRetentionSettingAsync(debugMode, cancellationToken)
+      : Task.CompletedTask;
+
+  /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
@@ -552,11 +579,11 @@ public interface IWorkCoordinator {
   Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Stores inbox messages directly without running the full process_work_batch pipeline.
-  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication,
-  /// bypassing completions, failures, claiming, and return query phases.
-  /// Event storage and perspective creation happen on the next tick when the
-  /// WorkCoordinatorPublisherWorker claims the messages (self-healing via Phase 5 → 4.5B).
+  /// Stores inbox messages directly via the <c>store_inbox_messages</c> SQL function.
+  /// This lightweight method ONLY inserts messages into wh_inbox with deduplication;
+  /// it records no completions or failures and claims nothing.
+  /// Event storage and perspective work for inbox events happen when <c>ClaimWorker</c>'s
+  /// <c>claim_work</c> call claims the messages (its <c>_emit_event_store_chain_for_inbox</c> step).
   /// </summary>
   /// <param name="messages">Inbox messages to store</param>
   /// <param name="partitionCount">Number of partitions for load balancing. Must match the PartitionCount used by the publisher worker
@@ -596,8 +623,8 @@ public interface IWorkCoordinator {
   }
 
   /// <summary>
-  /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
-  /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
+  /// Stores new outbox messages directly via the <c>store_outbox_messages</c> SQL function,
+  /// which also copies event rows into the event store (<c>_emit_event_store_chain</c>). Used by Dispatcher's
   /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages
   /// during flush. Default impl throws so non-Postgres backends opt in when ready.
   /// </summary>
@@ -638,7 +665,7 @@ public interface IWorkCoordinator {
   /// <c>compute_partition(stream_id, partition_count)</c>. Idempotent.
   /// </summary>
   /// <remarks>
-  /// Called by <c>WorkCoordinatorPublisherWorker</c> on startup so a service that comes
+  /// Called by the database initializer on startup so a service that comes
   /// up under a new (or first-time-correct) <c>PartitionCount</c> immediately self-heals
   /// rows wedged by a partition-mismatch (observed in production). Returns
   /// the number of rows recomputed per table, which the worker logs at WARN if any are
@@ -926,7 +953,8 @@ public interface IWorkCoordinator {
   /// the watermark advance is an optimistic compare-and-swap, so exactly one instance wins each
   /// window (the others get null and skip the cycle). The FIRST call baselines (returns an empty
   /// window at the current watermark) so history is never counted retroactively. At-most-once
-  /// schedule occurrences and checkpoints themselves are excluded from the counts. Default: null
+  /// schedule occurrences, checkpoints themselves and the <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/>
+  /// audit records are excluded from the counts. Default: null
   /// (engines without commit-sequence stamping cannot checkpoint).
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -940,8 +968,9 @@ public interface IWorkCoordinator {
   /// Stream-integrity Phase B, consumer side: counts the events THIS service has persisted from
   /// the given origin inside an origin commit-sequence window, per (tenant, type) — the local half
   /// of a checkpoint comparison. Keys on the origin identity every received event already persists
-  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). Default: empty (engines without
-  /// origin stamping cannot verify).
+  /// (<c>origin_service_id</c> + <c>origin_commit_sequence</c>). The
+  /// <see cref="Whizbang.Core.SystemEvents.DigestExemptTypes"/> audit records are excluded, matching the origin's
+  /// half. Default: empty (engines without origin stamping cannot verify).
   /// </summary>
   /// <param name="originServiceId">The origin whose window is being verified.</param>
   /// <param name="fromCommitSequence">Exclusive window floor.</param>
@@ -1173,7 +1202,7 @@ public interface IWorkCoordinator {
   /// <param name="clrTypeNames">The guarded perspective models' CLR type names.</param>
   /// <param name="perTableLimit">Bound per perspective table per cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#guards</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsAboutToReapAsync(
     IReadOnlyCollection<string> clrTypeNames,
@@ -1189,7 +1218,7 @@ public interface IWorkCoordinator {
   /// <param name="rows">The rows to hold.</param>
   /// <param name="holdUntil">When the hold lapses and the row is re-offered.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task HoldPerspectiveRowDestructionAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1201,7 +1230,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="rows">The rows to release.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#decisions</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task ReleasePerspectiveRowHoldsAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1219,7 +1248,7 @@ public interface IWorkCoordinator {
   /// <param name="maxRetries">Retry cap before the failure policy applies.</param>
   /// <param name="onDestroyFailure">The policy applied past the cap.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#failures</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<int> RecordPerspectiveRowDestructionFailureAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1234,7 +1263,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="batchSize">Rows deleted per perspective per cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<PerspectiveRowReapResult> ReapEnrolledPerspectiveRowsAsync(
     int batchSize = 5000,
@@ -1246,7 +1275,7 @@ public interface IWorkCoordinator {
   /// (window function), intended for a slower, fleet-claimed cadence. Default: unsupported no-op.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<PerspectiveRowReapResult> ReapPerspectiveRowCapsAsync(
     int batchSize = 5000,
@@ -1259,7 +1288,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="claimWindow">Minimum interval between cap sweeps service-wide.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<bool> TryClaimRowCapSweepAsync(
     TimeSpan claimWindow,
@@ -1272,7 +1301,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeName">The perspective model's CLR type name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#adoption-is-automatic</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task AcknowledgeRetentionEnforcementAsync(
     string clrTypeName,
@@ -1284,7 +1313,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeName">The perspective model's CLR type name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#adoption-is-automatic</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
   Task<long> CountPerspectiveRetentionBacklogAsync(
     string clrTypeName,
@@ -1314,7 +1343,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="limit">Maximum journal entries claimed this cycle.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowRef>> DrainRowEvictionJournalAsync(
     int limit = 1000,
@@ -1327,7 +1356,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="rows">The origin (table, row) pairs to re-journal.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#cascades</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task RequeueRowEvictionsAsync(
     IReadOnlyCollection<Whizbang.Core.Lifecycle.PerspectiveRowRef> rows,
@@ -1339,7 +1368,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="clrTypeNames">The perspective models to resolve.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
     IReadOnlyCollection<string> clrTypeNames,
@@ -1354,7 +1383,7 @@ public interface IWorkCoordinator {
   /// <param name="tableName">The perspective's physical table.</param>
   /// <param name="rowIds">The rows to load.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/pre-destruction-holds#cascades</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
     string clrTypeName,
@@ -1370,7 +1399,7 @@ public interface IWorkCoordinator {
   /// <param name="tableName">The member perspective's physical table.</param>
   /// <param name="rowIds">The rows the closure marked for eviction.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> CascadeDeletePerspectiveRowsAsync(
     string tableName,
@@ -1384,9 +1413,9 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="streamIds">The streams about to lose their pointers.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamCloserFoldOrderTests.cs:Close_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/StreamPrefixTruncatorFoldOrderTests.cs:Truncate_FoldsTheApplyPath_BeforeTheTruncateAsync</tests>
   Task<int> FoldStreamApplyPathsAsync(
     IReadOnlyCollection<Guid> streamIds,
     CancellationToken cancellationToken = default) => Task.FromResult(0);
@@ -1399,7 +1428,7 @@ public interface IWorkCoordinator {
   /// <param name="idleWindow">How long a stream must be idle to count as settled.</param>
   /// <param name="limit">Streams folded per invocation.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   Task<int> FoldSettledApplyPathsAsync(
     TimeSpan idleWindow,
@@ -1412,7 +1441,7 @@ public interface IWorkCoordinator {
   /// </summary>
   /// <param name="claimWindow">Minimum interval between settled folds service-wide.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam#serving-the-view</docs>
+  /// <docs>operations/observability/apply-stacks#folding</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ApplyPathFoldSqlTests.cs</tests>
   Task<bool> TryClaimSettledFoldSweepAsync(
     TimeSpan claimWindow,
@@ -1427,7 +1456,7 @@ public interface IWorkCoordinator {
   /// <param name="followerTable">The rebuilt follower perspective's physical table.</param>
   /// <param name="announcerTables">Its groups' announcer tables.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> ReconcileFollowerPresenceAsync(
     string followerTable,
@@ -1443,7 +1472,7 @@ public interface IWorkCoordinator {
   /// <param name="announcerTables">Its groups' announcer tables.</param>
   /// <param name="streamIds">The streams rebuilt, or null for the whole table.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>proposals/pre-destruction-seam</docs>
+  /// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
   Task<int> ReconcileFollowerPresenceAsync(
     string followerTable,
@@ -1540,6 +1569,7 @@ public interface IWorkCoordinator {
   /// Rewrites a table to reclaim unusable space, returning the ratio afterwards so the caller can
   /// confirm it worked. Takes an ACCESS EXCLUSIVE lock for the duration.
   /// </summary>
+  /// <remarks>The <see cref="Whizbang.Core.Workers.VacuumFullTableRewriter"/> strategy's rewrite.</remarks>
   Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
@@ -1585,6 +1615,24 @@ public interface IWorkCoordinator {
   Task<bool> RecordInstanceStateAsync(
       Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
       CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
+  /// Records the startup stage this instance is in on its own row (<c>startup_stage</c>,
+  /// <c>startup_stage_message</c>, and <c>startup_stage_entered_at</c> when the stage changed), with the lifecycle
+  /// phase the stage maps to (#1636). Returns false when the instance has no row yet, which is expected before it
+  /// registers. Like <see cref="RecordInstanceStateAsync"/>, it is not a heartbeat and does not refresh liveness.
+  /// Default: nothing is recorded.
+  /// </summary>
+  /// <param name="instanceId">This instance.</param>
+  /// <param name="stage">The stage.</param>
+  /// <param name="message">What the stage is doing.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Whether the instance's row now records the stage.</returns>
+  /// <docs>operations/startup/startup-status#startup-stages</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StartupStageSqlTests.cs</tests>
+  Task<bool> RecordStartupStageAsync(
+      Guid instanceId, Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) =>
     Task.FromResult(false);
 
   /// <summary>
@@ -1898,13 +1946,14 @@ public interface IWorkCoordinator {
     Task.FromResult(true);
 
   /// <summary>
-  /// A1 (Archival &amp; Compaction) — "close the books" on a durable Sourced stream: truncate the detail at or
-  /// below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
-  /// every event at/below the close point) AND a CARRY-FORWARD event survives above it (the domain's closing
-  /// event / new origin). Discard-only in increment 1 (cold-storage archive is a later increment). The domain
-  /// appends its closing event BEFORE calling this. Default: unsupported no-op (engines without the primitive).
+  /// A1 (Archival &amp; Compaction): the gated prefix truncate of a durable Sourced stream: remove the detail at
+  /// or below <paramref name="throughVersion"/> once the CONSUMPTION GATE holds (every perspective has processed
+  /// every event at/below the truncate point) AND a CARRY-FORWARD event survives above it (the domain's closing
+  /// event / new origin). The domain appends its carry-forward event BEFORE calling this. Named for what it does
+  /// since #1731 (it was <c>CloseStreamAsync</c>), which leaves "close" to closing the books. Default:
+  /// unsupported no-op (engines without the primitive).
   /// </summary>
-  /// <param name="streamId">The stream to close.</param>
+  /// <param name="streamId">The stream whose prefix to truncate.</param>
   /// <param name="throughVersion">The inclusive per-stream version below which detail is truncated.</param>
   /// <param name="archive">
   /// When <see langword="true"/>, the detail is copied to the cold-storage archive (<c>wh_event_archive</c>,
@@ -1913,17 +1962,38 @@ public interface IWorkCoordinator {
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>
-  /// A status (<c>closed</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>debug_skipped</c> |
-  /// <c>unsupported</c>) plus the number of events truncated.
+  /// A status (<c>truncated</c> | <c>blocked</c> | <c>no_carry_forward</c> | <c>held</c> | <c>cursor_behind</c> |
+  /// <c>debug_skipped</c> | <c>unsupported</c>) plus the number of events truncated. On <c>truncated</c>, every
+  /// perspective cursor inside the truncated range has moved onto the first surviving event, and every snapshot
+  /// a rewind could no longer replay from has been removed.
   /// </returns>
-  /// <docs>fundamentals/events/ephemeral-events</docs>
-  Task<StreamCloseResult> CloseStreamAsync(
+  /// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:CloseStream_ConsumptionGate_BlocksThenTruncatesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDefaultsTests.cs:TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync</tests>
+  Task<StreamTruncateResult> TruncateStreamPrefixAsync(
     Guid streamId, long throughVersion, bool archive = false, CancellationToken cancellationToken = default) =>
-    Task.FromResult(new StreamCloseResult("unsupported", 0));
+    Task.FromResult(new StreamTruncateResult("unsupported", 0));
 
   /// <summary>
-  /// A1 — read the archived detail of a closed stream from cold storage (<c>wh_event_archive</c>), ordered by
-  /// version. This is the retrieval side of an archiving close (<see cref="CloseStreamAsync"/> with
+  /// The events a prefix truncate of <paramref name="streamId"/> through <paramref name="throughVersion"/> would
+  /// remove: every stored event of the stream at or below that version, in version order. The prefix truncator
+  /// reads them before the truncate so the destruction-stage receptors (#1504) can be handed the events the
+  /// truncate removes, the way the ephemeral reap hands them the bodies it deletes. Default: empty (engines
+  /// without the truncate primitive).
+  /// </summary>
+  /// <param name="streamId">The stream about to be truncated.</param>
+  /// <param name="throughVersion">The inclusive per-stream version the truncate removes through.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The (event, stream, type) of each event at or below the truncate point.</returns>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#destruction</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamCloseSqlTests.cs:GetStreamTruncateTargets_ListsTheStreamsEventsThroughTheCloseVersionAsync</tests>
+  Task<IReadOnlyList<EphemeralDestructionTarget>> GetStreamTruncateTargetsAsync(
+    Guid streamId, long throughVersion, CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>([]);
+
+  /// <summary>
+  /// A1: read the archived detail of a truncated stream prefix from cold storage (<c>wh_event_archive</c>), ordered
+  /// by version. This is the retrieval side of an archiving truncate (<see cref="TruncateStreamPrefixAsync"/> with
   /// <c>archive: true</c>): the period's raw events, preserved out of the hot store for audit / full replay.
   /// Default: empty (engines without the archive store).
   /// </summary>
@@ -1938,10 +2008,10 @@ public interface IWorkCoordinator {
   /// <summary>
   /// A1 — the distinct perspective names that consume any event in <paramref name="streamId"/> at or below
   /// <paramref name="throughVersion"/> (via the message associations of those events' types). Used by
-  /// <see cref="Whizbang.Core.Lifecycle.IStreamCloser"/> to decide whether a discard-close would strand a
+  /// <see cref="Whizbang.Core.Lifecycle.IStreamPrefixTruncator"/> to decide whether a discarding truncate would strand a
   /// <see cref="Whizbang.Core.Attributes.FullHistoryAttribute"/> projection. Default: empty.
   /// </summary>
-  /// <param name="streamId">The stream being closed.</param>
+  /// <param name="streamId">The stream being truncated.</param>
   /// <param name="throughVersion">The inclusive per-stream version below which detail would be truncated.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The distinct consuming perspective names.</returns>
@@ -1952,8 +2022,8 @@ public interface IWorkCoordinator {
 
   /// <summary>
   /// E3 — the per-stream version of the event with id <paramref name="eventId"/>, or <c>null</c> if unknown.
-  /// A Tier-2 compaction closes an ephemeral stream through the version of the snapshot's anchor event, so this
-  /// maps that anchor event id to the close point. Default: <c>null</c>.
+  /// A Tier-2 compaction truncates an ephemeral stream through the version of the snapshot's anchor event, so this
+  /// maps that anchor event id to the truncate point. Default: <c>null</c>.
   /// </summary>
   /// <param name="eventId">The event id to look up.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -2291,8 +2361,57 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
 
   /// <summary>
+  /// The head of one stream's collective sink queue (#1524): the queue of
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>, in the same order, from its start while each row is one
+  /// <paramref name="throughWorkIds"/> names, then the first row it does not name, and nothing after that. A sink run
+  /// applies only the leading rows it holds, so it reads its own rows and one more instead of the whole queue, which
+  /// on a busy ordering key is the difference between linear and quadratic work.
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="throughWorkIds">The work rows the walk continues past: the run's held rows, and any row it already
+  /// applied whose completion has not been written yet.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The head, or null when the engine does not provide one; the sink then reads the whole queue with
+  /// <see cref="FetchCollectiveSinkQueueAsync"/>. An engine that provides the head also answers
+  /// <see cref="FetchCollectiveSinkQueueMembersAsync"/> without reading the whole queue.
+  /// </returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/PerspectiveWorkerCollectiveSinkQueueHeadTests.cs:CollectiveSink_QueueHead_NeverReadsTheWholeQueueAsync</tests>
+  Task<IReadOnlyList<CollectiveSinkQueueEntry>?> FetchCollectiveSinkQueueHeadAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> throughWorkIds,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult<IReadOnlyList<CollectiveSinkQueueEntry>?>(null);
+
+  /// <summary>
+  /// Which of the named rows are still in one stream's collective sink queue (#1524): each queued row whose work id
+  /// is in <paramref name="workIds"/> or whose event is in <paramref name="eventIds"/>, in no particular order. The
+  /// sink asks it for the rows it holds (a held row no longer queued was applied already) and for the predecessors
+  /// its collectives name (#1003).
+  /// </summary>
+  /// <param name="streamId">The sink stream.</param>
+  /// <param name="workIds">Work rows to look for.</param>
+  /// <param name="eventIds">Events whose work rows to look for.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The named rows still queued. By default this filters <see cref="FetchCollectiveSinkQueueAsync"/>, and
+  /// is empty when the engine has no queue.</returns>
+  /// <docs>fundamentals/messaging/collective-events</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CollectiveSinkQueueSqlTests.cs:FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorCollectiveSinkQueueDefaultsTests.cs:Members_ByDefault_FilterTheWholeQueueAsync</tests>
+  async Task<IReadOnlyList<CollectiveSinkQueueEntry>> FetchCollectiveSinkQueueMembersAsync(
+    Guid streamId,
+    IReadOnlyCollection<Guid> workIds,
+    IReadOnlyCollection<Guid> eventIds,
+    CancellationToken cancellationToken = default) {
+    var queue = await FetchCollectiveSinkQueueAsync(streamId, cancellationToken).ConfigureAwait(false);
+    return queue is null ? [] : [.. queue.Where(e => workIds.Contains(e.EventWorkId) || eventIds.Contains(e.EventId))];
+  }
+
+  /// <summary>
   /// Runs database maintenance tasks: purges completed messages, old deduplication entries,
-  /// and stuck inbox messages. Called on startup and periodically by WorkCoordinatorPublisherWorker.
+  /// and stuck inbox messages. Called periodically by MaintenanceWorker.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Results for each maintenance task with row counts and durations.</returns>
@@ -2598,7 +2717,7 @@ public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 /// <summary>Outcome of one perspective-row retention sweep invocation.</summary>
 /// <param name="RowsAffected">Rows destroyed by the sweep.</param>
 /// <param name="Status">The sweep's status string (<c>ok</c>, <c>skipped (debug_mode=true)</c>, <c>unsupported</c>, …).</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#how-rows-are-evicted</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
 public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
 
@@ -2615,7 +2734,7 @@ public sealed record PerspectiveRetentionAdoption(string ClrTypeName, long Backl
 /// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
 /// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
 /// <param name="TableName">The perspective's physical table.</param>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 public sealed record PerspectiveTableName(string ClrTypeName, string TableName);
 
@@ -2637,17 +2756,20 @@ public sealed record EphemeralSnapshotTarget(Guid StreamId, string PerspectiveNa
 public sealed record EphemeralPointerPruneResult(long RowsPruned, string Status);
 
 /// <summary>
-/// Result of an A1 "close the books" gated truncate (<see cref="IWorkCoordinator.CloseStreamAsync"/>): the
-/// <see cref="Status"/> (<c>closed</c> = detail truncated | <c>blocked</c> = a perspective has not consumed
-/// past the close point | <c>no_carry_forward</c> = no surviving event above the close point | <c>debug_skipped</c>
-/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>closed</c>).
+/// Result of an A1 gated prefix truncate (<see cref="IWorkCoordinator.TruncateStreamPrefixAsync"/>): the
+/// <see cref="Status"/> (<c>truncated</c> = detail removed | <c>blocked</c> = a perspective has not consumed
+/// past the truncate point | <c>no_carry_forward</c> = no surviving event above the truncate point | <c>held</c> = an
+/// active destruction hold covers an event in the range | <c>cursor_behind</c> = a perspective whose cursor is in
+/// the range has not yet consumed the first surviving event, so its cursor cannot move onto it | <c>debug_skipped</c>
+/// | <c>unsupported</c>) and how many events were truncated (0 unless <c>truncated</c>). Named
+/// <c>StreamCloseResult</c> until #1731.
 /// </summary>
-/// <docs>fundamentals/events/ephemeral-events</docs>
-public sealed record StreamCloseResult(string Status, long EventsTruncated);
+/// <docs>fundamentals/events/event-streams#truncating-a-stream-prefix</docs>
+public sealed record StreamTruncateResult(string Status, long EventsTruncated);
 
 /// <summary>
 /// An event read back from the A1 cold-storage archive (<c>wh_event_archive</c>) via
-/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/> — the preserved detail of a closed stream. Carries
+/// <see cref="IWorkCoordinator.GetArchivedEventsAsync"/>: the preserved detail of a truncated stream prefix. Carries
 /// identity + type + the raw body/metadata JSON (typed-envelope rehydration into a rebuild is a later phase).
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
@@ -2870,7 +2992,7 @@ public record WorkBatch {
 }
 
 /// <summary>
-/// Represents an outbox message to be stored in process_work_batch.
+/// Represents an outbox message to be stored by store_outbox_messages.
 /// Used for immediate processing pattern (store + immediately return for publishing).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
@@ -2950,6 +3072,8 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:OutboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:OutboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>
@@ -3009,6 +3133,16 @@ public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events#ordering-across-services</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherKeyedCollectiveStreamTests.cs:PublishAsync_KeyedCollective_MarksItsOutboxRowForALinkAsync</tests>
   public string? CollectiveLinkType { get; init; }
+
+  /// <summary>
+  /// Whether a refusal of this event by the mixed-stream guard (<c>WHIZ133</c>: one stream never holds both ephemeral
+  /// and Sourced events) fails the store with <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+  /// Set by the flushes whose caller awaits the store (the immediate and scoped strategies); false (the default) on
+  /// every background write, where only the refused row is dead-lettered and the rest of the write is stored.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz133</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MixedStreamGuardSqlTests.cs:Store_DirectCommitOfASourcedEventOnAnEphemeralStream_ThrowsMixedStreamEventExceptionAsync</tests>
+  public bool RaiseOnMixedStream { get; init; }
 }
 /// <summary>
 /// Per-group view over coalesce-pending outbox rows, returned by
@@ -3035,7 +3169,7 @@ public sealed record CoalesceGroupStats {
 
 
 /// <summary>
-/// Represents an inbox message to be stored in process_work_batch.
+/// Represents an inbox message to be stored by store_inbox_messages.
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
@@ -3092,6 +3226,8 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>fundamentals/messaging/collective-events</docs>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_DefaultsToNoneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsTransportTests.cs:InboxMessage_Flags_AcceptsCollectiveAndCompositeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventFlagsWireFormTests.cs:InboxMessage_OptionsWithAStringEnumConverter_WritesFlagsAsTheNumberAsync</tests>
+  [JsonConverter(typeof(EventFlagsNumberJsonConverter))]
   public EventFlags Flags { get; init; }
 
   /// <summary>
@@ -3128,6 +3264,26 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
   public long SourceCommitSequence { get; init; }
+
+  /// <summary>
+  /// The dead letter this message re-enters the inbox from, set only by dead-letter recovery. A message that
+  /// names its dead letter claims it as it is stored, is stored even though its id was already seen (the
+  /// observation is still counted), and settles the dead letter when it completes: Recovered once processed, held
+  /// for review when a gate completes it unprocessed (#1664). Null for every delivery.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ARecoveredMessage_IsStoredInTheSameWorkShapeAsADeliveryOfTheSameEnvelopeAsync</tests>
+  public Guid? RecoveredFromDeadLetterId { get; init; }
+
+  /// <summary>
+  /// Why the consumer decided not to process this message, set when it skipped it on receive (one of
+  /// <see cref="InboxReceiveDiscard"/>). The message is still stored, so the skip is durable and inspectable: the store
+  /// writes the row already settled (Stored and Published) with the reason in its error column, and never claims,
+  /// copies or dispatches it (#1720). Null for every message the consumer processes.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
+  public string? DiscardedOnReceive { get; init; }
 }
 
 /// <summary>

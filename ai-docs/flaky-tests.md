@@ -260,8 +260,8 @@ await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(10);  // FAIL
 ### Fix
 ```csharp
 // Add NotInParallel to isolate timing-sensitive tests
-[NotInParallel("WorkCoordinatorRaceCondition")]
-public class WorkCoordinatorPublisherWorkerRaceConditionTests {
+[NotInParallel("WorkerRaceCondition")]
+public class OutboxWorkerRaceConditionTests {
   // Tests now have dedicated CPU time for accurate timing
 }
 ```
@@ -382,4 +382,3 @@ fence) are written before the transaction opens. Examples: `NotifyDebounceSqlTes
 | `samples/ECommerce/tests/ECommerce.Integration.Tests/Infrastructure/ServiceBusIntegrationFixtureSanityTests.cs` | Added `InventoryRestockedEvent` waiter |
 | `tests/Whizbang.Core.Component.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs` | Increased delay from 300ms to 600ms |
 | `tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs` | `[NotInParallel]` for PostgreSQL connection pool |
-| `tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs` | `[NotInParallel]` for timing-sensitive race condition tests |

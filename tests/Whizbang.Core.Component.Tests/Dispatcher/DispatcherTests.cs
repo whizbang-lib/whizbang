@@ -575,7 +575,7 @@ public class DispatcherTests {
   // ========================================
   // NOTE: Outbox fallback tests removed - replaced by IWorkCoordinatorStrategy pattern
   // In the unified architecture, ALL outbox operations flow through:
-  // IWorkCoordinatorStrategy → IWorkCoordinator → process_work_batch
+  // IWorkCoordinatorStrategy → IWorkCoordinator → store_outbox_messages
   // The old Dispatcher(outbox: IOutbox) pattern no longer exists.
   // ========================================
 
@@ -863,7 +863,7 @@ public class DispatcherTests {
     // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
     // because the dispatcher already invokes receptors directly via generated delegates.
     // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
-    // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
+    // OutboxDrainWorker / OutboxPublishWorker (PreOutbox), NOT by Dispatcher.
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(

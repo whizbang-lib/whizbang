@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 043_FetchEventsByIds.sql
 -- Date: 2026-05-02
 -- Description: Scoped event-body fetch from wh_event_store by event_id list (Phase H step 7

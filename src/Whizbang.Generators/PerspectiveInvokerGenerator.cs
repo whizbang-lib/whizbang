@@ -21,26 +21,34 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
 
   /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
   /// Initializes the incremental generator by discovering perspective implementations and registering source generation.
   /// </summary>
   /// <tests>No tests found</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IPerspectiveFor implementations
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate perspective invoker with routing logic
     // Combine compilation with discovered perspectives to get assembly name for namespace
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndPerspectives = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var perspectives = data.Right;
-          _generatePerspectiveInvoker(ctx, compilation, perspectives!);
+          _generatePerspectiveInvoker(ctx, compilationAssemblyName, perspectives!);
         }
     );
   }
@@ -132,17 +140,17 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// <tests>No tests found</tests>
   private static void _generatePerspectiveInvoker(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
       // No perspectives found - generate empty invoker
-      _generateEmptyInvoker(context, compilation);
+      _generateEmptyInvoker(context, compilationAssemblyName);
       return;
     }
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Report each discovered perspective for routing
@@ -204,9 +212,9 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static void _generateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
+  private static void _generateEmptyInvoker(SourceProductionContext context, string? compilationAssemblyName) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     var template = TemplateUtilities.GetEmbeddedTemplate(

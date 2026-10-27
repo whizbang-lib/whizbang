@@ -70,11 +70,12 @@ Reconstructed from the 274 merged PRs and verified in `src/`. Each is a Done car
 > `whizbang-board` skill); this section is its narrative.
 
 ### In progress
-- **E1 ephemeral events**: `TransientStorage.InMemory` is documented but not yet enforced at runtime.
+- **E1 ephemeral events**: `TransientStorage.InMemory` was removed (#1538); a local, in-memory ephemeral event is open as #1549.
 - **E3 carry-forward tier 2**: `StreamCompactor` shipped; the reaper trigger (`Disposition.Compact`) and the
   compacted-record upgrade runner remain.
 
 ### Open
+- **Storage reclamation program (2026-10-19).** Bounded storage for the event store and work tables: event slimming (#1493), stream finalization, archive with read-through and Close the Books (#1494), bloat control (#1495), ledger retention and configurable retention settings (#1496), storage telemetry (#1497), Postgres extension capabilities (#1498); post-1.0 items in #1499; defects #1483 to #1492. Umbrella plan: `plans/storage-reclamation.md`.
 - **P0: Transport receive parity.** RabbitMQ drops on a registry miss; no `IMessageReceiveResolver` yet.
 - **P1: Canonical temporal rewrite on a store's first 1.0 boot.** One unbounded transaction across every
   table: a restart loses all progress, and a table past its 600-second timeout never converts. Needs

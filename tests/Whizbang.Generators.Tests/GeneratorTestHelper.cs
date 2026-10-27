@@ -210,6 +210,19 @@ public static class GeneratorTestHelper {
     return driver.GetRunResult();
   }
 
+  /// <summary>
+  /// Runs a source generator over a compilation the test built itself (for one that references an assembly the
+  /// standard helpers do not), with the given global options.
+  /// </summary>
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      CSharpCompilation compilation, Dictionary<string, string> globalOptions)
+      where TGenerator : IIncrementalGenerator, new() =>
+    CSharpGeneratorDriver.Create(
+        generators: [new TGenerator().AsSourceGenerator()],
+        optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions))
+      .RunGenerators(compilation)
+      .GetRunResult();
+
   /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>
   private sealed class TestAdditionalText(string path, string? content) : AdditionalText {
     public override string Path { get; } = path;
@@ -361,6 +374,41 @@ public static class GeneratorTestHelper {
     _throwIfAnyGeneratorFailed(ran.GetRunResult());
 
     return [.. outputCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error)];
+  }
+
+  /// <summary>
+  /// Runs one generator over a named compilation against the full reference set (framework, Whizbang.Core) and
+  /// any further references, and returns the run result with the compilation it produced.
+  /// </summary>
+  /// <remarks>
+  /// A test of a second assembly compiles the first with the generator, emits it, and passes the image here, so
+  /// the second sees the first's types as metadata, the way a consumer sees a package.
+  /// </remarks>
+  /// <param name="generator">The generator to run.</param>
+  /// <param name="source">The compilation's only source file.</param>
+  /// <param name="assemblyName">The compilation's assembly name.</param>
+  /// <param name="additionalReferences">References beyond the full set, or null.</param>
+  /// <returns>The run result and the compilation with the generated sources added.</returns>
+  [RequiresAssemblyFiles()]
+  public static (GeneratorDriverRunResult Result, Compilation Output) RunGeneratorWithFullReferences(
+      IIncrementalGenerator generator,
+      string source,
+      string assemblyName = "TestAssembly",
+      IEnumerable<MetadataReference>? additionalReferences = null) {
+    ArgumentNullException.ThrowIfNull(generator);
+    var references = _fullFrameworkReferences();
+    references.AddRange(additionalReferences ?? []);
+    var compilation = CSharpCompilation.Create(
+        assemblyName: assemblyName,
+        syntaxTrees: [CSharpSyntaxTree.ParseText(source)],
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+    var ran = CSharpGeneratorDriver.Create(generator)
+        .RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+    var result = ran.GetRunResult();
+    _throwIfAnyGeneratorFailed(result);
+    return (result, output);
   }
 
   /// <summary>

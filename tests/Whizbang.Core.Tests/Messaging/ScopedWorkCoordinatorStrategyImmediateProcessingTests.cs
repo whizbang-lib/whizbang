@@ -43,7 +43,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.CreateVersion7();
@@ -74,7 +74,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var coordinator = new TestWorkCoordinator();
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Act - First flush with 2 messages
     var msg1 = System.Guid.CreateVersion7();
@@ -152,7 +152,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var options = new WorkCoordinatorOptions();
-    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter());
+    var strategy = new ScopedWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, workChannelWriter: channelWriter, options: options, logger: NullLogger<ScopedWorkCoordinatorStrategy>.Instance, inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
@@ -257,7 +257,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");  // Test payload
     object IMessageEnvelope.Payload => Payload;  // Explicit interface implementation
 
     public void AddHop(MessageHop hop) {

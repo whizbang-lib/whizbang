@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 139_PerspectiveFailureCounter
 -- Date: 2026-09-07
 -- Description: wh_perspective_events counts failures separately from leases (issue #700).

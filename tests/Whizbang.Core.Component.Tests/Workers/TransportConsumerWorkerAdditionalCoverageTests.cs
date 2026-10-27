@@ -180,6 +180,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   /// here — the reason the traceparent is in this test's name — is not covered there.
   /// </summary>
   [Test]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_WhenExceptionWithTraceParent_SetsActivityErrorStatusAsync() {
     // The inbox span only exists while something is listening, so the listener is not just the
     // observer here — it is what makes the SetStatus path run at all.
@@ -270,6 +271,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   /// receive from one whose status was never decided.
   /// </summary>
   [Test]
+  [NotInParallel("WhizbangActivityListener")]
   public async Task HandleMessage_StoredWithTraceParent_SetsActivityOkStatusAsync() {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {
@@ -847,7 +849,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
@@ -928,7 +930,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
@@ -1122,7 +1124,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
@@ -1138,7 +1140,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       MessageId messageId, string traceParent) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [
         new MessageHop {
@@ -1360,7 +1362,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
         MessageId = _expectedMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(_expectedMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
           Hops = [
             new MessageHop {

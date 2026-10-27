@@ -183,7 +183,9 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(template).Contains("HasStreamEventsBeforeAsync")
       .Because("the row-null branch probes the event store for pre-batch history");
     await Assert.That(template).Contains("!_isEphemeralPerspective")
-      .Because("resurrection is Sourced-only — ephemeral streams keep snapshot-floor semantics");
+      .Because("an ephemeral perspective rebuilds only from a snapshot floor; its history before the floor is reaped");
+    await Assert.That(template).Contains("PerspectiveRowEviction.CanEvict(typeof(__MODEL_TYPE_NAME__))")
+      .Because("the probe runs for every perspective whose rows can be evicted (TTL, cap, stream group), and only those (#1483)");
     await Assert.That(template).Contains("_rewindAndRunCoreAsync")
       .Because("resurrection delegates to the lock-free rewind core");
 
@@ -285,5 +287,25 @@ public class PerspectiveRunnerTemplateInvariantTests {
       i = template.IndexOf(needle, i + needle.Length, StringComparison.Ordinal);
     }
     return count;
+  }
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task SaveModelAndCheckpoint_AsksTheWriteGuardBeforeItWritesAsync() {
+    // #1677 regression lock: every row write goes through SaveModelAndCheckpointAsync, which asks
+    // PerspectiveRowWriteGuard first, so a model no Apply produced (the scaffolded default) is never stored.
+    var template = _loadTemplate();
+    var method = template.IndexOf("private async Task<bool> SaveModelAndCheckpointAsync(", StringComparison.Ordinal);
+    var guard = template.IndexOf("PerspectiveRowWriteGuard.AllowsWrite(producedByApply", StringComparison.Ordinal);
+    var upsert = template.IndexOf("#region UPSERT_CALL", StringComparison.Ordinal);
+
+    await Assert.That(method).IsGreaterThan(0);
+    await Assert.That(guard).IsGreaterThan(method).Because("the guard is inside the write method");
+    await Assert.That(guard).IsLessThan(upsert).Because("the guard runs before the upsert");
+    var calls = template.Split("await SaveModelAndCheckpointAsync(").Length - 1;
+    var provenance = template.Split("perspectiveName,\n                updatedModel,\n                hasWrittenUpdate,").Length - 1
+      + template.Split("perspectiveName,\n              updatedModel,\n              hasWrittenUpdate,").Length - 1
+      + template.Split("streamId, perspectiveName, updatedModel, producedByApply,").Length - 1;
+    await Assert.That(provenance).IsEqualTo(calls)
+      .Because("every write passes whether an Apply produced the model: the live, partial and rewind writes");
   }
 }

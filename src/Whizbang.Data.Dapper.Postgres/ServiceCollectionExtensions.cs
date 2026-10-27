@@ -17,6 +17,7 @@ using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.MultiStream;
+using Whizbang.Data.Postgres.Observability;
 using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -123,6 +124,8 @@ public static class ServiceCollectionExtensions {
     // reconcile settings (a value that is not one fails the attempt) and the host's logger.
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveEntries) {
+        // The registry rows row retention enrolls from, for every perspective the host's assemblies declared (#1548).
+        PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
         ManagedObjects = managedObjects is null
           ? null
           : ManagedSchemaHostPass.Declared(ManagedSchemaObjectSet.FromDeclarations(managedObjects), sp),
@@ -146,6 +149,9 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
 
+    // TURNKEY: which Postgres extensions this database can use, probed and reported at startup.
+    _addExtensionProbe(services, connectionString);
+
     // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
     // it fills promoted columns for rows an instance still on the previous release wrote with the value only
     // in the document, settles demotions, and reports columns only a rebuild can restore (#1010). Idle
@@ -155,6 +161,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     services.AddSingleton(options);
@@ -180,7 +187,9 @@ public static class ServiceCollectionExtensions {
       sp.GetRequiredService<JsonbSizeValidator>(),
       sp.GetRequiredService<IPolicyEngine>(),
       sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -230,6 +239,7 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
+    _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -283,6 +293,7 @@ public static class ServiceCollectionExtensions {
     // Registration records what to initialize; the shared schema initializer does it at host start.
     _addSchemaInitialization(services, connectionString, options, initializeSchema, sp =>
       new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql) {
+        PerspectiveRegistry = Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Registered,
         Instance = sp.GetRequiredService<IServiceInstanceProvider>(),
         Observers = [.. sp.GetServices<ISchemaInitializationObserver>()],
       });
@@ -290,6 +301,9 @@ public static class ServiceCollectionExtensions {
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
+
+    // TURNKEY: which Postgres extensions this database can use, probed and reported at startup.
+    _addExtensionProbe(services, connectionString);
 
     // TURNKEY: the maintenance step that completes perspective field moves after the start that made them:
     // it fills promoted columns for rows an instance still on the previous release wrote with the value only
@@ -300,6 +314,7 @@ public static class ServiceCollectionExtensions {
         connectionString,
         sp.GetService<ILogger<DapperPhysicalColumnFillMaintenanceStep>>(),
         sp.GetService<TimeProvider>()));
+    _addPartitionMaintenance(services, connectionString);
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     // Register PostgresOptions for components that need retry settings
@@ -332,7 +347,9 @@ public static class ServiceCollectionExtensions {
       sp.GetRequiredService<JsonbSizeValidator>(),
       sp.GetRequiredService<IPolicyEngine>(),
       sp.GetService<IPerspectiveInvoker>(),
-      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>(),
+      // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+      sp.GetService<Whizbang.Core.IEphemeralModeResolver>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -385,6 +402,7 @@ public static class ServiceCollectionExtensions {
     // connection string at construction; opens connections on demand).
     _addDeadLetterStore(services, connectionString);
     _addPerspectiveTableSwapper(services, connectionString);
+    _addTableStatistics(services, connectionString);
 
     // #1358: multi-stream commands, over this connection string; the worker polls, as there is no listen connection.
     services.AddWhizbangMultiStreamCommands(connectionString);
@@ -444,11 +462,43 @@ public static class ServiceCollectionExtensions {
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
   }
 
+  /// <summary>
+  /// The name the extension probe reports this driver's database under: the database its connection string
+  /// names, since this driver has no connection-string name of its own, or the default name when the string
+  /// names none.
+  /// </summary>
+  /// <param name="connectionString">The service's database.</param>
+  /// <returns>The name.</returns>
+  /// <docs>operations/infrastructure/postgres-extensions#startup-report</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresCapabilityProbeIntegrationTests.cs:TheDapperDriver_FallsBackToTheDefaultNameWhenTheStringNamesNoDatabaseAsync</tests>
+  internal static string ProbeDatabaseName(string connectionString) =>
+    new Npgsql.NpgsqlConnectionStringBuilder(connectionString).Database
+      ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+
+  /// <summary>
+  /// Registers this driver's database as a scope of the Postgres capability provider, which reports at
+  /// startup which extensions the database can use (#1498, #1513).
+  /// </summary>
+  private static void _addExtensionProbe(IServiceCollection services, string connectionString) =>
+    services.AddWhizbangPostgresCapabilities(ProbeDatabaseName(connectionString), (_, ct) => OpenConnectionAsync(connectionString, ct));
+
   /// <summary>Opens a connection the caller disposes.</summary>
   internal static async ValueTask<Npgsql.NpgsqlConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken) {
     var connection = new Npgsql.NpgsqlConnection(connectionString);
     await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
     return connection;
+  }
+
+  // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once (#1646)
+  // and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled is true, and
+  // is idle otherwise.
+  private static void _addPartitionMaintenance(IServiceCollection services, string connectionString) {
+    services.AddFrameworkPartitionedTables();
+    services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+      new DapperPartitionMaintenanceStep(
+        connectionString,
+        sp.GetRequiredService<ILogger<DapperPartitionMaintenanceStep>>(),
+        sp.GetRequiredService<TimeProvider>()));
   }
 
   /// <summary>
@@ -464,6 +514,16 @@ public static class ServiceCollectionExtensions {
 
     return services;
   }
+
+  /// <summary>
+  /// Table statistics for the <c>Whizbang.TableStatistics</c> meter, the provider and collector the EF Core driver
+  /// registers, read through the connection's search path, which is where the Dapper stores' tables are.
+  /// </summary>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs:ADapperHost_ReportsTableStatisticsAsync</tests>
+  private static void _addTableStatistics(IServiceCollection services, string connectionString) =>
+    services.AddWhizbangTableStatistics((_, options) => new PostgresTableStatisticsProvider(
+      ct => OpenConnectionAsync(connectionString, ct), schema: null, options.MaxTrackedTables));
 
   /// <summary>
   /// Blue-green perspective rebuilds build a shadow table and swap it in (#1025), on connections of the swapper's

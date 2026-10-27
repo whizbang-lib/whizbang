@@ -10,6 +10,7 @@ using TUnit.Core;
 using Whizbang.Core.Component.Tests.ExecutorShapes.Owned;
 using Whizbang.Core.Component.Tests.Generated;
 using Whizbang.Core.Component.Tests.PolicyBehavior;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -312,10 +313,28 @@ public class DispatchExecutorShapeComponentTests {
   }
 
   [Test]
-  public async Task Send_ReceptorReturnsAnOwnedPlainMessageNothingHandles_SkipsItWithAWarningAsync() {
+  public async Task Send_ReceptorReturnsAnOwnedPlainMessageNothingHandles_RefusesByDefaultAsync() {
+    var outbox = new PolicyRecordingOutbox();
+    await using var provider = _buildProvider(outbox);
+    var trigger = new ExPlainResultTrigger(Guid.CreateVersion7());
+
+    // #1418: a returned value no receptor handles, by its own type or any interface or base type, fails
+    // the call by default (it was skipped with a warning before)
+    await Assert.That(async () => await _dispatcher(provider).SendAsync(trigger)).Throws<ReceptorNotFoundException>();
+
+    await Assert.That(PolicyProbe.Count(nameof(ExPlainResultTriggerReceptor), trigger.Id)).IsEqualTo(1);
+    await Assert.That(outbox.QueuedOf(typeof(ExPlainResult))).IsEmpty()
+      .Because("an owned message never leaves its service");
+  }
+
+  [Test]
+  public async Task Send_ReceptorReturnsAnOwnedPlainMessageNothingHandles_SkipsItWithAWarningWhenNotRequiredAsync() {
     var warnings = new PolicyWarningLog();
     var outbox = new PolicyRecordingOutbox();
-    await using var provider = _buildProvider(outbox, services => services.AddLogging(logging => logging.AddProvider(warnings)));
+    await using var provider = _buildProvider(outbox, services => {
+      services.AddLogging(logging => logging.AddProvider(warnings));
+      services.AddSingleton(new WhizbangCoreOptions { RequireReceptorForReturnedResult = false });
+    });
     var trigger = new ExPlainResultTrigger(Guid.CreateVersion7());
 
     await _dispatcher(provider).SendAsync(trigger);
@@ -324,7 +343,7 @@ public class DispatchExecutorShapeComponentTests {
     await Assert.That(outbox.QueuedOf(typeof(ExPlainResult))).IsEmpty()
       .Because("an owned message never leaves its service");
     await Assert.That(warnings.Entries.Any(e => e.Contains(nameof(ExPlainResult), StringComparison.Ordinal))).IsTrue()
-      .Because("a returned message nothing here handles and nothing can send on is skipped out loud, not silently");
+      .Because("with RequireReceptorForReturnedResult off, a returned message nothing handles is skipped out loud, not silently");
   }
 
   // ── E7: a cascaded command another service owns is written as a send writes it ───────────────

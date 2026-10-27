@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +22,13 @@ namespace Whizbang.Core.Messaging;
 /// Most fields are kept for source compatibility with strategy call sites; the new-path
 /// helper only consumes the ones documented below.
 /// </summary>
+/// <remarks>
+/// <c>RaiseOnMixedStream</c> (#1546) is set by a flush whose caller awaits it (the immediate and scoped strategies'
+/// <c>FlushAsync</c>): every outbox message it stores asks the store to raise a WHIZ133 refusal as
+/// <see cref="MixedStreamEventException"/> instead of dead-lettering the row.
+/// <c>DetachedWork</c> (#1721) is where the flush records the detached lifecycle stages it starts, so the stopping host
+/// waits for them before it disposes the service provider they resolve their receptors from.
+/// </remarks>
 internal readonly record struct FlushContext(
   IWorkCoordinator? Coordinator,
   IServiceScopeFactory? ScopeFactory,
@@ -37,17 +46,23 @@ internal readonly record struct FlushContext(
   LifecycleMetrics? LifecycleMetrics,
   IWorkChannelWriter? WorkChannelWriter,
   OutboxMessage[]? PendingAuditMessages,
-  bool SkipLifecycle = false);
+  bool SkipLifecycle = false,
+  WorkCoordinatorMetrics? Metrics = null,
+  string Strategy = "",
+  bool RaiseOnMixedStream = false,
+  DetachedLifecycleWork? DetachedWork = null);
 
 /// <summary>
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
 /// their queued operations through the new (post-Phase-H) work-pump path.
 /// </summary>
 /// <docs>messaging/work-coordinator#inbox-completions</docs>
+/// <docs>operations/observability/metrics#work-coordinator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperTests.cs:AFlush_RecordsItsDurationTaggedWithTheStrategyAsync</tests>
 /// <remarks>
 /// <para>
-/// The legacy implementation routed every flush through <c>process_work_batch</c>, which
+/// The legacy implementation routed every flush through <c>process_work_batch</c> (since removed), which
 /// inserted messages, recorded completions/failures, and claimed work in one trip.
 /// The new path decomposes those responsibilities:
 ///  - <c>store_outbox_messages</c> / <c>store_inbox_messages</c> insert new rows
@@ -78,6 +93,7 @@ internal static class WorkCoordinatorFlushHelper {
       return _empty;
     }
 
+    var flushStarted = Stopwatch.GetTimestamp();
     IServiceScope? flushScope = null;
     IWorkCoordinator coordinator;
     IServiceProvider? scopedProvider;
@@ -110,7 +126,8 @@ internal static class WorkCoordinatorFlushHelper {
         ctx.LifecycleMessageDeserializer,
         ctx.Logger,
         enableLifecycleTracing,
-        ctx.LifecycleMetrics);
+        ctx.LifecycleMetrics,
+        ctx.DetachedWork);
 
       if (!ctx.SkipLifecycle) {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
@@ -125,9 +142,13 @@ internal static class WorkCoordinatorFlushHelper {
           ct);
       }
 
-      var outboxToStore = ctx.OutboxMessages;
+      // #1546: a flush its caller awaits asks the store to raise a mixed-stream refusal to that caller; every other
+      // flush leaves it to the store to dead-letter the refused row and keep the rest of the write.
+      OutboxMessage[] outboxToStore = ctx.RaiseOnMixedStream
+        ? [.. ctx.OutboxMessages.Select(m => m with { RaiseOnMixedStream = true })]
+        : ctx.OutboxMessages;
       if (ctx.PendingAuditMessages is { Length: > 0 }) {
-        outboxToStore = [.. ctx.OutboxMessages, .. ctx.PendingAuditMessages];
+        outboxToStore = [.. outboxToStore, .. ctx.PendingAuditMessages];
       }
 
       if (outboxToStore.Length > 0) {
@@ -201,6 +222,9 @@ internal static class WorkCoordinatorFlushHelper {
       }
     } finally {
       flushScope?.Dispose();
+      ctx.Metrics?.FlushDuration.Record(
+        Stopwatch.GetElapsedTime(flushStarted).TotalMilliseconds,
+        new KeyValuePair<string, object?>("strategy", ctx.Strategy));
     }
 
     return _empty;

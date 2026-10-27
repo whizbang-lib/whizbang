@@ -57,22 +57,44 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     "PostInboxInline",
   ];
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a class or record declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedClassOrRecordCandidate(SyntaxNode node) =>
+      (node is ClassDeclarationSyntax c && c.AttributeLists.Any()) || (node is RecordDeclarationSyntax r && r.AttributeLists.Any());
+
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassOrRecordWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 } || node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var receptors = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptorEntry(ctx, ct)
     ).Where(static info => info is not null);
 
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveEntry(ctx, ct)
     ).Where(static info => info is not null);
 
     var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-          (node is ClassDeclarationSyntax c && c.AttributeLists.Any())
-          || (node is RecordDeclarationSyntax r && r.AttributeLists.Any()),
+        predicate: static (node, _) => IsAttributedClassOrRecordCandidate(node),
         transform: static (ctx, ct) => _extractTaggedMessageEntry(ctx, ct)
     ).Where(static name => name is not null);
 
@@ -80,9 +102,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     // tag needed). They must register as consumers so the receive-boundary drop-gate keeps them
     // alive long enough to fan out. See plans/composite-events-turnkey.md, Phase A.
     var compositeTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-          node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 }
-          || node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCompositeEntry(ctx, ct)
     ).Where(static name => name is not null);
 
@@ -92,9 +112,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     // the sink (migration 061). Without this the inbox row is discarded ("no consumer registered") before
     // storage and the collective apply never runs.
     var collectiveTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-          node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 }
-          || node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassOrRecordWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractCollectiveEntry(ctx, ct)
     ).Where(static name => name is not null);
 
@@ -126,7 +144,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// </summary>
   private sealed record ReceptorRegistryEntry(
       string MessageType,
-      ImmutableArray<string> Stages,
+      EquatableArray<string> Stages,
       bool IsInboxHandler,
       string ContractNamespace,
       string Kind
@@ -160,7 +178,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     var stages = CompileTimeMessageClassification.FireAtStagesOf(classSymbol);
     var isInboxHandler = CompileTimeMessageClassification.IsInboxHandler(stages);
 
-    return new ReceptorRegistryEntry(messageType, stages, isInboxHandler, contractNamespace, kind);
+    return new ReceptorRegistryEntry(messageType, [.. stages], isInboxHandler, contractNamespace, kind);
   }
 
   // ===== Discovery: perspectives =====
@@ -169,7 +187,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// no receptor is registered for that type.</summary>
   private sealed record PerspectiveRegistryEntry(string EventType);
 
-  private static PerspectiveRegistryEntry[]? _extractPerspectiveEntry(
+  private static EquatableArray<PerspectiveRegistryEntry>? _extractPerspectiveEntry(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken ct) {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
@@ -270,7 +288,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private static void _emitRegistryQuery(
       SourceProductionContext context,
       ImmutableArray<ReceptorRegistryEntry?> receptors,
-      ImmutableArray<PerspectiveRegistryEntry[]?> perspectives,
+      ImmutableArray<EquatableArray<PerspectiveRegistryEntry>?> perspectives,
       ImmutableArray<string?> taggedTypes,
       ImmutableArray<string?> compositeTypes,
       ImmutableArray<string?> collectiveTypes) {

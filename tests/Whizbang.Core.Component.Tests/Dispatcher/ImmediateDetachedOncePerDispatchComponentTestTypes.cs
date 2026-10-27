@@ -19,7 +19,19 @@ public static class ImmediateDetachedProbe {
   private static readonly ConcurrentDictionary<Guid, int> _immediateDetached = new();
   private static readonly ConcurrentDictionary<Guid, int> _handled = new();
 
-  public static void RecordImmediateDetached(Guid id) => _immediateDetached.AddOrUpdate(id, 1, static (_, n) => n + 1);
+  private static readonly ConcurrentDictionary<Guid, TaskCompletionSource> _fired = new();
+  private static readonly ConcurrentDictionary<Guid, TaskCompletionSource> _released = new();
+
+  public static void RecordImmediateDetached(Guid id) {
+    _immediateDetached.AddOrUpdate(id, 1, static (_, n) => n + 1);
+    Fired(id).TrySetResult();
+  }
+
+  /// <summary>Completes when an ImmediateDetached receptor for <paramref name="id"/> has started (#1393).</summary>
+  public static TaskCompletionSource Fired(Guid id) => _fired.GetOrAdd(id, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+
+  /// <summary>What a gated ImmediateDetached receptor waits on before it finishes (#1393).</summary>
+  public static TaskCompletionSource Released(Guid id) => _released.GetOrAdd(id, static _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
   public static void RecordHandled(Guid id) => _handled.AddOrUpdate(id, 1, static (_, n) => n + 1);
 
   public static int ImmediateDetachedCount(Guid id) => _immediateDetached.TryGetValue(id, out var n) ? n : 0;
@@ -61,5 +73,41 @@ public sealed class CountedResultCommandImmediateDetachedCounter : IReceptor<Cou
   public ValueTask HandleAsync(CountedResultCommand message, CancellationToken cancellationToken = default) {
     ImmediateDetachedProbe.RecordImmediateDetached(message.Id);
     return ValueTask.CompletedTask;
+  }
+}
+
+/// <summary>A command whose ImmediateDetached receptor does not finish until the test releases it (#1393).</summary>
+public record GatedDetachedCommand(Guid Id) : ICommand;
+
+/// <summary>A command whose ImmediateDetached receptor throws (#1393).</summary>
+public record ThrowingDetachedCommand(Guid Id) : ICommand;
+
+public sealed class GatedDetachedCommandReceptor : IReceptor<GatedDetachedCommand> {
+  public ValueTask HandleAsync(GatedDetachedCommand message, CancellationToken cancellationToken = default) {
+    ImmediateDetachedProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+public sealed class ThrowingDetachedCommandReceptor : IReceptor<ThrowingDetachedCommand> {
+  public ValueTask HandleAsync(ThrowingDetachedCommand message, CancellationToken cancellationToken = default) {
+    ImmediateDetachedProbe.RecordHandled(message.Id);
+    return ValueTask.CompletedTask;
+  }
+}
+
+[FireAt(LifecycleStage.ImmediateDetached)]
+public sealed class GatedDetachedCommandImmediateDetached : IReceptor<GatedDetachedCommand> {
+  public async ValueTask HandleAsync(GatedDetachedCommand message, CancellationToken cancellationToken = default) {
+    ImmediateDetachedProbe.RecordImmediateDetached(message.Id);
+    await ImmediateDetachedProbe.Released(message.Id).Task;
+  }
+}
+
+[FireAt(LifecycleStage.ImmediateDetached)]
+public sealed class ThrowingDetachedCommandImmediateDetached : IReceptor<ThrowingDetachedCommand> {
+  public ValueTask HandleAsync(ThrowingDetachedCommand message, CancellationToken cancellationToken = default) {
+    ImmediateDetachedProbe.RecordImmediateDetached(message.Id);
+    throw new InvalidOperationException("an ImmediateDetached receptor failed");
   }
 }

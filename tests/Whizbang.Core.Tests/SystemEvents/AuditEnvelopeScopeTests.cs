@@ -52,7 +52,7 @@ public class AuditEnvelopeScopeTests {
   private static (SystemEventEmitter Emitter, CaptureStore Store) _build() {
     var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null), store);
   }
 
   private static MessageEnvelope<AuditedEvent> _scopedSource(string tenantId, string userId) => new() {
@@ -113,7 +113,7 @@ public class AuditEnvelopeScopeTests {
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, source);
 
-    await Assert.That(store.Envelopes[0].Hops[0].CausationId).IsNotNull()
+    await Assert.That(store.Envelopes[0].Hops[0].CausationId).IsEqualTo(source.MessageId)
       .Because("an audit record whose whole purpose is to reference another event must record "
              + "which one; without causation the trail cannot be walked backwards");
   }
@@ -146,7 +146,7 @@ public class AuditEnvelopeScopeTests {
     // identified, so every record looks equally untraceable.
     var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, instanceProvider: new FixedInstance(), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, store, instanceProvider: new FixedInstance(), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 
@@ -162,7 +162,7 @@ public class AuditEnvelopeScopeTests {
     // audit records. Losing the audit entirely would be a far worse failure than an unknown writer.
     var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance, logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance, logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 
@@ -219,7 +219,7 @@ public class AuditEnvelopeScopeTests {
   public async Task ASystemEventThatIsNotAnAuditRecordIsScopedToTheSystemWithoutATenantAsync() {
     var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnablePerspectiveEvents());
-    var (emitter, _) = (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
+    var (emitter, _) = (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null), store);
 
     await emitter.EmitAsync(new PerspectiveIndexAdvised {
       ModelName = "Model",

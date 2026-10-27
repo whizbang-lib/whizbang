@@ -226,7 +226,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -265,7 +265,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
 
@@ -301,7 +301,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
@@ -338,7 +338,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
@@ -378,7 +378,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync(ct);
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"test-subscriber\"")
     };
     var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
@@ -426,7 +426,7 @@ public class RabbitMQTransportTests {
 
     // Create metadata with SubscriberName
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"order-service\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"order-service\"")
     };
     var destination = new TransportDestination("inbox", "#", metadata);
 
@@ -496,7 +496,7 @@ public class RabbitMQTransportTests {
 
     // Has SubscriberName but should be ignored when DefaultQueueName is set
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"order-service\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"order-service\"")
     };
     var destination = new TransportDestination("inbox", "#", metadata);
 
@@ -532,7 +532,7 @@ public class RabbitMQTransportTests {
     await transport.InitializeAsync();
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"inventory-worker\"")
     };
     var destination = new TransportDestination("events.inventory", "#", metadata);
 
@@ -577,7 +577,7 @@ public class RabbitMQTransportTests {
 
     // Empty SubscriberName should be treated as missing
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse("\"  \"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse("\"  \"")
     };
     var destination = new TransportDestination("inbox", "#", metadata);
 

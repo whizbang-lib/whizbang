@@ -92,10 +92,10 @@ The Azure Service Bus Emulator has several limitations that dictate our test arc
 
 ```
 Publisher (InventoryWorker):
-  Receptor → PublishAsync → Outbox → WorkCoordinatorPublisherWorker → ServiceBus Topics
+  Receptor → PublishAsync → Outbox → claim_work → OutboxDrainWorker → ServiceBus Topics
 
 Subscribers (InventoryWorker + BFF):
-  ServiceBus Topics → ServiceBusConsumerWorker → Inbox → process_work_batch → Event Store → Perspectives
+  ServiceBus Topics → ServiceBusConsumerWorker → Inbox → claim_work → Event Store → Perspectives
 ```
 
 ### Why Both Services Need ServiceBusConsumerWorker
@@ -115,7 +115,7 @@ Subscribers (InventoryWorker + BFF):
 **InventoryWorker** (Lines 458-477):
 - Subscribes to `sub-00-b` and `sub-01-b` on topics `topic-00` and `topic-01`
 - Receives its own published events from ServiceBus
-- Stores events to `inventory.wh_event_store` via `process_work_batch` Phase 4.5B
+- Stores events to `inventory.wh_event_store` via `claim_work`'s inbox event-store chain (`_emit_event_store_chain_for_inbox`)
 
 **BFF** (Lines 599-618):
 - Subscribes to `sub-00-a` and `sub-01-a` on the same topics

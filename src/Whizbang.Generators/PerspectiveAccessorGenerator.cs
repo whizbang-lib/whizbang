@@ -47,10 +47,18 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
   /// </remarks>
   private const int MAX_DEPTH = 3;
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var models = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extract(ctx, ct)
     ).Where(static model => model is not null);
 
@@ -233,7 +241,7 @@ public class PerspectiveAccessorGenerator : IIncrementalGenerator {
 
 /// <summary>A perspective model and the paths it can be filtered on.</summary>
 internal sealed record AccessorModel(
-    string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, ImmutableArray<AccessorPath> Paths);
+    string Name, string? Namespace, string FullyQualifiedName, bool IsPublic, EquatableArray<AccessorPath> Paths);
 
 /// <summary>One addressable property path, the type it yields, and how to reach it.</summary>
 /// <param name="Path">The dotted path a filter names.</param>

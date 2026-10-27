@@ -62,7 +62,7 @@ public class WhizbangCorrelationPipelineTests {
     using var host = await _hostCapturing(c => downstream = c).StartAsync();
     await host.GetTestClient().GetAsync("/");
 
-    await Assert.That(downstream).IsNotNull()
+    await Assert.That(downstream.HasValue).IsTrue()
       .Because("With no inbound header the downstream context still mints a correlation id.");
     // v7 minted (no Activity in the test) — not adopted from a header.
     await Assert.That(downstream!.Value.Value.Version).IsEqualTo(7);

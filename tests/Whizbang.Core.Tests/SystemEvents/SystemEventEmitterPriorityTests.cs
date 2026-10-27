@@ -71,7 +71,7 @@ public class SystemEventEmitterPriorityTests {
     var options = Options.Create(new SystemEventOptions { AuditPriority = WorkPriority.BACKGROUND }
       .EnableEventAudit().EnableCommandAudit());
     var store = new CaptureStore();
-    var emitter = new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance);
+    var emitter = new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _source());
 
@@ -94,7 +94,7 @@ public class SystemEventEmitterPriorityTests {
   private static (SystemEventEmitter Emitter, CaptureStore Store) _build() {
     var store = new CaptureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit().EnableCommandAudit());
-    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: NullLogger<SystemEventEmitter>.Instance, auditDecisionHook: null), store);
   }
 
   private static MessageEnvelope<AuditedEvent> _source() => new() {

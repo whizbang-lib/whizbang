@@ -35,7 +35,7 @@ public class EphemeralResolverCoverageTests {
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
       namespace TestApp;
-      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+      [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.TtlRow)]
       public interface IPresenceProfile : IEvent { }
       [Ephemeral(Destruction = Destruction.AfterTtl, Storage = TransientStorage.TtlRow)]
       public interface ISessionProfile : IEvent { }

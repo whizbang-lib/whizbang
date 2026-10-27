@@ -287,6 +287,39 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
   }
 
   /// <summary>
+  /// #1721: the throttle pause ran detached and outlived the transport: disposal returned while it waited, and once the
+  /// pause ran out it restarted a processor of a transport that was already disposed, after the host had disposed the
+  /// container. Disposal now ends the pause and waits for it, and the processor stays stopped.
+  /// </summary>
+  [Test]
+  public async Task NamespaceThrottle_TransportDisposedDuringThePause_EndsThePauseWithoutRestartingAsync() {
+    var options = new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = false,
+      EnableSessions = true,
+      EnableAdaptiveAcceptors = false,
+      EnableReceiveLivenessWatchdog = false,
+    };
+    var client = new RaisableServiceBusClient();
+    var logger = new RecordingTransportLogger();
+    var time = new FakeTimeProvider();
+    var transport = new AzureServiceBusTransport(
+      client, AsbTransportTestData.CombinedOptions, options, logger, timeProvider: time);
+    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _throttleDestination());
+    var processor = client.LastSessionProcessor!;
+    var startsBeforeTheThrottle = processor.StartProcessingAsyncCallCount;
+
+    await processor.RaiseErrorAsync(_serviceBusyErrorArgs());
+    await transport.DisposeAsync();
+
+    await Assert.That(logger.Contains(LogLevel.Information, "Throttle pause for inbox/throttle-sub ended by transport disposal")).IsTrue()
+      .Because("disposal ends the pause and waits for it, instead of leaving it to run after the transport is gone");
+    // The pause has ended, so no clock movement can restart the processor now
+    time.Advance(TimeSpan.FromMinutes(5));
+    await Assert.That(processor.StartProcessingAsyncCallCount).IsEqualTo(startsBeforeTheThrottle)
+      .Because("a disposed transport's processor is never restarted");
+  }
+
+  /// <summary>
   /// The finally is the only thing standing between a failed resume and a transport that has
   /// silently and permanently stopped throttling itself: if EndPause never ran, TryBeginPause
   /// would return false forever, and no FUTURE namespace throttle would ever get a pause again
@@ -365,14 +398,12 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
 
   /// <summary>
   /// Earlier coverage of the no-local-consumer drop only ever used an EMPTY perspective
-  /// registry, which (for a foreach over an array) never actually executes the loop body or
-  /// its exit — a service that legitimately owns perspectives for OTHER event types takes a
-  /// different path through this same predicate. If that path ever mistakenly reported a match
-  /// (or threw), an unrelated payload could either be delivered to a handler that never
-  /// registered for it, or silently stop being ack+dropped at all.
+  /// registry. Since #1720 the transport no longer consults the registries on receive: a payload no
+  /// local consumer takes, with a perspective registry that tracks OTHER event types wired, still
+  /// reaches the handler, which stores it, and the consumer decides the skip after storage.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_PerspectiveRegistryTracksOtherTypesOnly_NoLocalConsumerDropsAsync() {
+  public async Task ProcessMessage_PerspectiveRegistryTracksOtherTypesOnly_IsHandedToTheHandlerAsync() {
     var (transport, client) = _createDecisionTransport(
       receptorRegistry: new StubReceptorRegistry(null),
       perspectiveRegistry: new StubPerspectiveRegistry(typeof(UnregisteredBatchMessage)));
@@ -385,10 +416,9 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
     await client.LastProcessor!.RaiseMessageAsync(
       AsbTransportTestData.MessageArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("no-local-consumer drops still ack the broker so the message exits the topic");
-    await Assert.That(handlerInvoked).IsFalse()
-      .Because("a perspective registry that tracks OTHER event types must not make an unrelated payload look locally handled");
+    await Assert.That(handlerInvoked).IsTrue()
+      .Because("a payload no local consumer takes is stored, and the consumer decides the skip after storage (#1720)");
+    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
   }
 
   /// <summary>

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 name: Mirror CI images
 
 # Copies every Docker Hub image the test jobs pull (.github/ci-images.txt) to

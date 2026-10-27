@@ -51,12 +51,24 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : Forw
   public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
 
+    return Inner.AppendAsync(streamId, CreateAmbientEnvelope(message), cancellationToken);
+  }
+
+  /// <summary>
+  /// The envelope a bare message is stored under: a fresh id and one hop carrying the ambient scope, correlation
+  /// and causation. Shared with the audit decorator, which builds the envelope itself so the id it records is the
+  /// id the store writes.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to wrap.</param>
+  /// <returns>The envelope the store writes for <paramref name="message"/>.</returns>
+  internal static MessageEnvelope<TMessage> CreateAmbientEnvelope<TMessage>(TMessage message) {
     // Top-level event-store append (no source hop) — resolve scope + identity through the SAME shared hop-first
     // helpers as the outbox hop builders, so a raw event stored through this path keeps its correlation/causation
     // and scope consistently (with a null source these collapse to the ambient context).
     var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
 
-    var envelope = new MessageEnvelope<TMessage> {
+    return new MessageEnvelope<TMessage> {
       Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
@@ -72,7 +84,5 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : Forw
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
-
-    return Inner.AppendAsync(streamId, envelope, cancellationToken);
   }
 }

@@ -58,7 +58,7 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
     var msgId = (Guid)TrackedGuid.New();
     await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
     await _executeAsync(
-      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      "UPDATE wh_inbox_state SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = @m",
       new { i = instanceId, m = msgId });
 
     Guid[] input2 = [streamId];
@@ -280,7 +280,7 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -297,7 +297,7 @@ public class DapperCoordinatorBranchCoverageTests : PostgresTestBase {
   private static InboxMessage _makeInbox(Guid msgId, Guid streamId, string messageType = "Test.X, Test") {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = msgId,

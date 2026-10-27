@@ -24,6 +24,23 @@ public enum AuditMode {
 }
 
 /// <summary>
+/// Whether an audit record keeps the body of the event it audits, for types that do not say so themselves with
+/// <c>[AuditEvent(IncludeBody = true)]</c>.
+/// </summary>
+/// <docs>fundamentals/events/system-events#audit-body</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditingEventStoreDecoratorTests.cs:AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync</tests>
+public enum AuditBodyDefault {
+  /// <summary>
+  /// The record points at the event (id, type, stream, position) and carries its scope, but not its body.
+  /// The default: the body is already stored with the event itself.
+  /// </summary>
+  Omit,
+
+  /// <summary>Every audit record keeps a copy of the event's body as it was when audited.</summary>
+  Include
+}
+
+/// <summary>
 /// Configuration options for system events.
 /// Controls which system events are enabled and their transport behavior.
 /// </summary>
@@ -81,6 +98,15 @@ public sealed class SystemEventOptions {
   /// events unless excluded, <see cref="AuditMode.OptIn"/> audits only explicitly marked events.
   /// </summary>
   public AuditMode AuditMode { get; set; } = AuditMode.OptOut;
+
+  /// <summary>
+  /// Whether audit records keep the audited event's body: <see cref="AuditBodyDefault.Omit"/> (default) records a
+  /// pointer to the event and its scope; <see cref="AuditBodyDefault.Include"/> copies every body. A type marked
+  /// <c>[AuditEvent(IncludeBody = true)]</c> keeps its body either way.
+  /// Configuration key <c>Whizbang:SystemEvents:AuditBodyDefault</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#audit-body</docs>
+  public AuditBodyDefault AuditBodyDefault { get; set; } = AuditBodyDefault.Omit;
 
   /// <summary>
   /// Custom function to humanize event type names for the audit trail.
@@ -178,6 +204,43 @@ public sealed class SystemEventOptions {
   /// </remarks>
   /// <docs>fundamentals/messaging/message-priority#the-idle-band</docs>
   public int AuditPriority { get; set; } = Priority.WorkPriority.IDLE;
+
+  /// <summary>
+  /// Whether <see cref="Security.AccessDenied"/> is stored on <c>$wb-system</c>. Default <c>true</c>: a denial is
+  /// rare, and it is the record an auditor asks for when something is wrong.
+  /// Configuration key <c>Whizbang:SystemEvents:AccessDeniedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:Defaults_StoreDenialsAndPermissionChanges_NotGrantsOrScopeEstablishmentsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessDeniedEnabled_Off_StopsStoringDenialsOnlyAsync</tests>
+  public bool AccessDeniedEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether <see cref="Security.PermissionChanged"/> is stored on <c>$wb-system</c>. Default <c>true</c>: a
+  /// change to a user's roles or permissions is rare and is part of every access review.
+  /// Configuration key <c>Whizbang:SystemEvents:PermissionChangedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:PermissionChangedEnabled_Off_StopsStoringPermissionChangesOnlyAsync</tests>
+  public bool PermissionChangedEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Whether <see cref="Security.AccessGranted"/> is stored on <c>$wb-system</c>. Default <c>false</c>: a grant is
+  /// recorded on every allowed read, so storing it is a deployment's choice.
+  /// Configuration key <c>Whizbang:SystemEvents:AccessGrantedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:AccessGrantedEnabled_On_StoresGrantsOnlyAsync</tests>
+  public bool AccessGrantedEnabled { get; set; }
+
+  /// <summary>
+  /// Whether <see cref="Security.ScopeContextEstablished"/> is stored on <c>$wb-system</c>. Default <c>false</c>: a
+  /// scope is established on every request, so storing it is a deployment's choice.
+  /// Configuration key <c>Whizbang:SystemEvents:ScopeContextEstablishedEnabled</c>.
+  /// </summary>
+  /// <docs>fundamentals/events/system-events#security-events</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventStorageTests.cs:ScopeContextEstablishedEnabled_On_StoresScopeEstablishmentsOnlyAsync</tests>
+  public bool ScopeContextEstablishedEnabled { get; set; }
 
   /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
@@ -315,6 +378,23 @@ public sealed class SystemEventOptions {
     // wants to hear this one too; a host that does not is not asking to be advised.
     if (systemEventType == typeof(PerspectiveIndexAdvised) || systemEventType == typeof(PerspectiveScanAdvised)) {
       return PerspectiveEventsEnabled;
+    }
+
+    // Security facts (#1599): one switch per type, so a deployment stores exactly the kinds it wants.
+    if (systemEventType == typeof(Security.AccessDenied)) {
+      return AccessDeniedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.PermissionChanged)) {
+      return PermissionChangedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.AccessGranted)) {
+      return AccessGrantedEnabled;
+    }
+
+    if (systemEventType == typeof(Security.ScopeContextEstablished)) {
+      return ScopeContextEstablishedEnabled;
     }
 
     // Add more system event type checks as they are added

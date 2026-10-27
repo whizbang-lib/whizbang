@@ -26,7 +26,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   private static MessageEnvelope<JsonElement> _createEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
@@ -92,7 +92,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
     await sut.DisposeAsync();
 
     // Assert
@@ -120,7 +120,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -156,7 +156,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -192,7 +192,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -228,7 +228,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -264,7 +264,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -300,7 +300,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
 
@@ -339,7 +339,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue something so first flush doesn't return immediately on empty
     var messageId = Guid.CreateVersion7();
@@ -386,7 +386,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     try {
       // Act - flush with nothing queued
@@ -421,7 +421,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
@@ -458,7 +458,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Act
     await sut.DisposeAsync();
@@ -488,7 +488,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue a message without flushing
     var messageId = Guid.CreateVersion7();
@@ -522,7 +522,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Act
     await sut.DisposeAsync();
@@ -552,7 +552,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue something so flush is attempted
     var messageId = Guid.CreateVersion7();
@@ -586,7 +586,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue something so the timer flush attempt actually calls the work coordinator
     var messageId = Guid.CreateVersion7();
@@ -625,7 +625,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     var messageId1 = Guid.CreateVersion7();
     var messageId2 = Guid.CreateVersion7();
@@ -834,7 +834,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: writer);
+      inboxChannelWriter: writer, detachedWork: new DetachedLifecycleWork());
 
     try {
       sut.RouteClaimedInboxWorkToChannel(new WorkBatch {
@@ -865,7 +865,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: writer);
+      inboxChannelWriter: writer, detachedWork: new DetachedLifecycleWork());
 
     try {
       sut.RouteClaimedInboxWorkToChannel(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
@@ -899,7 +899,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter());
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     sut.QueueOutboxMessage(_createOutboxMessage(Guid.CreateVersion7()));
     await sut.DisposeAsync();

@@ -27,7 +27,7 @@ public class RecordTypesConstructionTests {
     var record = new OutboxRecord {
       MessageId = msgId,
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(msgId), Hops = [] },
       Destination = "topic-a",
       Attempts = 2,
@@ -59,7 +59,7 @@ public class RecordTypesConstructionTests {
     var record = new OutboxRecord {
       MessageId = (Guid)TrackedGuid.New(),
       MessageType = "T",
-      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new OutboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.New()), Hops = [] },
     };
     await Assert.That(record.FailureReason).IsEqualTo(MessageFailureReason.Unknown);
@@ -72,7 +72,7 @@ public class RecordTypesConstructionTests {
       MessageId = msgId,
       HandlerName = "OrderReceptor",
       MessageType = "MyApp.Events.OrderCreated",
-      MessageData = new InboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonDocument.Parse("{}").RootElement, Hops = [] },
+      MessageData = new InboxMessageData { MessageId = MessageId.From((Guid)TrackedGuid.New()), Payload = JsonElement.Parse("{}"), Hops = [] },
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(msgId), Hops = [] },
       Attempts = 1,
       Error = "fail",
@@ -172,7 +172,7 @@ public class RecordTypesConstructionTests {
       AggregateType = "Order",
       Version = 3,
       EventType = "MyApp.Events.OrderCreated",
-      EventData = JsonDocument.Parse("{\"k\":1}").RootElement,
+      EventData = JsonElement.Parse("{\"k\":1}"),
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From((Guid)TrackedGuid.New()), Hops = [] },
       Scope = null,
       CreatedAt = DateTime.UtcNow,

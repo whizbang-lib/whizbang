@@ -212,7 +212,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     _bffHost = _createBffHost(_connectionString, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
-    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
+    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call claim_work and the other work-coordinator functions
     Console.WriteLine("[ServiceBusFixture] Initializing database schema...");
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
@@ -467,7 +467,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),
@@ -487,7 +487,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // CRITICAL: Without this, PostPerspectiveInline lifecycle callbacks don't fire, breaking PerspectiveCompletionWaiter
     builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -663,7 +662,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register perspective runners for AOT-compatible lookup (replaces reflection)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
-    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     // NOTE: BFF.API has no command receptors, but AddWhizbangDispatcher is still required
     // for IReceptorInvoker registration (needed by PostPerspectiveInline lifecycle callbacks)
 
@@ -679,7 +677,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy for OutboxDrainWorker and OutboxPublishWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         transport: sp.GetRequiredService<ITransport>(),

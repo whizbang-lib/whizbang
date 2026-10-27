@@ -40,6 +40,12 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PoisonOutboxLoopSqlTests.cs</tests>
 public sealed partial class OutboxDrainWorker : BackgroundService {
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish,
+  /// and report a failure, while the services they resolve are still alive (#1721).
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IOutboxDrainChannel _drainChannel;
@@ -79,6 +85,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly IDeadLetterStore _deadLetterStore;
   private readonly IGenerationProvider _generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics;
+  // #1558: the lease a held row's renewal extends it by, while the transport reports not ready.
+  private readonly int _holdLeaseSeconds;
   // Slice 26.6b: cached local service identity from wh_service_config; resolved once
   // on first drain (after schema-ready gate) and reused for envelope publish-time
   // injection. Guid.Empty until resolved.
@@ -119,6 +127,20 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// </summary>
   /// <docs>operations/workers/publisher-worker</docs>
   public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
+
+  /// <summary>
+  /// Fired after each pass the worker holds because the transport reported not ready (#1558): nothing was
+  /// published, the rows this instance holds on the offered streams kept their leases (renewed by
+  /// <see cref="LeaseRenewalWorkerOptions.LeaseSeconds"/>), and no attempt was charged. The streams are offered
+  /// again by the next claim poll and publish once <see cref="IMessagePublishStrategy.IsReadyAsync"/> reports ready.
+  /// Public by design: a monitor can count held passes, and a test can wait on the hold itself.
+  /// </summary>
+  /// <docs>extending/extensibility/custom-health-checks#whizbang-extension-point-itransportreadinesscheck</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_HoldsTheRowsWithLeasesRenewed_ThenPublishesThemOnceReadyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithDefaultRenewalOptions_RenewsForTheDefaultLeaseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_StreamWithNothingHeldHere_RenewsNothingAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/OutboxDrainWorkerTransportReadinessTests.cs:NotReady_WithNoHeldSubscriber_StillRenewsTheLeasesAndCompletesThePassAsync</tests>
+  public event OutboxPublishHeldHandler? OnOutboxPublishHeld;
 
   /// <summary>Keyed-service key under which this worker's concurrency governor is registered. A host
   /// that registers its own governor under this key before AddWhizbang wins; the framework default
@@ -180,6 +202,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IDeadLetterStore deadLetterStore,
     IGenerationProvider generationProvider,
     [FromKeyedServices(GOVERNOR_KEY)] Whizbang.Core.Execution.IConcurrencyGovernor governor,
+    IOptions<LeaseRenewalWorkerOptions> leaseRenewalOptions,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);
@@ -212,6 +235,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _deadLetterStore = deadLetterStore;
     _generationProvider = generationProvider;
     _dlqMetrics = dlqMetrics;
+    ArgumentNullException.ThrowIfNull(leaseRenewalOptions);
+    _holdLeaseSeconds = leaseRenewalOptions.Value.LeaseSeconds;
   }
 
   /// <inheritdoc />
@@ -276,12 +301,17 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           // (see _drainStreamBatchAsync) — that concurrency is a separate, still-required fix.
           var distinctStreams = new HashSet<Guid>(batch);
           if (distinctStreams.Count > 0) {
-            _publishedThrough.Clear();
-            _failedStreams.Clear();
-            await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
-            // #917: move the streams on from the lease they already hold rather than waiting a claim
-            // cycle per run.
-            await _continueStreamsAsync(stoppingToken);
+            if (await _publishStrategy.IsReadyAsync(stoppingToken)) {
+              _publishedThrough.Clear();
+              _failedStreams.Clear();
+              await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
+              // #917: move the streams on from the lease they already hold rather than waiting a claim
+              // cycle per run.
+              await _continueStreamsAsync(stoppingToken);
+            } else {
+              // #1558: a transport that reported not ready is handed nothing; the rows wait, leased.
+              await _holdForTransportAsync([.. distinctStreams], stoppingToken);
+            }
           }
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
@@ -312,6 +342,31 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Holds a batch's streams while the transport reports not ready (#1558). Nothing is published and no
+  /// failure is reported, so no attempt is charged: an attempt is charged when a row is claimed again,
+  /// which happens after a failure's report releases it or its lease lapses. The rows this instance
+  /// holds on the streams keep their leases, renewed here, and the claim offers the streams again on its
+  /// next poll (it re-emits every stream whose rows this instance holds), when they publish if the
+  /// transport is ready by then.
+  /// </summary>
+  /// <remarks>
+  /// Every held row is renewed, not one page of each stream: the claim can lease more of a stream than the
+  /// drain's per-stream page, and a row left out would lapse and be charged on its re-claim.
+  /// </remarks>
+  private async Task _holdForTransportAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+    using var scope = _scopeFactory.CreateScope();
+    var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var rows = await coordinator.FetchOutboxBatchAsync(
+      streamIds, _instanceProvider.InstanceId, int.MaxValue, maxBytes: null, ct);
+    Guid[] held = [.. rows.Select(r => r.MessageId)];
+    if (held.Length > 0) {
+      await coordinator.RenewLeasesAsync(WorkCategory.Outbox, held, _holdLeaseSeconds, ct);
+    }
+    LogPublishHeldTransportNotReady(_logger, streamIds.Count, held.Length);
+    OnOutboxPublishHeld?.Invoke(new OutboxPublishHeldEvent { StreamIds = streamIds, HeldMessageIds = held });
   }
 
   /// <summary>
@@ -1172,11 +1227,22 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private IMessageEnvelope? _tryResolveTypedEnvelope(OutboxWork work) {
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.LifecycleStage, MessageParseKind.Payload);
       return work.Envelope.ReconstructWithPayload(message);
     } catch (Exception ex) {
       LogLifecycleDeserializeError(_logger, work.MessageId, ex);
       return null;
     }
+  }
+
+  /// <summary>
+  /// Stops the worker, then waits for the detached lifecycle stages it started: the host stops the services registered
+  /// before this one (the failure flush among them) and disposes the container only after this returns (#1721).
+  /// </summary>
+  /// <param name="cancellationToken">The host's stop deadline.</param>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
   }
 
   /// <summary>
@@ -1223,7 +1289,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       };
 
       if (hasDetached) {
-        _ = Task.Run(async () => {
+        DetachedWork.Track(Task.Run(async () => {
           try {
             await using var detachedScope = _scopeFactory.CreateAsyncScope();
             await SecurityContextHelper.EstablishFullContextAsync(typedEnvelope, detachedScope.ServiceProvider, ct);
@@ -1249,7 +1315,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
               Reason = MessageFailureReason.Unknown,
             }, ct);
           }
-        }, ct);
+        }, ct));
       }
 
       if (hasInline) {
@@ -1329,6 +1395,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for message {row.MessageId}.");
+    MessageParseDiagnostics.Record(row.MessageId, MessageParseSource.OutboxRead, MessageParseKind.Envelope);
 
     // Slice 26.6b: inject source identity into the envelope before publish. The wire
     // version of this envelope must carry SourceServiceId + SourceCommitSequence so
@@ -1606,6 +1673,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
             + "retrying at once from the same cursors")]
   static partial void LogContinuationRetried(
     ILogger logger, string reason, string? sqlState, int streams, int attempt, Exception exception);
+
+  [LoggerMessage(EventId = 60, Level = LogLevel.Information,
+    Message = "OutboxDrainWorker: transport not ready; held {Streams} stream(s) and renewed the leases of {Rows} row(s) without publishing")]
+  static partial void LogPublishHeldTransportNotReady(ILogger logger, int streams, int rows);
 
   [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
     Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "

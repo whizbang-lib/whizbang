@@ -29,7 +29,7 @@ public partial class InboxDispatchWorkerTests {
   private static RedeliveryComposite _redeliveryBundle(int innerCount) {
     var composite = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.New() };
     for (var i = 0; i < innerCount; i++) {
-      composite.InnerPayloads.Add(JsonDocument.Parse("{}").RootElement);
+      composite.InnerPayloads.Add(JsonElement.Parse("{}"));
       composite.InnerTypeNames.Add(typeof(InnerImportEvent).AssemblyQualifiedName!);
       composite.InnerEventIds.Add((Guid)TrackedGuid.New());
     }

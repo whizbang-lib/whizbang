@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -299,15 +300,17 @@ public sealed partial class CoalesceShipWorker(
       string? destination,
       ScopeDelta? scope,
       int priority) {
+    // QueuedAt is the time the composite is written to the outbox, as for every other outbox copy (#1557).
+    var queuedAt = _timeProvider.GetUtcNow();
     var envelope = new MessageEnvelope<CompositeEventBase> {
       Priority = priority,
       MessageId = new MessageId(TrackedGuid.New()),
-      Payload = composite,
+      Payload = (CompositeEventBase)AutoPopulatePopulatorRegistry.PopulateQueued(composite, queuedAt),
       Hops = [
         new MessageHop {
           ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
           Type = HopType.Current,
-          Timestamp = _timeProvider.GetUtcNow(),
+          Timestamp = queuedAt,
           // The folded singles' scope, carried forward. The consumer's fan-out derives every
           // child's scope from this hop and PERSISTS it, so an unscoped bundle leaves behind
           // children that no later read can repair.

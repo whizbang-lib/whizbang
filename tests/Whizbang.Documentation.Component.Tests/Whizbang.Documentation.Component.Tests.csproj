@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- HotChocolate.AspNetCore adds global usings (HotChocolate, GreenDonut) to a project that references it directly,
+         which make System.IO.Path and KeyNotFoundException ambiguous here. -->
+    <HotChocolateImplicitUsings>disable</HotChocolateImplicitUsings>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -25,5 +28,7 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Rocks" />
     <PackageReference Include="Bogus" />
+    <!-- AddGraphQLServer; the HotChocolate transport no longer brings it (#1552). -->
+    <PackageReference Include="HotChocolate.AspNetCore" />
   </ItemGroup>
 </Project>

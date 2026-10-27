@@ -6,6 +6,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.DependencyInjection;
+using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 using CoreManifest = Whizbang.Core.DependencyInjection.WhizbangServiceRequirements;
 
 namespace Whizbang.Core.Tests.DependencyInjection;
@@ -64,5 +66,42 @@ public class RealCompositionValidationTests {
     // If this ever reports nothing at all, the likely cause is a manifest that stopped matching
     // registrations rather than a composition that became complete, and that failure is silent.
     await Assert.That(CoreManifest.All).IsNotEmpty();
+  }
+  [Test]
+  public async Task ACompositionWithoutATransportConsumerDoesNotRequireATransportAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbang();
+
+    var missing = _missing(services);
+
+    // The transport consumer's registration call is in the framework's source, so its worker is
+    // in the manifest. A host that never calls AddTransportConsumer (a test host with no broker)
+    // never registers the worker, and must not be failed at startup for the transport it needs.
+    await Assert.That(missing.Where(m => m.NeededBy == typeof(TransportConsumerWorker))).IsEmpty()
+      .Because("the worker is not registered, so nothing will construct it");
+    await Assert.That(missing.Where(m => m.MissingService == typeof(ITransport))).IsEmpty();
+  }
+
+  [Test]
+  public async Task ATransportConsumerWithoutATransportIsStillReportedAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbang().AddTransportConsumer();
+
+    var missing = _missing(services);
+
+    // Once the worker IS registered, its transport is a real gap and must still fail startup.
+    await Assert.That(missing).Contains(
+      new MissingRegistration(typeof(TransportConsumerWorker), typeof(ITransport)));
+  }
+
+  private static List<MissingRegistration> _missing(IServiceCollection services) {
+    try {
+      services.ValidateWhizbangRegistrations(CoreManifest.All);
+      return [];
+    } catch (WhizbangRegistrationException ex) {
+      return [.. ex.Missing];
+    }
   }
 }

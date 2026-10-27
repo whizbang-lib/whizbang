@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 023_CleanupCompletedStreams.sql
 -- Date: 2025-12-25 (rewritten 2026-05-01 — Phase H step 6 slice 1)
 -- Description: Removes wh_active_streams entries for streams that have no pending work

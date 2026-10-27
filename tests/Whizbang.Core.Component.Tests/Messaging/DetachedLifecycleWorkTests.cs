@@ -1,0 +1,329 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// The detached lifecycle stages run in the background of the flush that starts them. <see cref="DetachedLifecycleWork"/>
+/// is what a stopping host waits on so that none of them is still running when the service provider is disposed.
+/// </summary>
+[Category("Messaging")]
+[Category("Lifecycle")]
+public class DetachedLifecycleWorkTests {
+
+  [Test]
+  public async Task WithNothingInFlight_DrainCompletesAtOnceAsync() {
+    var work = new DetachedLifecycleWork();
+
+    var drain = work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
+      .Because("a host with no detached work in flight has nothing to wait for");
+  }
+
+  [Test]
+  [Arguments("succeeded")]
+  [Arguments("failed")]
+  [Arguments("canceled")]
+  public async Task AnInvocationThatFinishes_WithNoDrainRunning_IsForgottenAsync(string outcome) {
+    var work = new DetachedLifecycleWork();
+    var invocation = new TaskCompletionSource();
+    work.Track(invocation.Task);
+
+    switch (outcome) {
+      case "succeeded":
+        invocation.SetResult();
+        break;
+      case "failed":
+        invocation.SetException(new InvalidOperationException("receptor failed"));
+        break;
+      default:
+        invocation.SetCanceled();
+        break;
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("a running host forgets each invocation as it finishes, so the record holds only what is still running");
+  }
+
+  [Test]
+  public async Task AnInvocationThatHadAlreadyFinished_WhenTracked_IsNotKeptAsync() {
+    var work = new DetachedLifecycleWork();
+
+    work.Track(Task.CompletedTask);
+    work.Track(Task.FromException(new InvalidOperationException("receptor failed")));
+    work.Track(Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("an invocation that finished before it was tracked has nothing left to wait for");
+  }
+
+  [Test]
+  public async Task ManyInvocations_FinishingWhileTheHostRuns_LeaveNothingTrackedAsync() {
+    var work = new DetachedLifecycleWork();
+    var invocations = new List<TaskCompletionSource>();
+    for (var i = 0; i < 1_000; i++) {
+      var invocation = new TaskCompletionSource();
+      invocations.Add(invocation);
+      work.Track(invocation.Task);
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(1_000);
+
+    foreach (var invocation in invocations) {
+      invocation.SetResult();
+    }
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0)
+      .Because("the record does not grow with the number of invocations a host has run, only with those still running");
+  }
+
+  [Test]
+  public async Task Drain_WaitsForEveryTrackedInvocation_AndForgetsThemOnceFinishedAsync() {
+    var work = new DetachedLifecycleWork();
+    var first = new TaskCompletionSource();
+    var second = new TaskCompletionSource();
+    work.Track(first.Task);
+    work.Track(second.Task);
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    first.SetResult();
+
+    await Assert.That(drain.IsCompleted).IsFalse()
+      .Because("one invocation is still running");
+    await Assert.That(work.InFlightCount).IsEqualTo(1)
+      .Because("a finished invocation is no longer counted");
+
+    second.SetResult();
+    await drain;
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AnInvocationThatFailedOrWasCanceled_DoesNotFailTheDrainAsync() {
+    var work = new DetachedLifecycleWork();
+    var failing = new TaskCompletionSource();
+    var canceled = new TaskCompletionSource();
+    work.Track(failing.Task);
+    work.Track(canceled.Task);
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    failing.SetException(new InvalidOperationException("receptor failed"));
+    canceled.SetCanceled();
+
+    await Assert.That(async () => await drain).ThrowsNothing()
+      .Because("an invocation reports its own failure; the host stopping is not where it surfaces");
+    await Assert.That(work.InFlightCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task WorkTrackedWhileDraining_IsWaitedFor_TooAsync() {
+    var work = new DetachedLifecycleWork();
+    var first = new TaskCompletionSource();
+    var late = new TaskCompletionSource();
+    work.Track(first.Task);
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    // A flush still finishing starts one more detached stage just as the first one ends.
+    work.Track(late.Task);
+    first.SetResult();
+
+    await Assert.That(drain.IsCompleted).IsFalse()
+      .Because("work started while the host waited is waited for as well");
+
+    late.SetResult();
+    await drain;
+
+    await Assert.That(work.InFlightCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task ACanceledDrain_StopsWaiting_AndLeavesTheWorkTrackedAsync() {
+    var work = new DetachedLifecycleWork();
+    var stuck = new TaskCompletionSource();
+    work.Track(stuck.Task);
+    using var deadline = new CancellationTokenSource();
+
+    var drain = work.DrainAsync(deadline.Token);
+    await deadline.CancelAsync();
+
+    await Assert.That(async () => await drain).Throws<OperationCanceledException>()
+      .Because("a shutdown that ran out of time is the host's to see");
+    await Assert.That(work.InFlightCount).IsEqualTo(1)
+      .Because("the invocation is still running");
+    stuck.SetResult();
+  }
+
+  [Test]
+  public async Task ADrain_AnnouncesOnceThatItIsWaiting_WithHowManyAreInFlightAsync() {
+    var work = new DetachedLifecycleWork();
+    var first = new TaskCompletionSource();
+    var second = new TaskCompletionSource();
+    work.Track(first.Task);
+    work.Track(second.Task);
+    var announced = new List<int>();
+    work.Waiting += announced.Add;
+
+    var drain = work.DrainAsync(CancellationToken.None);
+    first.SetResult();
+    second.SetResult();
+    await drain;
+    await work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(announced).IsEquivalentTo([2])
+      .Because("a drain says once, when it starts waiting, how many invocations it waits for; one with none says nothing");
+  }
+
+  [Test]
+  public async Task StopProducers_StopsEachRegisteredProducer_WithTheHostsTokenAsync() {
+    var work = new DetachedLifecycleWork();
+    using var deadline = new CancellationTokenSource();
+    var stoppedWith = new List<CancellationToken>();
+    using var first = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+    using var second = work.RegisterProducer(ct => { stoppedWith.Add(ct); return Task.CompletedTask; });
+
+    await work.StopProducersAsync(deadline.Token);
+
+    await Assert.That(stoppedWith).IsEquivalentTo([deadline.Token, deadline.Token]);
+  }
+
+  [Test]
+  public async Task AProducerThatUnregistered_IsNotStoppedAsync() {
+    var work = new DetachedLifecycleWork();
+    var stopped = false;
+    var registration = work.RegisterProducer(_ => { stopped = true; return Task.CompletedTask; });
+
+    registration.Dispose();
+    await work.StopProducersAsync(CancellationToken.None);
+
+    await Assert.That(stopped).IsFalse()
+      .Because("a producer disposed on its own has already stopped and flushed");
+  }
+
+  [Test]
+  public async Task AProducerThatFailsToStop_DoesNotKeepTheOthersFromStopping_AndIsRaisedAsync() {
+    var work = new DetachedLifecycleWork();
+    var secondStopped = false;
+    using var first = work.RegisterProducer(_ => Task.FromException(new InvalidOperationException("store unavailable")));
+    using var second = work.RegisterProducer(_ => { secondStopped = true; return Task.CompletedTask; });
+
+    var failure = await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<AggregateException>();
+
+    await Assert.That(secondStopped).IsTrue();
+    await Assert.That(failure!.InnerExceptions.Single().Message).IsEqualTo("store unavailable");
+  }
+
+  [Test]
+  public async Task AProducerCanceledByTheDeadline_EndsTheStop_WithTheCancellationAsync() {
+    var work = new DetachedLifecycleWork();
+    using var registration = work.RegisterProducer(_ => Task.FromCanceled(new CancellationToken(canceled: true)));
+
+    await Assert.That(async () => await work.StopProducersAsync(CancellationToken.None)).Throws<OperationCanceledException>()
+      .Because("a stop that ran out of time is the host's to see, not a producer failure");
+  }
+
+  [Test]
+  public async Task RegisterProducer_WithoutAStop_IsRefusedAsync() {
+    var work = new DetachedLifecycleWork();
+
+    await Assert.That(() => work.RegisterProducer(null!)).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task TheDistributeStages_TrackTheirDetachedStage_InTheContextsWorkAsync() {
+    var work = new DetachedLifecycleWork();
+    var receptor = new HeldDetachedReceptor();
+    var context = _context(receptor, work);
+
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeDetached, LifecycleStage.PostDistributeInline, context);
+    await receptor.Entered.Task;
+
+    await Assert.That(work.InFlightCount).IsEqualTo(1)
+      .Because("the detached stage is running in the background, and the host must be able to wait for it");
+
+    receptor.Release();
+    await work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(receptor.DetachedStagesFinished).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AnAsyncOnlyStage_IsTrackedInTheContextsWorkAsync() {
+    var work = new DetachedLifecycleWork();
+    var receptor = new HeldDetachedReceptor();
+    var context = _context(receptor, work);
+
+    LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(LifecycleStage.DistributeDetached, context);
+    await receptor.Entered.Task;
+
+    await Assert.That(work.InFlightCount).IsEqualTo(1)
+      .Because("the detached stage is running in the background, and the host must be able to wait for it");
+
+    receptor.Release();
+    await work.DrainAsync(CancellationToken.None);
+
+    await Assert.That(receptor.DetachedStagesFinished).IsEqualTo(1);
+  }
+
+  private static DistributeLifecycleContext _context(IReceptorInvoker receptor, DetachedLifecycleWork work) {
+    var services = new ServiceCollection();
+    services.AddSingleton(receptor);
+    var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    return new DistributeLifecycleContext(
+      [_outboxMessage()], [], scopeFactory, new PassThroughDeserializer(), Logger: null,
+      EnableLifecycleTracing: false, DetachedWork: work);
+  }
+
+  private static OutboxMessage _outboxMessage() {
+    var messageId = MessageId.New();
+    return new OutboxMessage {
+      MessageId = messageId.Value,
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = messageId,
+        Payload = JsonElement.Parse("{}"),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      },
+      Metadata = new EnvelopeMetadata { MessageId = messageId, Hops = [] },
+      EnvelopeType = "MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+    };
+  }
+
+  /// <summary>Holds every detached stage until released; inline stages pass straight through.</summary>
+  private sealed class HeldDetachedReceptor : IReceptorInvoker {
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _detachedStagesFinished;
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int DetachedStagesFinished => Volatile.Read(ref _detachedStagesFinished);
+    public void Release() => _release.TrySetResult();
+
+    public async ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      if (stage is LifecycleStage.PostDistributeDetached or LifecycleStage.DistributeDetached) {
+        Entered.TrySetResult();
+        await _release.Task.ConfigureAwait(false);
+        Interlocked.Increment(ref _detachedStagesFinished);
+      }
+    }
+  }
+
+  private sealed class PassThroughDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonElement.Parse(jsonBytes);
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
+  }
+}

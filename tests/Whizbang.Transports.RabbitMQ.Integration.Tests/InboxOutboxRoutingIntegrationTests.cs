@@ -118,7 +118,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
 
     // Set up consumer to verify message arrival at domain exchange
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(destination.Address),
@@ -126,16 +129,15 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Publish message using strategy destination
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders" exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{destination.Address}' within timeout");
       }
@@ -164,7 +166,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("custom-orders");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(destination.Address),
@@ -172,14 +177,13 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at custom exchange '{destination.Address}' within timeout");
       }
@@ -214,7 +218,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Metadata is not null).IsTrue();
 
     // Set up consumer on shared exchange with routing key
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(destination.Address),
@@ -222,14 +229,13 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at shared exchange '{destination.Address}' within timeout");
       }
@@ -257,7 +263,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(destination.Address),
@@ -265,14 +274,13 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail("Message should arrive at default shared exchange within timeout");
       }
@@ -305,7 +313,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.FilterExpression).IsNull(); // No filter for domain topics
 
     // Set up consumer on domain inbox
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(subscription.Topic),
@@ -313,10 +324,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Publish command to domain inbox
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(
         envelope,
         new TransportDestination(subscription.Topic),
@@ -325,7 +335,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at domain inbox '{subscription.Topic}' within timeout");
       }
@@ -352,7 +362,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("orders.in");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(subscription.Topic),
@@ -360,9 +373,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(
         envelope,
         new TransportDestination(subscription.Topic),
@@ -371,7 +383,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at custom inbox '{subscription.Topic}' within timeout");
       }
@@ -407,7 +419,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Metadata is not null).IsTrue();
 
     // Set up consumer on shared inbox
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(subscription.Topic),
@@ -415,9 +430,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(
         envelope,
         new TransportDestination(subscription.Topic),
@@ -426,7 +440,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at shared inbox '{subscription.Topic}' within timeout");
       }
@@ -454,7 +468,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("inbox");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(subscription.Topic),
@@ -462,9 +479,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(
         envelope,
         new TransportDestination(subscription.Topic),
@@ -473,7 +489,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
 
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail("Message should arrive at default shared inbox within timeout");
       }
@@ -504,7 +520,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     // Set up consumer using inbox strategy (subscribing to domain topic)
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(destination.Address),
@@ -512,10 +531,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Publish using outbox strategy destination
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       try {
@@ -558,7 +576,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo(subscription.Topic);
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(subscription.Topic),
@@ -566,9 +587,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     try {
-      await Task.Delay(500, cancellationToken);
-
-      var envelope = _createTestEnvelope();
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       try {
@@ -592,7 +612,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   /// </summary>
   private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"test-sub-{Guid.NewGuid():N}\"")
     };
     return new TransportDestination(address, routingKey, metadata);
   }

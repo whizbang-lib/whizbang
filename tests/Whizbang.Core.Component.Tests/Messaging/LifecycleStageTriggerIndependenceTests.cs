@@ -99,7 +99,7 @@ public class LifecycleStageTriggerIndependenceTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(id),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       },
@@ -133,7 +133,7 @@ public class LifecycleStageTriggerIndependenceTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
-      workChannelWriter: new WorkChannelWriter());
+      workChannelWriter: new WorkChannelWriter(), detachedWork: new DetachedLifecycleWork());
     return (strategy, invoker);
   }
 

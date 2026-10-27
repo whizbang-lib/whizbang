@@ -186,10 +186,11 @@ public class AzureServiceBusErrorHandlingTests {
   }
 
   /// <summary>
-  /// An envelope type with no local JsonTypeInfo is acked and dropped (no DLQ accumulation).
+  /// An envelope type with no local JsonTypeInfo whose body is not a readable envelope is dead-lettered
+  /// (#1720); a valid envelope of such a type is handed on as received to be stored.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_UnknownEnvelopeType_AcksAndDropsMessageAsync() {
+  public async Task ProcessMessage_UnknownEnvelopeTypeWithABodyThatIsNotAnEnvelope_DeadLettersMessageAsync() {
     var (transport, client) = _createTransport(enableSessions: false);
     var handlerInvoked = false;
     await transport.SubscribeAsync(
@@ -200,15 +201,15 @@ public class AzureServiceBusErrorHandlingTests {
     await client.LastProcessor!.RaiseMessageAsync(
       _messageArgs(_rawMessage("{}", "Unknown.Namespace.NoSuchEnvelope, NoSuchAssembly"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("unresolvable types are acked so they exit the topic without DLQ accumulation");
-    await Assert.That(receiver.DeadLettered).IsEmpty();
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("a body that is not a readable envelope cannot be stored, so it is dead-lettered, never acked and dropped (#1720)");
+    await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(handlerInvoked).IsFalse();
   }
 
-  /// <summary>A malformed body for a known envelope type is acked and dropped.</summary>
+  /// <summary>A malformed body for a known envelope type is dead-lettered (#1720).</summary>
   [Test]
-  public async Task ProcessMessage_MalformedBody_AcksAndDropsMessageAsync() {
+  public async Task ProcessMessage_MalformedBody_DeadLettersMessageAsync() {
     var (transport, client) = _createTransport(enableSessions: false);
     var handlerInvoked = false;
     await transport.SubscribeAsync(
@@ -219,28 +220,30 @@ public class AzureServiceBusErrorHandlingTests {
     await client.LastProcessor!.RaiseMessageAsync(
       _messageArgs(_rawMessage("{{{not-json", typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("invalid JSON is the one body refused before storage, and it is dead-lettered, never dropped (#1720)");
+    await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(handlerInvoked).IsFalse();
   }
 
   /// <summary>
-  /// A settlement failure during the ack+drop path (CompleteMessageAsync throws a
+  /// A settlement failure on the dead-letter path (DeadLetterMessageAsync throws a
   /// non-swallowable exception) routes into _handleMessageProcessingErrorAsync, which
   /// abandons the message for redelivery.
   /// </summary>
   [Test]
-  public async Task ProcessMessage_CompleteFailsDuringAckDrop_AbandonsMessageAsync() {
+  public async Task ProcessMessage_DeadLetterFails_AbandonsMessageAsync() {
     var (transport, client) = _createTransport(enableSessions: false);
     await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination());
     var receiver = new FakeReceiver {
-      CompleteException = new InvalidOperationException("complete failed")
+      DeadLetterException = new InvalidOperationException("dead-letter failed")
     };
 
     await client.LastProcessor!.RaiseMessageAsync(
       _messageArgs(_rawMessage("{}", "Unknown.Namespace.NoSuchEnvelope, NoSuchAssembly"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("the ack was attempted before its failure was routed to the error handler");
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("the dead-letter was attempted before its failure was routed to the error handler");
     await Assert.That(receiver.Abandoned).Count().IsEqualTo(1)
       .Because("a non-swallowable settlement failure falls back to abandon-for-redelivery");
   }
@@ -370,11 +373,11 @@ public class AzureServiceBusErrorHandlingTests {
   }
 
   /// <summary>
-  /// Session message with an unresolvable envelope type is acked and dropped (routes
-  /// through EmitAckDropTelemetry's warning branch).
+  /// Session message with an unresolvable envelope type whose body is not a readable envelope is
+  /// dead-lettered (#1720).
   /// </summary>
   [Test]
-  public async Task ProcessSessionMessage_UnknownEnvelopeType_AcksAndDropsMessageAsync() {
+  public async Task ProcessSessionMessage_UnknownEnvelopeTypeWithABodyThatIsNotAnEnvelope_DeadLettersMessageAsync() {
     var (transport, client) = _createTransport(enableSessions: true);
     var handlerInvoked = false;
     await transport.SubscribeAsync(
@@ -385,8 +388,9 @@ public class AzureServiceBusErrorHandlingTests {
     await client.LastSessionProcessor!.RaiseSessionMessageAsync(
       _sessionArgs(_rawMessage("{}", "Unknown.Namespace.NoSuchEnvelope, NoSuchAssembly"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
-    await Assert.That(receiver.DeadLettered).IsEmpty();
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("a body that is not a readable envelope cannot be stored, so it is dead-lettered, never acked and dropped (#1720)");
+    await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(handlerInvoked).IsFalse();
   }
 
@@ -902,14 +906,13 @@ public class AzureServiceBusErrorHandlingTests {
     public List<string> Completed { get; } = [];
     public List<string> Abandoned { get; } = [];
     public List<(string MessageId, string Reason, string? Description)> DeadLettered { get; } = [];
-    public Exception? CompleteException { get; init; }
     public Exception? AbandonException { get; init; }
     public Exception? DeadLetterException { get; init; }
 
     public override Task CompleteMessageAsync(
       ServiceBusReceivedMessage message, CancellationToken cancellationToken = default) {
       Completed.Add(message.MessageId);
-      return CompleteException is null ? Task.CompletedTask : Task.FromException(CompleteException);
+      return Task.CompletedTask;
     }
 
     public override Task AbandonMessageAsync(

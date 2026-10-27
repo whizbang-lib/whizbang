@@ -306,17 +306,17 @@ public class InProcessTransportTests {
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
-    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // No size or time trigger can fire while the test runs, so a message the transport hands to the
+    // subscription stays pending until Dispose flushes it. Disposing is therefore the barrier after
+    // which delivery has either happened or provably not: no wait on the clock decides the outcome.
     var subscription = await transport.SubscribeBatchAsync(
-      async (batch, _) => {
-        foreach (var msg in batch) {
-          handlerInvoked = true;
-        }
-        batchHandled.TrySetResult();
+      (batch, _) => {
+        handlerInvoked |= batch.Any(msg => msg.Envelope.MessageId == envelope.MessageId);
+        return Task.CompletedTask;
       },
       destination,
-      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+      new TransportBatchOptions { BatchSize = 100, SlideMs = 600_000, MaxWaitMs = 600_000 }
     );
 
     // Set subscription state
@@ -331,15 +331,7 @@ public class InProcessTransportTests {
 
     // Act
     await transport.PublishAsync(envelope, destination);
-
-    if (shouldInvokeHandler) {
-      // Wait for handler to fire (signal-based)
-      await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    } else {
-      // For paused/disposed, the message goes to the collector but subscription is inactive.
-      // Give a brief moment to confirm handler does NOT fire, then assert.
-      await Task.WhenAny(batchHandled.Task, Task.Delay(TimeSpan.FromMilliseconds(200)));
-    }
+    subscription.Dispose(); // flushes anything delivered; idempotent for the Disposed case
 
     // Assert
     await Assert.That(handlerInvoked).IsEqualTo(shouldInvokeHandler);

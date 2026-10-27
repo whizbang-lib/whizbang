@@ -195,7 +195,8 @@ public class WorkCoordinatorDrainTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       deferredChannel: deferredChannel ?? new DeferredOutboxChannel(),
       systemEventOptions: Options.Create(new SystemEventOptions()),
-      workChannelWriter: new WorkChannelWriter()
+      workChannelWriter: new WorkChannelWriter(),
+      auditDecisionHook: null, detachedWork: new DetachedLifecycleWork()
     );
   }
 
@@ -213,7 +214,7 @@ public class WorkCoordinatorDrainTests {
   }
 
   private static MessageEnvelope<System.Text.Json.JsonElement> _createTestEnvelope(Guid messageId) {
-    var json = System.Text.Json.JsonDocument.Parse("{}").RootElement;
+    var json = System.Text.Json.JsonElement.Parse("{}");
     return new MessageEnvelope<System.Text.Json.JsonElement> {
       MessageId = new MessageId(messageId),
       Payload = json,

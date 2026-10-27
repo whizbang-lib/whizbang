@@ -130,12 +130,13 @@ public partial class LifecycleExceptionInvariantTests {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value));
+      governor: OutboxDrainWorker.CreateDefaultGovernor((Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -220,7 +221,7 @@ public partial class LifecycleExceptionInvariantTests {
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -281,7 +282,7 @@ public partial class LifecycleExceptionInvariantTests {
     var messageId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };

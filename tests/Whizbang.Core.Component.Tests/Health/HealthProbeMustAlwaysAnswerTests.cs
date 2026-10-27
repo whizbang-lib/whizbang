@@ -33,7 +33,7 @@ public class HealthProbeMustAlwaysAnswerTests {
   [Test]
   public async Task AHangingSourceDoesNotStopTheProbeAnsweringAsync() {
     var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options);
+    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var result = await aggregator.EvaluateAsync(HealthProbe.Liveness, cts.Token);
@@ -46,7 +46,7 @@ public class HealthProbeMustAlwaysAnswerTests {
   [Test]
   public async Task LivenessStaysHealthyWhenASourceHangsAsync() {
     var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options);
+    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var result = await aggregator.EvaluateAsync(HealthProbe.Liveness, cts.Token);
@@ -61,7 +61,7 @@ public class HealthProbeMustAlwaysAnswerTests {
   [Test]
   public async Task ATimedOutSourceIsReportedAsFaultedAndNamedAsync() {
     var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options);
+    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, cts.Token);
@@ -76,7 +76,7 @@ public class HealthProbeMustAlwaysAnswerTests {
   public async Task AHealthySourceIsUnaffectedByAHangingOneAsync() {
     var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
     var aggregator = new WhizbangHealthAggregator(
-      [new HangingSource("transport"), new FastSource("schema", ComponentState.Operational)], options);
+      [new HangingSource("transport"), new FastSource("schema", ComponentState.Operational)], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, cts.Token);
@@ -91,7 +91,7 @@ public class HealthProbeMustAlwaysAnswerTests {
     var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(300) };
     var aggregator = new WhizbangHealthAggregator(
       [new HangingSource("a"), new HangingSource("b"), new HangingSource("c"),
-       new HangingSource("d"), new HangingSource("e")], options);
+       new HangingSource("d"), new HangingSource("e")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
 
     var started = DateTimeOffset.UtcNow;
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));

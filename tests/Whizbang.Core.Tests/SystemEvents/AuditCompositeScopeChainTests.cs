@@ -70,7 +70,7 @@ public class AuditCompositeScopeChainTests {
     var streamId = Guid.CreateVersion7();
     var composite = new AuditEventsComposite {
       StreamId = streamId,
-      InnerPayloads = [JsonDocument.Parse("{\"v\":1}").RootElement],
+      InnerPayloads = [JsonElement.Parse("{\"v\":1}")],
       InnerTypeNames = ["Whizbang.Core.SystemEvents.EventAudited, Whizbang.Core"],
       InnerEventIds = [Guid.CreateVersion7()],
     };

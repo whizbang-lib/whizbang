@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// This is the default behavior and minimizes database round-trips by batching multiple completions.
 /// </description></item>
 /// <item><description>
-/// <strong>InstantCompletionStrategy</strong>: Reports completions immediately via ProcessWorkBatchAsync.
+/// <strong>InstantCompletionStrategy</strong>: Reports completions immediately via <see cref="IWorkCoordinator.ReportPerspectiveCompletionAsync"/>.
 /// Useful for test environments where immediate consistency is required.
 /// </description></item>
 /// <item><description>
@@ -43,7 +43,7 @@ public interface IPerspectiveCompletionStrategy {
   /// <returns>Task representing the async operation</returns>
   /// <remarks>
   /// Batched strategies may store the completion for later reporting.
-  /// Instant strategies will call ProcessWorkBatchAsync immediately.
+  /// Instant strategies call <see cref="IWorkCoordinator.ReportPerspectiveCompletionAsync"/> immediately.
   /// </remarks>
   Task ReportCompletionAsync(
     PerspectiveCursorCompletion completion,
@@ -59,7 +59,7 @@ public interface IPerspectiveCompletionStrategy {
   /// <returns>Task representing the async operation</returns>
   /// <remarks>
   /// Batched strategies may store the failure for later reporting.
-  /// Instant strategies will call ProcessWorkBatchAsync immediately.
+  /// Instant strategies call <see cref="IWorkCoordinator.ReportPerspectiveFailureAsync"/> immediately.
   /// </remarks>
   Task ReportFailureAsync(
     PerspectiveCursorFailure failure,
@@ -87,7 +87,7 @@ public interface IPerspectiveCompletionStrategy {
   TrackedCompletion<PerspectiveCursorFailure>[] GetPendingFailures();
 
   /// <summary>
-  /// Mark items as sent to ProcessWorkBatchAsync.
+  /// Mark items as handed to the completion channels.
   /// </summary>
   void MarkAsSent(
     TrackedCompletion<PerspectiveCursorCompletion>[] completions,
@@ -95,7 +95,7 @@ public interface IPerspectiveCompletionStrategy {
     DateTimeOffset sentAt);
 
   /// <summary>
-  /// Mark oldest N items as acknowledged based on counts from ProcessWorkBatchAsync.
+  /// Mark oldest N items as acknowledged, using the counts the perspective worker handed over.
   /// </summary>
   void MarkAsAcknowledged(int completionCount, int failureCount);
 

@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 BeforeAll {
@@ -100,6 +103,23 @@ Describe 'Get-ReviewChecks.ps1' {
     $ids | Should -Contain 'pr.changelog'
   }
 
+  # PowerShell names are case-insensitive: a local $labels for the closing issues once overwrote the
+  # -Labels parameter, so the rules saw the issue's labels and docs:not-needed never cleared pr.docs-link (#1767).
+  It 'honors the pull request''s own labels when the closing issue has labels too' {
+    $labelOut = Join-Path $TestDrive 'label-comment.md'
+    Push-Location $Repo
+    try {
+      & pwsh -NoProfile -File $Script -Base $Base -Head $HeadSha -BaseRef develop -HeadRef fix/x -PullRequest 11 `
+        -BodyFile (Join-Path $TestDrive 'body.md') -ClosingIssueCount 1 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'ignore.txt') -OutFile $labelOut -Title 'fix(lib): a change' `
+        -ClosingIssueLabels 'bug' -Labels 'issue:accepted,docs:not-needed'
+      $LASTEXITCODE | Should -Be 0
+    } finally { Pop-Location }
+    $ids = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $labelOut -Raw))[0].Findings.Id)
+    $ids | Should -Not -Contain 'pr.docs-link'
+    $ids | Should -Not -Contain 'pr.fix-bug-issue' -Because 'the closing issue''s bug label still reaches its own rule'
+  }
+
   It 'reports how many findings it wrote, for the gate step' {
     $outputs = Join-Path $TestDrive 'github-output.txt'
     $countOut = Join-Path $TestDrive 'count-comment.md'
@@ -114,5 +134,23 @@ Describe 'Get-ReviewChecks.ps1' {
     $count = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $countOut -Raw))[0].Findings).Count
     $count | Should -BeGreaterThan 0
     Get-Content $outputs | Should -Contain "findings=$count"
+  }
+}
+
+Describe 'the Gate · Review checks job in ci.yml' {
+  BeforeAll {
+    $ci = Get-Content -Raw (Join-Path $Root '.github' 'workflows' 'ci.yml')
+    $script:Job = [regex]::Match($ci, '(?ms)^  review-checks:\s*$.*?(?=^  [\w-]+:\s*$)').Value
+  }
+
+  # Without issues: read the job's token reads a pull request's labels as an empty list rather than
+  # failing, so docs:not-needed never reached the rules and pr.docs-link stayed open (#1659).
+  It 'can read the pull request''s labels' {
+    $Job | Should -Not -BeNullOrEmpty -Because 'the job must be found for this check to mean anything'
+    $Job | Should -Match '(?m)^      issues: read\b'
+  }
+
+  It 'logs the labels it read, so an empty read is visible' {
+    $Job | Should -Match 'echo "Labels read: \$PR_LABELS"'
   }
 }

@@ -25,6 +25,8 @@ namespace Whizbang.Core.Tests.SystemEvents;
 /// </summary>
 [Category("SystemEvents")]
 public class AuditingEventStoreDecoratorTests {
+  private static readonly DateTimeOffset _fixedInstant = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
   #region Constructor Tests
 
   [Test]
@@ -120,9 +122,11 @@ public class AuditingEventStoreDecoratorTests {
     // Act
     await decorator.AppendAsync(streamId, envelope);
 
-    // Assert - Audit event contains correct stream position
+    // Assert - Audit event contains correct stream position, and the record is transport-only like the
+    // outbox builder's: audit records are never event-stored at the origin (#1485)
     await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
-    await Assert.That(channel.QueuedMessages[0].IsEvent).IsTrue();
+    await Assert.That(channel.QueuedMessages[0].Envelope.Payload.GetProperty("OriginalStreamPosition").GetInt64()).IsEqualTo(5L);
+    await Assert.That(channel.QueuedMessages[0].IsEvent).IsFalse();
   }
 
   #endregion
@@ -139,9 +143,11 @@ public class AuditingEventStoreDecoratorTests {
     // Act
     await decorator.AppendAsync(streamId, message);
 
-    // Assert
+    // Assert - the message goes down as the envelope the audit record names, so the stored id and the
+    // record's OriginalEventId are one id (#1485)
     await Assert.That(inner.AppendedStreamIds).Contains(streamId);
-    await Assert.That(inner.AppendedMessages).Count().IsEqualTo(1);
+    await Assert.That(inner.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(((MessageEnvelope<TestEvent>)inner.AppendedEnvelopes[0]).Payload).IsSameReferenceAs(message);
   }
 
   [Test]
@@ -158,6 +164,57 @@ public class AuditingEventStoreDecoratorTests {
     await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
     await Assert.That(channel.QueuedMessages[0].Destination)
         .IsEqualTo(AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+  }
+
+  #endregion
+
+  #region Record Fields (#1485)
+
+  [Test]
+  public async Task AppendAsync_WithEnvelope_SetsOriginalEventId_ToTheStoredEnvelopesIdAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var envelope = _createTestEnvelope(new TestEvent { Name = "Test" });
+
+    await decorator.AppendAsync(Guid.NewGuid(), envelope);
+
+    var payload = channel.QueuedMessages.Single().Envelope.Payload;
+    await Assert.That(payload.GetProperty("OriginalEventId").GetGuid()).IsEqualTo(envelope.MessageId.Value)
+      .Because("the record must point at the event it audits; Guid.Empty points at nothing");
+  }
+
+  [Test]
+  public async Task AppendAsync_WithEnvelope_SetsCausationId_FromTheEnvelopeAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var causation = MessageId.New();
+    var envelope = _createTestEnvelope(new TestEvent { Name = "Test" }, causation: causation);
+
+    await decorator.AppendAsync(Guid.NewGuid(), envelope);
+
+    var payload = channel.QueuedMessages.Single().Envelope.Payload;
+    await Assert.That(payload.GetProperty("CausationId").GetString()).IsEqualTo(causation.ToString());
+  }
+
+  [Test]
+  public async Task AppendAsync_WithMessage_SetsOriginalEventId_ToTheIdTheInnerStoreWroteAsync() {
+    var (decorator, inner, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), new TestEvent { Name = "Test" });
+
+    var stored = (MessageEnvelope<TestEvent>)inner.AppendedEnvelopes.Single();
+    var payload = channel.QueuedMessages.Single().Envelope.Payload;
+    await Assert.That(payload.GetProperty("OriginalEventId").GetGuid()).IsEqualTo(stored.MessageId.Value)
+      .Because("a bare message used to let the store mint its own id, so the record could name no stored event");
+  }
+
+  [Test]
+  public async Task AppendAsync_WithEnvelope_LandsOnTheTenantsLedgerStreamAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var envelope = _createTestEnvelope(new TestEvent { Name = "Test" }, tenantId: "tenant-ledger");
+
+    await decorator.AppendAsync(Guid.NewGuid(), envelope);
+
+    await Assert.That(channel.QueuedMessages.Single().StreamId).IsEqualTo(AuditLedger.StreamFor("tenant-ledger"))
+      .Because("audit records of one tenant share one ledger stream on every writer");
   }
 
   #endregion
@@ -495,11 +552,54 @@ public class AuditingEventStoreDecoratorTests {
   }
 
   [AuditEvent(Exclude = true, Reason = "Test excluded event")]
-  private sealed record ExcludedEvent : IEvent {
+  internal sealed record ExcludedEvent : IEvent {
   }
 
   [AuditEvent(Reason = "Explicitly marked for audit")]
-  private sealed record MarkedEvent : IEvent {
+  internal sealed record MarkedEvent : IEvent {
+  }
+
+  [AuditEvent(IncludeBody = true)]
+  internal sealed record BodyKeptEvent([property: StreamId] Guid Id, string Note) : IEvent;
+
+  #endregion
+
+  #region Audit body (#1588)
+
+  [Test]
+  public async Task AppendAsync_ByDefault_TheAuditRecordPointsAtTheEventWithoutItsBodyAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new TestEvent { Name = "Test" }));
+
+    var payload = channel.QueuedMessages.Single().Envelope.Payload;
+    await Assert.That(payload.TryGetProperty("OriginalBody", out _)).IsFalse()
+      .Because("a record points at the event it audits; the body is stored only when a type or the default asks for it");
+    await Assert.That(payload.GetProperty("OriginalEventType").GetString()).IsEqualTo(nameof(TestEvent));
+    await Assert.That(payload.GetProperty("OriginalEventId").GetGuid()).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task AppendAsync_ATypeThatAsksForItsBody_IsRecordedWithItAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new BodyKeptEvent(Guid.Empty, "kept")));
+
+    // Present, as an object; this test type is in no registered JSON context, so its content serializes as {}.
+    var body = channel.QueuedMessages.Single().Envelope.Payload.GetProperty("OriginalBody");
+    await Assert.That(body.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Object);
+  }
+
+  [Test]
+  public async Task AppendAsync_TheDefaultSetToInclude_RecordsEveryBodyAsync() {
+    var (decorator, _, channel) = _createDecorator(opts => {
+      opts.EnableEventAudit();
+      opts.AuditBodyDefault = AuditBodyDefault.Include;
+    });
+
+    await decorator.AppendAsync(Guid.NewGuid(), _createTestEnvelope(new TestEvent { Name = "everything" }));
+
+    await Assert.That(channel.QueuedMessages.Single().Envelope.Payload.TryGetProperty("OriginalBody", out _)).IsTrue();
   }
 
   #endregion
@@ -516,7 +616,7 @@ public class AuditingEventStoreDecoratorTests {
     return (decorator, inner, channel);
   }
 
-  private static MessageEnvelope<T> _createTestEnvelope<T>(T payload) {
+  private static MessageEnvelope<T> _createTestEnvelope<T>(T payload, MessageId? causation = null, string? tenantId = null) {
     return new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -524,7 +624,9 @@ public class AuditingEventStoreDecoratorTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = _fixedInstant,
+          CausationId = causation,
+          Scope = tenantId is null ? null : ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId })
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }

@@ -318,7 +318,7 @@ public class OutboxDrainWorkerBranchCoverageTests {
   private static OutboxBatchRow _row(Guid messageId, Guid streamId, int attempts = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -344,7 +344,7 @@ public class OutboxDrainWorkerBranchCoverageTests {
     Destination = "branch-test-topic",
     Envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Hops = [],
     },
@@ -387,6 +387,7 @@ public class OutboxDrainWorkerBranchCoverageTests {
       deadLetterStore: deadLetterStore ?? NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
       governor: governor ?? OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       dlqMetrics: dlqMetrics,
       governorMetrics: governorMetrics);
   }

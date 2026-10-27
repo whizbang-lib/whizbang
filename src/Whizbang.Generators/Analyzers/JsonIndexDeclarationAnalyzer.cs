@@ -54,6 +54,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ303: Warning - a field declares an index its stored form cannot carry.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz303</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveIndexAnalyzerEdgeTests.cs:AnIndexOnAnUnindexableTypeIsReportedAsync</tests>
   public static readonly DiagnosticDescriptor DeclaredIndexCannotBeBuilt = new(
       id: "WHIZ303",
       title: "Declared index cannot be built for this field's type",
@@ -75,6 +77,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ304: Warning - a model declares an index no query against it can reach.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz304</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/JsonIndexDeclarationAnalyzerTests.cs:WHIZ304NamesAnUnconstructibleMemberRatherThanPolymorphismAsync</tests>
   public static readonly DiagnosticDescriptor DeclaredIndexCannotBeReached = new(
       id: "WHIZ304",
       title: "Declared index cannot be reached for this model's storage",
@@ -100,6 +104,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ305: Warning - a field declares a capability its type cannot provide.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz305</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/JsonIndexDeclarationAnalyzerTests.cs:ACapabilityThatOnlyAppliesToText_IsReportedAsync</tests>
   public static readonly DiagnosticDescriptor DeclaredCapabilityDoesNotApply = new(
       id: "WHIZ305",
       title: "Declared index capability does not apply to this field's type",

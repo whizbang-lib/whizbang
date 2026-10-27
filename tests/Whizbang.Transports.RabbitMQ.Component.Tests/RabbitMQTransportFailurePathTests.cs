@@ -1,11 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;
@@ -159,15 +157,15 @@ public class RabbitMQTransportFailurePathTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection);
 
     var metadata = new Dictionary<string, JsonElement> {
-      ["str"] = JsonDocument.Parse("\"text\"").RootElement.Clone(),
-      ["int"] = JsonDocument.Parse("42").RootElement.Clone(),
-      ["long"] = JsonDocument.Parse("9999999999").RootElement.Clone(),
-      ["dbl"] = JsonDocument.Parse("1.5").RootElement.Clone(),
-      ["yes"] = JsonDocument.Parse("true").RootElement.Clone(),
-      ["no"] = JsonDocument.Parse("false").RootElement.Clone(),
-      ["nil"] = JsonDocument.Parse("null").RootElement.Clone(),
-      ["arr"] = JsonDocument.Parse("[1,\"two\",true]").RootElement.Clone(),
-      ["obj"] = JsonDocument.Parse("{\"k\":\"v\",\"n\":3}").RootElement.Clone()
+      ["str"] = JsonElement.Parse("\"text\""),
+      ["int"] = JsonElement.Parse("42"),
+      ["long"] = JsonElement.Parse("9999999999"),
+      ["dbl"] = JsonElement.Parse("1.5"),
+      ["yes"] = JsonElement.Parse("true"),
+      ["no"] = JsonElement.Parse("false"),
+      ["nil"] = JsonElement.Parse("null"),
+      ["arr"] = JsonElement.Parse("[1,\"two\",true]"),
+      ["obj"] = JsonElement.Parse("{\"k\":\"v\",\"n\":3}")
     };
 
     await transport.PublishAsync(
@@ -319,27 +317,6 @@ public class RabbitMQTransportFailurePathTests {
     await Assert.That(handled).IsEmpty();
     await Assert.That(channel.NackAttempts).Count().IsEqualTo(1);
     await Assert.That(channel.NackAttempts[0].Requeue).IsFalse();
-  }
-
-  [Test]
-  public async Task ProcessMessage_DiscardPolicySaysSkip_AcksWithoutInvokingHandlerAsync() {
-    using var meter = new Meter("Whizbang.Tests.RabbitMQTransportFailurePathTests.Discard");
-    var policy = new MessageDiscardPolicy(
-      registry: new EmptyReceptorRegistry(),
-      logger: new CapturingLogger<MessageDiscardPolicy>(),
-      meter: meter,
-      routingOptions: Options.Create(new RoutingOptions()),
-      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
-    var (channel, handled, _, _) = await _subscribeAsync(discardPolicy: policy);
-
-    var (props, body) = RabbitTestWire.ValidWireMessage("skipped");
-    await RabbitTestWire.DeliverAsync(channel, props, body, 5);
-
-    await Assert.That(handled).IsEmpty()
-      .Because("With no local consumer for the payload type, the message must be acked-and-skipped without touching the handler.");
-    await Assert.That(channel.AckAttempts).Count().IsEqualTo(1);
-    await Assert.That(channel.AckAttempts[0]).IsEqualTo(5UL);
-    await Assert.That(channel.NackAttempts).IsEmpty();
   }
 
   [Test]
@@ -517,7 +494,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_RoutingPatternsArrayMetadata_BindsEachPatternAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPatterns"] = JsonDocument.Parse("[\"orders.*\",\"payments.#\"]").RootElement.Clone()
+      ["RoutingPatterns"] = JsonElement.Parse("[\"orders.*\",\"payments.#\"]")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(extraMetadata: extraMetadata));
@@ -534,7 +511,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_SingularRoutingPatternMetadata_BindsThatPatternAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPattern"] = JsonDocument.Parse("\"orders.created\"").RootElement.Clone()
+      ["RoutingPattern"] = JsonElement.Parse("\"orders.created\"")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(extraMetadata: extraMetadata));
@@ -564,7 +541,7 @@ public class RabbitMQTransportFailurePathTests {
   [Test]
   public async Task SubscribeAsync_EmptyRoutingPatternsArray_FallsBackToMatchAllAsync() {
     var extraMetadata = new Dictionary<string, JsonElement> {
-      ["RoutingPatterns"] = JsonDocument.Parse("[]").RootElement.Clone()
+      ["RoutingPatterns"] = JsonElement.Parse("[]")
     };
     var (channel, _, _, _) = await _subscribeAsync(
       destination: RabbitTestWire.Destination(routingKey: "#", extraMetadata: extraMetadata));

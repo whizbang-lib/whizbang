@@ -199,7 +199,7 @@ public class DeferredOutboxChannelTests {
   /// Creates a test envelope for the OutboxMessage.
   /// </summary>
   private static MessageEnvelope<System.Text.Json.JsonElement> _createTestEnvelope(Guid messageId) {
-    var json = System.Text.Json.JsonDocument.Parse("{}").RootElement;
+    var json = System.Text.Json.JsonElement.Parse("{}");
     return new MessageEnvelope<System.Text.Json.JsonElement> {
       MessageId = new MessageId(messageId),
       Payload = json,

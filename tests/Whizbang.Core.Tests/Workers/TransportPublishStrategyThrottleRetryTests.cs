@@ -43,7 +43,7 @@ public class TransportPublishStrategyThrottleRetryTests {
       Destination = "test-topic",
       Envelope = new MessageEnvelope<JsonElement>(
         messageId: MessageId.From(id),
-        payload: JsonDocument.Parse("{}").RootElement,
+        payload: JsonElement.Parse("{}"),
         hops: []),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",

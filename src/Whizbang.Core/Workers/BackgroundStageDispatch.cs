@@ -7,7 +7,7 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Scheduler for fire-and-forget background stage dispatch (PostLifecycle in
-/// <see cref="PerspectiveWorker"/>, inbox Pre/PostDetached in <see cref="WorkCoordinatorPublisherWorker"/>).
+/// <see cref="PerspectiveWorker"/>, Pre/PostPerspectiveDetached in the generated perspective runners).
 /// </summary>
 /// <remarks>
 /// <para>

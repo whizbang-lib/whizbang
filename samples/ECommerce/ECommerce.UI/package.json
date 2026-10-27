@@ -30,7 +30,7 @@
     "@angular/core": "^21.2.24",
     "@angular/forms": "^21.2.24",
     "@angular/platform-browser": "^21.2.24",
-    "@angular/router": "^21.2.24",
+    "@angular/router": "^22.2.3",
     "@cds/core": "^6.17.0",
     "@clr/angular": "^17.13.0",
     "@clr/ui": "^17.13.0",

@@ -31,7 +31,7 @@ public class ImmediateBatchStrategyBehaviorTests {
       HandlerName = "TestHandler",
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -48,7 +48,7 @@ public class ImmediateBatchStrategyBehaviorTests {
     var msgId = (Guid)TrackedGuid.New();
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{}").RootElement,
+      JsonElement.Parse("{}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,

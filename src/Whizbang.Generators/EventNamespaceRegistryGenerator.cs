@@ -35,25 +35,34 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string IRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover event namespaces from IPerspectiveFor implementations
     var perspectiveNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveEventNamespaces(ctx, ct)
     ).Where(static info => info.HasValue)
      .SelectMany(static (namespaces, _) => namespaces!.Value);
 
     // Pipeline 2: Discover event namespaces from IReceptor<TEvent> implementations
     var receptorNamespaces = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptorEventNamespace(ctx, ct)
     ).Where(static ns => ns is not null);
 
-    // Combine both pipelines with compilation
+    // Combine both pipelines with the assembly name, the one fact read from the compilation. Combining the
+    // compilation itself would make every edit regenerate the registry, since every edit is a new compilation.
     var allData = perspectiveNamespaces.Collect()
         .Combine(receptorNamespaces.Collect())
-        .Combine(context.CompilationProvider);
+        .Combine(context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName));
 
     // Generate registry
     context.RegisterSourceOutput(
@@ -61,8 +70,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var perspectiveNs = data.Left.Left;
           var receptorNs = data.Left.Right;
-          var compilation = data.Right;
-          _generateEventNamespaceRegistry(ctx, compilation, perspectiveNs, receptorNs!);
+          var assemblyName = data.Right;
+          _generateEventNamespaceRegistry(ctx, assemblyName, perspectiveNs, receptorNs!);
         }
     );
   }
@@ -161,11 +170,11 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateEventNamespaceRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<string> perspectiveNamespaces,
       ImmutableArray<string?> receptorNamespaces) {
 
-    var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
+    var assemblyName = compilationAssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Filter out nulls and deduplicate namespaces (case-insensitive)

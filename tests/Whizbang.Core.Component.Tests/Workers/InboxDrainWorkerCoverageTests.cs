@@ -137,7 +137,7 @@ public partial class InboxDrainWorkerCoverageTests {
   private static InboxBatchRow _row(Guid messageId, Guid streamId, int attempts = 0, string? error = null) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };

@@ -12,7 +12,7 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// Validates that lifecycle receptors fire at correct points around transport publishing (Service Bus).
 /// </summary>
 /// <remarks>
-/// <para><strong>Hook Location</strong>: WorkCoordinatorPublisherWorker.cs, around ProcessOutboxWorkAsync()</para>
+/// <para><strong>Hook Location</strong>: OutboxDrainWorker.cs, around PublishOneAsync() and PublishBulkAsync()</para>
 /// <para><strong>Stages Tested</strong>:</para>
 /// <list type="bullet">
 ///   <item>PreOutboxInline - Before publishing to transport (blocking)</item>

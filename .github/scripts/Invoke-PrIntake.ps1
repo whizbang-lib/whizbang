@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 7.0
 
 <#
@@ -29,6 +32,18 @@
                    waits for a maintainer's /accept.
       Sweep        close each outside pull request still without an accepted issue Days after it was
                    opened, with a comment explaining the process again.
+      Review       a review was submitted or dismissed: re-run the "Gate - Pipeline owner" job
+                   (Test-PipelineOwner.ps1) of the pull request's latest CI run when the review can change
+                   its verdict, an approval of a failed gate or a change request or dismissal of a passed
+                   one. Re-running a job re-runs the jobs that need it, so the CI result follows. A run
+                   still going is left alone: the gate has not read the reviews yet, or, if it has,
+                   /recheck re-runs it once the run ends.
+      Enqueued     a pull request entered the merge queue: run the pipeline-owner check
+                   (Test-PipelineOwner.ps1, from this base-branch checkout with its CODEOWNERS) and take a
+                   pull request that fails it out of the queue, with a comment saying why (#1566). The CI
+                   gate runs from the pull request's own ci.yml, so a pull request could remove it; this
+                   workflow runs from the base branch, so it cannot. A check that cannot read the pull
+                   request fails, and the pull request leaves the queue (fail closed).
 
     The gate stays the authority; the labels describe the linked issue so a maintainer can filter. A
     committer's (write or above) pull request is never explained to or closed; it still needs an
@@ -38,7 +53,7 @@
     owner/name.
 
 .PARAMETER Mode
-    PullRequest, Issue, Command or Sweep.
+    PullRequest, Issue, IssueOpened, Command, Sweep, Review or Enqueued.
 
 .PARAMETER Number
     The pull request (PullRequest) or issue (Issue, Command) number.
@@ -51,16 +66,20 @@
 
 .PARAMETER Days
     How long a pull request may wait for an accepted issue before it is closed.
+
+.PARAMETER ReviewState
+    The submitted or dismissed review's state (Review): approved, changes_requested, commented or dismissed.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Repository,
-  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'IssueOpened', 'Command', 'Sweep')][string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'IssueOpened', 'Command', 'Sweep', 'Review', 'Enqueued')][string]$Mode,
   [int]$Number = 0,
   [long]$CommentId = 0,
   [string]$Actor = '',
   [switch]$IsPullRequest,
-  [int]$Days = 14
+  [int]$Days = 14,
+  [string]$ReviewState = ''
 )
 
 Set-StrictMode -Version Latest
@@ -77,6 +96,8 @@ $script:IntakeLabels = [ordered]@{
 $script:IntakeMarker = '<!-- pr-intake -->'
 $script:ClosedMarker = '<!-- pr-intake-closed -->'
 $script:IntakeDays = $Days
+# The pipeline-owner gate's job name in ci.yml, with the middle dot kept ASCII-only in source.
+$script:PipelineOwnerJob = "Gate $([char]0x00B7) Pipeline owner"
 # Commands, where they apply, and who may give them.
 $script:Commands = @{
   'accept'          = @{ OnPullRequest = $false; Who = 'maintainer' }
@@ -155,6 +176,19 @@ function Select-FailedCiRun {
   if ($latest -and $latest.conclusion -eq 'failure') { return $latest.databaseId }
 }
 
+function Select-PipelineOwnerJob {
+  <#
+  .SYNOPSIS
+      The id of the finished "Gate - Pipeline owner" job when a review in ReviewState can change its
+      verdict: an approval of a failed gate, or a change request or dismissal of a passed one. Nothing else.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Jobs, [Parameter(Mandatory)][AllowEmptyString()][string]$ReviewState)
+  $gate = $Jobs | Where-Object { $_.name -eq $script:PipelineOwnerJob -and $_.status -eq 'completed' } | Select-Object -First 1
+  if (-not $gate) { return }
+  $wanted = switch ($ReviewState) { 'approved' { 'failure' } { $_ -in @('changes_requested', 'dismissed') } { 'success' } default { '' } }
+  if ($wanted -and $gate.conclusion -eq $wanted) { return $gate.databaseId }
+}
+
 function Invoke-Gh {
   <# .SYNOPSIS Runs gh; throws when it fails. #>
   param([Parameter(Mandatory)][string[]]$Arguments)
@@ -217,6 +251,74 @@ function Update-PullRequest {
     [void](Invoke-Gh -Arguments @('run', 'rerun', "$failed", '--failed', '-R', $Repository))
     Write-Host "Re-ran the failed jobs of CI run $failed for pull request #$Number."
   }
+}
+
+function Update-PipelineOwnerGate {
+  <#
+  .SYNOPSIS
+      Re-runs the pipeline-owner gate of the pull request's latest CI run, and the jobs that need it, when
+      the review can change its verdict and the run has ended.
+  #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number, [Parameter(Mandatory)][AllowEmptyString()][string]$ReviewState)
+  $head = ((Invoke-Gh -Arguments @('pr', 'view', "$Number", '-R', $Repository, '--json', 'headRefOid', '--jq', '.headRefOid')) -join '').Trim()
+  $runs = (Invoke-Gh -Arguments @('run', 'list', '-R', $Repository, '--workflow', 'ci.yml', '--commit', $head,
+      '--json', 'databaseId,status,conclusion,event,createdAt')) -join "`n" | ConvertFrom-Json
+  $latest = @($runs) | Where-Object { $_.event -eq 'pull_request' } | Sort-Object { [datetimeoffset]$_.createdAt } | Select-Object -Last 1
+  if (-not $latest) { Write-Host "Pull request #${Number}: no CI run for $head yet."; return }
+  if ($latest.status -ne 'completed') {
+    Write-Host "Pull request #${Number}: CI run $($latest.databaseId) is still going; its gate reads the reviews when it runs."
+    return
+  }
+  $jobs = (Invoke-Gh -Arguments @('run', 'view', "$($latest.databaseId)", '-R', $Repository, '--json', 'jobs', '--jq', '.jobs')) -join "`n" | ConvertFrom-Json
+  $job = Select-PipelineOwnerJob -Jobs @($jobs) -ReviewState $ReviewState
+  if (-not $job) { Write-Host "Pull request #${Number}: a $ReviewState review does not change the pipeline-owner gate."; return }
+  [void](Invoke-Gh -Arguments @('run', 'rerun', '--job', "$job", '-R', $Repository))
+  Write-Host "Re-ran the pipeline-owner gate (job $job) of CI run $($latest.databaseId) for pull request #$Number."
+}
+
+function ConvertFrom-PipelineOwnerOutput {
+  <#
+  .SYNOPSIS
+      The pipeline-owner check's verdict from its exit code and output: Pass on exit 0; otherwise the
+      ::error:: lines as the problems, or one naming the exit code when it printed none.
+  #>
+  param([Parameter(Mandatory)][int]$ExitCode, [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Output)
+  if ($ExitCode -eq 0) { return [pscustomobject]@{ Pass = $true; Problems = @() } }
+  $problems = @($Output | Where-Object { $_ -like '::error::*' } | ForEach-Object { $_.Substring('::error::'.Length) })
+  if ($problems.Count -eq 0) { $problems = @("The pipeline-owner check failed (exit $ExitCode) without saying why; see the PR intake run.") }
+  return [pscustomobject]@{ Pass = $false; Problems = $problems }
+}
+
+function Invoke-PipelineOwnerCheck {
+  <#
+  .SYNOPSIS
+      Runs Test-PipelineOwner.ps1 from this checkout, in its own process (it shares function names with
+      Test-LinkedIssue.ps1, which this script dot-sources), and returns its verdict.
+  #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number)
+  $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-PipelineOwner.ps1') -Repository $Repository -PullRequest $Number 2>&1 |
+      ForEach-Object { "$_" })
+  $output | ForEach-Object { Write-Host $_ }
+  ConvertFrom-PipelineOwnerOutput -ExitCode $LASTEXITCODE -Output $output
+}
+
+function Invoke-QueueGuard {
+  <#
+  .SYNOPSIS
+      A pull request entered the merge queue: take it out, with a comment, when it fails the
+      pipeline-owner check. Throws when it cannot be taken out, so the run fails where it is seen.
+  #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number)
+  $check = Invoke-PipelineOwnerCheck -Repository $Repository -Number $Number
+  if ($check.Pass) { Write-Host "Pull request #${Number}: passes the pipeline-owner check; left in the queue."; return }
+
+  $id = ((Invoke-Gh -Arguments @('pr', 'view', "$Number", '-R', $Repository, '--json', 'id', '--jq', '.id')) -join '').Trim()
+  $mutation = 'mutation($id:ID!){dequeuePullRequest(input:{id:$id}){mergeQueueEntry{id}}}'
+  [void](Invoke-Gh -Arguments @('api', 'graphql', '-f', "query=$mutation", '-f', "id=$id"))
+  $body = "Taken out of the merge queue: the pipeline-owner check failed. It runs from the base branch when a pull " +
+    "request is queued, so a change to ci.yml cannot skip it (#1566).`n`n" + (($check.Problems | ForEach-Object { "- $_" }) -join "`n")
+  [void](Invoke-Gh -Arguments @('pr', 'comment', "$Number", '-R', $Repository, '--body', $body))
+  Write-Host "Pull request #${Number}: failed the pipeline-owner check; taken out of the merge queue."
 }
 
 function Update-PullRequestsClosing {
@@ -315,5 +417,7 @@ switch ($Mode) {
     Invoke-IntakeCommand -Repository $Repository -Issue $Number -Body $body -Actor $Actor -CommentId $CommentId -IsPullRequest:$IsPullRequest
   }
   'Sweep' { Invoke-IntakeSweep -Repository $Repository -Days $Days }
+  'Review' { Update-PipelineOwnerGate -Repository $Repository -Number $Number -ReviewState $ReviewState }
+  'Enqueued' { Invoke-QueueGuard -Repository $Repository -Number $Number }
 }
 exit 0

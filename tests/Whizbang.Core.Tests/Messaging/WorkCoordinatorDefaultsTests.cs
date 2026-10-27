@@ -445,6 +445,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task RecordStartupStageAsync_WithoutProviderSupport_RecordsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.RecordStartupStageAsync(Guid.Empty, Whizbang.Core.Startup.StartupStage.Running, "serving");
+
+    await Assert.That(result).IsFalse()
+      .Because("a coordinator with no instance rows records no stage, so the reporter holds it as unwritten");
+  }
+
+  [Test]
   public async Task RequestStandbyAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
@@ -628,12 +638,21 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
-  public async Task CloseStreamAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+  public async Task TruncateStreamPrefixAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 
-    var result = await coordinator.CloseStreamAsync(Guid.Empty, 0L, false);
+    var result = await coordinator.TruncateStreamPrefixAsync(Guid.Empty, 0L, false);
 
     await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetStreamTruncateTargetsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.GetStreamTruncateTargetsAsync(Guid.Empty, 0L);
+
+    await Assert.That(result).IsEmpty();
   }
 
   [Test]

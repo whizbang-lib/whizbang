@@ -167,7 +167,7 @@ public class RoleAssignmentChaosTests : EFCoreTestBase {
     skewed.Time.Advance(TimeSpan.FromDays(1));   // the instance thinks a day went by
     await skewed.PassAsync(cancellationToken);
     var remaining = await ChaosPod.LeaseRemainingAsync(ConnectionString, ROLE, cancellationToken);
-    await Assert.That(remaining).IsNotNull();
+    await Assert.That(remaining.HasValue).IsTrue();
     await Assert.That(remaining!.Value).IsLessThanOrEqualTo(_defaults.Lease)
       .Because("the renewal extended the lease from the database's now(), never from the instance's clock");
 

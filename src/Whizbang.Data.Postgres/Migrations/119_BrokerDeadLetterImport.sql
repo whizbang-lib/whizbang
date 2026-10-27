@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- ============================================================================
 -- Migration: 119_BrokerDeadLetterImport.sql
 -- Date: 2026-08-20

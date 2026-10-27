@@ -180,7 +180,9 @@ __PHYSICAL_FIELD_CONFIGS__
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
         jsonOptions,
-        sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>()
+        sp.GetService<global::Microsoft.Extensions.Logging.ILogger<global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>>(),
+        // #1546: an appended event's kind is the one the dispatch path stamps, [Ephemeral] on a type included.
+        sp.GetService<global::Whizbang.Core.IEphemeralModeResolver>()
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
@@ -208,8 +210,9 @@ __PHYSICAL_FIELD_CONFIGS__
     }
 
     // Register shared work channel writer as singleton
-    // Shared between ScopedWorkCoordinatorStrategy (writer) and WorkCoordinatorPublisherWorker (reader)
-    // Enables immediate processing of work returned from process_work_batch
+    // Shared between ClaimWorker (writes claimed outbox work, and wakes when a strategy flush signals
+    // new work) and OutboxPublishWorker (reader)
+    // Enables immediate processing of work returned from claim_work
     if (!services.Any(sd => sd.ServiceType == typeof(global::Whizbang.Core.Messaging.IWorkChannelWriter))) {
       services.AddSingleton<global::Whizbang.Core.Messaging.IWorkChannelWriter, global::Whizbang.Core.Messaging.WorkChannelWriter>();
     }
@@ -238,7 +241,8 @@ __PHYSICAL_FIELD_CONFIGS__
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
         workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
-        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>()
+        inboxChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IInboxChannelWriter>(),
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -256,7 +260,8 @@ __PHYSICAL_FIELD_CONFIGS__
         tracingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
         metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
-        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
+        workChannelWriter: sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>(),
+        detachedWork: sp.GetRequiredService<global::Whizbang.Core.Messaging.DetachedLifecycleWork>()
       );
     });
 

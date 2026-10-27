@@ -28,6 +28,9 @@ public class StreamDigestTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
 
+  /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
+  private const int AT_MOST_ONCE_FLAG = 32;
+
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
@@ -48,7 +51,7 @@ public class StreamDigestTests : EFCoreTestBase {
     // Exclusions on the origin side: ephemeral (flags&8), at-most-once, and a FRESH event.
     await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true, flags: 8);
     await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: true,
-      metadataJson: "{\"deliveryGuarantee\":1}");
+      flags: AT_MOST_ONCE_FLAG);
     await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.TypeX", TrackedGuid.New().Value, aged: false);
 
     var settle = TimeSpan.FromMinutes(60);
@@ -196,7 +199,7 @@ public class StreamDigestTests : EFCoreTestBase {
 
   private static async Task _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType, Guid eventId,
-      bool aged, int flags = 0, string? metadataJson = null) {
+      bool aged, int flags = 0) {
     await using (var store = conn.CreateCommand()) {
       store.CommandText = $@"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, created_at)
@@ -217,7 +220,7 @@ public class StreamDigestTests : EFCoreTestBase {
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
     body.Parameters.AddWithValue("event", eventId);
-    body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+    body.Parameters.AddWithValue("meta", "{}");
     await body.ExecuteNonQueryAsync();
   }
 

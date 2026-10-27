@@ -317,7 +317,10 @@ runs, so an org or repository secret is readable by anyone who can push a branch
 
 A job reads them only by declaring one of those environments (`Test · Pipeline scripts` fails any job
 that reads them without one, `.github/scripts/tests/ReleaseSecrets.Tests.ps1`). A reusable workflow's
-job declares the environment itself: a caller cannot pass an environment secret, so none does.
+job declares the environment itself: a caller cannot pass an environment secret, so none does. The
+reusable workflow also declares both names as optional `workflow_call` secrets: its job sees only the
+secrets its trigger declares, so without them the environment's values never reach it (#1477, guarded by
+the same test file).
 `nuget-publish.yml` mints the token in `release-app-ready` before anything is pushed, so a run that
 could not tag fails before the packages are public. Branch creation under `release/` is limited to
 build admins and the release app, so nobody else can make a branch the environment accepts.
@@ -344,13 +347,24 @@ mints a token with read-only permissions (administration, environments, members 
 administration), because `GITHUB_TOKEN` cannot read rulesets' bypass actors, the Actions settings, the
 teams or the organization's settings. It compares them with `.github/settings-baseline.json` and opens
 or updates one issue labeled `security` (with `GITHUB_TOKEN`) for each run that finds a difference. The
-app holds those four read permissions for this job alone; the release jobs never request them. After
+app holds those four read permissions for this job alone; the release jobs never request them. One thing
+it cannot see: GitHub shows a ruleset's bypass actors only to someone who can edit the ruleset, so the
+check lists them as not checked rather than give a release bot write access to the settings. The
+baseline still records them, so changing who can bypass is reviewed in the baseline pull request, and the
+organization audit log records any change made outside one. After
 changing a setting on purpose, refresh the baseline in a pull request:
 `pwsh .github/scripts/Test-SettingsDrift.ps1 -Mode Capture -Repository whizbang-lib/whizbang -OutFile .github/settings-baseline.json`.
 
 **Only allowed actions run** (#1467): GitHub's own, verified Marketplace creators and the patterns in
 `.github/allowed-actions.txt`, all pinned to a full commit SHA. A new action goes into that file and the
 repository's Actions setting together; the drift check reports the setting if the two disagree.
+
+**Release tags are signed** (#1438). The app pushes the tag, but the signature is the workflow's own:
+`.github/actions/signed-tag` signs it keylessly with Sigstore (gitsign), using the job's GitHub OIDC token,
+so the certificate names `release.yml` or `nuget-publish.yml` and the ref it ran on, the same identity as
+the packages' provenance. The action verifies the signature against that identity before it pushes, which
+is the check SECURITY.md ("Verifying a Release") gives consumers. Both tagging jobs need `id-token: write`.
+The gitsign binary is a pinned, checksum-verified release download, not a third-party action.
 
 A PR or push made with `GITHUB_TOKEN` starts no workflow, which is why these are not `GITHUB_TOKEN`.
 The tag is because the tag ruleset lets only the app create a `v*` tag, and GitHub Actions cannot be
@@ -361,6 +375,10 @@ a ruleset bypass actor. GitHub releases and everything else stay on `GITHUB_TOKE
 A stable release attaches, after the NuGet push succeeds:
 
 - every package (`*.nupkg`) and its SHA-256 (`*.nupkg.sha256`);
+- every package's software bill of materials, `<id>.X.Y.Z.cdx.json` (CycloneDX, #1440), written at pack
+  time by `.github/actions/package-sbom` from the locked restore, carried in the packages artifact, and a
+  subject of the provenance below. `verify-packages` fails a set missing one (the stable promote only
+  warns, for a hotfix of a release packed before SBOMs existed). Betas and rcs attach them too;
 - `whizbang-X.Y.Z.sigstore.json`: the Sigstore bundle `nuget-push` produced when it attested the
   packages, a keyless signature over a SLSA v1 provenance statement naming every package by digest;
 - `whizbang-X.Y.Z.intoto.jsonl`: that bundle's DSSE envelope, the in-toto provenance on its own.
@@ -679,13 +697,49 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
-| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z` |
+| `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the reusable sync workflow does not declare `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` under `workflow_call.secrets`, so the environment's values never reach its job (#1477) | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'`. Empty means nothing was lost. Otherwise fix the declaration by PR, then re-run the failed job |
+| `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z`. That tag is not signed by the workflow, so it fails SECURITY.md's verification: say so in the release notes |
+| `Create and push the signed tag` failed at `gitsign verify-tag` or before it, with nothing pushed | Sigstore (Fulcio or Rekor) was unavailable, or the job lacks `id-token: write` | Check [status.sigstore.dev](https://status.sigstore.dev); re-run the failed jobs once it is up. The tag is created only after the signature verifies, and the tag step checks for it first, so a re-run after the packages reached NuGet only adds the tag. A missing permission is a workflow bug: fix it by PR |
+| `Verify the package set` failed: "has no SBOM" | the packages artifact was packed by workflows from before #1440 (a release branch cut earlier, or a build re-used across the change), or `Generate the software bill of materials` did not run | Re-run **all** jobs of the run that packed them, so the pack writes the SBOMs; a release branch cut before the change needs `develop`'s `.github` merged into it by PR first. `Generate the software bill of materials` failing on "No project found" means a package in `.github/nuget-packages.txt` has no `src/<name>` or `tools/<name>` project |
 | A job in a release run failed for a flaky test | a real flake | Re-run the failed jobs to unblock, **and** fix the flake in a PR (flakes are fixed on sight, never parked) |
 
 `dry_run` on `release.yml` defaults to `true`: a dispatch without `-f dry_run=false` reports success
 and publishes nothing.
 
 ---
+
+## Public API baseline
+
+Every library package is compared with the **last stable release** when it is packed (#1439): .NET package
+validation (`EnablePackageValidation`, set in `Directory.Build.targets`) downloads that version from nuget.org
+and fails the pack on any change that breaks binary or source compatibility, such as a removed or changed public
+member or a dropped target framework. Analyzer and generator packages ship no library to compare, and the
+command-line tools are not an API, so they are not checked. The check runs wherever packing does, so a pull
+request that breaks the API fails its `Pack` job.
+
+**An intended break is recorded, not avoided.** Pre-1.0 every release is a new minor, so breaking changes are
+allowed, but each one is written down where a reviewer sees it. Regenerate the project's suppression file and
+commit it with the change:
+
+```bash
+dotnet pack src/<Project>/<Project>.csproj -c Release -p:WhizbangApiCheck=true -p:Version=1.0.0-local \
+  -p:ApiCompatGenerateSuppressionFile=true
+```
+
+The check runs on CI by itself; locally `WhizbangApiCheck=true` turns it on, and `Version` must be above the
+baseline, because the placeholder version in `Directory.Build.props` is lower than any release and would be
+reported as an assembly identity change (`CP0003`) in every package.
+
+That writes `src/<Project>/CompatibilitySuppressions.xml`, one entry per break (`CP0002` member removed,
+`CP0006` member added to an interface, and so on). The diff of that file is the API review. A suppression for
+a break nobody meant to make is the signal to fix the code instead.
+
+**After each stable release, move the baseline.** Set `PackageValidationBaselineVersion` in
+`Directory.Build.targets` to the version just released, and delete every `CompatibilitySuppressions.xml`: the
+breaks they recorded are now in the baseline. Do it in one pull request into `develop` right after the
+release. Until then, packs still compare with the previous stable and the old suppressions keep applying,
+so nothing fails; the PR only stops them from piling up. From 1.0 a break needs a new major as well as a
+suppression.
 
 ## Gotchas & invariants (for future edits)
 

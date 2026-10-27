@@ -55,6 +55,12 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/inbox-dispatch</docs>
 public sealed partial class InboxDispatchWorker : BackgroundService {
+  /// <summary>
+  /// The detached lifecycle stages this worker started and that are still running. Its stop waits for them, so they finish,
+  /// and report a failure, while the services they resolve are still alive (#1721).
+  /// </summary>
+  internal DetachedLifecycleWork DetachedWork { get; } = new();
+
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxChannelWriter _inboxChannelWriter;
@@ -535,9 +541,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         LogDiagPostInboxReturned(_logger, work.MessageId);
       }
 
-      // For events with no registered perspectives, fire PostAllPerspectives + PostLifecycle here
-      // (PerspectiveWorker fires them for events WITH perspectives after processing completes).
-      if (!stateOnly && _hasNoPerspectives(work.MessageType, scope.ServiceProvider)) {
+      // For events nothing in this service applies later, fire PostAllPerspectives + PostLifecycle here
+      // (PerspectiveWorker fires them for events WITH perspectives after processing completes, and the
+      // collective sink for a collective event once its apply commits, #1676).
+      if (!stateOnly && ReceivedEventPostPerspectiveStages.FiredOnReceipt(work.MessageType, typedEnvelope?.Payload, scope.ServiceProvider)) {
         await InvokeInboxLifecycleStageAsync(
           work, typedEnvelope, receptorInvoker, LifecycleStage.PostAllPerspectivesDetached, LifecycleStage.PostAllPerspectivesInline,
           "PostAllPerspectives", ct, detachedCancellationToken: stoppingToken);
@@ -564,6 +571,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.ReceptorDispatch, MessageParseKind.Payload);
       _deserializeCache?.Set(work.MessageId, message);
       return (work.Envelope.ReconstructWithPayload(message, work.HandlerName), null);
     } catch (Exception ex) when (IsPayloadRefusal(ex)) {
@@ -1059,7 +1067,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         // but in production it spawns a dedicated OS thread per inbox message — observed
         // throughput collapse on a consumer's service (10 msg/min vs target 1000s/min) traced here.
         // If pool starvation comes back, fix it at the host via ThreadPool.SetMinThreads.
-        _ = Task.Run(async () => {
+        DetachedWork.Track(Task.Run(async () => {
           try {
             // Fresh DI scope is required (detached body outlives the dispatch scope; needs
             // its own DbContext etc.). But we do NOT re-establish security context: the
@@ -1076,8 +1084,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             var ctx = lifecycleContext with { CurrentStage = detachedStage };
             await detachedInvoker.InvokeAsync(typedEnvelope, detachedStage, ctx, detachedCt);
             if (isHandlingStage) {
-              await detachedInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-                ctx with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+              await _invokeImmediateDetachedAsync(detachedInvoker, typedEnvelope, ctx, work.MessageId, detachedCt);
             }
           } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
             // graceful shutdown
@@ -1095,7 +1102,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
               Reason = ClassifyHandlerFailure(ex),
             }, detachedCt);
           }
-        }, detachedCt);
+        }, detachedCt));
       }
 
       // Inline: blocks until complete
@@ -1103,8 +1110,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
         if (isHandlingStage && !hasDetached) {
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
+          // ImmediateDetached is never part of the inbox unit of work (#1393): it starts after the handler, in its
+          // own scope, and its failure is logged without failing the message
+          DetachedWork.Track(_runImmediateDetachedAsync(typedEnvelope, lifecycleContext, work.MessageId, detachedCt));
         }
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
@@ -1131,6 +1139,39 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>
+  /// Stops the worker, then waits for the detached lifecycle stages it started: the host stops the services registered
+  /// before this one (the failure flush among them) and disposes the container only after this returns (#1721).
+  /// </summary>
+  /// <param name="cancellationToken">The host's stop deadline.</param>
+  public override async Task StopAsync(CancellationToken cancellationToken) {
+    await base.StopAsync(cancellationToken).ConfigureAwait(false);
+    await DetachedWork.DrainAsync(cancellationToken).ConfigureAwait(false);
+  }
+
+  // ImmediateDetached after the handler, in a scope of its own, when no PostInboxDetached task is there to run it
+  private Task _runImmediateDetachedAsync(IMessageEnvelope envelope, LifecycleExecutionContext context, Guid messageId,
+      CancellationToken detachedCt) =>
+    Task.Run(async () => {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      if (scope.ServiceProvider.GetService<IReceptorInvoker>() is { } invoker) {
+        await _invokeImmediateDetachedAsync(invoker, envelope, context, messageId, detachedCt);
+      }
+    }, CancellationToken.None);
+
+  // A detached stage never fails the message (#1393): its exception is logged, not routed to the failure channel
+  private async Task _invokeImmediateDetachedAsync(IReceptorInvoker invoker, IMessageEnvelope envelope,
+      LifecycleExecutionContext context, Guid messageId, CancellationToken detachedCt) {
+    try {
+      await invoker.InvokeAsync(envelope, LifecycleStage.ImmediateDetached,
+        context with { CurrentStage = LifecycleStage.ImmediateDetached }, detachedCt);
+    } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
+      // graceful shutdown
+    } catch (Exception ex) {
+      _logLifecycleError(messageId, nameof(LifecycleStage.ImmediateDetached), ex);
+    }
+  }
+
+  /// <summary>
   /// True when the lifecycle stage is one the source-generated WhizbangReceptorRegistryQuery
   /// actually emits entries for. Stages outside this set return false unconditionally from
   /// HasReceptors, so the gate must NOT consult the registry for them — see the gate site
@@ -1152,16 +1193,6 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       return false;
     }
     return _runtimeReceptorRegistry.GetReceptorsFor(messageType, stage).Count > 0;
-  }
-
-  private static bool _hasNoPerspectives(string messageType, IServiceProvider serviceProvider) {
-    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
-    if (registry is null) {
-      return true;
-    }
-    var normalized = EventTypeMatchingHelper.NormalizeTypeName(messageType);
-    return !registry.GetRegisteredPerspectives().Any(perspective => perspective.EventTypes
-      .Any(eventType => string.Equals(normalized, EventTypeMatchingHelper.NormalizeTypeName(eventType), StringComparison.Ordinal)));
   }
 
   // ============================================================
@@ -1306,10 +1337,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// machinery. Returns <c>false</c> (legacy behaviour) when no policy is wired.
   /// </summary>
   /// <remarks>
-  /// Internal-static for unit testability without spinning up the full worker. Mirrors
-  /// the receive-time gates in <c>AzureServiceBusTransport.EmitAckDropTelemetry</c> and
-  /// <c>RabbitMQTransport.ShouldSkipReceive</c> — discard reason here is
-  /// <see cref="MessageDiscardReason.RegistryChanged"/>, which logs at Information so
+  /// Internal-static for unit testability without spinning up the full worker. The transports no longer skip a
+  /// message with no local consumer on receive (#1720): it is stored, and this gate decides the skip after storage.
+  /// The discard reason here is <see cref="MessageDiscardReason.RegistryChanged"/>, which logs at Information so
   /// rolling-deploy drift is visible without being noisy.
   /// </remarks>
   internal static bool ShouldSkipInbox(

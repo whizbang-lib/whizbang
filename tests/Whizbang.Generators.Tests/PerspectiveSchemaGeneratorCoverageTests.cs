@@ -111,11 +111,16 @@ public class PerspectiveSchemaGeneratorCoverageTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error)
       .Because("an open-generic model's fallback property enumeration must degrade gracefully, not crash the generator");
 
-    var discovered = result.Diagnostics.Single(d => d.Id == "WHIZ007");
-    await Assert.That(discovered.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("OrderPerspective")
+    // Read from the schema entries the generator writes, keyed by perspective name. The generator used to report a
+    // summary under WHIZ007, the discovery generator's per-perspective ID, with arguments that did not fit its
+    // message (#1428); it reports none now.
+    var schema = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(schema).Contains("KeyValuePair<string, string>(\"OrderPerspective\"")
       .Because("a sibling perspective in the same compilation must still be discovered and scheduled even though an unrelated perspective's model type is an open generic parameter");
-    await Assert.That(discovered.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("GenericPerspective")
+    await Assert.That(schema).Contains("KeyValuePair<string, string>(\"GenericPerspective")
       .Because("the open-generic perspective itself is still a valid perspective (it names a real event) and must still be processed via the fallback member-enumeration path");
+    await Assert.That(result.Diagnostics.Where(d => d.Id == "WHIZ007")).IsEmpty()
+      .Because("WHIZ007 is the discovery generator's per-perspective message; a summary under it formats as nonsense and duplicates it");
   }
 
   // ==================== [PerspectiveStorage] not the first class-level attribute ====================

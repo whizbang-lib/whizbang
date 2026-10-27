@@ -40,7 +40,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid streamId, string? destination = "test-dest") {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -158,6 +158,31 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
       instanceId, "svc-c", "host-c", 1, MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300,
       AliveLockHeld: aliveLockHeld));
+
+    await Assert.That(batch.InstanceRegistrationStale).IsEqualTo(expectedStale);
+  }
+
+  [Test]
+  [Arguments("AcceptingCommands", true)]
+  [Arguments("Migrating", false)]
+  public async Task ClaimWorkAsync_ARowRecordingAnotherPhaseThanTheCallers_IsReportedStaleAsync(
+      string callerPhase, bool expectedStale) {
+    // #1638: a row whose recorded phase is not the caller's (a lost or overwritten transition) is reported stale, so
+    // the claim loop's registration writes the phase and a ready instance cannot stay ineligible for work.
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.New();
+    await c.RecordHeartbeatAsync(new HeartbeatRequest(instanceId, "svc-c", "host-c", 1, LifecyclePhase: "Migrating"));
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync(@"
+        INSERT INTO wh_perspective_events
+          (event_work_id, stream_id, perspective_name, event_id, instance_id, lease_expiry, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 'TestPerspective', gen_random_uuid(), NULL, NULL, 0, 0, 0, NOW())");
+    }
+
+    var batch = await c.ClaimWorkAsync(new ClaimWorkRequest(
+      instanceId, "svc-c", "host-c", 1, MaxStreams: 50, PartitionCount: 100, LeaseSeconds: 300,
+      LifecyclePhase: callerPhase));
 
     await Assert.That(batch.InstanceRegistrationStale).IsEqualTo(expectedStale);
   }
@@ -328,7 +353,7 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
     await conn.OpenAsync();
     var publishedAt = await conn.ExecuteScalarAsync<DateTime?>(
       "SELECT published_at FROM wh_outbox WHERE message_id = @m", new { m = msgId });
-    await Assert.That(publishedAt).IsNotNull();
+    await Assert.That(publishedAt.HasValue).IsTrue();
   }
 
   [Test]

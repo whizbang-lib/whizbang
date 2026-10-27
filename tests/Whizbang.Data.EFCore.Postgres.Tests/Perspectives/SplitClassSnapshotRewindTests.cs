@@ -92,7 +92,7 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
     }
 
     var snapshot = await snapshotStore.GetLatestSnapshotAsync(streamId, TABLE_NAME);
-    await Assert.That(snapshot).IsNotNull();
+    await Assert.That(snapshot.HasValue).IsTrue();
     await Assert.That(snapshot!.Value.SnapshotData.RootElement.GetRawText()).Contains("active")
       .Because("the snapshot is the model as it was applied, not the copy the write stripped for the document");
 
@@ -134,7 +134,7 @@ public class SplitClassSnapshotRewindTests : EFCoreTestBase {
     await _appendAsync(eventStore, streamId, new SplitClassSnapshotNoteChangedEvent { StreamId = streamId, Note = "second" });
     await runner.RunAsync(streamId, TABLE_NAME, null, CancellationToken.None);
     var snapshot = await snapshotStore.GetLatestSnapshotAsync(streamId, TABLE_NAME);
-    await Assert.That(snapshot).IsNotNull().Because("the second event reaches the cadence");
+    await Assert.That(snapshot.HasValue).IsTrue().Because("the second event reaches the cadence");
     await Assert.That(snapshot!.Value.SnapshotData.RootElement.GetRawText()).Contains("active")
       .Because("the due run serializes the model before the write strips it in place");
   }

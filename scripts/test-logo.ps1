@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 # Whizbang ASCII art logo - true color via ANSI escape codes
 # Run: pwsh scripts/test-logo.ps1
 

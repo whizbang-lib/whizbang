@@ -155,7 +155,7 @@ public class MessageOrderingExtensionsTests {
   // ===== Helpers =====
 
   private static MessageEnvelope<JsonElement> _envelope(Guid messageId) =>
-    new(MessageId.From(messageId), JsonDocument.Parse("{}").RootElement, []);
+    new(MessageId.From(messageId), JsonElement.Parse("{}"), []);
 
   private InboxWork _inboxWork(Guid streamId) {
     var messageId = _idProvider.NewGuid();

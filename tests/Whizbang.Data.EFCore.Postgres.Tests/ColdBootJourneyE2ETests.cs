@@ -167,7 +167,7 @@ public class ColdBootJourneyE2ETests {
       workChannelWriter: null,
       options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
       logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
-      inboxChannelWriter: new InboxChannelWriter()));
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()));
 
     // The write seam: the real generated dispatcher resolves this gate lazily.
     services.AddSingleton<ISchemaReadyGate>(schemaGate);

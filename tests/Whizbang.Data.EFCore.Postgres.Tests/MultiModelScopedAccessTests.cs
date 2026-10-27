@@ -164,7 +164,7 @@ public class MultiModelScopedAccessTests {
   public async Task BuildFilterInfo_Tenant_WithContext_ReturnsScopeFilterInfoAsync() {
     var accessor = CreateTenantAccessor("tenant-42");
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Tenant, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.TenantId).IsEqualTo("tenant-42");
   }
 
@@ -180,7 +180,7 @@ public class MultiModelScopedAccessTests {
     var accessor = CreateTenantAccessor("original-tenant");
     var overrides = new ScopeFilterOverride { TenantId = "overridden-tenant" };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Tenant, accessor, overrides);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.TenantId).IsEqualTo("overridden-tenant");
   }
 
@@ -188,7 +188,7 @@ public class MultiModelScopedAccessTests {
   public async Task BuildFilterInfo_WithNullOverride_UsesOriginalContextAsync() {
     var accessor = CreateTenantAccessor("original-tenant");
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Tenant, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.TenantId).IsEqualTo("original-tenant");
   }
 
@@ -1628,7 +1628,7 @@ public class MultiModelScopedAccessTests {
       }
     };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Organization, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.TenantId).IsEqualTo("t1");
     await Assert.That(result!.Value.OrganizationId).IsEqualTo("org-1");
   }
@@ -1641,7 +1641,7 @@ public class MultiModelScopedAccessTests {
       }
     };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Customer, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.CustomerId).IsEqualTo("cust-1");
   }
 
@@ -1653,7 +1653,7 @@ public class MultiModelScopedAccessTests {
       }
     };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.User, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.UserId).IsEqualTo("user-1");
   }
 
@@ -1666,7 +1666,7 @@ public class MultiModelScopedAccessTests {
       }
     };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.Principal, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SecurityPrincipals.Count).IsGreaterThan(0);
   }
 
@@ -1679,7 +1679,7 @@ public class MultiModelScopedAccessTests {
       }
     };
     var result = MultiModelScopeHelper.BuildFilterInfo(QueryScope.UserOrPrincipal, accessor, null);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.UseOrLogicForUserAndPrincipal).IsTrue();
   }
 

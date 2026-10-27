@@ -286,7 +286,7 @@ public class LenientNullableDateTimeOffsetConverterTests {
     var result = JsonSerializer.Deserialize<DateTimeOffset?>(json, _options);
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.Year).IsEqualTo(2024);
   }
 

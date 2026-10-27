@@ -5,7 +5,7 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Parameters for <see cref="IWorkCoordinator.ClaimWorkAsync"/> — the focused
-/// replacement for the claim portion of the legacy <c>ProcessWorkBatchAsync</c>.
+/// replacement for the claim portion of the legacy <c>ProcessWorkBatchAsync</c> (since removed).
 /// Only the polling claim worker calls this method; flushers and heartbeats
 /// have their own dedicated calls.
 /// </summary>
@@ -79,6 +79,14 @@ namespace Whizbang.Core.Messaging;
 /// beats on the slow cadence, so the claim does not report its registration stale between beats
 /// (<see cref="WorkBatch.InstanceRegistrationStale"/>). A missing registration is reported whatever this says.
 /// </param>
+/// <param name="LifecyclePhase">
+/// The lifecycle phase this instance announces (#1638), from
+/// <see cref="Whizbang.Core.RunControl.IWhizbangLifecycleState.AnnouncedPhase"/>. When the instance's row records
+/// another phase (a transition write that was lost, or overwritten by a beat built before it), the claim reports the
+/// registration stale (<see cref="WorkBatch.InstanceRegistrationStale"/>) and the claim loop's registration writes the
+/// phase, so a ready instance cannot stay ineligible for work while it claims. Null: the row is judged by liveness
+/// alone, as before.
+/// </param>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 public sealed record ClaimWorkRequest(
   Guid InstanceId,
@@ -100,4 +108,5 @@ public sealed record ClaimWorkRequest(
   int? MaxOutboxAcquireRows = null,
   int? OutboxRunLength = null,
   Whizbang.Core.Workers.PartitionAssignmentVersion? PartitionAssignment = null,
-  bool AliveLockHeld = false);
+  bool AliveLockHeld = false,
+  string? LifecyclePhase = null);

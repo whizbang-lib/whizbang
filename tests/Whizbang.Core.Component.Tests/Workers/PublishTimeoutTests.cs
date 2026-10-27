@@ -144,7 +144,7 @@ public class PublishTimeoutTests {
   private static OutboxBatchRow _row(Guid messageId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
     };
@@ -213,7 +213,8 @@ public class PublishTimeoutTests {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
     var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);
@@ -280,7 +281,8 @@ public class PublishTimeoutTests {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
 
@@ -343,7 +345,8 @@ public class PublishTimeoutTests {
         Enabled = true,
         MaxPerStream = 100,
         PublishTimeoutSeconds = 1,
-      })).Value));
+      })).Value),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     var row1 = _row((Guid)TrackedGuid.New(), (Guid)TrackedGuid.New());
     var row2 = _row((Guid)TrackedGuid.New(), row1.StreamId!.Value);

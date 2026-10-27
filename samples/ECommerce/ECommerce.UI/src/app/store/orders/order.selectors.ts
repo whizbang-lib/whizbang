@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { createFeatureSelector, createSelector } from '@ngrx/store';
 import { OrderState } from './order.reducer';
 

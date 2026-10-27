@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// Two exclusions are built into the selection, not left to callers:
 /// <list type="bullet">
-/// <item><b>At-most-once schedule occurrences</b> (envelope metadata <c>deliveryGuarantee = 1</c>)
+/// <item><b>At-most-once schedule occurrences</b> (flagged <see cref="EventFlags.AtMostOnce"/> on the stored row)
 /// are never selected — re-delivery would violate the exact guarantee they were declared for.</item>
 /// <item><b>Reaped ephemeral events</b> are excluded structurally: selection joins the event body,
 /// and a reaped body is absent — an event whose body no longer exists cannot be re-delivered
@@ -107,7 +107,14 @@ public sealed record RedeliveryEvent {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveryRequestReceptorTests.cs</tests>
 [PinnedId("4f8e2b7a-9d31-4c6e-8b5f-2a1d0c9e7f43")]
 [SystemControlTag(Tag = Tags.SystemTags.CONTROL, Properties = [])]
-public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage {
+public sealed record RequestRedeliveryCommand : ICommand, IControlPlaneMessage, Audit.IBoundedCommandAudit {
+  private static readonly string[] _idLists = [nameof(StreamIds)];
+
+  /// <inheritdoc />
+  /// <docs>fundamentals/security/audit-logging#bounded-command-audit</docs>
+  /// <tests>tests/Whizbang.Core.Tests/SystemEvents/CommandAuditListLengthsTests.cs:ARedeliveryRequest_IsAuditedWithItsStreamCountAsync</tests>
+  public IReadOnlyCollection<string> ListsAuditedAsLengths() => _idLists;
+
   /// <summary>Optional tenant filter (scope <c>t</c> key), as in <see cref="RedeliveryRequest.TenantScope"/>.</summary>
   public string? TenantScope { get; init; }
 

@@ -147,7 +147,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(outboxColumns).Contains("instance_id");
     await Assert.That(outboxColumns).Contains("lease_expiry");
 
-    // Phase H replaced process_work_batch with the focused claim_work function.
+    // Phase H replaced process_work_batch (since removed) with the focused claim_work function.
     const string sql2 = @"
       SELECT routine_name
       FROM information_schema.routines
@@ -529,7 +529,6 @@ public class SchemaInitializationTests : EFCoreTestBase {
       DROP TABLE IF EXISTS wh_message_deduplication CASCADE;
       DROP TABLE IF EXISTS wh_service_instances CASCADE;
       DROP TABLE IF EXISTS wh_sequences CASCADE;
-      DROP FUNCTION IF EXISTS process_work_batch CASCADE;
       DROP FUNCTION IF EXISTS claim_outbox_messages CASCADE;
       DROP FUNCTION IF EXISTS claim_inbox_messages CASCADE;
       DROP FUNCTION IF EXISTS update_receptor_processing CASCADE;

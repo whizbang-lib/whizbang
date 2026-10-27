@@ -1,3 +1,6 @@
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { ProductService } from '../../services/product.service';
 import { SignalRService } from '../../services/signalr.service';

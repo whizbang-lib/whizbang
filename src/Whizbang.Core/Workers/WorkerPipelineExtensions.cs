@@ -37,6 +37,7 @@ public static class WorkerPipelineExtensions {
   /// <docs>operations/workers/housekeeping-arbitration</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Workers/RecoveryLifecycleHardeningTests.cs:TurnkeyBootstrap_CoordinatorRecordsDecisions_OnTheHousekeepingMeterAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingDeferralCeilingTests.cs:ConfiguredMaxDeferral_ReachesTheCoordinator_OnTheRegisteredClockAsync</tests>
   internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
     services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
       new Whizbang.Core.Observability.HousekeepingMetrics(
@@ -46,7 +47,10 @@ public static class WorkerPipelineExtensions {
     // options: the section reaches the mechanism with no host code, hosts without
     // IConfiguration keep code defaults, and the binder source generator keeps it
     // reflection-free).
-    services.AddOptions<HousekeepingCoordinator.Settings>();
+    // #1491: a zero or negative MaxDeferral would force every deferred pass through, so the
+    // section is validated at host start rather than discovered as a gate that defers nothing.
+    services.AddOptions<HousekeepingCoordinator.Settings>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<HousekeepingCoordinator.Settings>, HousekeepingSettingsValidator>());
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<HousekeepingCoordinator.Settings>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<HousekeepingCoordinator.Settings>(options => {
@@ -61,7 +65,8 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp =>
       new HousekeepingCoordinator(
         sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<HousekeepingCoordinator.Settings>>().Value,
-        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>(),
+        sp.GetService<TimeProvider>()));
   }
 
   /// <summary>
@@ -175,6 +180,19 @@ public static class WorkerPipelineExtensions {
       new Observability.ServiceInstanceProvider(
         sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
+    // The startup stage (#1636): one reporter owns it, logs each stage as "Stage X of 7" and records it on this
+    // instance's row. The lifecycle moves it into Accept commands and Running (and Draining and Stopped on a
+    // killswitch stop); the host's own lifecycle marks Preflight before anything starts, Draining before anything
+    // stops, and Stopped after everything has; schema initialization reports Elect, Migrate, Converge and Coordinate.
+    services.TryAddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(sp => new Whizbang.Core.Startup.StartupStageReporter(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<Observability.IServiceInstanceProvider>(),
+      sp.GetServices<Whizbang.Core.Startup.IStartupStageObserver>(),
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupStageReporter>>(),
+      sp.GetService<TimeProvider>()));
+    services.AddSingleton<IWhizbangRunControl>(sp =>
+      new Whizbang.Core.Startup.StartupStageRunControl(sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Startup.StartupStageHostLifecycle>());
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
     // resolved from their dependencies, and per-step outcome/duration/reason. The state is
@@ -210,10 +228,17 @@ public static class WorkerPipelineExtensions {
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
+    // The rewrite itself sits behind ITableRewriter; the step runs the one of the selected strategy.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, VacuumFullTableRewriter>(sp =>
+      new VacuumFullTableRewriter(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
+    // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
       new Whizbang.Core.Startup.TableRewriteStartupStep(
         sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetServices<ITableRewriter>(),
         sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
         sp.GetRequiredService<ILogger<Whizbang.Core.Startup.TableRewriteStartupStep>>())));
     // The work tables are vacuumed when an instance acquires the maintainer duty, never merely because
     // it started (#1351). The holder loop runs it; without role assignment nothing acquires the duty.
@@ -248,12 +273,14 @@ public static class WorkerPipelineExtensions {
     // this pod not ready" is answerable from the health surface without reading logs.
     services.AddSingleton<Health.IWhizbangHealthSource>(sp => new Health.StartupPipelineHealthSource(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
-      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>()));
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupReadySignal>(),
+      sp.GetRequiredService<Whizbang.Core.Startup.IStartupStageReporter>()));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupReadyService(
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupPipelineState>(),
       sp.GetRequiredService<Whizbang.Core.Startup.StartupReadySignal>(),
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupReadinessContributor>()],
-      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>()));
+      sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StartupReadyService>>(),
+      sp.GetRequiredService<TimeProvider>()));
     services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupReadyService>());
 
     // The standby handshake (increment 9): the watcher is the peer side — it drains and holds on
@@ -273,6 +300,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetRequiredService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetRequiredService<ILogger<Whizbang.Core.Startup.StandbyWatcher>>(),
+      sp.GetRequiredService<TimeProvider>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>()));
 
@@ -353,7 +381,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<TransportDeadLetterDrainWorker>();
     // Type-definition fingerprint reconciler (F-4): detect-by-default, act-by-opt-in. Inert without a
     // catalog (GetService returns null) or without the fingerprint tables (coordinator defaults no-op).
-    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>();
+    services.AddOptions<Whizbang.Core.Configuration.EphemeralOptions>().ValidateOnStart();
+    // #1487: the ephemeral retention settings publish to wh_settings; a negative one is rejected at host start.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      IValidateOptions<Whizbang.Core.Configuration.EphemeralOptions>, Whizbang.Core.Configuration.EphemeralOptionsValidator>());
     // Perspective row retention (operator rung of the override ladder): the options are applied
     // to the TTL registry at startup so a TTL can be retuned — or retention switched off — per
     // environment without a redeploy. Registered as a hosted configurator; inert on defaults.
@@ -370,22 +401,23 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Fingerprint.TypeDefinitionReconciler>>(),
       sp.GetRequiredService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
-    // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
+    // A1 prefix truncate (StreamPrefixTruncator): fires the E2 destruction hook around a Sourced-stream truncate.
     // The hook is required; the shipped default proceeds and observes nothing, which is what an
     // unregistered hook used to do. TryAdd lets an application's own hook win.
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IDestructionHook,
       Whizbang.Core.Lifecycle.NoOpDestructionHook>();
-    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>(sp => new Whizbang.Core.Lifecycle.StreamPrefixTruncator(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
-      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
-      sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+      sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamPrefixTruncator>>(),
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>(),
+      sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
-    // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
+    // reusing the snapshot store + event store + the A1 prefix truncator. On-demand, like IStreamPrefixTruncator.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
       sp.GetRequiredService<Whizbang.Core.Perspectives.IPerspectiveSnapshotStore>(),
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Whizbang.Core.Messaging.IEventStore>(),
-      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamCloser>(),
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IStreamPrefixTruncator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Perspectives.StreamCompactor>>()));
     services.TryAddSingleton<IGenerationProvider, DefaultGenerationProvider>();
     services.TryAddSingleton<IDeadLetterRecoveryPolicy, DefaultDeadLetterRecoveryPolicy>();
@@ -953,7 +985,10 @@ public static class WorkerPipelineExtensions {
         }
       });
     });
-    services.AddOptions<MaintenanceWorkerOptions>();
+    // #1487: a negative retention window would make every row of its table eligible at once, so the
+    // Retention section is validated at host start rather than discovered in SQL.
+    services.AddOptions<MaintenanceWorkerOptions>().ValidateOnStart();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<MaintenanceWorkerOptions>, MaintenanceWorkerOptionsValidator>());
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
     services.AddOptions<RecentlyProcessedEventCacheOptions>();
@@ -994,6 +1029,8 @@ public static class WorkerPipelineExtensions {
     // Both batchers flush while the host stops, after every hosted service and before the container is disposed:
     // flushed only at disposal, their last batch ran against a service provider that was already gone (#1333).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, BatchStrategyShutdownFlush>());
+    // The detached lifecycle stages the outbox flush starts; the shutdown flush waits for them before the container goes.
+    services.TryAddSingleton<DetachedLifecycleWork>();
 
     return services;
   }
@@ -1062,6 +1099,7 @@ public static class WorkerPipelineExtensions {
     var tracingOptions = sp.GetService<IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>();
     var loggerFactory = sp.GetService<ILoggerFactory>();
     var lifecycleLogger = loggerFactory?.CreateLogger("Whizbang.Core.Workers.OutboxBatchFlush");
+    var detachedWork = sp.GetService<DetachedLifecycleWork>();
     return async (messages, ct) => {
       await schemaReadyGate.WaitForReadyAsync(ct).ConfigureAwait(false);
       using var scope = scopeFactory.CreateScope();
@@ -1084,7 +1122,8 @@ public static class WorkerPipelineExtensions {
         LifecycleMessageDeserializer: lifecycleDeserializer,
         Logger: lifecycleLogger,
         EnableLifecycleTracing: enableLifecycleTracing,
-        Metrics: lifecycleMetrics);
+        Metrics: lifecycleMetrics,
+        DetachedWork: detachedWork);
 
       try {
         await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

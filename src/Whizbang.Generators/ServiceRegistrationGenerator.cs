@@ -41,23 +41,31 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Single pipeline: discover classes that implement user interfaces extending Whizbang interfaces
     var serviceCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractServiceRegistrationInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine with compilation to get assembly name for namespace
-    var compilationAndServices = context.CompilationProvider.Combine(serviceCandidates.Collect());
+    var compilationAndServices = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(serviceCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndServices,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var services = data.Right;
-          _generateServiceRegistrations(ctx, compilation, services!);
+          _generateServiceRegistrations(ctx, compilationAssemblyName, services!);
         }
     );
   }
@@ -99,7 +107,8 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     // A "user interface" is one that:
     // 1. Is NOT a Whizbang interface itself (doesn't start with Whizbang.Core)
     // 2. Has ILensQuery or IPerspectiveFor in its AllInterfaces hierarchy
-    var userInterface = classSymbol.Interfaces.FirstOrDefault(i => _isUserInterfaceExtendingWhizbang(i));
+    var interfaces = _registrableInterfaces(classSymbol);
+    var userInterface = interfaces.FirstOrDefault(i => _isUserInterfaceExtendingWhizbang(i));
 
     if (userInterface is not null) {
       // User-defined interface pattern - register against user interface
@@ -114,7 +123,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Pattern 2: Direct implementation of ILensQuery<T> or IPerspectiveFor<T>
-    var directWhizbangInterface = classSymbol.Interfaces.FirstOrDefault(i => _isDirectWhizbangInterface(i));
+    var directWhizbangInterface = interfaces.FirstOrDefault(i => _isDirectWhizbangInterface(i));
 
     if (directWhizbangInterface is not null) {
       // Direct implementation pattern - register against the Whizbang interface
@@ -129,6 +138,21 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// The interfaces a class is registered against: its own, then those it inherits from abstract base classes.
+  /// </summary>
+  /// <remarks>
+  /// An abstract base is never registered itself, so a lens or perspective interface it declares would otherwise
+  /// reach no registration at all (#1431). A concrete base is registered on its own, so its interfaces stay with it.
+  /// </remarks>
+  private static List<INamedTypeSymbol> _registrableInterfaces(INamedTypeSymbol classSymbol) {
+    var interfaces = new List<INamedTypeSymbol>(classSymbol.Interfaces);
+    for (var baseType = classSymbol.BaseType; baseType is { IsAbstract: true }; baseType = baseType.BaseType) {
+      interfaces.AddRange(baseType.Interfaces);
+    }
+    return interfaces;
   }
 
   /// <summary>
@@ -246,10 +270,10 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateServiceRegistrations(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<ServiceRegistrationInfo> services) {
 
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = compilationAssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Separate concrete from abstract services

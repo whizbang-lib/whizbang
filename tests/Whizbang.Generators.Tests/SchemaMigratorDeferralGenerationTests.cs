@@ -138,7 +138,7 @@ public class SchemaMigratorDeferralGenerationTests {
       .Because("the generator embeds the whole migration set");
     await Assert.That(window.Split(".sql\"").Length - 1).IsEqualTo(embedded.Count);
     foreach (var name in embedded) {
-      await Assert.That(window).Contains($"(\"{name}\", @\"", StringComparison.Ordinal);
+      await Assert.That(window).Contains($"(\"{name}\", global::System.Text.Encoding.UTF8.GetString(@\"", StringComparison.Ordinal);
     }
   }
 
@@ -201,13 +201,17 @@ public class SchemaMigratorDeferralGenerationTests {
   /// <remarks>
   /// The point of waiting. Falling through to take the lock anyway would reintroduce the per-replica
   /// transaction and in-lock re-check the deferral exists to remove, and the suite would still be
-  /// green because the outcome is identical.
+  /// green because the outcome is identical. Each step's wait is the step runner's (its own tests pin
+  /// it); what the generated pass must do is stop when the runner says another instance finished.
   /// </remarks>
   [Test]
   public async Task AFinishedMigratorEndsTheInitializationWithoutTakingTheLockAsync() {
     var output = await _generatedAsync(MINIMAL_CONTEXT);
 
-    await Assert.That(output).Contains("anotherInstanceMigrated = true", StringComparison.Ordinal);
-    await Assert.That(output).Contains("if (anotherInstanceMigrated)", StringComparison.Ordinal);
+    await Assert.That(output).Contains("Whizbang.Data.EFCore.Postgres.SchemaStepRunner(", StringComparison.Ordinal);
+    await Assert.That(output).Contains("ct => _isSchemaCurrentAsync(connection, ct)", StringComparison.Ordinal)
+      .Because("a step that loses the lock waits on the same three-part currency check the fast path uses");
+    await Assert.That(output).Contains("if (steps.CompletedElsewhere)", StringComparison.Ordinal);
+    await Assert.That(output).Contains("if (pass is null)", StringComparison.Ordinal);
   }
 }

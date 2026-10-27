@@ -113,7 +113,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
 
     // Set up consumer to verify message arrival
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(topic),
@@ -121,17 +124,15 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     );
 
     try {
-      // Small delay to ensure consumer is fully registered
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Create and publish message
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders" exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
@@ -156,7 +157,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.commands");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(topic),
@@ -164,17 +168,15 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     );
 
     try {
-      // Small delay to ensure consumer is fully registered
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Create and publish message
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at namespace exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
@@ -202,7 +204,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events-01");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(topic),
@@ -210,17 +215,15 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     );
 
     try {
-      // Small delay to ensure consumer is fully registered
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Create and publish message
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders-01" exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
@@ -247,7 +250,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("custom-topic-ordercreated");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(topic),
@@ -255,17 +261,15 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     );
 
     try {
-      // Small delay to ensure consumer is fully registered
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Create and publish message
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at custom exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
@@ -289,48 +293,46 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       (typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "testnamespaces.myapp.contracts.events")
     };
 
-    var receivedMessages = new Dictionary<string, TaskCompletionSource<bool>>();
+    // One envelope per topic, created up front so each topic's awaiter completes only on the message
+    // published to it. An uncorrelated per-topic signal completed on ANY message reaching the queue,
+    // so it could not tell a correct route from another test's message on the same exchange.
+    var expected = testCases
+      .Select(testCase => (testCase.MessageType, testCase.ExpectedTopic, Envelope: _createTestEnvelope()))
+      .ToArray();
+    var awaiters = expected.ToDictionary(
+      item => item.ExpectedTopic,
+      item => new MessageIdAwaiter(item.Envelope.MessageId.ToString()),
+      StringComparer.Ordinal);
     var subscriptions = new List<ISubscription>();
 
     try {
-      // Set up consumers for each unique topic
-      foreach (var (_, expectedTopic) in testCases) {
-        if (!receivedMessages.ContainsKey(expectedTopic)) {
-          receivedMessages[expectedTopic] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-          var topicForClosure = expectedTopic;
-          var subscription = await _transport!.SubscribeAsync(
-            async (_, envelopeType, ct) => {
-              receivedMessages[topicForClosure].TrySetResult(true);
-              await Task.CompletedTask;
-            },
-            _createTestDestination(expectedTopic),
-            cancellationToken
-          );
-          subscriptions.Add(subscription);
-        }
+      // Set up a consumer for each topic
+      foreach (var (topic, awaiter) in awaiters) {
+        var subscription = await _transport!.SubscribeAsync(
+          awaiter.Handler,
+          _createTestDestination(topic),
+          cancellationToken
+        );
+        subscriptions.Add(subscription);
       }
 
-      // Small delay to ensure consumers are fully registered
-      await Task.Delay(500, cancellationToken);
-
-      // Publish messages
-      foreach (var (messageType, expectedTopic) in testCases) {
+      // No warmup wait: SubscribeAsync returns only after each queue is declared and bound, so the
+      // publishes below are routed to them.
+      foreach (var (messageType, expectedTopic, envelope) in expected) {
         var topic = routingStrategy.ResolveTopic(messageType, "");
         await Assert.That(topic).IsEqualTo(expectedTopic);
 
-        var envelope = _createTestEnvelope();
         await _transport!.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
       }
 
-      // Assert - All messages should arrive at their expected exchanges
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(10000);
-
-      try {
-        await Task.WhenAll(receivedMessages.Values.Select(tcs => tcs.Task.WaitAsync(timeoutCts.Token)));
-      } catch (OperationCanceledException) {
-        Assert.Fail("All messages should arrive at their correct exchanges within timeout");
+      // Assert - each message arrives at its own exchange
+      foreach (var (_, expectedTopic, envelope) in expected) {
+        try {
+          var receivedMessageId = await awaiters[expectedTopic].WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+          await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
+        } catch (TimeoutException) {
+          Assert.Fail($"Message should arrive at exchange '{expectedTopic}' within timeout");
+        }
       }
     } finally {
       foreach (var subscription in subscriptions) {
@@ -355,7 +357,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.events");
 
     // Set up consumer
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS test's message: a message another test published to the same exchange can
+    // reach this queue too, and an uncorrelated awaiter would complete on it instead.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       _createTestDestination(topic),
@@ -363,17 +368,15 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     );
 
     try {
-      // Small delay to ensure consumer is fully registered
-      await Task.Delay(500, cancellationToken);
-
+      // No warmup wait: SubscribeAsync returns only after the queue is declared and bound, so the
+      // publish below is routed to it.
       // Create and publish message
-      var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-        await Assert.That(receivedMessageId).IsNotNull();
+        await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
       } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
@@ -406,7 +409,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
   /// </summary>
   private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
     var metadata = new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"test-sub-{Guid.NewGuid():N}\"")
     };
     return new TransportDestination(address, routingKey, metadata);
   }

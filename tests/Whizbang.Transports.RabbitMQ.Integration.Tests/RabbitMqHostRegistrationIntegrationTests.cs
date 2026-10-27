@@ -198,15 +198,13 @@ public sealed class RabbitMqHostRegistrationIntegrationTests {
   /// and nacked without requeue onto the transport's dead-letter exchange. The derivation itself
   /// is property-locked in Whizbang.Core.Tests and is not re-derived here.
   /// </summary>
-  private static PoisonMessageDetector _quarantineEverything() =>
-    new(
-      Microsoft.Extensions.Options.Options.Create(new PoisonMessageOptions { AgeThreshold = TimeSpan.Zero }),
-      NullLogger<PoisonMessageDetector>.Instance,
-      new System.Diagnostics.Metrics.Meter("Whizbang.Transports.RabbitMQ.Integration.Tests.HostRegistration"));
+  // The default detector never quarantines on age (#1663), so the broker DLQ is reached with a
+  // detector that quarantines every message.
+  private static QuarantineEveryMessage _quarantineEverything() => new();
 
   private static TransportDestination _destination(string exchange, string subscriber) =>
     new(exchange, "#", new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"{subscriber}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"{subscriber}\"")
     });
 
   /// <summary>

@@ -10,10 +10,13 @@ This document explains the performance-critical patterns that MUST be followed w
 
 1. [Overview](#overview)
 2. [Syntactic Filtering First](#syntactic-filtering-first)
-3. [Value Type Records for Caching](#value-type-records-for-caching)
-4. [Early Null Returns](#early-null-returns)
-5. [Static Methods Where Possible](#static-methods-where-possible)
-6. [Performance Impact Summary](#performance-impact-summary)
+3. [Every Predicate Is a Named Candidate Method](#every-predicate-is-a-named-candidate-method)
+4. [Value Type Records for Caching](#value-type-records-for-caching)
+5. [Early Null Returns](#early-null-returns)
+6. [Static Methods Where Possible](#static-methods-where-possible)
+7. [Keeping Output Cached Across Edits](#keeping-output-cached-across-edits)
+8. [Timing Benchmark](#timing-benchmark)
+9. [Performance Impact Summary](#performance-impact-summary)
 
 ---
 
@@ -118,8 +121,10 @@ predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.
 // Classes with attributes
 predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 }
 
-// Method invocations (dispatcher calls, etc.)
-predicate: static (node, _) => node is InvocationExpressionSyntax
+// Method invocations: always narrow to the method names the transform handles. A bare
+// `node is InvocationExpressionSyntax` admits every call in the consumer (#1649)
+predicate: static (node, _) => node is InvocationExpressionSyntax {
+    Expression: MemberAccessExpressionSyntax { Name.Identifier.ValueText: "SendAsync" or "PublishAsync" } }
 
 // Properties with attributes
 predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 }
@@ -130,6 +135,63 @@ predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeList
 - Access cheap properties
 - Filter out 95%+ of nodes
 - Take microseconds to execute
+
+---
+
+## Every Predicate Is a Named Candidate Method
+
+### The Rule
+
+> **A `CreateSyntaxProvider` predicate is a `public static bool Is…Candidate(SyntaxNode node)` method on the
+> generator, and it admits no ordinary code.**
+
+```csharp
+/// <summary>Syntax predicate: admits a class with a base list.</summary>
+/// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+    node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+var receptors = context.SyntaxProvider.CreateSyntaxProvider(
+    predicate: static (node, _) => IsClassWithBaseListCandidate(node),
+    transform: static (ctx, ct) => _extractReceptor(ctx, ct));
+```
+
+The predicate is passed as a method group or forwarded by exactly `static (node, _) => IsXCandidate(node)`; any
+other lambda fails the build-cost tests. `ForAttributeWithMetadataName` pipelines are narrow by construction and
+exempt.
+
+### Why: the guard
+
+`tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs`:
+
+1. parses every generator source file and fails when a `CreateSyntaxProvider` predicate is not a named candidate
+   method, so a new pipeline cannot escape the guard;
+2. finds each candidate method on its `[Generator]` class by reflection; and
+3. runs every one over 200 files of ordinary code (`OrdinaryCodeCorpus`: classes, records, structs, interfaces
+   and enums with fields, properties and thousands of ordinary calls, lambdas and generic types, and no base list,
+   attribute, partial modifier or nested type) and fails when any admits a node. A predicate that legitimately
+   must admit some ordinary code goes in the test's commented exemption list, with the most it may admit and why;
+   the list is empty today.
+
+The predicate is called directly because counting a generator's tracked steps cannot see a broad predicate:
+Roslyn does not record a transform result equal to the default value, so a transform that returns null for a
+node it declines reads the same whether the predicate admitted the node or not. That is how a predicate that
+admitted every member-access call (#1649) passed every build-cost check and cost a large consumer 60% of its
+build.
+
+### Narrowing without changing output
+
+`SyntaxCandidates` (`Whizbang.Generators.Shared.Utilities`) holds the cheap checks:
+
+| Check | Admits | Use when the transform needs |
+|---|---|---|
+| `MayHaveBaseTypes(type)` | a base list, or `partial` | an interface or base type (a type with no base list implements nothing) |
+| `MayHaveAttributes(type)` | an attribute, or `partial` | an attribute on the type |
+| `DeclaresAttributedProperty(type)` | an attributed property, indexer, event or positional parameter | an attribute on a property it declares |
+
+A partial declaration always passes because another declaration of the same type, which the predicate cannot see,
+may carry the base list or the attribute, and the transform binds the whole type from any of them; admitting it
+keeps the output byte-identical even when a type's declarations are split.
 
 ---
 
@@ -360,6 +422,112 @@ public class MyGenerator : IIncrementalGenerator {
 
 ---
 
+## Keeping Output Cached Across Edits
+
+### The Rule
+
+> **An edit that changes nothing a generator reads must leave every output step Cached or Unchanged.**
+
+A generator whose output regenerates on every keystroke costs the consumer in the IDE, on every incremental
+build, and in every project that depends on the generated code. `tests/Whizbang.Generators.Tests/BuildCost/GeneratorCachingTests.cs`
+runs every generator in the package over a consumer-shaped corpus, applies an unrelated edit (an ordinary
+method body, a comment, a receptor body), and fails if any tracked output step is `New` or `Modified`.
+
+Three things defeat caching. Each was found in this package and fixed (#1609).
+
+### 1. Never combine `CompilationProvider` directly
+
+Every edit produces a new `Compilation`, so anything combined with it re-runs and, because a `Compilation`
+compares by reference, reaches the output as `Modified`.
+
+```csharp
+// ❌ WRONG: the output regenerates on every edit
+var data = receptors.Collect().Combine(context.CompilationProvider);
+
+// ✅ CORRECT: project the one fact you need to a value first
+var assemblyName = context.CompilationProvider.Select(static (c, _) => c.AssemblyName);
+var data = receptors.Collect().Combine(assemblyName);
+```
+
+When the output genuinely needs compilation-wide facts (the concrete subtypes of a polymorphic message, the
+nested types of a message's properties, referenced-assembly versions), read them in a `Select` step that
+returns a **value-equatable model**, and generate from the model:
+
+```csharp
+var facts = receptors.Collect()
+    .Combine(context.CompilationProvider)
+    .Select(static (data, _) => ReceptorCompilationFacts.From(data.Right, data.Left));
+context.RegisterSourceOutput(receptors.Collect().Combine(facts), ...);
+```
+
+The `Select` still runs on every edit, but its result compares equal while the facts do, so the output step is
+`Cached`. Never pass a `Compilation`, `ISymbol` or `SemanticModel` into `RegisterSourceOutput`.
+`ReceptorDiscoveryGenerator` (`ReceptorCompilationFacts`), `MessageJsonContextGenerator` (`JsonContextAnalysis`)
+and `MessageRegistryGenerator` (referenced Whizbang packages) are the worked examples.
+
+### 2. Models hold no arrays, `ImmutableArray`, `List`, symbols or syntax
+
+A `record` compares member by member, but an array, `ImmutableArray<T>` or `List<T>` member compares **by
+reference**, so a model holding one is unequal to its predecessor on every run. A syntax provider's semantic
+transform runs again against each new compilation, so a transform that returns such a model regenerates the
+output even when the edited file is unrelated.
+
+```csharp
+// ❌ WRONG: never equal across runs
+internal sealed record ReceptorInfo(string ClassName, string[] LifecycleStages);
+
+// ✅ CORRECT: EquatableArray<T> compares by its elements
+internal sealed record ReceptorInfo(string ClassName, EquatableArray<string> LifecycleStages);
+```
+
+`EquatableArray<T>` (`Whizbang.Generators.Shared.Utilities`) converts implicitly from `T[]`, is built by a
+collection expression (`[.. items]`), and reads like an array (`Length`, indexer, `foreach`, LINQ), so code that
+fills or reads a model rarely changes. It is a class, so a member that may be absent stays nullable
+(`EquatableArray<string>? MemberDefaults`). The same applies to a transform's own return type: return
+`EquatableArray<T>?`, not `T[]?` or `ImmutableArray<T>?`, when the result is `Collect()`ed.
+
+A `Location` is acceptable only on the rare model that reports a diagnostic: it compares by syntax tree and
+span, so it stays equal while its file is unchanged.
+
+### 3. Prefer `ForAttributeWithMetadataName` when an attribute is the trigger
+
+`ForAttributeWithMetadataName` finds its candidates from a per-tree index of attribute names that the
+compiler keeps incrementally, so an edit re-scans only the edited tree, where a `CreateSyntaxProvider`
+predicate is evaluated against the nodes of every changed tree by hand. Both still run their semantic transform
+against the new compilation on every edit, so rule 2 applies to both: the transform's result must compare equal.
+When the trigger is an attribute, use `ForAttributeWithMetadataName` (as the saga pipelines do). When it is an
+interface or base type, `CreateSyntaxProvider` with a syntactic predicate is the only option.
+
+### How to Diagnose
+
+Run the driver with `new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true)`,
+apply an edit, run again, and read `GetRunResult().Results[i].TrackedOutputSteps`. For a step that is `New` or
+`Modified`, walk `step.Inputs` back to the first input that is not `Cached`/`Unchanged`; its output value's type
+names the model that lacks value equality. `WithTrackingName("...")` on a step makes it appear in
+`TrackedSteps` by name.
+
+---
+
+## Timing Benchmark
+
+Timing is not a test (tests are deterministic), so it is a tool: `benchmarks/Whizbang.BuildCost.Benchmarks` builds a
+large consumer in memory (1,000 features of messages, receptors and perspectives plus 3,000 files of ordinary code),
+loads every generator package from its build output as a consumer's compiler does, and times each generator
+(`GeneratorDriver.GetTimingInfo`) and each analyzer assembly (`CompilationWithAnalyzers` with
+`logAnalyzerExecutionTime`), median of 5 runs after a warm-up. It checks them against `build-cost-thresholds.json`
+and exits 1 when one is over; the advisory CI job "Build · Generator and analyzer timing" runs it and puts the table
+in the job summary.
+
+```bash
+dotnet build -c Release benchmarks/Whizbang.BuildCost.Benchmarks
+dotnet run -c Release --no-build --project benchmarks/Whizbang.BuildCost.Benchmarks -- --runs 5
+```
+
+A new generator needs a threshold in the file (`BuildCostThresholdsFileTests` fails without one). Thresholds start
+generous and are tightened from CI data.
+
+---
+
 ## Performance Impact Summary
 
 ### Good Practices vs. Bad Practices
@@ -403,8 +571,12 @@ Incremental build (receptor changed): 5,000ms
 Before claiming generator work complete:
 
 - [ ] Predicate uses syntactic filtering only (no semantic analysis)
-- [ ] Predicate filters out 95%+ of nodes
+- [ ] Predicate is a `public static bool Is…Candidate(SyntaxNode)` method and `SyntaxCandidateGuardTests` passes (it admits no ordinary code)
 - [ ] Info types are `sealed record` (not classes)
+- [ ] Models and transform results hold `EquatableArray<T>`, never `T[]`, `ImmutableArray<T>`, `List<T>`, symbols or syntax
+- [ ] `CompilationProvider` is projected with `Select` to a value before any `Combine`; no `Compilation` reaches `RegisterSourceOutput`
+- [ ] Attribute-triggered pipelines use `ForAttributeWithMetadataName`
+- [ ] `GeneratorCachingTests` passes (an unrelated edit regenerates nothing)
 - [ ] Transform has early null returns
 - [ ] Semantic operations pass `CancellationToken`
 - [ ] Methods are `static` where possible

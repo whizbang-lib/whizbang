@@ -133,7 +133,7 @@ public class InboxDispatchWorkerCoverageTests {
       var jsonEnv = new MessageEnvelope<JsonElement> {
         DispatchContext = envelope.DispatchContext,
         MessageId = envelope.MessageId,
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = envelope.Hops?.ToList() ?? [],
       };
       return new SerializedEnvelope(jsonEnv, $"Whizbang.Core.Observability.MessageEnvelope`1[[{aqn}]], Whizbang.Core", aqn);
@@ -162,7 +162,7 @@ public class InboxDispatchWorkerCoverageTests {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) =>
       DeserializeFromJsonElement(envelope.Payload, envelopeTypeName);
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonElement.Parse(jsonBytes);
   }
 
   /// <summary>Pass-through deserializer for the (non-composite) perspective-gating test: the
@@ -170,7 +170,7 @@ public class InboxDispatchWorkerCoverageTests {
   private sealed class PassThroughLifecycleDeserializer : ILifecycleMessageDeserializer {
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) => envelope.Payload;
     public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) => envelope.Payload;
-    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonDocument.Parse(jsonBytes).RootElement;
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => JsonElement.Parse(jsonBytes);
     public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) => jsonElement;
   }
 
@@ -237,7 +237,7 @@ public class InboxDispatchWorkerCoverageTests {
       MessageId = msgId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(msgId),
-        Payload = JsonDocument.Parse("{}").RootElement,
+        Payload = JsonElement.Parse("{}"),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox }
       },
@@ -370,7 +370,7 @@ public class InboxDispatchWorkerCoverageTests {
       await Task.Yield();
     }
 
-    await Assert.That(perf).IsNotNull()
+    await Assert.That(perf.HasValue).IsTrue()
       .Because("crossing the >100ms threshold with Debug enabled must emit the PERF diagnostic line");
     await Assert.That(perf!.Value.Message).Contains(work.MessageId.ToString())
       .Because("the diagnostic must identify WHICH message was slow");

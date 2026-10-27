@@ -413,6 +413,11 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return _noProjectionLoaderWired ? WatchdogRecoveryResult.NotYet : WatchdogRecoveryResult.SagaNotFound;
     }
     if (saga.CompletionEventDispatched) {
+      // The run's outcome again, from the status the projection recorded: covers a process that won
+      // the completion and died before the signal, and a signal whose publish failed and was
+      // swallowed so the completion stood. Free when the signal did land, because the claim is taken.
+      // A status not yet terminal on the projection decides nothing, and is left to the next tick.
+      await _trySignalOutcomeAsync(ctx, saga.Status, cancellationToken).ConfigureAwait(false);
       return WatchdogRecoveryResult.AlreadyComplete;
     }
     if (saga.TotalItems <= 0) {
@@ -640,6 +645,11 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     };
     await _emitter.PublishOnceAsync(SagaAbandonGuard.ClaimKey(_sagaName, ctx.SagaId), abandoned, cancellationToken)
       .ConfigureAwait(false);
+
+    // Whether or not this tick won the abandonment: a tick that won it and died before this line leaves
+    // a retried tick that loses it. A failure propagates, unlike at completion, because this tick ends
+    // the chain and no later one would retry the rollback; failing it gets the tick redelivered.
+    await _signalOutcomeAsync(ctx, SagaStatus.Abandoned, cancellationToken).ConfigureAwait(false);
     return WatchdogTickOutcome.Abandoned;
   }
 
@@ -1080,8 +1090,123 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     var claimKey = SagaCompletionGuard.ClaimKey(_sagaName, ctx.SagaId);
     var won = await _emitter.PublishOnceAsync(claimKey, evt, cancellationToken).ConfigureAwait(false);
     await _requestContinuationsAsync(ctx, finalStatus, cancellationToken).ConfigureAwait(false);
+    await _trySignalOutcomeAsync(ctx, finalStatus, cancellationToken).ConfigureAwait(false);
     return won;
   }
+
+  /// <summary>
+  /// Rolls a run back explicitly, before or regardless of how it ends: the signal a cancel sends.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Publishes <see cref="SagaRolledBackEvent"/> with no <see cref="ISagaOutcomeEvent.FinalStatus"/>,
+  /// since the run has not necessarily ended, under the run's one outcome claim. A rollback taken here
+  /// is therefore the run's outcome: a completion already in flight finds the claim taken and publishes
+  /// no commit.
+  /// </para>
+  /// <para>
+  /// Honored for a saga that did not declare <c>[SignalsOutcome]</c>. The declaration decides whether
+  /// completion signals on its own; a caller asking for a rollback by name has decided already.
+  /// </para>
+  /// <para>
+  /// This signals; it does not stop the run. Stopping new items from dispatching stays the caller's,
+  /// as it was before.
+  /// </para>
+  /// </remarks>
+  /// <param name="ctx">The run to roll back.</param>
+  /// <param name="reason">Why, for the compensator's log and the audit trail. Required.</param>
+  /// <param name="cancellationToken">Cancels the publish.</param>
+  /// <returns>
+  /// <see langword="true"/> when this call signaled the rollback; <see langword="false"/> when the run
+  /// already had an outcome.
+  /// </returns>
+  /// <exception cref="ArgumentException"><paramref name="reason"/> is blank.</exception>
+  /// <docs>fundamentals/sagas/commit-rollback#rolling-back-explicitly</docs>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaOutcomeTests.cs:AnExplicitRollbackSignalsRollbackWithTheReasonAsync</tests>
+  /// <tests>tests/Whizbang.Sagas.Tests/SagaOutcomeTests.cs:ARolledBackRunIsNeverCommittedAsync</tests>
+  public async Task<bool> RollbackSagaAsync(SagaContext ctx, string reason, CancellationToken cancellationToken) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+    cancellationToken.ThrowIfCancellationRequested();
+    return await _publishOutcomeAsync(ctx, SagaOutcome.Rollback, finalStatus: null, reason, cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Signals the run's outcome for a final status, when the saga declared <c>[SignalsOutcome]</c> and
+  /// the status has one. Propagates a publish failure.
+  /// </summary>
+  /// <returns>Whether this call published the signal.</returns>
+  private async Task<bool> _signalOutcomeAsync(SagaContext ctx, SagaStatus finalStatus, CancellationToken cancellationToken) {
+    if (SagaOutcomeRegistry.For(_sagaName)?.OutcomeFor(finalStatus) is not { } outcome) {
+      return false;
+    }
+    return await _publishOutcomeAsync(ctx, outcome, finalStatus, _reasonFor(finalStatus), cancellationToken)
+      .ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// <see cref="_signalOutcomeAsync"/> for a completion, which a failed signal must not undo.
+  /// </summary>
+  /// <remarks>
+  /// The rule continuations follow, for the same reason: the run did finish and its completion event
+  /// records it, and propagating would roll back the caller's transaction and re-run the terminal
+  /// path. The watchdog tick that finds the run complete signals again from the recorded status.
+  /// </remarks>
+  private async Task _trySignalOutcomeAsync(SagaContext ctx, SagaStatus finalStatus, CancellationToken cancellationToken) {
+    try {
+      await _signalOutcomeAsync(ctx, finalStatus, cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) {
+      LogOutcomeSignalFailed(_logger, _sagaName, ctx.SagaId, finalStatus, ex);
+    }
+  }
+
+  /// <summary>
+  /// Publishes the run's one outcome under its outcome claim, as the concrete event for that outcome.
+  /// </summary>
+  /// <remarks>
+  /// Two calls rather than one generic one, so each is published as its own runtime type and routed to
+  /// the receptors on that type.
+  /// </remarks>
+  private async Task<bool> _publishOutcomeAsync(
+      SagaContext ctx, SagaOutcome outcome, SagaStatus? finalStatus, string reason, CancellationToken cancellationToken) {
+    var claimKey = SagaOutcomeGuard.ClaimKey(_sagaName, ctx.SagaId);
+    bool won;
+    if (outcome == SagaOutcome.Commit) {
+      var committed = new SagaCommittedEvent {
+        SagaName = _sagaName,
+        EntityId = ctx.EntityId,
+        StreamId = ctx.SagaId,
+        FinalStatus = finalStatus,
+        Reason = reason,
+      };
+      won = await _emitter.PublishOnceAsync(claimKey, committed, cancellationToken).ConfigureAwait(false);
+    } else {
+      var rolledBack = new SagaRolledBackEvent {
+        SagaName = _sagaName,
+        EntityId = ctx.EntityId,
+        StreamId = ctx.SagaId,
+        FinalStatus = finalStatus,
+        Reason = reason,
+      };
+      won = await _emitter.PublishOnceAsync(claimKey, rolledBack, cancellationToken).ConfigureAwait(false);
+    }
+    if (won) {
+      LogOutcomeSignaled(_logger, outcome, _sagaName, ctx.SagaId, reason, null);
+    }
+    return won;
+  }
+
+  /// <summary>A short account of a final status, for a signal that no caller gave a reason for.</summary>
+  /// <remarks>
+  /// Only a status <see cref="SagaOutcomePolicy.OutcomeFor"/> maps to an outcome reaches here, so the
+  /// last arm is <see cref="SagaStatus.Abandoned"/>.
+  /// </remarks>
+  private static string _reasonFor(SagaStatus finalStatus) => finalStatus switch {
+    SagaStatus.Completed => "Every item completed.",
+    SagaStatus.CompletedWithFailures => "The run reached the end with some items failed.",
+    SagaStatus.Failed => "The run failed before every item finished.",
+    _ => "The watchdog abandoned the run: it stopped making progress.",
+  };
 
   /// <summary>
   /// Asks for each declared continuation whose trigger matches the final status.
@@ -1200,6 +1325,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Error, Message = "Could not request continuation saga {ContinuationSagaName} after {SagaName} {SagaId} — the saga still completed; the watchdog can drive the request again")]
   private static partial void LogContinuationRequestFailed(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
+
+  [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "Signaled {Outcome} for {SagaName} {SagaId}: {Reason}")]
+  private static partial void LogOutcomeSignaled(ILogger logger, SagaOutcome Outcome, string SagaName, Guid SagaId, string Reason, Exception? exception);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Error, Message = "Could not signal the outcome of {SagaName} {SagaId} after it ended {FinalStatus}; the run still completed, and the next watchdog tick signals it again")]
+  private static partial void LogOutcomeSignalFailed(ILogger logger, string SagaName, Guid SagaId, SagaStatus FinalStatus, Exception exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Hook {HookName} already terminal on saga {SagaName} {SagaId} — skip")]
   private static partial void LogHookSkipped(ILogger logger, string HookName, string SagaName, Guid SagaId, Exception? exception);

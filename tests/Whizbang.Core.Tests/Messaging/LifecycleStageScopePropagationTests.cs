@@ -274,7 +274,7 @@ public class LifecycleStageScopePropagationTests {
   private static MessageEnvelope<JsonElement> _createEnvelopeWithScope(string userId, string tenantId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -304,7 +304,7 @@ public class LifecycleStageScopePropagationTests {
 
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -334,7 +334,7 @@ public class LifecycleStageScopePropagationTests {
   private static MessageEnvelope<JsonElement> _createEnvelopeWithoutScope() {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,

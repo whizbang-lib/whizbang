@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration 039: Create message_type_registry table
 --
 -- Universal catalog of every registered IMessage / IPerspectiveFor<> type with

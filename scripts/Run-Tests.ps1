@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 7.0
 
 <#
@@ -2884,8 +2887,11 @@ try {
 
 } finally {
     # Clean up test containers after test run completes (especially important after fail-fast)
-    # This ensures containers don't hang around after abrupt test termination
-    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered -or $Cleanup) {
+    # This ensures containers don't hang around after abrupt test termination. Skipped where there is no
+    # docker at all (a runner that runs only the unit and component suites): nothing to clean, and calling
+    # it would fail a run whose tests all passed.
+    Import-Module (Join-Path $PSScriptRoot 'lib' 'CiImages.psm1') -Force
+    if (($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered -or $Cleanup) -and (Test-DockerAvailable)) {
         if (-not $useAiOutput) {
             Write-Host ""
             Write-Host "Cleaning up test containers..." -ForegroundColor Yellow

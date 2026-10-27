@@ -22,4 +22,15 @@ public static class SchemaInitializationObservers {
       await observer.OnSchemaLockContendedAsync(schema, cancellationToken).ConfigureAwait(false);
     }
   }
+
+  /// <summary>One step of the schema pass for <paramref name="schema"/> committed.</summary>
+  /// <param name="services">Where the observers are registered; null tells none.</param>
+  /// <param name="schema">The schema being migrated, unquoted.</param>
+  /// <param name="step">The step that committed.</param>
+  /// <param name="cancellationToken">Canceled when initialization is.</param>
+  public static async Task StepCommittedAsync(IServiceProvider? services, string schema, string step, CancellationToken cancellationToken) {
+    foreach (var observer in services?.GetServices<ISchemaInitializationObserver>() ?? []) {
+      await observer.OnSchemaStepCommittedAsync(schema, step, cancellationToken).ConfigureAwait(false);
+    }
+  }
 }

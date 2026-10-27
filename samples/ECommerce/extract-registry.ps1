@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 param([string]$InputFile, [string]$OutputFile)
 
 $content = Get-Content $InputFile -Raw

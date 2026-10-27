@@ -94,6 +94,17 @@ public sealed class WhizbangNotificationOptions {
   /// </summary>
   public TimeSpan PollingFallbackInterval { get; set; } = TimeSpan.FromSeconds(30);
 
+  /// <summary>
+  /// How long a durable signal (<c>wh_signals</c>) is kept before the retention sweep may delete it. Default 7 days.
+  /// </summary>
+  /// <remarks>
+  /// The sweep never deletes a signal some pod has not yet delivered, whatever its age, so a slow tail is never
+  /// stranded. A window of zero or less is rejected at startup.
+  /// </remarks>
+  /// <docs>fundamentals/signal-bus/signal-bus#retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgDurableSignalRetentionWindowTests.cs:Sweep_UsesTheConfiguredWindowAsync</tests>
+  public TimeSpan SignalRetention { get; set; } = TimeSpan.FromDays(7);
+
   /// <summary>Cadence of <c>SELECT 1</c> keepalive on the listener connection. Default 30 s.</summary>
   public TimeSpan ListenKeepaliveInterval { get; set; } = TimeSpan.FromSeconds(30);
 

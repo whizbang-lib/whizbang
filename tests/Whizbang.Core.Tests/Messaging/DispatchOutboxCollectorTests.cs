@@ -62,7 +62,7 @@ public class DispatchOutboxCollectorTests {
     MessageId = (Guid)TrackedGuid.New(),
     Envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
-      Payload = JsonDocument.Parse($"{{\"id\":\"{id}\"}}").RootElement,
+      Payload = JsonElement.Parse($"{{\"id\":\"{id}\"}}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     },

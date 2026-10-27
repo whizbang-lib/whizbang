@@ -71,8 +71,8 @@ public class RabbitMQTransportPoisonAndRoutingBranchTests {
     var channel = new RecordingChannel();
     var transport = await _initializedAsync(channel);
     var metadata = new Dictionary<string, JsonElement> {
-      ["RoutingPatterns"] = JsonDocument.Parse("\"orders.*\"").RootElement.Clone(),
-      ["RoutingPattern"] = JsonDocument.Parse("\"payments.created\"").RootElement.Clone()
+      ["RoutingPatterns"] = JsonElement.Parse("\"orders.*\""),
+      ["RoutingPattern"] = JsonElement.Parse("\"payments.created\"")
     };
 
     await transport.SubscribeAsync(

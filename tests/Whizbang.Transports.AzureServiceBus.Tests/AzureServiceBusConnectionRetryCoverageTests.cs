@@ -89,7 +89,14 @@ public class AzureServiceBusConnectionRetryCoverageTests {
       MaxRetryDelay = TimeSpan.FromMilliseconds(2),
       RetryIndefinitely = true,
     };
-    var retry = new AzureServiceBusConnectionRetry(options, log);
+    // Every attempt fails at once through the verification seam. A real connection to a closed port is
+    // refused at once on Linux but takes seconds per attempt on Windows (TCP retries the refused SYN, then
+    // the SDK retries on top), so eleven real attempts outran this test's timeout there and attempt 10
+    // was never reached. The seam makes the attempt count the only thing the outcome depends on.
+    var retry = new AzureServiceBusConnectionRetry(options, log) {
+      VerifyNamespaceReachableAsync = (_, _) =>
+        Task.FromException(new Azure.RequestFailedException("namespace not answering"))
+    };
 
     // Act & Assert -- shutdown is still the only thing that ends an indefinite retry.
     await Assert.That(async () =>

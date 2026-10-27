@@ -1,0 +1,53 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Core.Lifecycle.IStreamCloser</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Core.Lifecycle.StreamCloser</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:Whizbang.Core.Messaging.StreamCloseResult</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Lenses.ScopeInheritance.Resolve(Whizbang.Core.Lenses.PerspectiveScope,Whizbang.Core.Lenses.PerspectiveScope,System.Boolean,Whizbang.Core.Lenses.ScopeFields,Whizbang.Core.Lenses.ScopeFields,System.Boolean)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Messaging.IWorkCoordinator.CloseStreamAsync(System.Guid,System.Int64,System.Boolean,System.Threading.CancellationToken)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Perspectives.StreamCompactor.#ctor(Whizbang.Core.Perspectives.IPerspectiveSnapshotStore,Whizbang.Core.Messaging.IWorkCoordinator,Whizbang.Core.Messaging.IEventStore,Whizbang.Core.Lifecycle.IStreamCloser,Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Perspectives.StreamCompactor})</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Startup.TableRewriteStartupStep.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.MaintenanceWorkerOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Startup.TableRewriteStartupStep})</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

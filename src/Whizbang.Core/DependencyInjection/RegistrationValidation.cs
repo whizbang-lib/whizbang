@@ -26,13 +26,20 @@ namespace Whizbang.Core.DependencyInjection;
 /// Because it runs against <see cref="IServiceCollection"/> rather than a built provider, it fails
 /// before a single service is constructed.
 /// </para>
+/// <para>
+/// A requirement applies only when its implementation type is registered in the collection being
+/// validated. The manifest is derived from every registration call in the compiled source, and a
+/// composition makes only some of them: a host that never adds the transport consumer never
+/// registers its worker, and must not be failed for the transport that worker would need.
+/// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/registration-validation</docs>
 /// <tests>tests/Whizbang.Core.Tests/DependencyInjection/RegistrationValidationTests.cs</tests>
 public static class RegistrationValidation {
 
   /// <summary>
-  /// Throws if any requirement names a service type that no descriptor provides.
+  /// Throws if any requirement whose implementation is registered names a service type that no
+  /// descriptor provides.
   /// </summary>
   /// <param name="services">The composed service collection.</param>
   /// <param name="requirements">
@@ -53,6 +60,9 @@ public static class RegistrationValidation {
 
     for (var r = 0; r < requirements.Count; r++) {
       var requirement = requirements[r];
+      if (!_isRegistered(services, requirement)) {
+        continue;
+      }
       var dependencies = requirement.Dependencies;
 
       for (var d = 0; d < dependencies.Count; d++) {
@@ -69,6 +79,67 @@ public static class RegistrationValidation {
     }
 
     return services;
+  }
+
+  /// <summary>
+  /// True when some descriptor in the collection will construct the requirement's implementation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A type-based or instance descriptor names what it builds, so it is matched directly. A factory
+  /// descriptor names only its service type, which is enough when the requirement is named after that
+  /// service type (the generator names a factory's requirement that way). When the requirement is a
+  /// concrete type that some registration builds through a factory under a different service type,
+  /// the generator records that service type in <see cref="ServiceRequirement.FactoryServiceTypes"/>,
+  /// and a factory descriptor under it counts as registering the implementation. Erring towards
+  /// checking keeps a factory-built type from silently dropping out of validation.
+  /// </para>
+  /// <para>
+  /// A keyed descriptor throws if its non-keyed implementation members are read, so keyed and
+  /// non-keyed descriptors are read through their own members.
+  /// </para>
+  /// </remarks>
+  private static bool _isRegistered(IServiceCollection services, ServiceRequirement requirement) {
+    var implementation = requirement.ImplementationType;
+    var factoryServiceTypes = requirement.FactoryServiceTypes;
+
+    for (var i = 0; i < services.Count; i++) {
+      var descriptor = services[i];
+      if (descriptor.ServiceType == implementation) {
+        return true;
+      }
+
+      Type? implementationType;
+      object? instance;
+      bool hasFactory;
+      if (descriptor.IsKeyedService) {
+        implementationType = descriptor.KeyedImplementationType;
+        instance = descriptor.KeyedImplementationInstance;
+        hasFactory = descriptor.KeyedImplementationFactory is not null;
+      } else {
+        implementationType = descriptor.ImplementationType;
+        instance = descriptor.ImplementationInstance;
+        hasFactory = descriptor.ImplementationFactory is not null;
+      }
+
+      if (implementationType == implementation || instance?.GetType() == implementation) {
+        return true;
+      }
+      if (hasFactory && _contains(factoryServiceTypes, descriptor.ServiceType)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private static bool _contains(IReadOnlyList<Type> types, Type type) {
+    for (var i = 0; i < types.Count; i++) {
+      if (types[i] == type) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static bool _isSatisfied(IServiceCollection services, Type dependency) {

@@ -9,9 +9,12 @@
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <!-- Configuration binding uses the interceptor-based source generator, so the
-         BindConfiguration/Bind calls below compile to typed property assignments — the
-         zero-reflection rule holds without hand-written per-key binders. -->
-    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+         BindConfiguration/Bind calls below compile to typed property assignments: the
+         zero-reflection rule holds without hand-written per-key binders. The mutation build
+         turns it off (WhizbangMutationBuild, set by scripts/mutation/run-mutation-tests.ps1):
+         Stryker mutates the generator's in-memory output, which its file exclusions cannot
+         reach, and then cannot compile (#1444). That build is never packed or shipped. -->
+    <EnableConfigurationBindingGenerator Condition="'$(WhizbangMutationBuild)' != 'true'">true</EnableConfigurationBindingGenerator>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <!-- Emit source-generated files to disk for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
@@ -22,7 +25,7 @@
     <PropertyGroup>
       <_VersionInfoFile>$(IntermediateOutputPath)WhizbangVersionInfo.Generated.cs</_VersionInfoFile>
     </PropertyGroup>
-    <WriteLinesToFile File="$(_VersionInfoFile)" Overwrite="true" Lines="// &lt;auto-generated/&gt;
+    <WriteLinesToFile File="$(_VersionInfoFile)" Overwrite="true" WriteOnlyWhenDifferent="true" Lines="// &lt;auto-generated/&gt;
 namespace Whizbang.Core.Diagnostics%3B
 
 /// &lt;summary&gt;Compile-time version info stamped by MSBuild from $(Version).&lt;/summary&gt;
@@ -69,6 +72,14 @@ internal static class WhizbangVersionInfo
          feeds formerNames into the JSON-context alias registrations + catalog entries so rows
          persisted under a pre-rename CLR name keep resolving. -->
     <AdditionalFiles Include=".whizbang/pinned-type-ledger.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- #1490: the recorded configuration key manifest, embedded so the startup check of unknown
+         Whizbang:* keys reads the exact set the binders read, with no reflection. The file is
+         regenerated and locked by ConfigurationKeyManifestTests; the docs site checks against it too. -->
+    <EmbeddedResource Include="../../tests/Whizbang.Documentation.Tests/Baselines/configuration-keys.txt"
+                      LogicalName="Whizbang.Core.Configuration.configuration-keys.txt"
+                      Link="Configuration/configuration-keys.txt" />
   </ItemGroup>
   <ItemGroup>
     <!-- Testing support: test assemblies that access internal members. The strong-name

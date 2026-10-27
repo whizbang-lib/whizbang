@@ -58,6 +58,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// The one thing the test does to the clock is end a backoff early: a scheduled retry is 60 seconds out,
 /// and moving <c>scheduled_for</c> to the past with SQL is the retry becoming due, without waiting for it.
 /// </para>
+/// <para>
+/// Between the claim loop and the worker sits a gate the test can close. A state that the next apply replaces
+/// (a converted row whose retry the same commit made due) is read with the gate closed, so the read happens
+/// before the apply by construction rather than by being quicker than the claim poll.
+/// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/PerspectiveWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Perspectives/StoredFormUnreadable.cs</code-under-test>
@@ -183,6 +188,10 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     // Waited on from before the migration: the retry falls due the moment the conversion commits.
     var recovered = pipeline.Applied.WaitAsync(items => items.Contains(poisoned), cancellationToken, fromNow: true);
     var completed = pipeline.Completed.WaitAsync(items => items.Contains(failingWork), cancellationToken);
+    // The commit that converts the row also makes its retry due, and the apply that recovers the stream rewrites
+    // the row. Held from before the migration, nothing the claim loop takes reaches the worker until the converted
+    // row has been read, so the read sees the conversion and not the recovery.
+    pipeline.HandOff.Hold();
     await StoredFormMigrationSql.DeclareAsync(() => new NpgsqlConnection(ConnectionString), schema, [migration], cancellationToken);
     var notices = new NoticeLogger();
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
@@ -198,6 +207,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var status = await StoredFormMigrationJournal.ReadAsync(conn, schema, [migration], cancellationToken);
     await Assert.That(status.Single().State).IsEqualTo(StoredFormMigrationState.Applied);
     await Assert.That(status.Single().RowsConverted).IsEqualTo(1L);
+    pipeline.HandOff.Release();
 
     // No clock is moved: the migration brought the parked stream's retry forward, so the claim loop picks it up,
     // reads the converted document, applies the waiting event and recovers, well inside its 60-second backoff.
@@ -352,6 +362,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     var config = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     var instanceProvider = new ServiceInstanceProvider(config);
     var harness = new PerspectiveWorkerTestHarness();
+    var handOff = new HandOffGate();
 
     var claims = new Recorder<HashSet<Guid>>();
     var failures = new Recorder<MessageFailure>();
@@ -376,8 +387,8 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       logger: NullLogger<ClaimWorker>.Instance,
       outboxChannel: new WorkChannelWriter(),
       inboxChannel: new InboxChannelWriter(),
-      perspectiveChannel: harness.ChannelWriter,
-      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveChannel: new HeldPerspectiveChannelWriter(harness.ChannelWriter, handOff),
+      perspectiveDrainChannel: new HeldPerspectiveDrainChannel(harness.DrainChannel, handOff),
       outboxDrainChannel: new OutboxDrainChannel(),
       inboxDrainChannel: new InboxDrainChannel(),
       signalingGate: NullNotifySignalingGate.Instance,
@@ -448,6 +459,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       PerspectiveWorker = perspectiveWorker,
       MeterListener = meterListener,
       Health = new StoredFormHealthSource(registry),
+      HandOff = handOff,
       Claims = claims,
       Failures = failures,
       Applied = applied,
@@ -465,6 +477,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
     public required PerspectiveWorker PerspectiveWorker { get; init; }
     public required MeterListener MeterListener { get; init; }
     public required StoredFormHealthSource Health { get; init; }
+    public required HandOffGate HandOff { get; init; }
     public required Recorder<HashSet<Guid>> Claims { get; init; }
     public required Recorder<MessageFailure> Failures { get; init; }
     public required Recorder<Guid> Applied { get; init; }
@@ -547,7 +560,7 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
           MessageId = MessageId.From(eventIds[i]),
           DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
           Hops = [],
-          Payload = JsonDocument.Parse(payloadJson).RootElement
+          Payload = JsonElement.Parse(payloadJson)
         };
         var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
         messages.Add($$"""
@@ -584,6 +597,54 @@ public class StoredFormScalarMismatchWorkerTests : EFCoreTestBase {
       MeterListener.Dispose();
       await Services.DisposeAsync();
     }
+  }
+
+  /// <summary>
+  /// Holds what the claim loop hands to the perspective worker, so a test can read a row the next apply would
+  /// rewrite. Open until <see cref="Hold"/>; <see cref="Release"/> lets every held hand-off through.
+  /// </summary>
+  private sealed class HandOffGate {
+    private TaskCompletionSource? _held;
+
+    public bool IsOpen => Volatile.Read(ref _held) is null;
+
+    public void Hold() => Volatile.Write(ref _held, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+
+    public void Release() => Interlocked.Exchange(ref _held, null)?.TrySetResult();
+
+    public Task PassAsync(CancellationToken ct) => Volatile.Read(ref _held)?.Task.WaitAsync(ct) ?? Task.CompletedTask;
+  }
+
+  /// <summary>The claim loop's side of the perspective work channel, passing each write through the gate.</summary>
+  private sealed class HeldPerspectiveChannelWriter(IPerspectiveChannelWriter inner, HandOffGate gate) : IPerspectiveChannelWriter {
+    public System.Threading.Channels.ChannelReader<PerspectiveWork> Reader => inner.Reader;
+
+    public async ValueTask WriteAsync(PerspectiveWork work, CancellationToken ct = default) {
+      await gate.PassAsync(ct);
+      await inner.WriteAsync(work, ct);
+    }
+
+    public bool TryWrite(PerspectiveWork work) => gate.IsOpen && inner.TryWrite(work);
+
+    public void Complete() => inner.Complete();
+  }
+
+  /// <summary>The claim loop's side of the perspective drain channel, passing each write through the gate.</summary>
+  private sealed class HeldPerspectiveDrainChannel(IPerspectiveDrainChannel inner, HandOffGate gate) : IPerspectiveDrainChannel {
+    public System.Threading.Channels.ChannelReader<Guid> Reader => inner.Reader;
+
+    public async ValueTask WriteAsync(Guid streamId, CancellationToken cancellationToken = default) {
+      await gate.PassAsync(cancellationToken);
+      await inner.WriteAsync(streamId, cancellationToken);
+    }
+
+    public bool TryWrite(Guid streamId) => gate.IsOpen && inner.TryWrite(streamId);
+
+    public bool IsInFlight(Guid streamId) => inner.IsInFlight(streamId);
+
+    public void MarkDraining(Guid streamId) => inner.MarkDraining(streamId);
+
+    public void MarkDrained(Guid streamId) => inner.MarkDrained(streamId);
   }
 
   /// <summary>Reports each failure to the coordinator before returning, then records it.</summary>

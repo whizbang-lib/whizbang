@@ -60,7 +60,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
 
   private static MessageTypeCatalogEntry _ephemeralEntry(string settingsHash, string schemaHash) =>
     new(typeof(object), EventType, "event", null) {
-      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.InMemory),
+      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.TtlRow),
       SettingsHash = settingsHash,
       SchemaHash = schemaHash,
     };
@@ -186,7 +186,7 @@ public class TypeDefinitionReconcilerTests : EFCoreTestBase {
     var coordinator = _coordinator(dbContext);
 
     var entry = new MessageTypeCatalogEntry(typeof(object), "Whizbang.Tests.GraceSyncEvent", "event", null) {
-      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.InMemory, RewindGraceSeconds: 42),
+      Ephemeral = new EphemeralInfo(Destruction.WhenConsumed, TransientStorage.TtlRow, RewindGraceSeconds: 42),
       SettingsHash = new string('a', 64),
       SchemaHash = new string('c', 64),
     };

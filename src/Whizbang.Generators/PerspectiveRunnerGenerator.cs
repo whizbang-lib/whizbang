@@ -40,21 +40,29 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _csharpBool(bool value) => value ? "true" : "false";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Extract perspective info or warning for models missing StreamId
     var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveOrWarning(ctx, ct)
     ).Where(static result => result is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndResults = context.CompilationProvider.Combine(perspectiveResults.Collect());
+    var compilationAndResults = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(perspectiveResults.Collect());
 
     context.RegisterSourceOutput(
         compilationAndResults,
         static (ctx, data) => {
-          var compilation = data.Left;
+          var compilationAssemblyName = data.Left;
           var results = data.Right;
 
           // Report warnings for perspectives missing StreamId on model
@@ -62,12 +70,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             if (result!.Warning is { } warning) {
               ctx.ReportDiagnostic(Diagnostic.Create(
                   DiagnosticDescriptors.PerspectiveModelMissingStreamId,
-                  Location.Create(
-                      warning.FilePath,
-                      default,
-                      new Microsoft.CodeAnalysis.Text.LinePositionSpan(
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column),
-                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column))),
+                  warning.Location,
                   warning.PerspectiveName,
                   warning.ModelName
               ));
@@ -89,7 +92,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
                 DiagnosticDescriptors.SplitClassModelCannotBeCopied, Location.None, Model, Problem));
           }
 
-          _generatePerspectiveRunners(ctx, compilation, validPerspectives);
+          _generatePerspectiveRunners(ctx, compilationAssemblyName, validPerspectives);
         }
     );
   }
@@ -275,16 +278,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       ClassDeclarationSyntax classDeclaration,
       INamedTypeSymbol classSymbol,
       ITypeSymbol modelType) {
-    var location = classDeclaration.GetLocation();
-    var lineSpan = location.GetLineSpan();
     return new PerspectiveOrWarning(
         Info: null,
         Warning: new PerspectiveMissingStreamIdWarning(
             PerspectiveName: classSymbol.Name,
             ModelName: modelType.Name,
-            FilePath: lineSpan.Path,
-            Line: lineSpan.StartLinePosition.Line,
-            Column: lineSpan.StartLinePosition.Character
+            Location: classDeclaration.Identifier.GetLocation()
         )
     );
   }
@@ -465,7 +464,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generatePerspectiveRunners(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
@@ -474,7 +473,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
-      var runnerSource = _generateRunnerSource(compilation, perspective);
+      var runnerSource = _generateRunnerSource(compilationAssemblyName, perspective);
       var runnerName = _getRunnerName(perspective.SimpleName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
@@ -492,8 +491,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Generates the C# source code for a perspective runner.
   /// Uses template-based generation with unit-of-work pattern and AOT-compatible switch statements.
   /// </summary>
-  private static string _generateRunnerSource(Compilation compilation, PerspectiveInfo perspective) {
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+  private static string _generateRunnerSource(string? compilationAssemblyName, PerspectiveInfo perspective) {
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template from embedded resource
@@ -734,7 +733,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _buildSplitPhysicalFieldRegistration(PerspectiveInfo perspective, string modelTypeName) {
     // A Split model reads every promoted field back from its column. Any other model reads back its jsonb
     // columns: the EF Core model keeps them out of the mapped document, so the column is where they are.
-    PhysicalFieldInfoCompact[] promoted = perspective.PhysicalFields ?? [];
+    EquatableArray<PhysicalFieldInfoCompact> promoted = perspective.PhysicalFields ?? [];
     var fields = perspective.StorageMode == 2
       ? promoted
       : [.. promoted.Where(f => PhysicalFieldScalar.IsJsonb(f.ColumnType))];
@@ -997,17 +996,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (perspective.HasScopeInterface) {
       // Perspective implements IPerspectiveScopeFor — let it decide the final scope
       sb.AppendLine($"          if (perspective is global::Whizbang.Core.Perspectives.IPerspectiveScopeFor<{perspective.InterfaceTypeArguments[0]}> scopePerspective) {{");
-      sb.AppendLine("            var currentScope = lastScope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
-      sb.AppendLine("            lastScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
+      // The current scope is the one an earlier scope event in this batch set, else the row's stored scope,
+      // never the last message's envelope scope (#1432).
+      sb.AppendLine("            var currentScope = scopeEventScope ?? applyRead.Scope ?? new global::Whizbang.Core.Lenses.PerspectiveScope();");
+      sb.AppendLine("            scopeEventScope = scopePerspective.ApplyScope(currentScope, proposedScope);");
       sb.AppendLine("          } else {");
-      sb.AppendLine("            lastScope = proposedScope;");
+      sb.AppendLine("            scopeEventScope = proposedScope;");
       sb.AppendLine("          }");
     } else {
       // No IPerspectiveScopeFor — accept proposed scope directly
-      sb.AppendLine("          lastScope = proposedScope;");
+      sb.AppendLine("          scopeEventScope = proposedScope;");
     }
-
-    sb.AppendLine("          scopeChanged = true;");
     sb.AppendLine("        }");
 
     return sb.ToString().TrimEnd('\r', '\n');

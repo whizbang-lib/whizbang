@@ -113,7 +113,7 @@ public class PerspectivePersistenceJsonContextTests {
     var written = System.Text.Json.JsonSerializer.Serialize(
       new Whizbang.Core.Lenses.PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc) },
       options.GetTypeInfo(typeof(Whizbang.Core.Lenses.PerspectiveMetadata)));
-    await Assert.That(System.Text.Json.JsonDocument.Parse(written).RootElement.GetProperty("Timestamp").ValueKind)
+    await Assert.That(System.Text.Json.JsonElement.Parse(written).GetProperty("Timestamp").ValueKind)
       .IsEqualTo(System.Text.Json.JsonValueKind.Number);
   }
 

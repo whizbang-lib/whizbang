@@ -106,6 +106,20 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher, gl
   }
 
   /// <summary>
+  /// Generated lookup - for a message with two or more local receptors, a runner that runs every one in
+  /// priority order and returns the first result the caller asked for (#1412). Null for a message with
+  /// one receptor, which keeps the single-receptor lookups.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override Func<object, IMessageEnvelope?, CancellationToken, Task<TAnswer?>>? GetLocalReceptorRunner<TAnswer>(Type messageType, bool wantsAnswer) where TAnswer : default {
+    #region LOCAL_RUNNER_ROUTING
+    // This region will be replaced with generated local runner routing code
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Generated lookup - returns a sync delegate that invokes the appropriate sync receptor.
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>
@@ -187,6 +201,20 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher, gl
 
   global::Whizbang.Core.Dispatch.DispatchModes? global::Whizbang.Core.IReceptorLookup.LookupReceptorDefaultRouting(Type messageType)
     => GetReceptorDefaultRouting(messageType);
+
+  global::System.Collections.Generic.IReadOnlyList<Type> global::Whizbang.Core.IReceptorLookup.LookupPolymorphicReceptorMessageTypes()
+    => GetPolymorphicReceptorMessageTypes();
+
+  /// <summary>
+  /// Generated - the interfaces and base types this assembly's local receptors are declared for (#1418).
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override global::System.Collections.Generic.IReadOnlyList<Type> GetPolymorphicReceptorMessageTypes() => _polymorphicReceptorMessageTypes;
+
+  private static readonly Type[] _polymorphicReceptorMessageTypes = [
+    #region POLYMORPHIC_RECEPTOR_MESSAGE_TYPES
+    #endregion
+  ];
 
   /// <summary>
   /// Generated override - publishes cascaded events to outbox using type-switch dispatch.

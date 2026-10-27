@@ -22,6 +22,15 @@
     <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 
+  <!-- Repository-internal test analyzers (src/Whizbang.TestAnalyzers): assertions that cannot fail are build
+       errors here, starting with WHZ0004 (IsNotNull() on a Nullable<T> subject passes on null under the pinned
+       TUnit; ai-docs/testing-tunit.md). Loaded as an analyzer only, so nothing reaches a test's references or
+       its lock file. Its own test project references it directly, as an assembly and as an analyzer. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' != 'Whizbang.TestAnalyzers.Tests'">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
   <!-- Sonar's analyzers run in every build (see the root Directory.Build.props) and their findings
        are errors here exactly as they are in src/. Test code gets no downgraded rule list: a rule
        either holds for the whole repository or is turned off for the whole repository, with the

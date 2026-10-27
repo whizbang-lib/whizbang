@@ -31,6 +31,8 @@ public record ScopedWorkCoordinatorDependencies {
   public SystemEvents.SystemEventOptions? SystemEventOptions { get; init; }
   /// <summary>Coalesce-group resolver for tag-bound coalesce stamping at the mint seam.</summary>
   public Tags.CoalesceGroupResolver? CoalesceResolver { get; init; }
+  /// <summary>The registered audit decision hook, consulted for every audit record this strategy builds.</summary>
+  public SystemEvents.IAuditDecisionHook? AuditDecisionHook { get; init; }
 }
 
 /// <summary>
@@ -54,6 +56,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   WorkCoordinatorOptions options,
   ILogger<ScopedWorkCoordinatorStrategy> logger,
   IInboxChannelWriter inboxChannelWriter,
+  DetachedLifecycleWork detachedWork,
   ScopedWorkCoordinatorDependencies? dependencies = null,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
@@ -64,12 +67,15 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
   private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork = ArgumentGuard.NotNull(detachedWork);
   private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
   private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.CoalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.AuditDecisionHook, dependencies?.CoalesceResolver);
 
   private bool _disposed;
 
@@ -170,13 +176,21 @@ public partial class ScopedWorkCoordinatorStrategy(
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
           outboxFailures, inboxFailures, _dependencies.LifecycleMessageDeserializer,
           _logger, _dependencies.TracingOptions, _lifecycleMetrics,
-          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+          // #1546: this flush's caller awaits it, so a mixed-stream refusal is raised to it.
+          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true, DetachedWork: _detachedWork),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       // The caller withdrew this work: the write rolled back and the caller is told it was canceled,
       // so nothing may write it after all, neither a later flush nor the disposal safety net (#1410
       // follow-up). A cancellation the caller did not ask for keeps the work, as any other failure does.
+      _queues.Clear();
+      throw;
+    } catch (MixedStreamEventException) {
+      // #1546: the store refused the write for mixing ephemeral and Sourced events on one stream. It rolled back
+      // and the caller has the refusal; the same write is refused every time, so it is withdrawn rather than
+      // offered to a later flush (which it would fail too) or to the disposal safety net.
       _queues.Clear();
       throw;
     }
@@ -189,7 +203,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     return workBatch;
   }
 
-  // Removed _logPostFlushDiagnostics: the legacy ProcessWorkBatchAsync path returned the
+  // Removed _logPostFlushDiagnostics: the legacy ProcessWorkBatchAsync path (since removed) returned the
   // claimed batch synchronously, so an empty result after a non-empty queue indicated a
   // real bug. After the Phase H decomposition the flush helper persists messages and
   // returns an empty WorkBatch by design — claiming is now async via ClaimWorker. The
@@ -263,7 +277,8 @@ public partial class ScopedWorkCoordinatorStrategy(
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
             // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
             // shutdown's backgrounded stage halves would race process exit.
-            SkipLifecycle: true),
+            SkipLifecycle: true,
+            Metrics: _metrics, Strategy: STRATEGY_NAME, DetachedWork: _detachedWork),
           ct: default
         );
 

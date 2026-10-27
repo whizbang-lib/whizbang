@@ -111,7 +111,8 @@ public class OutboxStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
       runtimeReceptorRegistry: serviceProvider.GetRequiredService<IReceptorRegistry>(),
       deadLetterStore: NullDeadLetterStore.Instance,
       generationProvider: new DefaultGenerationProvider(),
-      governor: OutboxDrainWorker.CreateDefaultGovernor(options));
+      governor: OutboxDrainWorker.CreateDefaultGovernor(options),
+      leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()));
 
     ScopeContextAccessor.CurrentInitiatingContext = null;
     ScopeContextAccessor.CurrentContext = null;
@@ -232,7 +233,7 @@ public class OutboxStageOwnedCommandSendIntegrationTests : EFCoreTestBase {
         workChannelWriter: null,
         options: new WorkCoordinatorOptions { LeaseSeconds = 30, AbandonStaleInstanceThresholdSeconds = 300, PartitionCount = 4 },
         logger: sp.GetRequiredService<ILogger<ScopedWorkCoordinatorStrategy>>(),
-        inboxChannelWriter: new InboxChannelWriter()));
+        inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()));
 
     services.AddReceptors();
     services.AddWhizbangDispatcher();

@@ -445,11 +445,35 @@ internal static class DiagnosticDescriptors {
 }
 ```
 
-**Diagnostic ID Allocation**:
-- WHIZ001-003: Existing diagnostics (receptors)
-- WHIZ004-006: Aggregate ID system
-- WHIZ007-009: Reserved for future
-- WHIZ010+: Additional features
+**Diagnostic ID Allocation** (bands in use; the descriptors are the source of truth):
+
+| Band | Area |
+|------|------|
+| WHIZ001-015 | Discovery: receptors, stream ids, perspectives, JSON-serializable types, generic message types |
+| WHIZ020-028 | Strongly-typed ids, topic filters, perspective runners |
+| WHIZ030-033 | Perspective events and models: stream ids, name collisions |
+| WHIZ040-041 | User service discovery |
+| WHIZ053-059 | Documentation maps, Guid usage and interception |
+| WHIZ060-063 | Serializable properties |
+| WHIZ070-072 | Vector fields, polymorphic base types |
+| WHIZ080-099 | RPC handlers, message tags, generator notices |
+| WHIZ100-106 | Perspective purity (Apply methods) |
+| WHIZ110-122 | Pinned type identity and the pinned-type ledger |
+| WHIZ130-171 | Ephemeral events, stream groups, minted composites, command ownership, type-name keys, scope inheritance |
+| WHIZ180 | Audit settings the generator cannot register |
+| WHIZ200 | Perspective model shape |
+| WHIZ300-309 | Perspective model consistency and indexes |
+| WHIZ400-402 | Lens queries (EF Core) |
+| WHIZ500-501 | Dependency injection |
+| WHIZ701-703 | EF Core generator notices |
+| WHIZ801-833 | Perspective storage: vector and physical fields, model shapes, identifier lengths, stored-form migrations |
+| WHIZ900 | Perspective sync in receptors |
+| WHIZS001-004 | Suppressions (`DiagnosticSuppressor`) of third-party unused-parameter rules on parameters the framework requires on convention-bound methods (#1378) |
+
+Take the next free number in your area's band (`git grep 'id: "WHIZ' -- src` lists every taken ID). Never reuse
+an ID in `DiagnosticDescriptors.RETIRED_IDS`. Every descriptor carries `<docs>operations/diagnostics/whizNNN</docs>`
+and a `<tests>` link to a test that asserts it, and gets a page at that path on the docs site
+(`DiagnosticDescriptorLinkTests` fails a descriptor without the links).
 
 ### Reporting Diagnostics
 

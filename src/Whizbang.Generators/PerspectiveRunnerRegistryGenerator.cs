@@ -20,15 +20,30 @@ namespace Whizbang.Generators;
 public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
-  private const string COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN = "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a method declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedMethodCandidate(SyntaxNode node) =>
+      node is MethodDeclarationSyntax { AttributeLists.Count: > 0 };
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveRunnerGenerator
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -40,28 +55,28 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // type even when it lives in a referenced assembly). Matches CollectiveApplyDiscoveryGenerator's
     // discovery, so the emitted typeof() references the same accessible types.
     var collectiveEventCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is MethodDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedMethodCandidate(node),
         transform: static (ctx, ct) => _extractCollectiveEventType(ctx, ct)
     ).Where(static t => t is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndPerspectives = context.CompilationProvider
+    var compilationAndPerspectives = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName)
         .Combine(perspectiveCandidates.Collect())
         .Combine(collectiveEventCandidates.Collect());
 
     context.RegisterSourceOutput(
         compilationAndPerspectives,
         static (ctx, data) => {
-          var compilation = data.Left.Left;
+          var compilationAssemblyName = data.Left.Left;
           var perspectives = data.Left.Right;
           var collectiveEventTypes = data.Right;
-          _generatePerspectiveRunnerRegistry(ctx, compilation, perspectives!, collectiveEventTypes!);
+          _generatePerspectiveRunnerRegistry(ctx, compilationAssemblyName, perspectives!, collectiveEventTypes!);
         }
     );
   }
 
   /// <summary>
-  /// For a method carrying <c>[CollectiveApplyFor]</c>, returns the fully-qualified type name of its first
+  /// For a collective-event handler the framework binds (<see cref="CollectiveApplyShape"/>), returns the fully-qualified type name of its first
   /// parameter (the collective event it applies). Returns null otherwise. The event type resolves through
   /// the semantic model, so it's correct even when the event lives in a referenced contracts assembly.
   /// </summary>
@@ -71,10 +86,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     var methodDecl = (MethodDeclarationSyntax)context.Node;
     // The bind guard shares the "not a [CollectiveApplyFor] method" exit: a method Roslyn cannot bind
     // exposes no attributes and no parameters, so it fails the same test without being dereferenced.
+    // The same test CollectiveApplyDiscoveryGenerator applies (#1378): a method it rejects is never invoked, so
+    // its first parameter is not an event the sink loads.
     if (context.SemanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is not IMethodSymbol methodSymbol
-        || !methodSymbol.GetAttributes()
-              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN))
-        || methodSymbol.Parameters.Length < 1) {
+        || CollectiveApplyShape.BoundModel(methodSymbol) is null) {
       return null;
     }
     return TypeNameUtilities.FullyQualified(methodSymbol.Parameters[0].Type);
@@ -212,7 +227,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
   private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<PerspectiveRegistryInfo> perspectives,
       ImmutableArray<string?> collectiveEventTypes) {
 
@@ -225,7 +240,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return;
     }
 
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     var source = new StringBuilder();
@@ -464,6 +479,6 @@ internal sealed record PerspectiveRegistryInfo(
     string ClrTypeName,
     string RunnerName,
     string ModelType,
-    string[] EventTypes,
-    string[] EventTypesCodeGen
+    EquatableArray<string> EventTypes,
+    EquatableArray<string> EventTypesCodeGen
 );

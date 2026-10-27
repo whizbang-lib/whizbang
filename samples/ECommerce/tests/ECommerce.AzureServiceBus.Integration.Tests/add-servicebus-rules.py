@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 """
 Adds $Default TrueFilter rules to Azure Service Bus Emulator subscriptions.
 Reads Config.json from stdin, adds rules to all subscriptions, writes to stdout.

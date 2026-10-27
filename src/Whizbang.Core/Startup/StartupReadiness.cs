@@ -3,7 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -87,19 +86,29 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
   private readonly StartupReadySignal _signal;
   private readonly IReadOnlyList<IStartupReadinessContributor> _contributors;
   private readonly ILogger<StartupReadyService> _logger;
+  private readonly TimeProvider _time;
 
   /// <summary>Creates the service over the pipeline state, the signal it marks, and the contributors it awaits.</summary>
+  /// <param name="pipelineState">The pipeline whose blocking steps must drain.</param>
+  /// <param name="signal">The signal marked once everything has answered.</param>
+  /// <param name="contributors">Every readiness contributor awaited after the pipeline.</param>
+  /// <param name="logger">Logger; a blocked wait is narrated here.</param>
+  /// <param name="timeProvider">The clock for the narration probes and the elapsed times reported;
+  /// the host's registered clock.</param>
   public StartupReadyService(
       IStartupPipelineState pipelineState,
       StartupReadySignal signal,
       IReadOnlyList<IStartupReadinessContributor> contributors,
-      ILogger<StartupReadyService> logger) {
+      ILogger<StartupReadyService> logger,
+      TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(pipelineState);
     ArgumentNullException.ThrowIfNull(signal);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _pipelineState = pipelineState;
     _signal = signal;
     _contributors = contributors;
     _logger = logger;
+    _time = timeProvider;
   }
 
   /// <summary>
@@ -111,7 +120,7 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
 
   /// <inheritdoc />
   public async Task StartedAsync(CancellationToken cancellationToken) {
-    var watch = Stopwatch.StartNew();
+    var startedAt = _time.GetTimestamp();
 
     // Cancellation here means the host is being told to stop while startup is still waiting —
     // an ordinary rollout SIGTERM, a liveness restart, an operator abandoning a slow boot. It
@@ -125,22 +134,24 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
     // propagate — only cancellation is graceful.
     try {
       await _narratedWaitAsync(
-        _pipelineState.WaitForReadyAsync(cancellationToken), _describePipeline, watch, cancellationToken)
+        _pipelineState.WaitForReadyAsync(cancellationToken), _describePipeline, startedAt, cancellationToken)
         .ConfigureAwait(false);
 
       foreach (var contributor in _contributors) {
         await _narratedWaitAsync(
           contributor.WaitForContributorReadyAsync(cancellationToken),
-          () => $"readiness contributor '{contributor.ContributorName}'", watch, cancellationToken)
+          () => $"readiness contributor '{contributor.ContributorName}'", startedAt, cancellationToken)
           .ConfigureAwait(false);
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
-      LogCanceledDuringStartup(_logger, watch.Elapsed.TotalSeconds);
+      var waited = _time.GetElapsedTime(startedAt);
+      LogCanceledDuringStartup(_logger, waited.TotalSeconds);
       return;
     }
 
     _signal.MarkReady();
-    LogReady(_logger, watch.Elapsed.TotalMilliseconds, _contributors.Count);
+    var elapsed = _time.GetElapsedTime(startedAt);
+    LogReady(_logger, elapsed.TotalMilliseconds, _contributors.Count);
   }
 
   private string _describePipeline() {
@@ -158,11 +169,11 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
 
   /// <summary>Awaits, narrating on a backoff (probes 3, 10, 30, then every 60) what is blocking.</summary>
   private async Task _narratedWaitAsync(
-      Task wait, Func<string> describe, Stopwatch watch, CancellationToken cancellationToken) {
+      Task wait, Func<string> describe, long startedAt, CancellationToken cancellationToken) {
     var probes = 0;
     var nextNarration = 3;
     while (true) {
-      var winner = await Task.WhenAny(wait, Task.Delay(WaitProbeInterval, cancellationToken))
+      var winner = await Task.WhenAny(wait, Task.Delay(WaitProbeInterval, _time, cancellationToken))
         .ConfigureAwait(false);
       if (ReferenceEquals(winner, wait)) {
         await wait.ConfigureAwait(false);   // propagate faults/cancellation
@@ -171,7 +182,8 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
       probes++;
       if (probes >= nextNarration) {
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
-        LogStillWaiting(_logger, watch.Elapsed.TotalSeconds, describe());
+        var waited = _time.GetElapsedTime(startedAt);
+        LogStillWaiting(_logger, waited.TotalSeconds, describe());
       }
     }
   }

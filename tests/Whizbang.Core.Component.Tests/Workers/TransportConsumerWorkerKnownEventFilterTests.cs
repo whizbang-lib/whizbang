@@ -75,12 +75,12 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
       new TransportMessage(_createJsonEnvelope(MessageId.New()), _envelopeTypeFor(typeof(FilterCoverageUnknownEvent)))
     ]);
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
-      .Because("An all-filtered batch must produce NO additional inbox rows — the handler returns before the insert.");
-    var dedup = metricHelper.GetByName("whizbang.transport.inbox.messages_deduplicated");
-    await Assert.That(dedup).Count().IsEqualTo(1)
-      .Because("The filter must record exactly one deduplicated-message measurement for the dropped event.");
-    await Assert.That(dedup[0].Value).IsEqualTo(1d);
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(2)
+      .Because("the filtered event is stored too, settled with its reason, never dropped unstored (#1720)");
+    await Assert.That(coordinator.StoredMessages[1].DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.UNKNOWN_EVENT_TYPE);
+    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_discarded");
+    await Assert.That(discarded.Where(m => m.Tags.GetValueOrDefault("reason") == InboxReceiveDiscard.UNKNOWN_EVENT_TYPE).Sum(m => m.Value)).IsEqualTo(1d)
+      .Because("the filter counts the filtered event once, under its reason");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -177,7 +177,7 @@ public partial class TransportConsumerWorkerKnownEventFilterTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,

@@ -782,7 +782,7 @@ public class MessageEnvelopeTests {
     var result = envelope.GetMetadata("key");
 
     // Assert
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.GetString()).IsEqualTo("latest-value");
   }
 

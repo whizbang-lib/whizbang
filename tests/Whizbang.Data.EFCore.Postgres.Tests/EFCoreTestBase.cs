@@ -193,7 +193,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       MessageId = MessageId.From(messageId),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
-      Payload = JsonDocument.Parse("{}").RootElement  // Empty JSON object for testing
+      Payload = JsonElement.Parse("{}")  // Empty JSON object for testing
     };
   }
 

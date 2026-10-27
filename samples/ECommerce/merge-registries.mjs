@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (c) whizbang-lib contributors.
+// SPDX-License-Identifier: MIT
+
 
 /**
  * Merge multiple Whizbang message registry files into a single master registry.

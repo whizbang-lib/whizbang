@@ -26,7 +26,7 @@ namespace Whizbang.Core.Attributes;
 /// The event store is never touched — an evicted stream re-folds everywhere on its next event.
 /// </para>
 /// </remarks>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStreamGroupRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StreamGroupCascadeSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs</tests>

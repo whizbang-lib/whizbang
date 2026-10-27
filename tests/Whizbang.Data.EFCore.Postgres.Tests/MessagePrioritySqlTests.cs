@@ -38,7 +38,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
   }
 
   private static InboxMessage _inbox(Guid messageId, Guid streamId, int priority, string messageType = "Test.X, Test") {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []);
     return new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
@@ -53,7 +53,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
   }
 
   private static OutboxMessage _outbox(Guid messageId, Guid streamId, int priority) {
-    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonDocument.Parse("{\"p\":1}").RootElement, []);
+    var envelope = new MessageEnvelope<JsonElement>(MessageId.From(messageId), JsonElement.Parse("{\"p\":1}"), []);
     return new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
@@ -94,7 +94,8 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
 
   private static async Task _leaseInboxAsync(NpgsqlConnection conn, Guid messageId, Guid instance) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+    // As a claim leaves it: leased, and stored by the emit chain, which is when fetch_inbox_batch hands an event out (#1607).
+    cmd.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes', chain_emitted_at = NOW() WHERE message_id = @id";
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.AddWithValue("id", messageId);
     await cmd.ExecuteNonQueryAsync();

@@ -5,13 +5,14 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Persists perspective cursor checkpoints produced by a runner without going through the
-/// full <see cref="IWorkCoordinator.ProcessWorkBatchAsync"/> pipeline. Used by
+/// live completion path (<see cref="IWorkCoordinator.CompletePerspectiveAsync(IReadOnlyList{PerspectiveCursorCompletion}, IReadOnlyList{Guid}, bool, CancellationToken)"/>). Used by
 /// <see cref="Perspectives.PerspectiveRebuilder"/> so rebuild operations leave
 /// <c>wh_perspective_cursors</c> consistent with the replayed event log.
 /// </summary>
 /// <remarks>
-/// The live processing path (<see cref="Workers.PerspectiveWorker"/>) continues to persist
-/// cursor completions via <c>ProcessWorkBatchAsync</c>. This interface exists so callers
+/// The live processing path (<see cref="Workers.PerspectiveWorker"/>) persists cursor completions
+/// through <see cref="Workers.PerspectiveCompletionFlushWorker"/>, which calls
+/// <c>IWorkCoordinator.CompletePerspectiveAsync</c>. This interface exists so callers
 /// that only need the cursor-persistence primitive (e.g., rebuild) don't have to pay for
 /// event claiming, lease management, or transport concerns.
 /// </remarks>

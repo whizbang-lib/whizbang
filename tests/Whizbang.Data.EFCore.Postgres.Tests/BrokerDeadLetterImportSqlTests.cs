@@ -137,25 +137,18 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
       await Assert.That(reader.GetString(1)).IsEqualTo("Test.Composite, Test")
         .Because("custody records the payload type, the form a received inbox row stores");
     }
-    await using (var recoverCmd = conn.CreateCommand()) {
-      recoverCmd.CommandText = "SELECT recover_dead_letter(@id)";
-      recoverCmd.Parameters.AddWithValue("id", dlqId);
-      _ = await recoverCmd.ExecuteScalarAsync();
-    }
-    await using var inboxCmd = conn.CreateCommand();
-    inboxCmd.CommandText = "SELECT message_type FROM wh_inbox WHERE message_id = @id";
-    inboxCmd.Parameters.AddWithValue("id", messageId);
-    await Assert.That((string?)await inboxCmd.ExecuteScalarAsync()).IsEqualTo("Test.Composite, Test")
-      .Because("the recovered row is judged by the inbox gate on this name");
+    // Recovery re-enters the row from what it reads back (231, #1664), and builds the inbox row under this name.
+    var redelivery = await new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(ctx).ReadRedeliveryAsync(dlqId);
+    await Assert.That(redelivery?.MessageType).IsEqualTo("Test.Composite, Test")
+      .Because("the recovered row is built, and judged by the inbox gate, on this name");
   }
 
   [Test]
-  public async Task Recover_BrokerRow_ReemitsIntoInboxAndMarksRecoveredAsync() {
+  public async Task Recover_BrokerRow_IsReadBackVerbatimForReentry_NotReemittedBySqlAsync() {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var messageId = (Guid)TrackedGuid.New();
-    var streamId = (Guid)TrackedGuid.New();
-    _ = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId, streamId));
+    _ = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId, (Guid)TrackedGuid.New()));
 
     var conn = await _openAsync(ctx);
     Guid dlqId;
@@ -171,26 +164,15 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
       recoverCmd.Parameters.AddWithValue("id", dlqId);
       recovered = (bool)(await recoverCmd.ExecuteScalarAsync())!;
     }
-    await Assert.That(recovered).IsTrue();
+    var redelivery = await new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(ctx).ReadRedeliveryAsync(dlqId);
 
-    await using (var inboxCmd = conn.CreateCommand()) {
-      inboxCmd.CommandText = "SELECT i.event_data ->> 'v', i.stream_id, s.attempts "
-                           + "FROM wh_inbox i JOIN wh_inbox_state s USING (message_id) WHERE i.message_id = @id";
-      inboxCmd.Parameters.AddWithValue("id", messageId);
-      await using var reader = await inboxCmd.ExecuteReaderAsync();
-      await Assert.That(await reader.ReadAsync()).IsTrue()
-        .Because("recovery re-emits a broker row through the inbox front door so dispatch, "
-               + "composite fan-out, and the internal max-attempts ladder all apply unchanged");
-      await Assert.That(reader.GetString(0)).IsEqualTo("1");
-      await Assert.That(reader.GetGuid(1)).IsEqualTo(streamId);
-      await Assert.That(reader.GetInt32(2)).IsEqualTo(0);
-    }
-
-    await using var statusCmd = conn.CreateCommand();
-    statusCmd.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id";
-    statusCmd.Parameters.AddWithValue("id", dlqId);
-    await Assert.That((int)(await statusCmd.ExecuteScalarAsync())!).IsEqualTo(3)
-      .Because("Recovered");
+    await Assert.That(recovered).IsFalse()
+      .Because("a broker row re-enters through the inbox's arrival path, never through recover_dead_letter's own writes");
+    await Assert.That(redelivery).IsNotNull();
+    await Assert.That(redelivery!.SourceId).IsEqualTo(messageId);
+    using var body = System.Text.Json.JsonDocument.Parse(redelivery.EnvelopeJson);
+    await Assert.That(body.RootElement.GetProperty("v").GetInt32()).IsEqualTo(1)
+      .Because("the raw wire body is handed back verbatim, so the row is built from the envelope the broker carried");
   }
 
   /// <summary>

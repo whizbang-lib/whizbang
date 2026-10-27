@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Objects: none  (data-only UPDATE; defines no SQL objects — closure-exempt)
 -- Migration 034: Strip global:: prefix from perspective registry CLR type names
 --

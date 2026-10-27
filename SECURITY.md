@@ -77,6 +77,33 @@ dotnet nuget verify SoftwareExtravaganza.Whizbang.Core.X.Y.Z.nupkg --all
 Apart from that signature file, the nuget.org package has exactly the contents of the GitHub release
 asset.
 
+**A release tag** (`vX.Y.Z`, and every beta and rc tag) is signed the same keyless way, with
+[gitsign](https://github.com/sigstore/gitsign), by the workflow that published the release. Verify it in a
+clone of the repository with gitsign installed:
+
+```bash
+git fetch --tags origin
+gitsign verify-tag vX.Y.Z \
+  --certificate-identity-regexp '^https://github\.com/whizbang-lib/whizbang/\.github/workflows/(release|nuget-publish)\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+It succeeds only for a tag created by this repository's release workflows and not moved since. GitHub's
+own "Verified" badge does not check Sigstore signatures, so the tag shows as unverified on github.com; use
+the command above. Tags created before signing was introduced (#1438) are unsigned.
+
+**What a package depends on** is listed in its software bill of materials: each GitHub release attaches
+`<package id>.X.Y.Z.cdx.json` beside every package, a [CycloneDX](https://cyclonedx.org/) SBOM naming every
+NuGet dependency the package brings (direct and transitive, with version, license and hash) and the other
+Whizbang packages it depends on. The SBOMs are subjects of the same signed provenance as the packages, so
+one you downloaded is verified the same way:
+
+```bash
+gh attestation verify SoftwareExtravaganza.Whizbang.Core.X.Y.Z.cdx.json --repo whizbang-lib/whizbang
+```
+
+Releases from before SBOMs were introduced (#1440) do not carry them.
+
 ## Security Assurance
 
 What Whizbang protects, its threat model and trust boundaries, and what an application can and cannot

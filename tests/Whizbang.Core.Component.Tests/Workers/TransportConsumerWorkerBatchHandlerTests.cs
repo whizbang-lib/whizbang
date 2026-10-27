@@ -145,9 +145,9 @@ public class TransportConsumerWorkerBatchHandlerTests {
     await transport.SimulateBatchReceivedAsync([new TransportMessage(envelope, envelopeType)]);
     await cts.CancelAsync();
 
-    // Assert — NO inline processing. Processing deferred to WorkCoordinatorPublisherWorker.
+    // Assert: NO inline processing. Processing is deferred to ClaimWorker + InboxDispatchWorker.
     await Assert.That(workStrategy.InboxCompletionCount).IsEqualTo(0)
-      .Because("Batch handler should NOT process inline — processing is deferred to WorkCoordinatorPublisherWorker");
+      .Because("Batch handler should NOT process inline: processing is deferred to ClaimWorker and InboxDispatchWorker");
   }
 
   // ========================================
@@ -210,9 +210,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
     await transport.SimulateBatchReceivedAsync([new TransportMessage(selfEchoEnvelope, envelopeType)]);
     await cts.CancelAsync();
 
-    // Assert — self-echo should be discarded before inbox insert
-    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("Self-echo messages should be discarded in batch handler");
+    // Assert: a self-echo is stored settled with its reason, never dropped unstored (#1720)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("a self-echo is stored, so the skip is durable and inspectable");
+    await Assert.That(noOpCoordinator.StoredMessages[0].DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.SELF_ECHO);
   }
 
   // ========================================
@@ -364,7 +365,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -379,7 +380,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
   private static MessageEnvelope<JsonElement> _createSelfEchoEnvelope(MessageId messageId, string sourceServiceName) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -531,7 +532,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
         MessageId = workMessageId,
         Envelope = new MessageEnvelope<JsonElement> {
           MessageId = MessageId.From(workMessageId),
-          Payload = JsonDocument.Parse("{}").RootElement,
+          Payload = JsonElement.Parse("{}"),
           Hops = [
             new MessageHop {
               Type = HopType.Current,

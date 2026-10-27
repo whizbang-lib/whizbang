@@ -758,6 +758,23 @@ public class MergedSharedCopyTests {
 
   [Test]
   [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_BlankStripSuffixesProperty_KeepsStrippingOnAsync(MergedHost host) {
+    // The package declares the property compiler-visible, so a project that never sets it hands
+    // every generator an empty value. Each copy has to read that as unset, or the generators that
+    // carry it rename every perspective table (#1660).
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var options = new StubConfigOptions(new Dictionary<string, string> {
+      ["build_property.WhizbangStripTableNameSuffixes"] = ""
+    });
+
+    var config = _call(host.Assembly, ns + "ConfigurationUtilities", "GetTableNameConfig", options)!;
+
+    await Assert.That((bool)config.GetType().GetProperty("StripSuffixes")!.GetValue(config)!).IsTrue()
+      .Because("an empty value is what an unset declared property looks like, so the default stands");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
   public async Task MergedCopy_RejectsAnUnusableIdentifierLengthOverrideAsync(MergedHost host) {
     // Returning 0 or a negative would let a generator truncate every identifier to nothing.
     // null means "use the provider's own limit", which is the only safe reading of bad input.

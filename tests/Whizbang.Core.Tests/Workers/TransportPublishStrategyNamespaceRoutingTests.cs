@@ -239,7 +239,7 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       Destination = destination,
       Envelope = new MessageEnvelope<JsonElement>(
         messageId: MessageId.From(messageId),
-        payload: JsonDocument.Parse("{}").RootElement,
+        payload: JsonElement.Parse("{}"),
         hops: []),
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{messageType.AssemblyQualifiedName}]], Whizbang.Core",
       MessageType = messageType.AssemblyQualifiedName!,

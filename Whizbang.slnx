@@ -5,6 +5,7 @@
     <Platform Name="x86" />
   </Configurations>
   <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Whizbang.BuildCost.Benchmarks/Whizbang.BuildCost.Benchmarks.csproj" />
     <Project Path="benchmarks/Whizbang.Benchmarks/Whizbang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/samples/" />
@@ -61,6 +62,7 @@
     <Project Path="src/Whizbang.Sagas/Whizbang.Sagas.csproj" />
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <Project Path="src/Whizbang.TestAnalyzers/Whizbang.TestAnalyzers.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
     <Project Path="src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
     <Project Path="src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
@@ -104,6 +106,7 @@
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Component.Tests/Whizbang.Partitioning.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
+    <Project Path="tests/Whizbang.RepoAnalyzers.Tests/Whizbang.RepoAnalyzers.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Tests/Whizbang.Sagas.Tests.csproj" />
     <Project Path="tests/Whizbang.Sagas.Component.Tests/Whizbang.Sagas.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Component.Tests/Whizbang.Sequencing.Component.Tests.csproj" />
@@ -111,6 +114,7 @@
     <Project Path="tests/Whizbang.Testing.Tests/Whizbang.Testing.Tests.csproj" />
     <Project Path="tests/Whizbang.Testing.Component.Tests/Whizbang.Testing.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Testing.Integration.Tests/Whizbang.Testing.Integration.Tests.csproj" />
+    <Project Path="tests/Whizbang.TestAnalyzers.Tests/Whizbang.TestAnalyzers.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Component.Tests/Whizbang.Transports.RabbitMQ.Component.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
@@ -133,5 +137,6 @@
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
     <Project Path="tools/Whizbang.LanguageServer/Whizbang.LanguageServer.csproj" />
     <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
+    <Project Path="tools/Whizbang.RepoAnalyzers/Whizbang.RepoAnalyzers.csproj" />
   </Folder>
 </Solution>

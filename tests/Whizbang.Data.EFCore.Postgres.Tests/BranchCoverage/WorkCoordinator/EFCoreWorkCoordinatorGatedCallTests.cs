@@ -111,6 +111,8 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
       await Assert.That(await c.NotifyScheduledRetryDueAsync()).IsEqualTo(0));
     register("RecordInstanceState", "RecordInstanceStateAsync", async (c, _) =>
       await Assert.That(await c.RecordInstanceStateAsync(_newId(), "Running")).IsFalse());
+    register("RecordStartupStage", "RecordStartupStageAsync", async (c, _) =>
+      await Assert.That(await ((Whizbang.Core.Messaging.IWorkCoordinator)c).RecordStartupStageAsync(_newId(), Whizbang.Core.Startup.StartupStage.Running, "serving")).IsFalse());
     register("GetStandbyRequest", "GetStandbyRequestAsync", async (c, _) =>
       await Assert.That(await c.GetStandbyRequestAsync()).IsNull());
     register("ClearStandbyRequest", "_scalarFunctionAsync", (c, _) => c.ClearStandbyRequestAsync(_newId()));
@@ -173,10 +175,14 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("CleanupCompletedStreams", "CleanupCompletedStreamsAsync", (c, _) => c.CleanupCompletedStreamsAsync([_newId()]));
 
     // ── Streams and event bodies ───────────────────────────────────────────
-    register("CloseStream", "CloseStreamAsync", async (c, conn) => {
+    register("TruncateStreamPrefix", "TruncateStreamPrefixAsync", async (c, conn) => {
       var (streamId, _) = await _seedEventAsync(conn);
-      var result = await c.CloseStreamAsync(streamId, throughVersion: 1);
+      var result = await c.TruncateStreamPrefixAsync(streamId, throughVersion: 1);
       await Assert.That(result.Status).IsNotNull();
+    });
+    register("GetStreamTruncateTargets", "GetStreamTruncateTargetsAsync", async (c, conn) => {
+      var (streamId, eventId) = await _seedEventAsync(conn);
+      await Assert.That((await ((IWorkCoordinator)c).GetStreamTruncateTargetsAsync(streamId, throughVersion: 1)).Select(t => t.EventId)).IsEquivalentTo([eventId]);
     });
     register("GetArchivedEvents", "GetArchivedEventsAsync", async (c, _) =>
       await Assert.That(await c.GetArchivedEventsAsync(_newId())).IsEmpty());

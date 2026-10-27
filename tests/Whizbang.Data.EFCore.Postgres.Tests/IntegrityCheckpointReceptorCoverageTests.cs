@@ -207,7 +207,7 @@ public class IntegrityCheckpointReceptorCoverageTests {
 
     await receptor.HandleAsync(_checkpoint(Guid.NewGuid(), "origin-svc", from: 0, to: 5, count: 0, emptyBuckets: true));
 
-    await Assert.That(cleanupDuringCheckpoint).IsNotNull()
+    await Assert.That(cleanupDuringCheckpoint.HasValue).IsTrue()
       .Because("the handler must have reached the backlog count, where the probe runs");
     await Assert.That(cleanupDuringCheckpoint!.Value.Granted).IsFalse();
     await Assert.That(cleanupDuringCheckpoint.Value.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.HigherPriorityRunning)

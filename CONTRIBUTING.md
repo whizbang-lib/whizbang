@@ -75,7 +75,8 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 
 ### Prerequisites
 
-- .NET 10 SDK
+- .NET 10 SDK or newer. The projects target `net10.0`; a newer SDK builds them faster (see
+  [Faster local builds](#faster-local-builds)).
 - PowerShell 7+ (cross-platform)
 - Git
 
@@ -101,6 +102,26 @@ dotnet build
 ```bash
 pwsh scripts/Run-Tests.ps1
 ```
+
+### Faster local builds
+
+`global.json` sets `10.0.100` as the floor with `rollForward: latestMajor`, so command-line builds use the
+newest SDK installed. The projects still target `net10.0`, and tests still run on the .NET 10 runtime.
+CI is unaffected: `setup-dotnet-retry` installs only the feature band `sdk.version` names, so CI builds
+on SDK 10.
+
+- **SDK 11.** A .NET 11 SDK (11.0.100-rc.2 at the time of writing) builds a .NET 10 solution of this size
+  roughly 40% faster than SDK 10. Install it next to SDK 10, for example with
+  [`dotnetup`](https://learn.microsoft.com/dotnet/core/tools/dotnetup/), which installs per user without
+  administrator rights: `dotnetup sdk install 11.0 10.0` and `dotnetup runtime install 10.0
+  aspnetcore@10.0`. Builds print `NETSDK1057` (a preview SDK) as a message, not a warning.
+- **Multithreaded MSBuild (`-mt`).** Builds projects on threads in one process instead of in separate
+  node processes; with SDK 11 it saves roughly another 10 to 15%. MSBuild labels it experimental. Pass it
+  per command, or put it in a `Directory.Build.rsp` in a folder **above** your clone (MSBuild reads that
+  file from the project's folder and every folder above it). Don't add it to the repository's own
+  `Directory.Build.rsp`: that file is tracked and applies to everyone.
+- **When your build and CI disagree, CI decides.** CI builds on SDK 10 without `-mt`.
+- **To go back,** uninstall the newer SDK, or delete the `-mt` line.
 
 ## Development Workflow
 
@@ -463,7 +484,19 @@ pull request, and every pull request is reviewed against the same standard.
   request that leaves any outcome of any hand-written decision untested, anywhere in `src/`, fails
   (a member excluded by the documented procedure in `ai-docs/coverage-exclusions.md` is not counted);
 - CodeQL, secret scanning and the dependency vulnerability scan find nothing new;
-- `dotnet format` makes no changes, and every source file carries the copyright and license header;
+- no dependency the pull request adds has a known vulnerability of moderate severity or higher, and every
+  dependency a package ships is under a license on the allow list in `.github/dependency-review-config.yml`
+  (**Gate · Dependency review** for npm and GitHub Actions; NuGetAudit at restore and the license check at
+  pack for NuGet). A license outside the list needs a reviewed exception in that file;
+- `dotnet format` makes no changes, and every file states its copyright and license (**Gate · License headers**,
+  `reuse lint`): a source file in any language starts with the two-line header
+  (`Copyright (c) whizbang-lib contributors.` then `SPDX-License-Identifier: MIT`, in that language's comment
+  syntax), and a file that cannot carry one (documentation, data, project files, images, generator templates)
+  is covered by `REUSE.toml`. Check locally with
+  `docker run --rm -v "$PWD":/data:ro fsfe/reuse:6.2.0 lint`;
+- a change to the pipeline, the gates or the build inputs (the files `.github/CODEOWNERS` assigns to
+  `build-admins`) is approved by a build admin on its latest commit, unless a build admin opened it
+  (**Gate · Pipeline owner**; [GOVERNANCE.md](GOVERNANCE.md#roles));
 - every commit is signed off ([DCO](#developer-certificate-of-origin)), and lock files match the
   package versions;
 - the pull request closes an issue in this repository that was opened before it

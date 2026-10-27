@@ -19,6 +19,7 @@ using Whizbang.Core.RunControl;
 using Whizbang.Data.EFCore.Postgres.Dispatch;
 using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Notifications;
+using Whizbang.Data.Postgres.Observability;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -173,6 +174,16 @@ public static class PostgresDriverExtensions {
                 sp.GetService<ILogger<IndexStatisticsMaintenanceStep>>(),
                 sp.GetService<TimeProvider>()));
 
+        // TURNKEY: the partition manager (#1611). It converts wh_log, wh_signals and wh_lifecycle_completions once
+        // (#1646) and keeps the framework's partitioned tables while Whizbang:Workers:Maintenance:Partitioning:Enabled
+        // is true, and is idle otherwise. One per DbContext, since each context's schema has its own tables.
+        selector.Services.AddFrameworkPartitionedTables();
+        selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
+            new PartitionMaintenanceStep(
+                dbContextType,
+                sp.GetService<ILogger<PartitionMaintenanceStep>>() ?? NullLogger<PartitionMaintenanceStep>.Instance,
+                sp.GetRequiredService<TimeProvider>()));
+
         // TURNKEY: the maintenance step that runs the managed-object reconcile between starts, so a drop a start held
         // back while the previous release still ran lands once it is gone, without another deploy (#1252).
         selector.Services.AddScoped<Whizbang.Core.Workers.IMaintenanceStep>(sp =>
@@ -200,7 +211,7 @@ public static class PostgresDriverExtensions {
         selector.Services.AddHostedService<RebuildBackgroundWorker>();
 
         // TURNKEY: A1 scheduled close — runtime-register ScheduledStreamCloseReceptor so a fired
-        // "close the books" schedule occurrence drives IStreamCloser.CloseAsync. Same rationale as above.
+        // "close the books" schedule occurrence drives IStreamPrefixTruncator.TruncateAsync. Same rationale as above.
         selector.Services.AddHostedService<ScheduledStreamCloseReceptorRegistrar>();
 
         // TURNKEY: stream-integrity R1b — runtime-register RedeliveryRequestReceptor so a received
@@ -299,15 +310,11 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<IWhizbangLifecycleState>(),
             "event-store database unreachable"));
 
-        // TURNKEY: Register table statistics provider + collector for OTel metrics.
-        // The provider schema-qualifies its queries — pass the model's default schema so
+        // TURNKEY: table statistics for OTel metrics, the same provider and collector the Dapper driver
+        // registers. The provider schema-qualifies its queries: pass the model's default schema so
         // multi-schema services report THEIR tables instead of probing a bare public schema.
-        selector.Services.TryAddSingleton<ITableStatisticsProvider>(sp => {
-          var ds = sp.GetRequiredService<NpgsqlDataSource>();
-          var schema = defaultSchema(sp);
-          return new PostgresTableStatisticsProvider(ds, schema);
-        });
-        selector.Services.TryAddSingleton<TableStatisticsMetrics>();
+        selector.Services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
+          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables));
 
         // Durable suppression for the findings that cycle raises. Without it the advisory remembers
         // in process memory, so every replica reports the same table independently and every
@@ -335,7 +342,6 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton(
           new Whizbang.Core.Messaging.IntegrityRepairPolicy(
             new Whizbang.Core.Messaging.IntegrityRepairPolicy.Settings()));
-        selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // TURNKEY: adaptive notify-debounce (137) observability — the provider reads the regime and
         // fired/suppressed volumes from wh_notify_state, the collector refreshes the gauges. Schema-
@@ -367,10 +373,13 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<IServiceScopeFactory>(),
             dbContextType,
             sp.GetService<WorkCoordinatorGate>()));
+        // The partition count every arrival is stored with: ClaimWorkerOptions is its one source, and a recovered
+        // outbox or perspective row re-enters its store with it (#1722).
         selector.Services.TryAddScoped<IDeadLetterRecoveryService>(sp =>
           new EFCoreDeadLetterRecoveryService<Microsoft.EntityFrameworkCore.DbContext>(
             (Microsoft.EntityFrameworkCore.DbContext)sp.GetRequiredService(dbContextType),
-            sp.GetService<WorkCoordinatorGate>()));
+            sp.GetService<WorkCoordinatorGate>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Workers.ClaimWorkerOptions>>().Value.PartitionCount));
 
         // TURNKEY: DbContext-backed fallback so the LISTEN/NOTIFY listener + commit-order
         // stamper + app-signal channel use the same connection string EF Core already has,
@@ -416,6 +425,12 @@ public static class PostgresDriverExtensions {
         // #1012: the same name keys this database's PostgresOptions section,
         // Whizbang:Postgres:<name>, which overrides the code values per key.
         selector.Services.AddWhizbangPostgresOptionsBinding(connectionStringName, legacyConnectionStringName);
+        // TURNKEY: which Postgres extensions this database can use, probed and reported at startup, under the
+        // same name. The data source is resolved when the probe runs, after the schema is ready, not here.
+        selector.Services.AddWhizbangPostgresCapabilities(connectionStringName,
+          (sp, ct) => sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync(ct));
+        // What this context's schema requires (pgvector for a vector column), judged on this database only.
+        selector.Services.AddWhizbangPostgresSchemaRequirements(selector.DbContextType, connectionStringName);
         selector.Services.AddOptions<WhizbangNotificationOptions>().PostConfigure<IServiceProvider>((options, sp) => {
           if (string.IsNullOrWhiteSpace(options.ConnectionStringKey)) {
             options.ConnectionStringKey = Whizbang.Core.Naming.WhizbangNamingConvention.ResolveConnectionStringName(

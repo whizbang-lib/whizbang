@@ -441,7 +441,7 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       MessageId = MessageId.From(eventId),
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
-      Payload = JsonDocument.Parse(payloadJson).RootElement
+      Payload = JsonElement.Parse(payloadJson)
     };
     var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
     var eventType = TypeNameFormatter.Format(typeof(SampleOrderCreatedEvent));

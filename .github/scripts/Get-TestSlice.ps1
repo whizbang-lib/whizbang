@@ -1,4 +1,7 @@
 #!/usr/bin/env pwsh
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 7.0
 
 <#
@@ -66,7 +69,7 @@ $script:UnslicedTypes = [ordered]@{
 }
 
 # The projects in the solution of a type (and carrying a tag, when one is given), as repository-relative
-# directories.
+# directories with forward slashes on every OS.
 function Get-TestSliceProject([string]$Root, [string]$Tag, [string]$Type = 'Integration') {
   $solution = Get-Content (Join-Path -Path $Root -ChildPath 'Whizbang.slnx') -Raw
   $projects = [regex]::Matches($solution, '<Project Path="([^"]+\.csproj)"') | ForEach-Object { $_.Groups[1].Value }
@@ -75,10 +78,10 @@ function Get-TestSliceProject([string]$Root, [string]$Tag, [string]$Type = 'Inte
     if (-not (Test-Path $path)) { continue }
     $content = Get-Content $path -Raw
     if ($content -notmatch "<WhizbangTestType>$Type</WhizbangTestType>") { continue }
-    if (-not $Tag) { Split-Path -Path $relative -Parent; continue }
+    if (-not $Tag) { (Split-Path -Path $relative -Parent) -replace '\\', '/'; continue }
     if ($content -notmatch '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') { continue }
     $tags = $Matches[1] -split ';' | ForEach-Object { $_.Trim() }
-    if ($tags -contains $Tag) { Split-Path -Path $relative -Parent }
+    if ($tags -contains $Tag) { (Split-Path -Path $relative -Parent) -replace '\\', '/' }
   }
 }
 

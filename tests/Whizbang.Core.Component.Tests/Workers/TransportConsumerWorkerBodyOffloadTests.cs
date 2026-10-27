@@ -28,6 +28,8 @@ using Whizbang.Testing.Workers;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 
+using Whizbang.Core.Tests.Shutdown;
+
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
@@ -221,6 +223,41 @@ public class TransportConsumerWorkerBodyOffloadTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// #1721: the active cleanup runs after the batch is stored, fire-and-forget, from a scope of its own. The worker's
+  /// stop now waits for it, so the host does not dispose the container under a delete still in progress.
+  /// </summary>
+  [Test]
+  public async Task BatchHandler_ActiveCleanupInFlight_WorkerStopWaitsForItBeforeTheContainerIsDisposedAsync() {
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var held = new HeldWork();
+    var store = new TestBodyStore(MEM_PROVIDER_KEY) { Held = held };
+    var sp = _buildProvider(new NoOpWorkCoordinator(), jsonOptions, services => {
+      services.AddKeyedSingleton<IMessageBodyStore>(MEM_PROVIDER_KEY, (_, _) => store);
+      services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = true);
+      services.AddSingleton<ProviderLiveness>();
+    });
+    store.LivenessFrom = sp;
+    var transport = new OffloadTransport();
+    var worker = _buildWorker(transport, sp);
+    await worker.StartAsync(CancellationToken.None);
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    var (claimEnvelope, _, originalTypeName, _) = await _uploadOriginalEnvelopeAsync(store, jsonOptions);
+
+    await transport.DeliverBatchAsync([new TransportMessage(claimEnvelope, originalTypeName)]);
+    await held.Entered.Task;
+
+    // What a stopping host does: stop the hosted service, then dispose the container
+    var waited = await HostShutdown.StopWaitsForAsync(async () => {
+      await worker.StopAsync(CancellationToken.None);
+      await sp.DisposeAsync();
+    }, worker.DetachedWork, held);
+
+    await Assert.That(waited).IsTrue()
+      .Because("the cleanup resolves its store from a scope of the container the host disposes after the stop");
+    await Assert.That(await held.Finished.Task).IsTrue();
   }
 
   [Test]
@@ -432,7 +469,7 @@ public class TransportConsumerWorkerBodyOffloadTests {
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{\"x\":1}").RootElement,
+      Payload = JsonElement.Parse("{\"x\":1}"),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
@@ -455,6 +492,9 @@ public class TransportConsumerWorkerBodyOffloadTests {
 
     public string ProviderName { get; } = providerName;
     public bool ThrowOnDelete { get; init; }
+    /// <summary>When set, a delete holds on it, then checks <see cref="LivenessFrom"/>.</summary>
+    public HeldWork? Held { get; init; }
+    public IServiceProvider? LivenessFrom { get; set; }
     public int DeleteCallCount => Volatile.Read(ref _deleteCallCount);
     /// <summary>Completes when DeleteAsync has been invoked (before any simulated failure surfaces).</summary>
     public TaskCompletionSource DeleteObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -481,6 +521,9 @@ public class TransportConsumerWorkerBodyOffloadTests {
         MessageBodyClaim claim, MessageBodyDeleteOptions? options = null,
         CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _deleteCallCount);
+      if (Held is { } held) {
+        return held.HoldAsync(LivenessFrom!);
+      }
       if (ThrowOnDelete) {
         DeleteObserved.TrySetResult();
         throw new InvalidOperationException("simulated delete failure");

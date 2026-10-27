@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 112_StreamGroupCascadeAndApplyPathFold
 -- Purpose:  Two consumers of the row-destruction seam land their SQL substrate here.
 --           (1) STREAM GROUPS: the row sweeps now JOURNAL what they evict, so the maintenance

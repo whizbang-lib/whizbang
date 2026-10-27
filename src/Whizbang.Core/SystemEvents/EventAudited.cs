@@ -38,7 +38,7 @@ namespace Whizbang.Core.SystemEvents;
 ///       Timestamp = @event.Timestamp,
 ///       TenantId = @event.TenantId,
 ///       UserId = @event.UserId,
-///       Body = @event.OriginalBody
+///       Body = @event.OriginalBody   // null unless the type or the default keeps bodies
 ///     };
 ///   }
 /// }
@@ -93,9 +93,14 @@ public sealed record EventAudited : ISystemEvent {
   public required long OriginalStreamPosition { get; init; }
 
   /// <summary>
-  /// The full body of the original event as JSON.
+  /// The body of the original event as JSON, when kept: only for a type marked
+  /// <c>[AuditEvent(IncludeBody = true)]</c> or when <see cref="SystemEventOptions.AuditBodyDefault"/> is
+  /// <see cref="AuditBodyDefault.Include"/>. Otherwise null and left out of the record; the original event is
+  /// found through <see cref="OriginalEventId"/>.
   /// </summary>
-  public required JsonElement OriginalBody { get; init; }
+  /// <docs>fundamentals/events/system-events#audit-body</docs>
+  [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+  public JsonElement? OriginalBody { get; init; }
 
   /// <summary>
   /// When the original event was recorded.

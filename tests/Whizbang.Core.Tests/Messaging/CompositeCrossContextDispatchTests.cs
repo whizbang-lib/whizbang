@@ -212,7 +212,7 @@ public class CompositeCrossContextDispatchTests {
     if (jsonb.IndexOf("\"Note\"", StringComparison.Ordinal) > jsonb.IndexOf("\"$type\"", StringComparison.Ordinal)) {
       throw new InvalidOperationException($"Fixture assumption broken: jsonb order kept $type first in {jsonb}");
     }
-    return JsonDocument.Parse(jsonb).RootElement.Clone();
+    return JsonElement.Parse(jsonb);
   }
 
   private static InboxWork _work(JsonElement payload, string messageType, Guid streamId) {

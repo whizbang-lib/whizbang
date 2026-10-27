@@ -52,12 +52,16 @@ public sealed class PostgresSchemaInitializer {
   /// </remarks>
   internal static int MaxBatchPasses { get; set; } = 10_000;
 
-  private readonly IMigrationProvider _migrationProvider;
+  // The migrations, rendered for public until initialization learns the target schema; a provider the caller passed
+  // is kept as given.
+  private IMigrationProvider _migrationProvider;
+  private readonly bool _rendersForTargetSchema;
   private readonly string? _applicationVersion;
   private readonly IApplicationSchemaObjects? _applicationObjects;
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql = null)
     : this(connectionString, perspectiveSchemaSql, new PostgresMigrationProvider()) {
+    _rendersForTargetSchema = true;
   }
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql, IMigrationProvider migrationProvider) {
@@ -84,6 +88,7 @@ public sealed class PostgresSchemaInitializer {
       IApplicationSchemaObjects? applicationObjects = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
     ArgumentNullException.ThrowIfNull(perspectiveEntries);
+    _rendersForTargetSchema = migrationProvider is null;
     _perspectiveEntries = perspectiveEntries;
     _applicationVersion = applicationVersion;
     _applicationObjects = applicationObjects;
@@ -95,6 +100,15 @@ public sealed class PostgresSchemaInitializer {
   /// no longer declared (#1252). Null leaves every object in place.
   /// </summary>
   public ManagedSchemaObjectSet? ManagedObjects { get; init; }
+
+  /// <summary>
+  /// The perspective registry payloads to reconcile into <c>wh_perspective_registry</c> after the perspective tables
+  /// are built, as the EF Core driver does: the registry is what row retention enrolls from, and what the row-eviction
+  /// cleanup reads a model's perspectives from (#1548). The driver passes what the host's assemblies registered
+  /// (<see cref="Whizbang.Core.Perspectives.PerspectiveRegistryPayloads"/>); null or empty reconciles nothing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveRegistryReconcileTests.cs</tests>
+  public IReadOnlyList<Whizbang.Core.Perspectives.PerspectiveRegistryPayload>? PerspectiveRegistry { get; init; }
 
   /// <summary>The reconcile's settings; the defaults when not set. The driver reads them from <c>Whizbang:Schema:Reconcile</c>.</summary>
   public ManagedSchemaSettings ManagedObjectSettings { get; init; } = ManagedSchemaSettings.Read(null);
@@ -130,9 +144,9 @@ public sealed class PostgresSchemaInitializer {
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
-    string schema;
-    await using (var current = new NpgsqlCommand("SELECT current_schema()", connection)) {
-      schema = (string)(await current.ExecuteScalarAsync(cancellationToken))!;
+    var schema = await _targetSchemaAsync(connection, cancellationToken);
+    if (_rendersForTargetSchema) {
+      _migrationProvider = new PostgresMigrationProvider(typeof(PostgresMigrationProvider).Assembly, schema);
     }
 
     // Everything up to the managed-object reconcile runs under the schema initialization lock, the key the EF Core
@@ -156,6 +170,23 @@ public sealed class PostgresSchemaInitializer {
     }
   }
 
+  /// <summary>
+  /// The schema this initialization installs into, taken as the coordinator takes it (#1547): the first schema the
+  /// connection string's Search Path names, created when it does not exist yet, so the session's unqualified DDL lands
+  /// there; otherwise the session's <c>current_schema()</c>. The migrations are rendered for the same schema, so the
+  /// functions read the tables they are installed beside.
+  /// </summary>
+  private async Task<string> _targetSchemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+    if (DapperCoordinatorSchema.FromConnectionString(_connectionString) is { } named) {
+      await using var create = connection.CreateCommand();
+#pragma warning disable S2077 // A schema name cannot be a bind parameter; PgIdentifier.Quote quotes it.
+      create.CommandText = $"CREATE SCHEMA IF NOT EXISTS {PgIdentifier.Quote(named)}";
+#pragma warning restore S2077
+      await create.ExecuteNonQueryAsync(cancellationToken);
+    }
+    return await DapperCoordinatorSchema.CurrentAsync(connection, cancellationToken);
+  }
+
   /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
   private async Task _migrateAsync(
       NpgsqlConnection connection, string schemaSql, string schema, CancellationToken cancellationToken) {
@@ -166,7 +197,7 @@ public sealed class PostgresSchemaInitializer {
     await command.ExecuteNonQueryAsync(cancellationToken);
 
     // Execute migration SQL files with hash-based change detection
-    await _executeMigrationsWithHashDetectionAsync(connection, cancellationToken);
+    await _executeMigrationsWithHashDetectionAsync(connection, schema, cancellationToken);
 
     // An application's own objects, before anything of its perspectives exists. This is the slot an
     // immutable function behind an expression index needs: the function has to be there before the
@@ -174,15 +205,21 @@ public sealed class PostgresSchemaInitializer {
     await _executeApplicationObjectsAsync(
       connection, _applicationObjects?.BeforePerspectives, "before", cancellationToken);
 
+    // A model whose table name changed has its table renamed before the pass below creates the new name (#1719).
+    var renames = await _followPerspectiveTableRenamesAsync(connection, schema, cancellationToken);
+
     // Execute perspective schema — per-perspective hash tracking if entries provided, else legacy single-string
     if (_perspectiveEntries is { Length: > 0 }) {
-      await _executePerspectiveMigrationsAsync(connection, cancellationToken);
+      await _executePerspectiveMigrationsAsync(connection, renames, cancellationToken);
     } else if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       await using var perspectiveCommand = connection.CreateCommand();
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
       perspectiveCommand.CommandTimeout = 30;
       await perspectiveCommand.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    // The registry rows for those tables, once the tables exist (the EF Core driver's step 6).
+    await _reconcilePerspectiveRegistryAsync(connection, schema, cancellationToken);
 
     // And the objects that refer to a perspective's table, which can only be created now that the
     // tables are there.
@@ -194,6 +231,61 @@ public sealed class PostgresSchemaInitializer {
     if (Instance is { } instance) {
       await SchemaBootstrapPhase.RegisterInstanceAsync(
         () => new NpgsqlConnection(_connectionString), schema, instance, cancellationToken: cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Renames each perspective table whose model the registry maps to a different name, or that is still under the name
+  /// a released build gave it (the payload's former name; that build never wrote the registry), before the
+  /// perspective pass creates the new name as an empty table (#1719). A model with a table under both names keeps
+  /// both, with a warning.
+  /// </summary>
+  /// <returns>The tables renamed, old name by new name.</returns>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs</tests>
+  private async Task<Dictionary<string, string>> _followPerspectiveTableRenamesAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    var renamed = new Dictionary<string, string>(StringComparer.Ordinal);
+    var logger = Logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    foreach (var payload in PerspectiveRegistry ?? []) {
+      await using var follow = connection.CreateCommand();
+#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
+      follow.CommandText =
+        $"SELECT o_action, o_clr_type_name, o_old_table_name, o_new_table_name FROM {PgIdentifier.Qualify(schema, "wh_follow_perspective_table_renames")}(@p_perspectives::jsonb, @p_service_name)";
+#pragma warning restore S2077
+      follow.Parameters.AddWithValue("p_perspectives", payload.Json);
+      follow.Parameters.AddWithValue("p_service_name", payload.ServiceName);
+      follow.CommandTimeout = 30;
+      await using var reader = await follow.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var (action, model, oldTable, newTable) = (reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3));
+        if (action == "renamed") {
+          renamed[newTable] = oldTable;
+          _logTableRenamed(logger, model, oldTable, newTable, null);
+        } else {
+          _logBothTablesExist(logger, model, oldTable, newTable, null);
+        }
+      }
+    }
+    return renamed;
+  }
+
+  /// <summary>
+  /// Reconciles each registered payload into <c>wh_perspective_registry</c> through the shared
+  /// <c>reconcile_perspective_registry</c> function, which inserts new models, follows renamed tables, and records the
+  /// perspectives that fold each model.
+  /// </summary>
+  private async Task _reconcilePerspectiveRegistryAsync(
+      NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
+    foreach (var payload in PerspectiveRegistry ?? []) {
+      await using var reconcile = connection.CreateCommand();
+#pragma warning disable S2077 // The schema cannot be a bind parameter; PgIdentifier.Qualify quotes it. Every value is bound.
+      reconcile.CommandText =
+        $"SELECT count(*) FROM {PgIdentifier.Qualify(schema, "reconcile_perspective_registry")}(@p_perspectives::jsonb, @p_service_name)";
+#pragma warning restore S2077
+      reconcile.Parameters.AddWithValue("p_perspectives", payload.Json);
+      reconcile.Parameters.AddWithValue("p_service_name", payload.ServiceName);
+      reconcile.CommandTimeout = 30;
+      await reconcile.ExecuteScalarAsync(cancellationToken);
     }
   }
 
@@ -252,8 +344,7 @@ public sealed class PostgresSchemaInitializer {
         // failure on the connection the rollback did not touch, propagate.
         failure = ex;
         await transaction.RollbackAsync(cancellationToken);
-        await _upsertMigrationAsync(connection,
-          new MigrationRecord(name, hash, versionId, -1, $"Failed: {ex.Message}"), cancellationToken);
+        await _recordFailureAsync(connection, name, hash, versionId, ex, cancellationToken);
       }
 
       if (failure is not null) {
@@ -279,7 +370,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
       AND table_name LIKE '%\_bak\_%' ESCAPE '\'
       ORDER BY table_name DESC
       LIMIT 1";
@@ -372,10 +463,11 @@ public sealed class PostgresSchemaInitializer {
       List<MigrationStep> steps, NpgsqlConnection connection,
       IReadOnlyList<Core.Data.MigrationScript> migrations, CancellationToken cancellationToken) {
     foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
-      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var hash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
 
-      if (existingHash == hash) {
+      // A row still on the legacy hash of this file is a file that did not change: the start rewrites it and skips.
+      if (existingHash == hash || existingHash == MigrationSqlNormalizer.LegacyContentHash(migration.Sql)) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
       } else if (existingHash != null) {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));
@@ -450,7 +542,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public'
+      WHERE table_schema = current_schema()
       AND table_name LIKE '%\_bak\_%' ESCAPE '\'";
     cmd.CommandTimeout = 10;
 
@@ -494,7 +586,7 @@ public sealed class PostgresSchemaInitializer {
   }
 
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Deciding what to run compares each migration's recorded hash against the file, then pulls in the redefinition closure of whatever drifted. Both passes walk the same ordered list, and the second depends on what the first found.")]
-  private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+  private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, string schema, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {
       return;
@@ -512,16 +604,21 @@ public sealed class PostgresSchemaInitializer {
     // Step 2: Upsert version row
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
+    var ordered = migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
+
+    // Step 2b: rows an earlier release recorded over the raw text are moved onto normalized hashes before any hash is
+    // read, so a file that did not change is not applied again.
+    await _rewriteLegacyMigrationHashesAsync(connection, schema, ordered, versionId, cancellationToken);
+
     // Redefinition-closure pre-pass (mirrors the EF Core schema-init): whenever a migration
     // re-runs, every LATER migration defining any of the same SQL objects must re-run after it —
     // otherwise a partial replay leaves the database on an earlier definition with no error
     // anywhere. Compute the will-run set, then expand it to its fixed-point closure.
-    var ordered = migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal)).ToList();
     var hashCache = new Dictionary<string, (string Hash, string? ExistingHash)>(StringComparer.Ordinal);
     var toRun = new List<string>();
     var orderedObjects = new List<(string Name, IReadOnlyCollection<string> Objects)>();
     foreach (var migration in ordered) {
-      var preHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var preHash = MigrationSqlNormalizer.ContentHash(migration.Sql);
       var preExisting = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
       hashCache[migration.Name] = (preHash, preExisting);
       if (preExisting != preHash) {
@@ -547,12 +644,14 @@ public sealed class PostgresSchemaInitializer {
       var isUpdate = existingHash != null;
       // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
       // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
-      // unavailable to them. The EFCore runner has always honored it, because EF's
-      // ExecuteSqlRawAsync runs inside a transaction. This runner did not, and the divergence stayed
-      // invisible until a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a
-      // transaction block with 25P01, so a cutover that moves rows between tables and then drops the
-      // columns they came from failed here while passing there. Nothing in these migrations is
-      // transaction-hostile (no CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
+      // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
+      // pass shared, which met the contract but threw away every file that had succeeded when a later
+      // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
+      // This runner once ran them outside any transaction, and the divergence stayed invisible until
+      // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
+      // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
+      // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
+      // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
       //
       // The ledger write joins the transaction too, so a migration and the record saying it applied
       // commit together or not at all. The FAILURE record is deliberately written outside it, after
@@ -619,9 +718,7 @@ public sealed class PostgresSchemaInitializer {
         failure = ex;
         await transaction.RollbackAsync(cancellationToken);
         // Record failure on the connection with no ambient transaction, so it survives the rollback.
-        await _upsertMigrationAsync(connection,
-            new MigrationRecord(migration.Name, hash, versionId, -1, $"Failed: {ex.Message}"),
-            cancellationToken);
+        await _recordFailureAsync(connection, migration.Name, hash, versionId, ex, cancellationToken);
       }
 
       if (failure is not null) {
@@ -631,23 +728,58 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// The pre-migration hash rewrite (#1648): every ledger row whose hash is the raw-text hash of its file as shipped,
+  /// which is what earlier releases recorded, takes the file's normalized hash. Runs under the schema lock and before
+  /// change detection reads a hash; a row matching neither form belongs to a file that really changed and is left for
+  /// change detection to apply.
+  /// </summary>
+  /// <remarks>
+  /// A distinct step so the startup phases can move it. Nothing to latch: once no row holds a legacy hash, the
+  /// statement updates nothing.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/NormalizedMigrationHashTests.cs</tests>
+  private Task<int> _rewriteLegacyMigrationHashesAsync(
+      NpgsqlConnection connection, string schema, IEnumerable<Core.Data.MigrationScript> migrations, int versionId,
+      CancellationToken cancellationToken) =>
+    MigrationHashUpgrade.RewriteLegacyHashesAsync(
+      connection, schema, migrations.Select(m => (m.Name, m.Sql)), versionId, Logger, cancellationToken);
+
+  /// <summary>
   /// Executes perspective DDL with per-perspective hash tracking.
   /// Each perspective is individually hash-checked and wrapped in its own transaction.
   /// Hash matches → skip (status 3). Hash differs or missing → execute DDL → record hash (status 1 or 2).
   /// </summary>
-  private async Task _executePerspectiveMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
+  private async Task _executePerspectiveMigrationsAsync(
+      NpgsqlConnection connection, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
     foreach (var entry in _perspectiveEntries!) {
-      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, cancellationToken);
+      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, renames, cancellationToken);
     }
   }
 
+  /// <summary>
+  /// The DDL as it read under the table's previous name: every use of the table's name, and of the part of it past
+  /// <c>wh_per_</c> that some index names carry, written with the previous one (#1719).
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPerspectiveTableRenameTests.cs:AsNamed_RewritesTheNameAndThePartPastThePrefix_OnlyWhenBothCarryItAsync</tests>
+  internal static string AsNamed(string ddl, string tableName, string previous) {
+    const string PREFIX = "wh_per_";
+    const string MARK = "\u0000";
+    var marked = ddl.Replace(tableName, MARK, StringComparison.Ordinal);
+    if (tableName.StartsWith(PREFIX, StringComparison.Ordinal) && previous.StartsWith(PREFIX, StringComparison.Ordinal)) {
+      marked = marked.Replace(tableName[PREFIX.Length..], previous[PREFIX.Length..], StringComparison.Ordinal);
+    }
+    return marked.Replace(MARK, previous, StringComparison.Ordinal);
+  }
+
+  private static string _sha256(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
   private static async Task _executeSinglePerspectiveMigrationAsync(
       NpgsqlConnection connection, KeyValuePair<string, string> entry,
-      int versionId, CancellationToken cancellationToken) {
+      int versionId, IReadOnlyDictionary<string, string> renames, CancellationToken cancellationToken) {
     var perspectiveName = $"perspective:{entry.Key}";
-    var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+    var hash = _sha256(entry.Value);
     var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
 
     if (existingHash == hash) {
@@ -659,8 +791,17 @@ public sealed class PostgresSchemaInitializer {
     var tableName = _extractTableName(entry.Value);
     var strategy = MigrationStrategy.DirectDdl;
 
+    string? renamedFrom = null;
+
     if (isUpdate && tableName != null) {
-      strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+      // A table renamed in place this start whose DDL differs only by its name is not changed DDL (#1719): the
+      // statements are re-run as they are, with no strategy that copies or replays its rows.
+      if (renames.TryGetValue(tableName, out var previous)
+          && existingHash == _sha256(AsNamed(entry.Value, tableName, previous))) {
+        renamedFrom = previous;
+      } else {
+        strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+      }
     }
 
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -682,9 +823,11 @@ public sealed class PostgresSchemaInitializer {
 
       var eventReplay = strategy == MigrationStrategy.EventReplay;
       var appliedStatus = isUpdate ? 2 : 1;
-      var appliedDesc = isUpdate
-        ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
-        : "First apply";
+      var appliedDesc = (isUpdate, renamedFrom) switch {
+        (_, not null) => $"Renamed from {renamedFrom}",
+        (true, _) => $"Updated from hash {existingHash![..8]}... (strategy: {strategy})",
+        _ => "First apply",
+      };
       var status = eventReplay ? 4 : appliedStatus;
       var desc = eventReplay
         ? $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)"
@@ -702,9 +845,7 @@ public sealed class PostgresSchemaInitializer {
       // order — roll back, record the failure, propagate — with no unreachable line.
       failure = ex;
       await transaction.RollbackAsync(cancellationToken);
-      await _upsertMigrationAsync(connection,
-        new MigrationRecord(perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}"),
-        cancellationToken);
+      await _recordFailureAsync(connection, perspectiveName, hash, versionId, ex, cancellationToken);
     }
 
     if (failure is not null) {
@@ -788,6 +929,31 @@ public sealed class PostgresSchemaInitializer {
     cmd.Parameters.AddWithValue("desc", record.Description);
     cmd.Parameters.AddWithValue("prevContent", (object?)record.PreviousContent ?? DBNull.Value);
     cmd.Parameters.AddWithValue("execOrder", (object?)record.ExecutionOrder ?? DBNull.Value);
+    cmd.CommandTimeout = 10;
+    await cmd.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Records a failure on a connection with no transaction open, after the failed step rolled back. Status -1 and the
+  /// error, but never the file's own hash: a row for a file that never applied gets
+  /// <see cref="SchemaPassLedger.PENDING_HASH"/>, and an existing row keeps the hash it had, so the next start still
+  /// reads the file as changed and runs it again. A row another session has since brought current is left alone.
+  /// </summary>
+  private static async Task _recordFailureAsync(
+      NpgsqlConnection connection, string fileName, string hash, int versionId, Exception failure,
+      CancellationToken cancellationToken) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_schema_migrations AS m (file_name, content_hash, version_id, status, status_description)
+      VALUES (@name, @pending, @versionId, -1, @desc)
+      ON CONFLICT (file_name) DO UPDATE SET
+        status = -1, status_description = EXCLUDED.status_description, updated_at = NOW()
+      WHERE m.content_hash <> @hash";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("pending", SchemaPassLedger.PENDING_HASH);
+    cmd.Parameters.AddWithValue(nameof(hash), hash);
+    cmd.Parameters.AddWithValue(nameof(versionId), versionId);
+    cmd.Parameters.AddWithValue("desc", $"Failed: {failure.Message}");
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
@@ -889,7 +1055,7 @@ public sealed class PostgresSchemaInitializer {
     cmd.CommandText = @"
       SELECT column_name, data_type
       FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = @tableName
+      WHERE table_schema = current_schema() AND table_name = @tableName
       ORDER BY ordinal_position";
     cmd.Parameters.AddWithValue(nameof(tableName), tableName);
     cmd.CommandTimeout = 10;
@@ -1045,6 +1211,14 @@ public sealed class PostgresSchemaInitializer {
   private static bool _isSafeIdentifier(string identifier) {
     return !string.IsNullOrEmpty(identifier) && identifier.All(c => char.IsLetterOrDigit(c) || c == '_');
   }
+
+  private static readonly Action<ILogger, string, string, string, Exception?> _logTableRenamed = LoggerMessage.Define<string, string, string>(
+    LogLevel.Information, new EventId(1719, "PerspectiveTableRenamed"),
+    "Renamed the perspective table of {Model} from {OldTable} to {NewTable}, keeping its rows");
+
+  private static readonly Action<ILogger, string, string, string, Exception?> _logBothTablesExist = LoggerMessage.Define<string, string, string>(
+    LogLevel.Warning, new EventId(1720, "PerspectiveTableRenameBlocked"),
+    "The perspective table of {Model} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it");
 
   private static readonly Action<ILogger, Exception?> _logReconcileFailed = LoggerMessage.Define(
     LogLevel.Warning, new EventId(1252, "ManagedObjectReconcileFailed"),

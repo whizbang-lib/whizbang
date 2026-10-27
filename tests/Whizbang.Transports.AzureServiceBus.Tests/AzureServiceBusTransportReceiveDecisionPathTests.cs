@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -77,73 +78,71 @@ public class AzureServiceBusTransportReceiveDecisionPathTests {
   }
 
   /// <summary>
-  /// Registries wired but neither consumes the payload type: the message is acked and
-  /// dropped at the receive boundary with the structured warning — never reaching the handler.
+  /// Registries wired but neither consumes the payload type: the message still reaches the handler, which stores it,
+  /// before the broker is told anything; the consumer decides the skip after storage (#1720).
   /// </summary>
   [Test]
-  public async Task ProcessMessage_NoLocalConsumer_AcksAndDropsWithWarningAsync() {
+  public async Task ProcessMessage_NoLocalConsumer_IsHandedToTheHandlerBeforeItIsCompletedAsync() {
     var logger = new RecordingTransportLogger();
     var (transport, client) = _createTransport(
       enableSessions: false,
       logger: logger,
       receptorRegistry: new StubReceptorRegistry(null),
       perspectiveRegistry: new StubPerspectiveRegistry());
-    var handlerInvoked = false;
-    await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
-      _destination());
     var receiver = new RecordingTransportReceiver();
+    var completedWhenHandled = -1;
+    await transport.SubscribeAsync(
+      (_, _, _) => { completedWhenHandled = receiver.Completed.Count; return Task.CompletedTask; },
+      _destination());
 
     await client.LastProcessor!.RaiseMessageAsync(
       AsbTransportTestData.MessageArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("no-local-consumer drops ack the broker so the message exits the topic");
+    await Assert.That(completedWhenHandled).IsEqualTo(0)
+      .Because("the handler stores the message before the broker is told anything");
+    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(receiver.DeadLettered).IsEmpty();
-    await Assert.That(handlerInvoked).IsFalse();
-    await Assert.That(logger.Contains(LogLevel.Warning, "ack+drop")).IsTrue();
   }
 
+
   /// <summary>
-  /// Session pipeline: a NoLocalConsumer drop with a wired discard policy routes through
-  /// IMessageDiscardPolicy.RecordDiscard (Debug + counter) instead of the legacy warning.
+  /// Session pipeline: a payload with no local consumer reaches the handler too, and the transport records no discard,
+  /// since it no longer decides one (#1720).
   /// </summary>
   [Test]
-  public async Task ProcessSessionMessage_NoLocalConsumerWithDiscardPolicy_RecordsDiscardAsync() {
+  public async Task ProcessSessionMessage_NoLocalConsumer_IsHandedToTheHandler_AndRecordsNoDiscardAsync() {
     var discardPolicy = new RecordingDiscardPolicy();
     var (transport, client) = _createTransport(
       enableSessions: true,
       receptorRegistry: new StubReceptorRegistry(null),
       perspectiveRegistry: new StubPerspectiveRegistry(),
       discardPolicy: discardPolicy);
-    var handlerInvoked = false;
+    var handled = 0;
     await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
+      (_, _, _) => { handled++; return Task.CompletedTask; },
       _destination());
     var receiver = new RecordingTransportSessionReceiver();
 
     await client.LastSessionProcessor!.RaiseSessionMessageAsync(
       AsbTransportTestData.SessionArgs(AsbTransportTestData.EnvelopeMessage(AsbTransportTestData.CreateEnvelope()), receiver));
 
-    await Assert.That(discardPolicy.Recorded).Count().IsEqualTo(1);
-    var (Gate, Decision, PayloadClrType) = discardPolicy.Recorded[0];
-    await Assert.That(Gate).IsEqualTo(MessageDiscardGate.Receive);
-    await Assert.That(Decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
-    await Assert.That(PayloadClrType).IsEqualTo(typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName);
+    await Assert.That(handled).IsEqualTo(1);
+    await Assert.That(discardPolicy.Recorded).IsEmpty();
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
-    await Assert.That(handlerInvoked).IsFalse();
   }
+
 
   // ========================================
   // SLICE-5 RAW RECEPTOR DISPATCH
   // ========================================
 
   /// <summary>
-  /// Non-session pipeline: when the typed binder misses but a raw receptor is registered for
-  /// the envelope's inner type, the raw receptor gets the "p" payload and the message is acked.
+  /// Non-session pipeline: when the typed binder misses but a raw receptor is registered for the envelope's inner type,
+  /// the handler stores the message as received first, then the raw receptor gets the "p" payload, then the message is
+  /// completed (#1720).
   /// </summary>
   [Test]
-  public async Task ProcessMessage_RawReceptorMatch_InvokesRawReceptorAndAcksAsync() {
+  public async Task ProcessMessage_RawReceptorMatch_StoresThenInvokesRawReceptorThenCompletesAsync() {
     var logger = new RecordingTransportLogger();
     var rawReceptor = new RecordingRawReceptor(RAW_INNER_TYPE_NAME);
     var (transport, client) = _createTransport(
@@ -151,51 +150,49 @@ public class AzureServiceBusTransportReceiveDecisionPathTests {
       logger: logger,
       rawReceptorRegistry: new SingleRawReceptorRegistry(rawReceptor),
       typeBinder: new MissTypeBinder());
-    var handlerInvoked = false;
+    var receptorRunsWhenHandled = -1;
     await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
+      (_, _, _) => { receptorRunsWhenHandled = rawReceptor.Handled.Count; return Task.CompletedTask; },
       _destination());
     var receiver = new RecordingTransportReceiver();
 
     await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
-      AsbTransportTestData.RawMessage("""{"p":{"content":"raw-payload"}}""", RAW_ENVELOPE_TYPE_NAME),
+      AsbTransportTestData.RawMessage(_rawEnvelopeBody("raw-payload"), RAW_ENVELOPE_TYPE_NAME),
       receiver));
 
+    await Assert.That(receptorRunsWhenHandled).IsEqualTo(0).Because("the message is stored before the raw receptor runs");
     await Assert.That(rawReceptor.Handled).Count().IsEqualTo(1);
     await Assert.That(rawReceptor.Handled[0].GetProperty("content").GetString()).IsEqualTo("raw-payload");
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(receiver.DeadLettered).IsEmpty();
-    await Assert.That(handlerInvoked).IsFalse()
-      .Because("raw-receptor dispatch bypasses the typed envelope handler");
-    await Assert.That(logger.Contains(LogLevel.Information, "raw-receptor")).IsTrue();
+    await Assert.That(logger.Contains(LogLevel.Information, "stored as received")).IsTrue();
   }
+
 
   /// <summary>Session pipeline counterpart of the raw-receptor dispatch.</summary>
   [Test]
-  public async Task ProcessSessionMessage_RawReceptorMatch_InvokesRawReceptorAndAcksAsync() {
-    var logger = new RecordingTransportLogger();
+  public async Task ProcessSessionMessage_RawReceptorMatch_StoresThenInvokesRawReceptorThenCompletesAsync() {
     var rawReceptor = new RecordingRawReceptor(RAW_INNER_TYPE_NAME);
     var (transport, client) = _createTransport(
       enableSessions: true,
-      logger: logger,
       rawReceptorRegistry: new SingleRawReceptorRegistry(rawReceptor),
       typeBinder: new MissTypeBinder());
-    var handlerInvoked = false;
+    var receptorRunsWhenHandled = -1;
     await transport.SubscribeAsync(
-      (_, _, _) => { handlerInvoked = true; return Task.CompletedTask; },
+      (_, _, _) => { receptorRunsWhenHandled = rawReceptor.Handled.Count; return Task.CompletedTask; },
       _destination());
     var receiver = new RecordingTransportSessionReceiver();
 
     await client.LastSessionProcessor!.RaiseSessionMessageAsync(AsbTransportTestData.SessionArgs(
-      AsbTransportTestData.RawMessage("""{"p":{"content":"raw-session-payload"}}""", RAW_ENVELOPE_TYPE_NAME),
+      AsbTransportTestData.RawMessage(_rawEnvelopeBody("raw-session-payload"), RAW_ENVELOPE_TYPE_NAME),
       receiver));
 
+    await Assert.That(receptorRunsWhenHandled).IsEqualTo(0);
     await Assert.That(rawReceptor.Handled).Count().IsEqualTo(1);
     await Assert.That(rawReceptor.Handled[0].GetProperty("content").GetString()).IsEqualTo("raw-session-payload");
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
-    await Assert.That(handlerInvoked).IsFalse();
-    await Assert.That(logger.Contains(LogLevel.Information, "session-receive raw-receptor")).IsTrue();
   }
+
 
   // ========================================
   // SESSION ABANDON SWALLOW POLICY
@@ -312,4 +309,17 @@ public class AzureServiceBusTransportReceiveDecisionPathTests {
   }
 
   private static TransportDestination _destination() => new("decision-topic", "decision-sub");
+
+  /// <summary>A full envelope whose payload this service has no type for, as a producer of it writes it.</summary>
+  private static string _rawEnvelopeBody(string content) {
+    var envelope = AsbTransportTestData.CreateEnvelope();
+    var asReceived = new MessageEnvelope<JsonElement> {
+      MessageId = envelope.MessageId,
+      Payload = JsonElement.Parse("{\"content\":\"" + content + "\"}"),
+      Hops = envelope.Hops,
+      DispatchContext = envelope.DispatchContext,
+    };
+    return JsonSerializer.Serialize(asReceived,
+      AsbTransportTestData.CombinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
+  }
 }

@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Stream-integrity Phase B: <c>AdvanceIntegrityCheckpointAsync</c> baselines on first run (no
 /// retroactive history counting), then advances the watermark to the highest stamped commit
 /// sequence and returns per-(tenant, type) counts inside the advanced window — excluding
-/// at-most-once occurrences. A quiet window advances to an empty (but non-null) window, keeping
+/// at-most-once occurrences and audit records. A quiet window advances to an empty (but non-null) window, keeping
 /// the liveness beat alive.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
@@ -28,6 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";
+
+  /// <summary>The event-store flag an at-most-once occurrence carries (<c>EventFlags.AtMostOnce</c>).</summary>
+  private const int AT_MOST_ONCE_FLAG = 32;
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
     new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
@@ -54,7 +57,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await _seedAsync(conn, stream, 3, TENANT_A, "Contracts.TypeX");
     await _seedAsync(conn, stream, 4, TENANT_A, "Contracts.TypeY");
     await _seedAsync(conn, stream, 5, TENANT_A, "Contracts.OccurrenceFired",
-      metadataJson: "{\"scheduleId\":\"s-1\",\"deliveryGuarantee\":1}");
+      flags: AT_MOST_ONCE_FLAG);
 
     var window = await coordinator.AdvanceIntegrityCheckpointAsync();
     await Assert.That(window).IsNotNull();
@@ -129,11 +132,69 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     await Assert.That(counts.Count).IsEqualTo(2);
   }
 
+  [Test]
+  public async Task CountReceivedFromOrigin_UnscopedEvent_BucketsWithNoTenantAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var coordinator = _coordinator(ctx);
+
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    // A received event whose scope carries no tenant (a global, unscoped stream).
+    await _seedReceivedAsync(conn, stream, 1, tenant: null, "Contracts.TypeX", origin, originSeq: 11);
+    await _seedReceivedAsync(conn, stream, 2, TENANT_A, "Contracts.TypeX", origin, originSeq: 12);
+
+    var counts = await coordinator.CountReceivedFromOriginAsync(origin, fromCommitSequence: 10, toCommitSequence: 20);
+
+    await Assert.That(counts.Select(b => $"{b.TenantScope ?? "(none)"}|{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["(none)|Contracts.TypeX=1", $"{TENANT_A}|Contracts.TypeX=1"])
+      .Because("an event with no tenant in its scope buckets under a null tenant, the same unscoped key the " +
+               "origin's half reports, never under an empty-string tenant that would read as a distinct bucket.");
+  }
+
+  [Test]
+  public async Task CheckpointCounts_LeaveAuditRecordsOut_OnBothSidesAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await _resetWatermarkAsync(conn);
+    var coordinator = _coordinator(ctx);
+    string[] auditTypes = [
+      Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.SystemEvents.EventAudited)),
+      Whizbang.Core.TypeNameFormatter.Format(typeof(Whizbang.Core.SystemEvents.CommandAudited)),
+    ];
+
+    await coordinator.AdvanceIntegrityCheckpointAsync();   // baseline
+
+    // The origin stores a domain event and, like any service that keeps audit records, the audit records of it.
+    var stream = TrackedGuid.New().Value;
+    await _seedAsync(conn, stream, 1, TENANT_A, "Contracts.TypeX");
+    await _seedAsync(conn, stream, 2, TENANT_A, auditTypes[0]);
+    await _seedAsync(conn, stream, 3, TENANT_A, auditTypes[1]);
+    var window = await coordinator.AdvanceIntegrityCheckpointAsync();
+
+    // A subscriber stores what it receives under the origin's identity, audit records included.
+    var origin = TrackedGuid.New().Value;
+    var received = TrackedGuid.New().Value;
+    await _seedReceivedAsync(conn, received, 1, TENANT_A, "Contracts.TypeX", origin, window!.FromCommitSequence + 1);
+    await _seedReceivedAsync(conn, received, 2, TENANT_A, auditTypes[0], origin, window.FromCommitSequence + 2);
+    await _seedReceivedAsync(conn, received, 3, TENANT_A, auditTypes[1], origin, window.FromCommitSequence + 3);
+    var counts = await coordinator.CountReceivedFromOriginAsync(origin, window.FromCommitSequence, window.ToCommitSequence);
+
+    await Assert.That(window.Buckets.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("the origin's checkpoint leaves audit records out, as every integrity digest does (#1492): " +
+               "the origin publishes its audit records without necessarily storing them.");
+    await Assert.That(counts.Select(b => $"{b.EventType}={b.Count}").ToList())
+      .IsEquivalentTo(["Contracts.TypeX=1"])
+      .Because("the subscriber's half applies the same exclusion, so audit traffic it received never reads as a " +
+               "count the origin did not declare (#1554).");
+  }
+
   // ── seeding ──────────────────────────────────────────────────────────────
 
   /// <summary>Seeds one RECEIVED event: origin identity stamped, as the 1:1 forward persist does.</summary>
   private static async Task _seedReceivedAsync(
-      NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
+      NpgsqlConnection conn, Guid streamId, int version, string? tenant, string eventType,
       Guid originServiceId, long originSeq) {
     var eventId = TrackedGuid.New().Value;
     await using var store = conn.CreateCommand();
@@ -143,7 +204,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
     store.Parameters.AddWithValue("event", eventId);
     store.Parameters.AddWithValue("stream", streamId);
     store.Parameters.AddWithValue("type", eventType);
-    store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
+    store.Parameters.AddWithValue("scope", tenant is null ? "{}" : $"{{\"t\":\"{tenant}\"}}");
     store.Parameters.AddWithValue(nameof(version), version);
     store.Parameters.AddWithValue("origin", originServiceId);
     store.Parameters.AddWithValue("oseq", originSeq);
@@ -159,17 +220,18 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
   /// <summary>Seeds one stamped event (store pointer + body).</summary>
   private static async Task<Guid> _seedAsync(
       NpgsqlConnection conn, Guid streamId, int version, string tenant, string eventType,
-      string? metadataJson = null) {
+      int flags = 0) {
     var eventId = TrackedGuid.New().Value;
     await using (var store = conn.CreateCommand()) {
       store.CommandText = @"
         INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags)
-        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), 0)";
+        VALUES (@event, @stream, @stream, 'TestAggregate', @type, @scope::jsonb, @version, nextval('wh_commit_seq'), @flags)";
       store.Parameters.AddWithValue("event", eventId);
       store.Parameters.AddWithValue("stream", streamId);
       store.Parameters.AddWithValue("type", eventType);
       store.Parameters.AddWithValue("scope", $"{{\"t\":\"{tenant}\"}}");
       store.Parameters.AddWithValue(nameof(version), version);
+      store.Parameters.AddWithValue(nameof(flags), flags);
       await store.ExecuteNonQueryAsync();
     }
     await using (var body = conn.CreateCommand()) {
@@ -179,7 +241,7 @@ public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
         VALUES (@event, '{"seeded":true}'::jsonb, @meta::jsonb)
 """;
       body.Parameters.AddWithValue("event", eventId);
-      body.Parameters.AddWithValue("meta", (object?)metadataJson ?? "{}");
+      body.Parameters.AddWithValue("meta", "{}");
       await body.ExecuteNonQueryAsync();
     }
     return eventId;

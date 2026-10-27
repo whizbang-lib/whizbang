@@ -276,7 +276,7 @@ public sealed partial class PgCommitOrderStamperWorker(
         } finally {
           _setLeader(false);
           if (lockConn is not null) {
-            try { await _releaseLeaderLockAsync(lockConn, lockKey); } catch { /* best effort */ }
+            try { _ = await _releaseLeaderLockAsync(lockConn, lockKey, _logger); } catch { /* best effort */ }
             await lockConn.DisposeAsync();
           }
         }
@@ -505,11 +505,8 @@ public sealed partial class PgCommitOrderStamperWorker(
     return ScalarResult.IsTrue(result);
   }
 
-  private static async Task _releaseLeaderLockAsync(NpgsqlConnection conn, long lockKey) {
-    await using var cmd = new NpgsqlCommand("SELECT pg_advisory_unlock(@k)", conn);
-    cmd.Parameters.AddWithValue("k", lockKey);
-    _ = await cmd.ExecuteScalarAsync();
-  }
+  private static Task<bool> _releaseLeaderLockAsync(NpgsqlConnection conn, long lockKey, ILogger logger) =>
+    AdvisoryLockRelease.ReleaseAsync(conn, lockKey, "commit-order stamper leader lock", logger, CancellationToken.None);
 
   private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, IDutyGrant? grant, CancellationToken ct) {
     // notifyOwners: TRUE only on the fenced-retry drain — the one case where the rows'

@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- BFF Read Models Schema
 -- This schema contains denormalized views optimized for UI queries
 

@@ -87,7 +87,7 @@ public class PgSharedNotifyConnectionProbeTests {
     await Assert.That(ok).IsFalse();
     await Assert.That(conn.IsAvailable).IsFalse();
     await Assert.That(conn.LastFailureReason).IsNotNull();
-    await Assert.That(conn.LastFailureAt).IsNotNull();
+    await Assert.That(conn.LastFailureAt.HasValue).IsTrue();
   }
 
   [Test]

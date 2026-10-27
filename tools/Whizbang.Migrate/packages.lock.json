@@ -2,15 +2,6 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
-      "LibGit2Sharp": {
-        "type": "Direct",
-        "requested": "[0.31.0, )",
-        "resolved": "0.31.0",
-        "contentHash": "b3+UfV7LjKMjAHWwl7VawejiOv2gJIC6dTCA/S0puLTHACAA/Oeb5JJmWUQMeyH/T/WR/LaIK8bk2RbdFnrZvg==",
-        "dependencies": {
-          "LibGit2Sharp.NativeBinaries": "[2.0.323]"
-        }
-      },
       "Microsoft.CodeAnalysis.BannedApiAnalyzers": {
         "type": "Direct",
         "requested": "[4.14.0, )",
@@ -77,11 +68,6 @@
         "type": "Transitive",
         "resolved": "2.14.1",
         "contentHash": "lQKvtaTDOXnoVJ20ibTuSIOf2i0uO0MPbDhd1jm238I+U/2ZnRENj0cktKZhtchBMtCUSRQ5v4xBCUbKNmyVMw=="
-      },
-      "LibGit2Sharp.NativeBinaries": {
-        "type": "Transitive",
-        "resolved": "2.0.323",
-        "contentHash": "Kg+fJGWhGj5qRXG0Ilj4ddhuodGXZg57yhfX6OVUDR0M2DKg/UR42/d74+qv5l1qotc1qJilo/ho7xQnULP6yA=="
       },
       "Microsoft.CodeAnalysis.Common": {
         "type": "Transitive",

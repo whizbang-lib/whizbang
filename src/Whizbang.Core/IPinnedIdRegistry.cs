@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// that survives namespace renames. Stored data keeps the current CLR type name; the registry's
 /// role is to expose the pinned identity to the runtime without reflection.
 /// </remarks>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public interface IPinnedIdRegistry {
   /// <summary>
   /// Gets the pinned ID GUID string for the given type, or null if the type is not pinned.

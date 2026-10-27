@@ -1,0 +1,74 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
+# Dependency review (#1441): what a pull request may add. Read by the Gate · Dependency review job in ci.yml,
+# which is in Gate · CI result's needs, so a finding blocks the merge.
+#
+# Only dependencies the pull request adds or changes are checked; what is already in the repository is the
+# weekly OSV scan's concern (security-supply-chain.yml).
+#
+# Coverage: GitHub's dependency graph resolves npm and GitHub Actions dependencies by version. For NuGet it
+# reads project files without versions (central package management keeps them in Directory.Packages.props),
+# so it cannot match a NuGet advisory or license here. NuGet is covered elsewhere, by the same rules:
+#   - vulnerabilities at restore: NuGetAudit checks every package, transitive ones included, and
+#     TreatWarningsAsErrors fails the build on any advisory (Directory.Packages.props lists the few
+#     suppressions, each with its reason);
+#   - licenses at pack: .github/scripts/Test-PackageLicenses.ps1 checks every shipped package's whole
+#     dependency graph, from its SBOM, against allow-licenses below and the pkg:nuget exceptions.
+
+# Moderate or higher, in any scope: a vulnerable test or build dependency still runs in CI with its tokens.
+fail-on-severity: moderate
+fail-on-scopes:
+  - runtime
+  - development
+  - unknown
+
+# Licenses a new dependency may carry: the permissive licenses the project already ships with or builds with.
+# A dependency under anything else (copyleft, non-commercial, no license) needs a reviewed exception below.
+allow-licenses:
+  - MIT
+  - MIT-0
+  - Apache-2.0
+  - PostgreSQL
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - 0BSD
+  - BlueOak-1.0.0
+  - CC0-1.0
+  - Unlicense
+
+# Reviewed exceptions, with why. Every version of the package is excepted, so re-check one whose license
+# could change when it moves a major version.
+allow-dependencies-licenses:
+  # Data and font packages used only by the sample UI, whose licenses are not software licenses
+  # (caniuse-lite and spdx-exceptions are CC-BY data, @cds/city is an OFL font, json-schema-typed adds the
+  # JSON license to BSD-2-Clause). None of them ships in a package.
+  - pkg:npm/caniuse-lite
+  - pkg:npm/spdx-exceptions
+  - pkg:npm/json-schema-typed
+  - pkg:npm/%40cds/city
+
+  # Permissive, read from the license file or URL the package declares instead of an SPDX expression, which
+  # the SBOM cannot carry.
+  - pkg:nuget/Fractions                                   # BSD (license file)
+  - pkg:nuget/J2N                                         # Apache-2.0 (license file)
+  - pkg:nuget/Lucene.Net                                  # Apache-2.0 (license file), and the four below
+  - pkg:nuget/Lucene.Net.Analysis.Common
+  - pkg:nuget/Lucene.Net.Queries
+  - pkg:nuget/Lucene.Net.QueryParser
+  - pkg:nuget/Lucene.Net.Sandbox
+  - pkg:nuget/OmniSharp.Extensions.JsonRpc                # MIT (license file), and the four below
+  - pkg:nuget/OmniSharp.Extensions.JsonRpc.Generators
+  - pkg:nuget/OmniSharp.Extensions.LanguageProtocol
+  - pkg:nuget/OmniSharp.Extensions.LanguageServer
+  - pkg:nuget/OmniSharp.Extensions.LanguageServer.Shared
+  - pkg:nuget/Apache.Arrow                                # Apache-2.0 (license file)
+  - pkg:nuget/System.Security.Cryptography.ProtectedData  # MIT (dotnet/corefx license URL)
+  - pkg:nuget/Microsoft.AspNetCore.Http.Abstractions      # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
+  - pkg:nuget/Microsoft.AspNetCore.Http.Features          # Apache-2.0 (aspnet/AspNetCore 2.x license URL)
+  - pkg:nuget/RabbitMQ.Client                             # Apache-2.0 OR MPL-2.0; the SBOM splits the OR into two entries
+  # Microsoft's test-only coverage collector, under the Microsoft .NET Library license. Every test project
+  # (about 70 of them) references it in its project file; it runs only in test runs and ships in no package, so a
+  # new test project only adds another reference to a dependency the repository already has.
+  - pkg:nuget/Microsoft.Testing.Extensions.CodeCoverage

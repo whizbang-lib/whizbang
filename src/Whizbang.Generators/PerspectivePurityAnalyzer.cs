@@ -26,10 +26,12 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ100: Error - Apply method returns Task (must be synchronous).
   /// </summary>
+  /// <docs>operations/diagnostics/whiz100</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_AsyncApplyMethod_ReportsWHIZ100ErrorAsync</tests>
   public static readonly DiagnosticDescriptor ApplyMethodIsAsync = new(
       id: "WHIZ100",
       title: "Apply method must be synchronous",
-      messageFormat: "Apply method '{0}' returns Task but must be synchronous for purity. Change return type from 'Task<{1}>' to '{1}'.",
+      messageFormat: "Apply method '{0}' returns '{2}' but must be synchronous for purity. Change the return type to '{1}'.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -39,6 +41,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ101: Error - Apply method uses async/await keywords.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz101</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyAwaitsInsideBody_ReportsWHIZ101Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodUsesAwait = new(
       id: "WHIZ101",
       title: "Apply method cannot use async/await",
@@ -52,6 +56,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ102: Error - Apply method calls database I/O operations.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz102</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyCallsPerspectiveStore_ReportsWHIZ102Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodCallsDatabase = new(
       id: "WHIZ102",
       title: "Apply method cannot call database I/O",
@@ -65,6 +71,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ103: Error - Apply method calls HTTP/network operations.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz103</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_ApplyCallsHttpClient_ReportsWHIZ103Async</tests>
   public static readonly DiagnosticDescriptor ApplyMethodCallsHttp = new(
       id: "WHIZ103",
       title: "Apply method cannot call HTTP/network operations",
@@ -78,19 +86,23 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ104: Warning - Apply method may use non-deterministic DateTime.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz104</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_DateTimeUtcNowUsage_ReportsWHIZ104WarningAsync</tests>
   public static readonly DiagnosticDescriptor ApplyMethodUsesDateTime = new(
       id: "WHIZ104",
-      title: "Apply method should use event timestamps instead of DateTime.UtcNow",
-      messageFormat: "Apply method '{0}' uses DateTime.UtcNow which is non-deterministic. Use event timestamps instead for purity.",
+      title: "Apply method should use event timestamps instead of reading the clock",
+      messageFormat: "Apply method '{0}' uses {1} which is non-deterministic. Use event timestamps instead for purity.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Perspective Apply methods should be deterministic. Use timestamps from the event instead of DateTime.UtcNow."
+      description: "Perspective Apply methods should be deterministic. Use timestamps from the event instead of DateTime.Now, DateTime.UtcNow, DateTimeOffset.Now or DateTimeOffset.UtcNow."
   );
 
   /// <summary>
   /// WHIZ105: Warning - Perspective injects a service not marked with [PureService].
   /// </summary>
+  /// <docs>operations/diagnostics/whiz105</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerCoverageTests.cs:GenericTypeParameterConstructorInjection_ReportsWHIZ105Async</tests>
   public static readonly DiagnosticDescriptor NonPureServiceInjected = new(
       id: "WHIZ105",
       title: "Perspective injects non-pure service",
@@ -104,10 +116,12 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   /// <summary>
   /// WHIZ106: Error - Collective apply performs an apply-time cross-perspective query.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz106</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectivePurityAnalyzerTests.cs:Analyzer_CollectiveApplyUsesCollectiveQuery_ReportsWHIZ106Async</tests>
   public static readonly DiagnosticDescriptor CollectiveApplyUsesCollectiveQuery = new(
       id: "WHIZ106",
       title: "Collective apply must not query other perspectives at apply time",
-      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>() — an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
+      messageFormat: "Collective apply method '{0}' calls ICollectiveQuery.Of<>(), an apply-time cross-perspective query. This makes the spec non-replayable: it can't be re-evaluated per-row during a single-stream replay/rebuild. Resolve the cross-query BEFORE event creation and bake the result into the event as static payload, so the apply depends only on the row's own state and the event.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
@@ -172,7 +186,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
           ApplyMethodIsAsync,
           methodDeclaration.Identifier.GetLocation(),
           methodSymbol.Name,
-          modelType ?? "TModel"
+          modelType ?? "TModel",
+          TypeNameUtilities.MinimallyQualified(methodSymbol.ReturnType)
       );
       context.ReportDiagnostic(diagnostic);
     }
@@ -212,12 +227,13 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 5: Warn about DateTime.UtcNow usage
-    var dateTimeCalls = _findDateTimeNowCalls(methodDeclaration);
-    foreach (var call in dateTimeCalls) {
+    var dateTimeCalls = _findDateTimeNowCalls(methodDeclaration, context.SemanticModel);
+    foreach (var (call, clockRead) in dateTimeCalls) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodUsesDateTime,
           call.GetLocation(),
-          methodSymbol.Name
+          methodSymbol.Name,
+          clockRead
       );
       context.ReportDiagnostic(diagnostic);
     }
@@ -365,7 +381,11 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         var containingType = TypeNameUtilities.DisplayOrEmpty(methodSymbol.ContainingType);
         var methodName = methodSymbol.Name;
 
-        // Check for common database operation patterns
+        // Check for common database operation patterns. An HTTP type's Get/Post methods match the name heuristic,
+        // but they are HTTP calls, reported once as WHIZ103 (#1428).
+        if (_isHttpType(containingType)) {
+          continue;
+        }
         if (containingType.Contains("DbContext") ||
             containingType.Contains("DbSet") ||
             containingType.Contains("IPerspectiveStore") ||
@@ -399,8 +419,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         var methodName = methodSymbol.Name;
 
         // Check for HTTP operation patterns
-        if (containingType.Contains("HttpClient") ||
-            containingType.Contains("HttpMessageInvoker") ||
+        if (_isHttpType(containingType) ||
             (methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http")) ||
             (methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http")) ||
             (methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http")) ||
@@ -411,16 +430,20 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
   }
 
-  private static IEnumerable<MemberAccessExpressionSyntax> _findDateTimeNowCalls(
-      MethodDeclarationSyntax methodDeclaration) {
+  private static bool _isHttpType(string containingType) =>
+      containingType.Contains("HttpClient") || containingType.Contains("HttpMessageInvoker");
 
-    return methodDeclaration.DescendantNodes()
-        .OfType<MemberAccessExpressionSyntax>()
-        .Where(m => {
-          var expr = m.Expression.ToString();
-          var name = m.Name.ToString();
-          return (expr == "DateTime" || expr == "DateTimeOffset") &&
-                 (name == "Now" || name == "UtcNow");
-        });
+  /// <summary>
+  /// The clock reads in the method, found by the property they bind to rather than how they are spelled, so
+  /// <c>System.DateTime.UtcNow</c> and <c>global::System.DateTimeOffset.Now</c> are found too (#1428).
+  /// </summary>
+  private static IEnumerable<(MemberAccessExpressionSyntax Call, string ClockRead)> _findDateTimeNowCalls(
+      MethodDeclarationSyntax methodDeclaration, SemanticModel semanticModel) {
+    foreach (var access in methodDeclaration.DescendantNodes().OfType<MemberAccessExpressionSyntax>()) {
+      if (semanticModel.GetSymbolInfo(access).Symbol is IPropertySymbol { IsStatic: true, Name: "Now" or "UtcNow" } property
+          && TypeNameUtilities.DisplayOrEmpty(property.ContainingType) is "System.DateTime" or "System.DateTimeOffset") {
+        yield return (access, $"{property.ContainingType.Name}.{property.Name}");
+      }
+    }
   }
 }

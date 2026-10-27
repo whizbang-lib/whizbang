@@ -37,6 +37,8 @@
     <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj">
       <Aliases>global,fastendpoints_generators</Aliases>
     </ProjectReference>
+    <!-- The build-cost benchmark: its corpus and checked-in thresholds file -->
+    <ProjectReference Include="../../benchmarks/Whizbang.BuildCost.Benchmarks/Whizbang.BuildCost.Benchmarks.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <!-- HotChocolate runtime for GraphQLLensAttribute -->
@@ -63,5 +65,21 @@
        assemblies. -->
   <ItemGroup>
     <Compile Include="../Whizbang.Generators.Tests/GeneratorTestHelper.cs" Link="Shared/GeneratorTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/AnalyzerTestHelper.cs" Link="Shared/AnalyzerTestHelper.cs" />
+    <Compile Include="../Whizbang.Generators.Tests/MSBuildGlobalOptions.cs" Link="Shared/MSBuildGlobalOptions.cs" />
+    <!-- MSBuildGlobalOptions reads the generator packages' build files from this assembly's resources. -->
+    <EmbeddedResource Include="..\..\src\Whizbang.Generators\build\*.props;..\..\src\Whizbang.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Generators/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.props;..\..\src\Whizbang.Data.EFCore.Postgres.Generators\build\*.targets"
+                      LogicalName="WhizbangBuild/Whizbang.Data.EFCore.Postgres.Generators/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <!-- #1378: the suppressor guard runs the real third-party rules a consumer's build runs. Directory.Build.props
+       references both packages for every project; their analyzer assemblies are copied into the output so the
+       test finds them on a runner that has the build artifacts but no package cache. -->
+  <ItemGroup>
+    <PackageReference Update="Roslynator.Analyzers" GeneratePathProperty="true" />
+    <PackageReference Update="SonarAnalyzer.CSharp" GeneratePathProperty="true" />
+    <None Include="$(PkgRoslynator_Analyzers)/analyzers/dotnet/roslyn4.7/cs/*.dll" Link="ThirdPartyAnalyzers/Roslynator/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(PkgSonarAnalyzer_CSharp)/analyzers/*.dll" Link="ThirdPartyAnalyzers/Sonar/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 </Project>

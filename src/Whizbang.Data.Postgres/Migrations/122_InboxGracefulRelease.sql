@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 122_InboxGracefulRelease.sql
 --
 -- Lets a worker hand back inbox rows it claimed but never dispatched, WITHOUT spending their retry

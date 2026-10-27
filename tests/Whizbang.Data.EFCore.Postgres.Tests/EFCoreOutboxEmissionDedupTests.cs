@@ -54,7 +54,7 @@ public class EFCoreOutboxEmissionDedupTests : EFCoreTestBase {
 
     public DedupObserver(WorkCoordinatorMetrics metrics) {
       _listener.InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument.Meter, metrics.ProcessBatchCalls.Meter)
+        if (ReferenceEquals(instrument.Meter, metrics.CommitHandlerFallbacks.Meter)
             && instrument.Name == "whizbang.work_coordinator.outbox.emission_deduplicated") {
           l.EnableMeasurementEvents(instrument);
         }

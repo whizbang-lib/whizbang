@@ -83,7 +83,7 @@ public class StrandedSagaSweepTests {
       .Because("the saga has already been still for longer than a whole stall count; the tick resolves it on arrival");
     await Assert.That(tick.LastObservedCompleted).IsEqualTo(2);
     await Assert.That(tick.LastObservedFailed).IsEqualTo(0);
-    await Assert.That(tick.LastObservedAt).IsNotNull();
+    await Assert.That(tick.LastObservedAt.HasValue).IsTrue();
   }
 
   [Test]

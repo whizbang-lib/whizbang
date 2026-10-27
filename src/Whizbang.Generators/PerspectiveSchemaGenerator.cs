@@ -35,13 +35,23 @@ namespace Whizbang.Generators;
 /// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (data, metadata, scope).
-/// Table names are configurable via MSBuild properties:
+/// A table is named from the perspective's MODEL type, by the rule the EF Core driver shares
+/// (<see cref="PerspectiveTableNaming"/>), or by <c>[PerspectiveTable]</c> on the model (#1719).
+/// Generated names are configurable via MSBuild properties:
 /// - WhizbangStripTableNameSuffixes (default: true) - Strip common suffixes like Model, Projection, Dto
 /// - WhizbangTableNameSuffixesToStrip (default: ReadModel,Model,Projection,Dto,View) - Suffixes to strip
 /// </summary>
 [Generator]
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -52,25 +62,76 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine perspective candidates with table name configuration
-    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig);
+    // Combine perspective candidates with table name configuration, and the assembly the registry payload is
+    // registered under (the EF Core driver's service name, "Unknown" for an unnamed compilation as there).
+    var serviceName = context.CompilationProvider.Select(static (c, _) => c.AssemblyName ?? "Unknown");
+    // The identifier limit (WhizbangMaxIdentifierLength, PostgreSQL's 63 bytes when unset), and whether this is an EF
+    // Core consumer, whose generator checks the same names and reports them itself (WHIZ820, #1719).
+    var maxIdLengthOverride = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectMaxIdentifierLengthOverride);
+    var efCoreConsumer = context.CompilationProvider.Select(static (c, _) => IsEFCoreConsumer(c));
+    var perspectivesWithConfig = perspectiveCandidates.Collect()
+        .Combine(tableNameConfig)
+        .Combine(serviceName)
+        .Combine(maxIdLengthOverride)
+        .Combine(efCoreConsumer);
 
     // Collect all perspectives and generate schemas
     context.RegisterSourceOutput(
         perspectivesWithConfig,
         static (ctx, data) => {
-          var (candidates, config) = data;
-          var perspectives = candidates
-              .Where(c => c is not null)
+          var ((((candidates, config), service), maxIdOverride), efCore) = data;
+          var all = candidates
               .Select(c => _buildPerspectiveSchemaInfo(c!, config))
               .ToImmutableArray();
-          _generatePerspectiveSchemas(ctx, perspectives);
+          var perspectives = efCore
+              ? all
+              : _checkTableNames(ctx, all, maxIdOverride ?? PerspectiveTableNaming.POSTGRES_MAX_IDENTIFIER_BYTES);
+          _generatePerspectiveSchemas(ctx, perspectives, service);
         }
     );
+  }
+
+  /// <summary>
+  /// True when the compilation references the EF Core driver, whose generator checks every perspective table name
+  /// (WHIZ820, WHIZ824, WHIZ825), so this generator leaves those checks to it rather than report each error twice.
+  /// </summary>
+  /// <param name="compilation">The consumer's compilation.</param>
+  /// <returns>True for an EF Core consumer.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveTableNamingDiagnosticsTests.cs:SchemaGenerator_InAnEFCoreConsumer_LeavesTheNameChecksToTheEFCoreGeneratorAsync</tests>
+  public static bool IsEFCoreConsumer(Compilation compilation) =>
+      compilation.ReferencedAssemblyNames.Any(a => a.Name == "Whizbang.Data.EFCore.Postgres");
+
+  /// <summary>
+  /// The perspectives whose table names PostgreSQL can take as written (#1719). A manual name that is not a valid
+  /// perspective table name (WHIZ824) or a name past the identifier limit (WHIZ823) is reported at the model and gets
+  /// no table; two models resolving to one table are reported (WHIZ825).
+  /// </summary>
+  private static ImmutableArray<PerspectiveSchemaInfo> _checkTableNames(
+      SourceProductionContext context, ImmutableArray<PerspectiveSchemaInfo> perspectives, int maxBytes) {
+    var kept = ImmutableArray.CreateBuilder<PerspectiveSchemaInfo>();
+    foreach (var perspective in perspectives) {
+      var bytes = IdentifierValidation.GetByteCount(perspective.TableName);
+      if (perspective.IsManualTableName && !PerspectiveTableNaming.IsValidManualName(perspective.TableName)) {
+        context.ReportDiagnostic(Diagnostic.Create(PerspectiveTableNaming.InvalidManualTableName, perspective.ModelLocation,
+            perspective.ModelClrTypeName, perspective.TableName));
+      } else if (bytes > maxBytes) {
+        context.ReportDiagnostic(Diagnostic.Create(PerspectiveTableNaming.TableNameExceedsLimit, perspective.ModelLocation,
+            perspective.ModelClrTypeName, perspective.TableName, bytes, maxBytes));
+      } else {
+        kept.Add(perspective);
+      }
+    }
+
+    foreach (var collision in PerspectiveTableNaming.Collisions(
+        kept.Select(p => (p.TableName, p.ModelClrTypeName, (Location?)p.ModelLocation)))) {
+      context.ReportDiagnostic(collision);
+    }
+    return kept.ToImmutable();
   }
 
   /// <summary>
@@ -121,10 +182,6 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var className = clrTypeName.Contains('+')
         ? clrTypeName[(clrTypeName.LastIndexOf('+') + 1)..]
         : clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..];
-    // Extract table base name from CLR name (remove + to merge nested names)
-    // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection
-    var tableBaseName = clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..].Replace("+", "");
-
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
@@ -150,13 +207,17 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ClassName: className,
         FullyQualifiedClassName: TypeNameUtilities.FullyQualified(classSymbol),
         ModelClassName: modelClassName,
-        TableBaseName: tableBaseName,
+        PerspectiveClrTypeName: clrTypeName,
+        ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
+        TableSource: PerspectiveTableNaming.From(modelType),
+        ModelLocation: LocationUtilities.FirstOrNone(modelType),
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
         StorageMode: storageMode,
         PhysicalFields: physicalFields,
         DocumentProperties: [.. DocumentPropertyDiscovery.From(modelType as INamedTypeSymbol)],
         BuildsMetadataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsMetadataIndex,
+        BuildsDataIndex: PerspectiveQueriesDiscovery.From(modelType as INamedTypeSymbol).BuildsDataIndex,
         TableStorage: TableStorageInfo.From(modelType)
     );
   }
@@ -168,20 +229,27 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       PerspectiveCandidate candidate,
       TableNameConfig config) {
 
-    // Generate table name using shared utility with configurable suffix stripping
-    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+    // The model's table name by the rule both drivers share (#1719): its [PerspectiveTable] name as written, or the
+    // name generated from the model type under the build's suffix settings.
+    var tableName = candidate.TableSource.TableName(config);
 
     return new PerspectiveSchemaInfo(
         ClassName: candidate.ClassName,
         FullyQualifiedClassName: candidate.FullyQualifiedClassName,
         ModelClassName: candidate.ModelClassName,
+        PerspectiveClrTypeName: candidate.PerspectiveClrTypeName,
+        ModelClrTypeName: candidate.ModelClrTypeName,
         TableName: tableName,
+        IsManualTableName: candidate.TableSource.IsManual,
+        ModelLocation: candidate.ModelLocation,
+        FormerTableName: PerspectiveTableNaming.FormerDapperTableName(candidate.PerspectiveClrTypeName, tableName, config),
         PropertyCount: candidate.PropertyCount,
         EstimatedSizeBytes: candidate.EstimatedSizeBytes,
         StorageMode: candidate.StorageMode,
         PhysicalFields: candidate.PhysicalFields,
         DocumentProperties: candidate.DocumentProperties,
         BuildsMetadataIndex: candidate.BuildsMetadataIndex,
+        BuildsDataIndex: candidate.BuildsDataIndex,
         TableStorage: candidate.TableStorage
     );
   }
@@ -379,7 +447,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generatePerspectiveSchemas(
       SourceProductionContext context,
-      ImmutableArray<PerspectiveSchemaInfo> perspectives) {
+      ImmutableArray<PerspectiveSchemaInfo> perspectives,
+      string serviceName) {
 
     if (perspectives.IsEmpty) {
       return;
@@ -406,7 +475,14 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // The objects each table's DDL builds, declared to the managed-object ledger (#1252), read from that DDL.
     var managedObjects = new System.Collections.Generic.List<(string Table, string Kind, string Name, string DeclaredBy)>();
 
+    // One table per model: a second perspective of the same model shares the first one's table (as on the EF Core
+    // driver), so its DDL is not emitted again. Its registry entry still is, below.
+    var builtTables = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
     foreach (var perspective in perspectives) {
+      if (!builtTables.Add(perspective.TableName)) {
+        continue;
+      }
+
       // Report size warning if estimated size is large
       if (perspective.EstimatedSizeBytes >= SIZE_WARNING_THRESHOLD) {
         context.ReportDiagnostic(Diagnostic.Create(
@@ -508,18 +584,37 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       schemaBuilder.AppendLine($"        (\"{table}\", \"{kind}\", \"{name.Replace("\"", "\\\"")}\", \"{declaredBy}\"),");
     }
     schemaBuilder.AppendLine("    };");
+    schemaBuilder.AppendLine();
+    _appendRegistryPayload(schemaBuilder, perspectives, serviceName);
     schemaBuilder.AppendLine("}");
 
-    // Add source file as C# code
+    // Add source file as C# code. No summary diagnostic: WHIZ007 is the discovery generator's per-perspective
+    // message, and a summary under it formatted as "Found perspective '2' listening to A, B" (#1428).
     context.AddSource("PerspectiveSchemas.g.sql.cs", schemaBuilder.ToString());
+  }
 
-    // Report summary
-    context.ReportDiagnostic(Diagnostic.Create(
-        DiagnosticDescriptors.PerspectiveDiscovered,
-        Location.None,
-        perspectives.Length.ToString(CultureInfo.InvariantCulture),
-        string.Join(", ", perspectives.Select(p => p.ClassName))
-    ));
+  /// <summary>
+  /// Emits the perspective registry payload and the module initializer that registers it (#1548): the Dapper driver
+  /// reconciles what its assemblies registered into <c>wh_perspective_registry</c> at startup, which is what row
+  /// retention enrolls from. The payload is built by the same shared builder as the EF Core driver's.
+  /// </summary>
+  private static void _appendRegistryPayload(
+      StringBuilder schemaBuilder, ImmutableArray<PerspectiveSchemaInfo> perspectives, string serviceName) {
+    var entries = perspectives.Select(p => new PerspectiveRegistryEntry(
+      p.ModelClrTypeName, p.TableName, p.PerspectiveClrTypeName, p.PhysicalFields,
+      p.BuildsDataIndex, p.BuildsMetadataIndex, p.FormerTableName)).ToList();
+    var json = PerspectiveRegistryPayload.ToJson(entries, serviceName, _mapToPostgresType);
+
+    schemaBuilder.AppendLine("    /// <summary>The service this assembly's perspectives are registered under.</summary>");
+    schemaBuilder.AppendLine($"    public const string ServiceName = \"{PerspectiveRegistryPayload.EscapeJsonString(serviceName)}\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>The perspective registry payload: one entry per perspective, keyed by the model's CLR type name.</summary>");
+    schemaBuilder.AppendLine($"    public const string RegistryJson = \"{json.Replace("\\", "\\\\").Replace("\"", "\\\"")}\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>Registers this assembly's perspective registry payload at load.</summary>");
+    schemaBuilder.AppendLine("    [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    schemaBuilder.AppendLine("    internal static void RegisterPerspectiveRegistry() =>");
+    schemaBuilder.AppendLine("        global::Whizbang.Core.Perspectives.PerspectiveRegistryPayloads.Register(ServiceName, RegistryJson);");
   }
 
   /// <summary>
@@ -617,7 +712,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     return [.. perspective.PhysicalFields.Select(f => f with { IsSplit = isSplit && !f.IsVector })];
   }
 
-  private static string _generatePhysicalColumnsSql(PhysicalFieldInfo[] physicalFields) {
+  private static string _generatePhysicalColumnsSql(EquatableArray<PhysicalFieldInfo> physicalFields) {
     if (physicalFields.Length == 0) {
       return string.Empty;
     }
@@ -751,7 +846,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates SQL index definitions for physical fields.
   /// </summary>
-  private static string _generatePhysicalIndexesSql(string tableName, PhysicalFieldInfo[] physicalFields) {
+  private static string _generatePhysicalIndexesSql(string tableName, EquatableArray<PhysicalFieldInfo> physicalFields) {
     var sb = new StringBuilder();
 
     foreach (var field in physicalFields) {
@@ -833,7 +928,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 /// <param name="ClassName">Simple class name (e.g., "OrderSummaryPerspective")</param>
 /// <param name="FullyQualifiedClassName">Fully qualified class name</param>
 /// <param name="ModelClassName">Simple class name of the model type</param>
-/// <param name="TableName">Generated PostgreSQL table name (e.g., "order_summary_perspective")</param>
+/// <param name="TableName">The model's PostgreSQL table name (e.g., "wh_per_order_summary")</param>
+/// <param name="IsManualTableName">Whether <c>[PerspectiveTable]</c> on the model set <paramref name="TableName"/></param>
+/// <param name="ModelLocation">The model's declaration, where a table-name error is reported</param>
+/// <param name="FormerTableName">The name a released Dapper build gave this perspective's table, when it differs (#1719)</param>
 /// <param name="PropertyCount">Number of properties for size estimation</param>
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
@@ -845,13 +943,19 @@ internal sealed record PerspectiveSchemaInfo(
     string ClassName,
     string FullyQualifiedClassName,
     string ModelClassName,
+    string PerspectiveClrTypeName,
+    string ModelClrTypeName,
     string TableName,
+    bool IsManualTableName,
+    Location ModelLocation,
+    string? FormerTableName,
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields,
-    string[] DocumentProperties,
+    EquatableArray<PhysicalFieldInfo> PhysicalFields,
+    EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
+    bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null
 );
 
@@ -877,24 +981,32 @@ public enum GeneratorFieldStorageMode {
 /// <param name="ClassName">Simple class name (e.g., "OrderSummaryProjection")</param>
 /// <param name="FullyQualifiedClassName">Fully qualified class name</param>
 /// <param name="ModelClassName">Simple class name of the model type</param>
-/// <param name="TableBaseName">Base name for table generation (nested classes merged, e.g., "ActivityProjection")</param>
+/// <param name="PerspectiveClrTypeName">The perspective's CLR type name, the form its cursors and snapshots key on</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c>), the perspective registry key</param>
+/// <param name="TableSource">Where the model's table name comes from: its base name, or its <c>[PerspectiveTable]</c> name</param>
+/// <param name="ModelLocation">The model's declaration, where a table-name error is reported</param>
 /// <param name="PropertyCount">Number of properties for size estimation</param>
 /// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
 /// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 /// <param name="DocumentProperties">The model's properties kept only in the document, whose columns an earlier release may have left behind (#1022)</param>
 /// <param name="BuildsMetadataIndex">Whether the model's [PerspectiveQueries] asks for the metadata index</param>
+/// <param name="BuildsDataIndex">Whether the model's [PerspectiveQueries] asks for the index over its whole document</param>
 /// <param name="TableStorage">The table's storage options from <c>[PerspectiveTableStorage]</c>, if any</param>
 internal sealed record PerspectiveCandidate(
     string ClassName,
     string FullyQualifiedClassName,
     string ModelClassName,
-    string TableBaseName,
+    string PerspectiveClrTypeName,
+    string ModelClrTypeName,
+    PerspectiveTableSource TableSource,
+    Location ModelLocation,
     int PropertyCount,
     int EstimatedSizeBytes,
     GeneratorFieldStorageMode StorageMode,
-    PhysicalFieldInfo[] PhysicalFields,
-    string[] DocumentProperties,
+    EquatableArray<PhysicalFieldInfo> PhysicalFields,
+    EquatableArray<string> DocumentProperties,
     bool BuildsMetadataIndex,
+    bool BuildsDataIndex,
     TableStorageInfo? TableStorage = null
 );

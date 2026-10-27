@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>
 /// <para>
 /// This prevents double-fire when multiple workers (TransportConsumerWorker,
-/// WorkCoordinatorPublisherWorker) attempt to fire the same lifecycle stage
+/// InboxDispatchWorker) attempt to fire the same lifecycle stage
 /// for the same inbox message.
 /// </para>
 /// <para>

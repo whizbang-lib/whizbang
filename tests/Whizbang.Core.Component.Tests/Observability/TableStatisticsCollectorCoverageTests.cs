@@ -44,7 +44,8 @@ public class TableStatisticsCollectorCoverageTests {
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: new TableStatisticsMetrics(new WhizbangMetrics(meterFactory: new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>())),
-      schemaReadyGate: gate, logger: NullLogger<TableStatisticsCollector>.Instance);
+      schemaReadyGate: gate, logger: NullLogger<TableStatisticsCollector>.Instance,
+      options: Microsoft.Extensions.Options.Options.Create(new TableStatisticsOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

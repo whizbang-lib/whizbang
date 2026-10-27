@@ -147,7 +147,7 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
       .IsTrue()
       .Because("the statement's own account of the table, with its update count, reaches the startup log");
 
-    var converted = JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_mapped WHERE id = '{renderings}'")).RootElement;
+    var converted = JsonElement.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_mapped WHERE id = '{renderings}'"));
     await Assert.That(converted.GetProperty("OccurredAt").GetInt64()).IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at));
     await Assert.That(converted.GetProperty("RecordedAt").GetInt64()).IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at))
       .Because("an inherited temporal is one the mapping reads, so the rewrite reaches it");
@@ -159,12 +159,12 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(new DateOnly(2026, 3, 5)))
       .Because("a temporal inside a collection element is one the mapping reads");
     await Assert.That(converted.GetProperty("Occurrences")[0].GetProperty("MaybeAt").ValueKind).IsEqualTo(JsonValueKind.Number);
-    await Assert.That(JsonDocument.Parse(await _scalarAsync($"SELECT metadata::text FROM wh_per_mapped WHERE id = '{renderings}'"))
-        .RootElement.GetProperty("Timestamp").GetInt64())
+    await Assert.That(JsonElement.Parse(await _scalarAsync($"SELECT metadata::text FROM wh_per_mapped WHERE id = '{renderings}'"))
+        .GetProperty("Timestamp").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at))
       .Because("the framework's own document is a document like any other");
 
-    var units = JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_mapped WHERE id = '{mixedUnits}'")).RootElement;
+    var units = JsonElement.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_mapped WHERE id = '{mixedUnits}'"));
     await Assert.That(units.GetProperty("Window").GetProperty("Length").GetInt64())
       .IsEqualTo(5400000000L)
       .Because("a tick count in the mixed-unit form divides down to microseconds");
@@ -191,7 +191,7 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
 
     await _runAsync();
 
-    var data = JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_opaque WHERE id = '{id}'")).RootElement;
+    var data = JsonElement.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_opaque WHERE id = '{id}'"));
     await Assert.That(data.GetProperty("StartedAt").GetInt64()).IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at));
     await Assert.That(data.GetProperty("Turns")[0].GetProperty("At").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at.AddMinutes(1)))

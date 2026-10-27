@@ -496,6 +496,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
         inboxChannelWriter: new InboxChannelWriter(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
@@ -513,6 +514,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
         lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
         tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
         workChannelWriter: sp.GetRequiredService<IWorkChannelWriter>(),
+        detachedWork: new DetachedLifecycleWork(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
       );
@@ -588,7 +590,7 @@ public class WorkCoordinatorStrategyRegistrationTests {
     var messageId = Guid.CreateVersion7();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };

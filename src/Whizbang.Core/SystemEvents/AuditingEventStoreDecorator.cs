@@ -84,22 +84,13 @@ public sealed class AuditingEventStoreDecorator(
       Guid streamId,
       TMessage message,
       CancellationToken cancellationToken = default) {
-    // Delegate to inner store for persistence
-    await Inner.AppendAsync(streamId, message, cancellationToken);
+    ArgumentNullException.ThrowIfNull(message);
 
-    // Create a minimal envelope for audit purposes
-    var envelope = new MessageEnvelope<TMessage> {
-      MessageId = MessageId.New(),
-      Payload = message,
-      Hops = [
-        new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow,
-          TraceParent = HopStamping.AmbientTraceParent,
-        }
-      ],
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
-    };
+    // The message goes down as an envelope built here, the one the security decorator would build, so the
+    // id the store writes is the id the audit record names. Handing the store the bare message let it mint
+    // an id of its own, and the record could point at no stored event (#1485).
+    var envelope = Whizbang.Core.Messaging.SecurityContextEventStoreDecorator.CreateAmbientEnvelope(message);
+    await Inner.AppendAsync(streamId, envelope, cancellationToken);
 
     // Emit audit event if eligible
     await _emitAuditIfEligibleAsync(streamId, envelope, cancellationToken);
@@ -150,15 +141,16 @@ public sealed class AuditingEventStoreDecorator(
     var scope = EventAuditScope.Build(scopeContext, correlationId);
 
     // Extract audit attribute metadata
-    var attr = typeof(TMessage)
-        .GetCustomAttributes(typeof(AuditEventAttribute), inherit: true)
-        .FirstOrDefault() as AuditEventAttribute;
+    var attr = AuditEligibility.AttributeOf(typeof(TMessage));
 
-    // Serialize payload to JsonElement (AOT-compatible)
-    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger);
+    // The body only when kept (#1588); otherwise the record points at the event and is not serialized at all
+    JsonElement? payloadJson = AuditEligibility.IncludesBody(typeof(TMessage), _options.AuditBodyDefault)
+      ? AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions, _logger)
+      : null;
 
     return new EventAudited {
       Id = TrackedGuid.New(),
+      OriginalEventId = envelope.MessageId.Value,
       OriginalEventType = typeof(TMessage).Name,
       OriginalStreamId = streamId.ToString(),
       OriginalStreamPosition = streamPosition,
@@ -170,6 +162,7 @@ public sealed class AuditingEventStoreDecorator(
       TenantId = scopeContext?.Scope.TenantId,
       UserId = scopeContext?.Scope.UserId,
       CorrelationId = correlationId?.ToString(),
+      CausationId = envelope.GetCausationId()?.ToString(),
       AuditReason = attr?.Reason,
       AuditLevel = attr?.Level ?? AuditLevel.Info,
       Scope = scope
@@ -221,8 +214,11 @@ public sealed class AuditingEventStoreDecorator(
         Hops = envelope.CopyHops()
       },
       EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
-      StreamId = auditEvent.Id,
-      IsEvent = true,
+      // The tenant's audit ledger, as on the outbox path. Transport-only, as on the outbox path: an audit
+      // record is never event-stored at its origin, so it neither takes the ledger's per-stream store lock
+      // nor lands in the origin's digest lane (#1485).
+      StreamId = AuditLedger.StreamFor(auditEvent.TenantId),
+      IsEvent = false,
       MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
     };
   }

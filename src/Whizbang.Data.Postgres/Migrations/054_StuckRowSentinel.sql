@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 054_StuckRowSentinel.sql
 -- Date: 2026-06-07 (v0.657 slice 5)
 -- Description: Structural canary for the "row claimed but never drained" bug

@@ -24,10 +24,11 @@
     <!-- XML files are included in NuGet packages automatically when this is enabled -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
-    <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
-    <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
-    <!-- Options: latest-minimum, latest-recommended, latest-all -->
-    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- Code analysis (CA rules), recommended set, pinned to the .NET 10 rule set rather than "latest".
+         global.json rolls forward to the newest installed SDK, and "latest" would turn on each newer SDK's
+         rules locally while CI builds on SDK 10 (#1678). Move it when CI moves; SDK 11's CA2026 findings
+         are tracked in #1679. -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
 
     <!-- Treat code analysis warnings as errors (separate from compiler warnings) -->
     <!-- This ensures CA rules fail the build just like compiler errors -->
@@ -47,7 +48,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Local-only version — CI/CD build server overrides this. Do NOT commit non-local versions. -->
-    <Version>0.2623.0</Version>
+    <Version>0.2624.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -171,6 +172,15 @@
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks'))" />
     <!-- Generator projects also ban the raw Roslyn display APIs outside TypeNameUtilities (issue #698) -->
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.Generators.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and $(MSBuildProjectName.Contains('Generators'))" />
+  </ItemGroup>
+
+  <!-- Repository-only analyzers (tools/Whizbang.RepoAnalyzers, never packed): rules this repository enforces on
+       its own source before the SDK it builds with can. Loaded as an analyzer only, so no project references
+       its assembly or carries it into a package. The analyzer project and its tests reference it directly instead.
+       WHZ0005 stands in for CA2026 until SDK 11 (#1679). -->
+  <ItemGroup Condition="!$(MSBuildProjectName.StartsWith('Whizbang.RepoAnalyzers'))">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tools/Whizbang.RepoAnalyzers/Whizbang.RepoAnalyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 
   <!-- Analyzers. SonarAnalyzer is here so Sonar's own rules fail the build locally and in CI

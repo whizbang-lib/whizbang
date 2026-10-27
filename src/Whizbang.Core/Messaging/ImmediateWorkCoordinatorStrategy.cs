@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
-/// Immediate strategy - calls process_work_batch immediately for each operation.
+/// Immediate strategy - flushes queued work to the database immediately for each operation.
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
@@ -39,11 +39,14 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IDeferredOutboxChannel deferredChannel,
   IOptions<SystemEventOptions> systemEventOptions,
   IWorkChannelWriter workChannelWriter,
+  IAuditDecisionHook? auditDecisionHook,
+  DetachedLifecycleWork detachedWork,
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null,
   Whizbang.Core.Tags.CoalesceGroupResolver? coalesceResolver = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
 #pragma warning restore S107
+  private const string STRATEGY_NAME = "immediate";
   private readonly IWorkCoordinator _coordinator = ArgumentGuard.NotNull(coordinator);
   private readonly IServiceInstanceProvider _instanceProvider = ArgumentGuard.NotNull(instanceProvider);
   private readonly WorkCoordinatorOptions _options = ArgumentGuard.NotNull(options);
@@ -53,10 +56,13 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly IOptionsMonitor<TracingOptions> _tracingOptions = tracingOptions;
   private readonly IDeferredOutboxChannel _deferredChannel = deferredChannel;
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter;
+  // The host's record of background work it waits for before disposing the service provider: the detached lifecycle
+  // stages this strategy's flushes start are tracked there (#1721).
+  private readonly DetachedLifecycleWork _detachedWork = ArgumentGuard.NotNull(detachedWork);
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly SystemEventOptions _systemEventOptions = systemEventOptions.Value;
-  private readonly WorkCoordinatorQueues _queues = new(logger, coalesceResolver);
+  private readonly WorkCoordinatorQueues _queues = new(logger, auditDecisionHook, coalesceResolver);
 
   /// <summary>
   /// Queues an outbox message for immediate flush.
@@ -125,7 +131,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
   public async Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
     _metrics?.FlushCalls.Add(1,
-      new KeyValuePair<string, object?>("strategy", "immediate"),
+      new KeyValuePair<string, object?>("strategy", STRATEGY_NAME),
       new KeyValuePair<string, object?>("trigger", "api"));
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
@@ -143,7 +149,11 @@ public partial class ImmediateWorkCoordinatorStrategy(
       LogDeferredChannelDrained(_logger, deferredMessages.Count);
     }
 
-    // Immediate strategy calls process_work_batch with all queued operations
+    if (_queues.IsEmpty) {
+      _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
+    }
+
+    // Immediate strategy flushes all queued operations at once (WorkCoordinatorFlushHelper)
     LogFlushStarting(
       _logger,
       _queues.OutboxMessages.Count,
@@ -171,13 +181,21 @@ public partial class ImmediateWorkCoordinatorStrategy(
           outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
           outboxFailures, inboxFailures, _lifecycleMessageDeserializer,
           _logger, _tracingOptions, _lifecycleMetrics,
-          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+          // #1546: this flush's caller awaits it, so a mixed-stream refusal is raised to it.
+          Metrics: _metrics, Strategy: STRATEGY_NAME, RaiseOnMixedStream: true, DetachedWork: _detachedWork),
         ct
       );
     } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
       // The caller withdrew this work: the write rolled back and the caller is told it was canceled,
       // so nothing may write it after all, neither a later flush nor the disposal safety net (#1410
       // follow-up). A cancellation the caller did not ask for keeps the work, as any other failure does.
+      _queues.Clear();
+      throw;
+    } catch (MixedStreamEventException) {
+      // #1546: the store refused the write for mixing ephemeral and Sourced events on one stream. It rolled back
+      // and the caller has the refusal; the same write is refused every time, so it is withdrawn rather than
+      // offered to a later flush (which it would fail too) or to the disposal safety net.
       _queues.Clear();
       throw;
     }

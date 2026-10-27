@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 200_ManagedObjects.sql
 -- Date: 2026-10-08
 -- Description: The ledger of database objects Whizbang manages for perspectives, and the functions a DBA

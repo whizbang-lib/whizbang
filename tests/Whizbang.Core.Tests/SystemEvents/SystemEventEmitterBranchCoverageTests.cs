@@ -33,9 +33,9 @@ public class SystemEventEmitterBranchCoverageTests {
   [Test]
   public async Task EmitEventAuditedAsync_NullLoggerAndUnserializablePayload_StillAppendsTheAuditRecordAsync() {
     var eventStore = new RecordingEventStore();
-    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var options = Options.Create(new SystemEventOptions { AuditBodyDefault = AuditBodyDefault.Include }.EnableEventAudit());
     var emitter = new SystemEventEmitter(options, eventStore,
-      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: null!);
+      new ServiceInstanceProvider(configuration: new ConfigurationBuilder().Build()), logger: null!, auditDecisionHook: null);
     var envelope = new MessageEnvelope<UnregisteredAuditedEvent> {
       MessageId = MessageId.New(),
       Payload = new UnregisteredAuditedEvent("probe"),
@@ -55,8 +55,8 @@ public class SystemEventEmitterBranchCoverageTests {
       .Because("a missing logger must never cost the audit record itself");
     var audited = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
     await Assert.That(audited).IsNotNull();
-    await Assert.That(audited!.Payload.OriginalBody.ValueKind).IsEqualTo(JsonValueKind.Object);
-    await Assert.That(audited.Payload.OriginalBody.EnumerateObject().Any()).IsFalse()
+    await Assert.That(audited!.Payload.OriginalBody!.Value.ValueKind).IsEqualTo(JsonValueKind.Object);
+    await Assert.That(audited.Payload.OriginalBody.Value.EnumerateObject().Any()).IsFalse()
       .Because("the payload type is in no registered context, so its body is persisted as {}");
   }
 

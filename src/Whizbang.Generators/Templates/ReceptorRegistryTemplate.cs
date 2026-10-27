@@ -23,7 +23,7 @@ namespace Whizbang.Core.Generated;
 /// Generated IReceptorRegistry implementation with zero-reflection routing for {{RECEPTOR_COUNT}} receptor(s).
 /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
 /// - Receptors WITH [FireAt(X)] are registered at stage X only
-/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached, PreOutboxDetached, and PostInboxDetached
+/// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached
 /// Also supports runtime registration for integration test synchronization.
 /// </summary>
 /// <remarks>
@@ -48,6 +48,30 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
   // Runtime registrations: keyed by (MessageType, LifecycleStage)
   private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Instance, global::Whizbang.Core.Messaging.ReceptorInfo Info)>> _runtimeRegistrations = new();
+
+  /// <summary>
+  /// The receptors registered at runtime for an interface or base type of <paramref name="messageType"/>
+  /// at <paramref name="stage"/> (#1418). Runtime registrations are few, so each key is tested in turn.
+  /// </summary>
+  public IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> GetRuntimeReceptorsForBaseTypesOf(Type messageType, LifecycleStage stage) {
+    if (messageType is null) {
+      throw new ArgumentNullException(nameof(messageType));
+    }
+    if (_runtimeRegistrations.IsEmpty) {
+      return _emptyList;
+    }
+    var found = new List<global::Whizbang.Core.Messaging.ReceptorInfo>();
+    foreach (var entry in _runtimeRegistrations) {
+      if (entry.Key.Stage == stage && entry.Key.MessageType != messageType && entry.Key.MessageType.IsAssignableFrom(messageType)) {
+        lock (entry.Value) {
+          foreach (var registration in entry.Value) {
+            found.Add(registration.Info);
+          }
+        }
+      }
+    }
+    return found;
+  }
 
   /// <summary>
   /// Gets all receptors registered to handle the specified message type at the specified lifecycle stage.
@@ -207,12 +231,12 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
 
   /// <summary>
   /// True when any runtime-registered receptor exists for the given message-type string at any
-  /// lifecycle stage. Used by the receive-boundary drop gate in TransportConsumerWorker (and
+  /// lifecycle stage. Used by the receive-boundary no-consumer gate in TransportConsumerWorker (and
   /// ServiceBusConsumerWorker) to keep messages that runtime registrations are listening for
   /// even when the compile-time consumer registry reports nothing for the type. Without this,
   /// integration tests that register a runtime receptor for a type the service has no
-  /// compile-time consumer for would have their messages silently dropped before any inbox
-  /// row is written.
+  /// compile-time consumer for would have their messages stored settled as having no local
+  /// consumer, never dispatched.
   /// </summary>
   public bool HasAnyRuntimeReceptors(string messageType) {
     if (_runtimeRegistrations.IsEmpty || string.IsNullOrEmpty(messageType)) {

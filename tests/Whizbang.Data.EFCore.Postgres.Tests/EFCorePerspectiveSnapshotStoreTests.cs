@@ -47,7 +47,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
     var result = await _store.GetLatestSnapshotWithCommitSequenceAsync(streamId, perspectiveName);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
     await Assert.That(result.Value.SnapshotCommitSequence)
       .IsEqualTo(expectedCommitSequence)
@@ -65,7 +65,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, snapshotData);
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
 
     var json = result.Value.SnapshotData.RootElement;
@@ -87,7 +87,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, updated);
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotData.RootElement.GetProperty("count").GetInt32()).IsEqualTo(2);
     result.Value.SnapshotData.Dispose();
   }
@@ -104,7 +104,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     }
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotData.RootElement.GetProperty("batch").GetInt32()).IsEqualTo(3);
     result.Value.SnapshotData.Dispose();
   }
@@ -199,7 +199,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId3, d3);
 
     var result = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId3);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(3);
     result.Value.SnapshotData.Dispose();
@@ -229,7 +229,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
     // Get latest before eventId3 — should return eventId2's snapshot
     var result = await _store.GetLatestSnapshotBeforeAsync(streamId, perspectiveName, eventId3);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId2);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(2);
     result.Value.SnapshotData.Dispose();
@@ -294,7 +294,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId3, d3);
 
     var result = await _store.GetLatestSnapshotBeforeAsync(streamId, perspectiveName, beforeEventId);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId2);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(2);
     result.Value.SnapshotData.Dispose();
@@ -317,7 +317,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, eventId2, d2);
 
     var result = await _store.GetLatestSnapshotBeforeAsync(streamId, perspectiveName, beforeEventId);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId1);
     result.Value.SnapshotData.Dispose();
   }
@@ -392,7 +392,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
     // Only latest 2 should remain
     var latest = await _store.GetLatestSnapshotAsync(streamId, perspectiveName);
-    await Assert.That(latest).IsNotNull();
+    await Assert.That(latest.HasValue).IsTrue();
     await Assert.That(latest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(5);
     latest.Value.SnapshotData.Dispose();
 
@@ -457,7 +457,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
       .Because("pruning a stream with no snapshots must not conjure one");
 
     var neighborLatest = await _store.GetLatestSnapshotAsync(neighborStream, perspectiveName);
-    await Assert.That(neighborLatest).IsNotNull()
+    await Assert.That(neighborLatest.HasValue).IsTrue()
       .Because("an unrelated stream's snapshots must survive a prune aimed at an empty stream");
     await Assert.That(neighborLatest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(3);
     neighborLatest.Value.SnapshotData.Dispose();
@@ -560,7 +560,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     // Anchor 250 → latest strictly before is commit sequence 200 (v=2).
     var result = await _store.GetLatestSnapshotBeforeCommitSequenceAsync(streamId, perspectiveName, 250L);
 
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(eventId2);
     await Assert.That(result.Value.SnapshotCommitSequence).IsEqualTo(200L);
     await Assert.That(result.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(2);
@@ -626,7 +626,7 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
     await _store.CreateSnapshotAsync(streamId, perspectiveName, snapshotEventId, data);
 
     var result = await _store.GetLatestSnapshotWithCommitSequenceAsync(streamId, perspectiveName);
-    await Assert.That(result).IsNotNull();
+    await Assert.That(result.HasValue).IsTrue();
     await Assert.That(result!.Value.SnapshotEventId).IsEqualTo(snapshotEventId);
     await Assert.That(result.Value.SnapshotCommitSequence).IsNull()
       .Because("legacy 4-arg snapshots carry no commit sequence");

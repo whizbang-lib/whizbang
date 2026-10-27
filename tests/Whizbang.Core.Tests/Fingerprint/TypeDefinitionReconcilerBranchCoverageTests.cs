@@ -39,7 +39,7 @@ public class TypeDefinitionReconcilerBranchCoverageTests {
     var summary = await _reconciler(coordinator, catalog).ReconcileAsync(CancellationToken.None);
 
     await Assert.That(summary.DriftDetected).IsEqualTo(1);
-    await Assert.That(coordinator.Recorded).IsNotNull();
+    await Assert.That(coordinator.Recorded.HasValue).IsTrue();
     await Assert.That(coordinator.Recorded!.Value.Relationship).IsEqualTo(DefinitionRelationship.ReclassifiedTo)
       .Because("the payload shape is unchanged and the type is now ephemeral: that is a reclassification, "
         + "not a metadata tweak and not a schema upgrade");
@@ -58,7 +58,7 @@ public class TypeDefinitionReconcilerBranchCoverageTests {
     var summary = await _reconciler(coordinator, catalog).ReconcileAsync(CancellationToken.None);
 
     await Assert.That(summary.DriftDetected).IsEqualTo(1);
-    await Assert.That(coordinator.Recorded).IsNotNull();
+    await Assert.That(coordinator.Recorded.HasValue).IsTrue();
     await Assert.That(coordinator.Recorded!.Value.Relationship).IsEqualTo(DefinitionRelationship.SchemaUpgradedTo)
       .Because("a changed payload shape takes precedence over the ephemeral classification: it is the change an "
         + "operator has to act on with an upcaster");

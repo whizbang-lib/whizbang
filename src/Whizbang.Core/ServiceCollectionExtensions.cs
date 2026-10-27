@@ -148,6 +148,20 @@ public static class ServiceCollectionExtensions {
     // host.RunAsync() instead of shipping under a policy nobody declared.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
 
+    // #1490: .NET binding ignores a key no options class reads, so a removed or misspelled Whizbang:* key
+    // left its setting at the default without a word. At host start every configured Whizbang:* key is
+    // checked against the embedded configuration key manifest; each one nothing reads is logged once at
+    // Warning (naming the replacement of a removed key), or fails start under
+    // Whizbang:Configuration:UnknownKeys = Throw.
+    services.AddOptions<ConfigurationCheckOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<ConfigurationCheckOptions>, ConfigureConfigurationCheckOptions>(
+      sp => new ConfigureConfigurationCheckOptions(sp.GetService<IConfiguration>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, UnknownConfigurationKeyStartupValidator>(
+      sp => new UnknownConfigurationKeyStartupValidator(
+        sp.GetRequiredService<IOptions<ConfigurationCheckOptions>>(),
+        sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UnknownConfigurationKeyStartupValidator>>(),
+        sp.GetService<IConfiguration>())));
+
     // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
     // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
     // shipped default advertises concurrency the runtime will not use, and every deployment
@@ -326,7 +340,8 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private static void _registerCoreServices(IServiceCollection services) {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
-    services.TryAddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
+    // No ITraceStore by default (#1601): a host opts in with AddWhizbangInMemoryTraceStore or its own store,
+    // and with none the dispatcher does no trace work
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.TryAddScoped<Messaging.ILifecycleContextAccessor, Messaging.AsyncLocalLifecycleContextAccessor>();
     services.TryAddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
@@ -401,7 +416,10 @@ public static class ServiceCollectionExtensions {
 
     // Register lens infrastructure
     services.TryAddSingleton<LensOptions>();
-    services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();
+    // The real emitter wherever an event store is registered, decided at first resolution so a driver
+    // registering its store after this call still counts; the null emitter where none is (#1621).
+    // TryAdd, so a host's own emitter registered first wins.
+    SystemEvents.DefaultSystemEventEmitter.TryAdd(services);
     services.TryAddScoped<IScopedLensFactory, ScopedLensFactory>();
 
     // Register observability metrics (near-zero cost when no OTEL exporter is attached)

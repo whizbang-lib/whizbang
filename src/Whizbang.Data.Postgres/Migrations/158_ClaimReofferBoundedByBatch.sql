@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 158_ClaimReofferBoundedByBatch.sql
 -- Date: 2026-09-16
 -- Description: One claim poll costs what the batch it returns costs, never what the instance holds.

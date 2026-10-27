@@ -257,7 +257,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:SentAt");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
   }
 
   [Test]
@@ -280,7 +280,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:CreatedBy");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("user-123");
   }
 
@@ -304,7 +304,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:TenantId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("tenant-456");
   }
 
@@ -328,7 +328,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:ProcessedBy");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("TestService");
   }
 
@@ -353,7 +353,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:MsgId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetGuid()).IsEqualTo(messageId.Value);
   }
 
@@ -378,7 +378,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:CorrelationId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetGuid()).IsEqualTo(correlationId.Value);
   }
 
@@ -449,8 +449,8 @@ public class AutoPopulateProcessorTests {
     processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
 
     // Assert
-    await Assert.That(envelope.GetMetadata("auto:SentAt")).IsNotNull();
-    await Assert.That(envelope.GetMetadata("auto:CreatedBy")).IsNotNull();
+    await Assert.That(envelope.GetMetadata("auto:SentAt").HasValue).IsTrue();
+    await Assert.That(envelope.GetMetadata("auto:CreatedBy").HasValue).IsTrue();
     await Assert.That(envelope.GetMetadata("auto:CreatedBy")!.Value.GetString()).IsEqualTo("user-999");
   }
 
@@ -543,7 +543,7 @@ public class AutoPopulateProcessorTests {
 
   [Test]
   public async Task AutoPopulateProcessor_ProcessAutoPopulate_QueuedAtTimestamp_ReturnsNullAndSkipsAsync() {
-    // Arrange - QueuedAt timestamps are set later by WorkCoordinatorPublisherWorker, not here
+    // Arrange - QueuedAt timestamps are not set by AutoPopulateProcessor
     var processor = new AutoPopulateProcessor();
     var registration = new AutoPopulateRegistration {
       MessageType = typeof(TestAutoPopulateMessage),
@@ -634,7 +634,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:InstanceId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.String); // Guids serialize as strings
   }
 
@@ -658,7 +658,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:HostName");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("localhost");
   }
 
@@ -682,7 +682,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:ProcessId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetInt32()).IsEqualTo(12345);
   }
 
@@ -724,7 +724,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:CausationId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetGuid()).IsEqualTo(causationId.Value);
   }
 
@@ -765,7 +765,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:StreamId");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("stream-123");
   }
 
@@ -909,7 +909,7 @@ public class AutoPopulateProcessorTests {
 
     // Assert
     var metadata = envelope.GetMetadata("auto:TenantIdProp");
-    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata.HasValue).IsTrue();
     await Assert.That(metadata!.Value.GetString()).IsEqualTo("tenant-x");
   }
 

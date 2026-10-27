@@ -236,6 +236,12 @@ public sealed class ProcessWideOptionsBindingTests {
     ["Whizbang:SystemEvents:AuditShipMaxDelaySeconds"] = "30",
     ["Whizbang:SystemEvents:AuditShipMaxBatchCount"] = "50",
     ["Whizbang:SystemEvents:AuditPriority"] = "200",
+    ["Whizbang:SystemEvents:AuditBodyDefault"] = "Include",
+    // Each security switch is set to the opposite of its default, so a key that does not bind fails (#1599)
+    ["Whizbang:SystemEvents:AccessDeniedEnabled"] = "false",
+    ["Whizbang:SystemEvents:PermissionChangedEnabled"] = "false",
+    ["Whizbang:SystemEvents:AccessGrantedEnabled"] = "true",
+    ["Whizbang:SystemEvents:ScopeContextEstablishedEnabled"] = "true",
   };
 
   private static async Task _assertSystemEventsBoundAsync(SystemEventOptions options) {
@@ -245,6 +251,11 @@ public sealed class ProcessWideOptionsBindingTests {
     await Assert.That(options.AuditShipMaxDelaySeconds).IsEqualTo(30);
     await Assert.That(options.AuditShipMaxBatchCount).IsEqualTo(50);
     await Assert.That(options.AuditPriority).IsEqualTo(200);
+    await Assert.That(options.AuditBodyDefault).IsEqualTo(AuditBodyDefault.Include);
+    await Assert.That(options.AccessDeniedEnabled).IsFalse();
+    await Assert.That(options.PermissionChangedEnabled).IsFalse();
+    await Assert.That(options.AccessGrantedEnabled).IsTrue();
+    await Assert.That(options.ScopeContextEstablishedEnabled).IsTrue();
   }
 
   [Test]

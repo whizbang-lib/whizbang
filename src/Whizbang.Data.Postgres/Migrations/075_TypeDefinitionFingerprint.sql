@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 075_TypeDefinitionFingerprint.sql
 -- Date: 2026-07-16
 -- Description: Type-definition fingerprint storage substrate (fingerprint F-1). One substrate detects when

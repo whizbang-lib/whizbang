@@ -397,9 +397,10 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   [Test]
   public async Task SubscribeAsync_MessageWithoutEnvelopeTypeHeader_DeadLettersWithMissingEnvelopeTypeReasonAsync() {
-    // Arrange — a message with no EnvelopeType ApplicationProperty has nothing to
-    // route on; the decision maker returns DeadLetter and the transport settles it
-    // via _safeDeadLetterAsync with the decision's reason + description
+    // Arrange: a message with no EnvelopeType ApplicationProperty whose body is not a readable envelope ("{}" has no
+    // id) cannot be stored, so the decision maker returns DeadLetter and the transport settles it via
+    // _safeDeadLetterAsync with the decision's reason and description (#1720: a readable envelope without the
+    // property is handed on instead, and the consumer gives it custody with its body)
     var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = _createTransport(JsonContextRegistry.CreateCombinedOptions(), options);
     await transport.InitializeAsync();
@@ -430,7 +431,8 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
         .Because("a message without EnvelopeType metadata must be dead-lettered by the transport");
       await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("MissingEnvelopeType");
       await Assert.That(deadLettered.DeadLetterErrorDescription)
-        .IsEqualTo("Message does not contain EnvelopeType metadata");
+        .IsEqualTo("Message does not contain EnvelopeType metadata; the body is not a readable envelope, so it cannot be stored")
+        .Because("the description names both the missing metadata and why the message could not be stored instead");
     } finally {
       subscription.Dispose();
     }
@@ -486,20 +488,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   // ========================================
 
   [Test]
-  public async Task SubscribeAsync_AgedSessionMessage_QuarantinesToTheEntityDlqWithDeliveryCountOneAsync() {
-    // The arc's motivating failure, at broker tier on a SESSION-enabled subscription.
-    //
-    // The emulator spike and a live Standard-namespace probe both established that a lock lost to
-    // connection death on a session entity does NOT increment DeliveryCount. So the broker's
-    // MaxDeliveryCount valve and the transport's MaxDeliveryAttempts branch — both reading that
-    // counter — can never fire under a consumer-death storm, and the message is hostage forever.
-    // This test proves the replacement works where the counter cannot: the message quarantines on
-    // AGE with DeliveryCount still at 1, and lands in the real per-entity DLQ that the existing
-    // dead-letter drainer already replays.
-    //
-    // AgeThreshold = zero makes any already-enqueued message aged, which is the only way to write
-    // this as a bounded test — the derivation (renewal x attempts, floored at 30 minutes) is
-    // property-locked in Whizbang.Core.Tests, not re-derived here.
+  public async Task SubscribeAsync_AgedSessionMessage_IsAcceptedNotDeadLetteredAsync() {
+    // Issue #1663, at broker tier on a SESSION-enabled subscription. AgeThreshold = zero makes the
+    // message aged on arrival, the shape of a backlog: first enqueued long ago, delivered now for the
+    // first time with DeliveryCount 1. The receive gate accepts it and hands it to the handler (which
+    // is what stores it in a host); it must not reach the DLQ. A session lock-loss storm, whose
+    // DeliveryCount never moves, is bounded after storage by durable observations (layer 2), which
+    // the data-driver tests lock.
     var options = new AzureServiceBusOptions { EnableSessions = true };
     var transport = new AzureServiceBusTransport(
       _fixture.Client,
@@ -508,6 +503,51 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       logger: null,
       adminClient: null,
       poisonDetector: _poisonDetector(TimeSpan.Zero));
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+    await _drainDeadLetterQueueAsync("topic-fifo-02", "sub-fifo-session");
+
+    var received = Channel.CreateUnbounded<string>();
+    var marker = $"aged-session-{Guid.CreateVersion7():N}";
+    var subscription = await transport.SubscribeAsync(
+      async (env, _, _) => {
+        if (env.Payload is TestMessage m) { await received.Writer.WriteAsync(m.Content, CancellationToken.None); }
+      },
+      new TransportDestination("topic-fifo-02", "sub-fifo-session")
+    );
+
+    try {
+      await transport.PublishBatchAsync(
+        [_createBulkItem(_createTestEnvelope(marker), Guid.CreateVersion7())],
+        new TransportDestination("topic-fifo-02"));
+
+      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+      string? delivered = null;
+      while (delivered != marker) {
+        delivered = await received.Reader.ReadAsync(cts.Token);
+      }
+
+      await Assert.That(delivered).IsEqualTo(marker)
+        .Because("an aged message is accepted at receive; the gate never quarantines on age");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  public async Task SubscribeAsync_QuarantineVerdictOnASession_LandsInTheEntityDlqWithDeliveryCountOneAsync() {
+    // The broker-tier lock on the quarantine MECHANISM for a SESSION-enabled subscription: a
+    // quarantine verdict reaches the real per-entity DLQ that the existing dead-letter drainer
+    // replays, with DeliveryCount still at 1. Since #1663 the default detector never quarantines at
+    // receive (an aged message is accepted), so a detector that does (a custom policy) drives it.
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      JsonContextRegistry.CreateCombinedOptions(),
+      options,
+      logger: null,
+      adminClient: null,
+      poisonDetector: new QuarantineEveryMessage());
     _disposables.Add(transport);
     await transport.InitializeAsync();
     await _drainDeadLetterQueueAsync("topic-fifo-02", "sub-fifo-session");
@@ -529,10 +569,10 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
         "topic-fifo-02", "sub-fifo-session", envelope.MessageId.Value.ToString());
 
       await Assert.That(deadLettered).IsNotNull()
-        .Because("an aged session message must reach the DLQ on age alone");
+        .Because("a quarantine verdict on a session message must reach the entity DLQ");
       await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("PoisonQuarantine");
       await Assert.That(deadLettered.DeliveryCount).IsEqualTo(1)
-        .Because("the counter every legacy valve reads never moved — that is the whole point");
+        .Because("the verdict acts on the first delivery, before any count-based valve could");
       await Assert.That(Volatile.Read(ref handlerInvoked)).IsEqualTo(0)
         .Because("quarantine happens at the receive boundary, before the handler");
     } finally {
@@ -583,8 +623,26 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     }
   }
 
-  /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
-  /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
+  /// <summary>A custom detector that quarantines every message, to lock the broker-tier DLQ mechanism.</summary>
+  private sealed class QuarantineEveryMessage : Whizbang.Core.Routing.IPoisonMessageDetector {
+    public Whizbang.Core.Routing.PoisonVerdict Evaluate(Whizbang.Core.Routing.PoisonEvaluationContext context) =>
+      Whizbang.Core.Routing.PoisonVerdict.Quarantine(
+        Whizbang.Core.Routing.PoisonQuarantineReason.ObservationCountExceeded, "custom policy");
+
+    public void RecordQuarantine(
+        Whizbang.Core.Routing.PoisonQuarantineGate gate,
+        Whizbang.Core.Routing.PoisonVerdict verdict,
+        Whizbang.Core.Routing.PoisonEvaluationContext context,
+        IReadOnlyDictionary<string, object?>? additionalTags = null) {
+    }
+
+    public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) {
+    }
+  }
+
+  /// <summary>Real Core detector with an explicit age threshold. Layer 2 is unreachable here (the
+  /// transport boundary reports no durable observation count), and since #1663 layer 1 never
+  /// quarantines on age, so this detector only reports aged messages.</summary>
   private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
     new(
       Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
@@ -594,11 +652,11 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       new System.Diagnostics.Metrics.Meter("Whizbang.Transports.AzureServiceBus.Integration.Tests.Poison"));
 
   [Test]
-  public async Task SubscribeAsync_MalformedJsonBody_AcksAndDropsWithoutDeadLetteringAsync() {
-    // Arrange — slice 1 hotfix behavior: a body that fails deserialization for a
-    // KNOWN envelope type is acked + dropped (completed at the broker), NOT
-    // dead-lettered. MaxConcurrentCalls=1 guarantees the malformed message is fully
-    // settled before the subsequent valid message reaches the handler.
+  public async Task SubscribeAsync_MalformedJsonBody_DeadLettersItAndNeverHandsItOnAsync() {
+    // Arrange: #1720. A body that is not JSON for a KNOWN envelope type is the one thing refused before storage, and it
+    // is dead-lettered (custody at the broker, which the dead-letter drain imports), never acked and dropped, and never
+    // handed to the handler. MaxConcurrentCalls=1 guarantees the malformed message is fully settled before the
+    // subsequent valid message reaches the handler.
     var options = new AzureServiceBusOptions { EnableSessions = false, MaxConcurrentCalls = 1 };
     var transport = _createTransport(JsonContextRegistry.CreateCombinedOptions(), options);
     await transport.InitializeAsync();
@@ -609,9 +667,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var validAwaiter = new MessageAwaiter<IMessageEnvelope>(
       envelope => envelope.MessageId.Value == validEnvelope.MessageId.Value ? envelope : null
     );
+    var handled = new System.Collections.Concurrent.ConcurrentBag<Guid>();
 
     var subscription = await transport.SubscribeAsync(
-      validAwaiter.Handler,
+      (envelope, envelopeType, token) => {
+        handled.Add(envelope.MessageId.Value);
+        return validAwaiter.Handler(envelope, envelopeType, token);
+      },
       new TransportDestination("topic-01", "sub-01-a")
     );
 
@@ -642,18 +704,16 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       subscription.Dispose();
     }
 
-    // Assert — NOT dead-lettered: the DLQ contains no trace of the malformed message
-    var dlqReceiver = _fixture.Client.CreateReceiver("topic-01", "sub-01-a",
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
-    try {
-      var dlqMessages = await dlqReceiver.PeekMessagesAsync(maxMessages: 100);
-      await Assert.That(dlqMessages.Any(m => m.MessageId == malformedMessageId)).IsFalse()
-        .Because("deserialization failures are acked + dropped, never dead-lettered (slice 1 hotfix)");
-    } finally {
-      await dlqReceiver.DisposeAsync();
-    }
+    await Assert.That(handled).IsEquivalentTo([validEnvelope.MessageId.Value])
+      .Because("a body that is not JSON is never handed on: only the valid message reaches the handler");
 
-    // Assert — completed at the broker: the malformed message is gone from the subscription
+    // Assert: dead-lettered, with the reason the typed read gave
+    var deadLettered = await _receiveDeadLetteredMessageAsync("topic-01", "sub-01-a", malformedMessageId);
+    await Assert.That(deadLettered).IsNotNull()
+      .Because("invalid JSON is refused before storage and dead-lettered with custody, never dropped (#1720)");
+    await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("DeserializationFailed");
+
+    // Assert: not left on the subscription either
     var receiver = _fixture.Client.CreateReceiver("topic-01", "sub-01-a");
     try {
       for (var i = 0; i < 2; i++) {
@@ -662,7 +722,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
           break;
         }
         await Assert.That(residual.MessageId).IsNotEqualTo(malformedMessageId)
-          .Because("the malformed message must have been completed (acked) by the transport");
+          .Because("the malformed message was settled (dead-lettered) by the transport, not left for redelivery");
         await receiver.CompleteMessageAsync(residual);
       }
     } finally {
@@ -772,9 +832,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   /// <summary>
   /// Waits (broker-side) for a specific message to arrive in the subscription's
-  /// dead-letter sub-queue. Completes and returns the match; completes and skips
+  /// dead-letter sub-queue. Removes and returns the match; removes and skips
   /// stray dead-lettered messages from earlier runs. Returns null if the message
   /// never arrives within ~60 seconds of broker-side waits.
+  /// <para>
+  /// Receive-and-delete, not peek-lock: these helpers only consume, and completing a
+  /// peek-locked dead-letter message intermittently failed with MessageLockLost on the
+  /// emulator, failing a test whose assertion had nothing to do with locks.
+  /// </para>
   /// </summary>
   private async Task<ServiceBusReceivedMessage?> _receiveDeadLetteredMessageAsync(
     string topicName,
@@ -782,7 +847,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     string expectedMessageId
   ) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var attempt = 0; attempt < 12; attempt++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5));
@@ -790,7 +855,6 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
           continue;
         }
 
-        await receiver.CompleteMessageAsync(message);
         if (message.MessageId == expectedMessageId) {
           return message;
         }
@@ -802,14 +866,14 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
   }
 
   private async Task _drainMessagesAsync(string topicName, string subscriptionName) {
-    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName);
+    var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
+      new ServiceBusReceiverOptions { ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();
@@ -818,14 +882,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   private async Task _drainDeadLetterQueueAsync(string topicName, string subscriptionName) {
     var receiver = _fixture.Client.CreateReceiver(topicName, subscriptionName,
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
+      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete });
     try {
       for (var i = 0; i < 100; i++) {
         var message = await receiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
         if (message == null) {
           break;
         }
-        await receiver.CompleteMessageAsync(message);
       }
     } finally {
       await receiver.DisposeAsync();

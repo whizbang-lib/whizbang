@@ -16,7 +16,7 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// idempotent re-registration per (type, key), and the empty default for ungrouped models —
 /// untouchable by cascades.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 public class PerspectiveStreamGroupRegistryTests {
 
   private sealed class ListModel;

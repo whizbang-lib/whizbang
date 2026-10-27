@@ -13,7 +13,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Strategy interface for publishing outbox messages to a transport.
 /// Implementations define how messages are published (e.g., to Azure Service Bus, AWS SQS, etc.).
-/// This abstraction allows pluggable publish logic in WorkCoordinatorPublisherWorker.
+/// This abstraction allows pluggable publish logic in OutboxDrainWorker and OutboxPublishWorker.
 /// </summary>
 /// <docs>extending/extensibility/custom-transports</docs>
 public interface IMessagePublishStrategy {
@@ -30,7 +30,7 @@ public interface IMessagePublishStrategy {
 
   /// <summary>
   /// Publishes a single outbox message to the configured transport.
-  /// Called by WorkCoordinatorPublisherWorker's internal publisher loop.
+  /// Called by the publish paths of OutboxDrainWorker and OutboxPublishWorker.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/MessagePublishStrategyTests.cs:IMessagePublishStrategy_Interface_ShouldHavePublishAsyncMethodAsync</tests>
   /// <param name="work">The outbox work item containing the message to publish</param>

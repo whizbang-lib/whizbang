@@ -1,6 +1,13 @@
-# Design: Stream Assignment Model for process_work_batch
+# Design: Stream Assignment Model for the work-batch call
 
-## Status: PROPOSED — not yet implemented
+## Status: superseded by the work-pump decomposition
+
+This proposal was written against `process_work_batch`, the single SQL call that once claimed,
+stored and returned all work. That function has since been removed (migration 029 drops it). Its
+claim portion became `claim_work`, which returns stream ids for outbox work; the outbox worker
+fetches payloads on demand through `fetch_outbox_batch`, and inbox and perspective work have their
+own fetch functions (`fetch_inbox_batch`, `fetch_pending_perspective_events`). The text below is the
+original proposal, kept for its reasoning.
 
 ## Problem
 
@@ -66,7 +73,7 @@ Worker → caches messages in memory, only fetches what's new
 This affects:
 - `process_work_batch` return contract (Phase 7)
 - `WorkBatchRow` / `WorkBatch` C# types
-- `WorkCoordinatorPublisherWorker` (outbox processing)
+- The outbox worker (now `ClaimWorker` for claiming and `OutboxDrainWorker` for publishing)
 - `PerspectiveWorker` (perspective processing)
 - `TransportConsumerWorker` (inbox processing — already partially separated)
 - `IWorkCoordinator` interface (new fetch methods)

@@ -1,7 +1,6 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core;
 using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
@@ -15,13 +14,16 @@ namespace Whizbang.Testing.Transport;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Transport subscriptions (especially Azure Service Bus) may not be immediately
-/// ready to receive messages after SubscribeAsync returns. The processor needs
-/// time to establish AMQP connections and register with the broker.
+/// Warmup is one round trip through the real subscription: publish a warmup message and wait for
+/// the subscriber to signal that it received it. It proves the subscriber is consuming before the
+/// test publishes the message it asserts on, without waiting on the clock.
 /// </para>
 /// <para>
-/// This class provides a reliable warmup pattern: keep sending test messages
-/// until one is successfully received, confirming the subscription is ready.
+/// One publish is enough. Every transport's subscribe call returns only after its subscription is
+/// durable on the broker (an Azure Service Bus subscription exists, a RabbitMQ queue is declared and
+/// bound), so the warmup message waits there until the subscriber takes it. There is no initial
+/// delay and no resend: the only wait is on the subscriber's signal, bounded by a timeout that fails
+/// the test when the signal never comes.
 /// </para>
 /// </remarks>
 public static class SubscriptionWarmup {
@@ -31,16 +33,6 @@ public static class SubscriptionWarmup {
   /// Default timeout for subscription warmup.
   /// </summary>
   public static readonly TimeSpan DefaultWarmupTimeout = TimeSpan.FromSeconds(30);
-
-  /// <summary>
-  /// Default delay between warmup message sends.
-  /// </summary>
-  public static readonly TimeSpan DefaultRetryInterval = TimeSpan.FromSeconds(2);
-
-  /// <summary>
-  /// Default initial delay before starting warmup.
-  /// </summary>
-  public static readonly TimeSpan DefaultInitialDelay = TimeSpan.FromSeconds(5);
 
   /// <summary>
   /// Generates a unique warmup ID for distinguishing warmup messages from test messages.
@@ -99,61 +91,38 @@ public static class SubscriptionWarmup {
   }
 
   /// <summary>
-  /// Performs subscription warmup by sending messages until one is received.
+  /// Publishes one warmup message and waits for the subscriber to signal that it arrived.
   /// </summary>
   /// <typeparam name="TEnvelope">The envelope type.</typeparam>
   /// <param name="transport">The transport to publish through.</param>
   /// <param name="destination">The destination to publish to.</param>
-  /// <param name="envelopeFactory">Factory to create warmup envelopes.</param>
-  /// <param name="warmupAwaiter">Awaiter that completes when warmup message is received.</param>
-  /// <param name="timeout">Maximum warmup time.</param>
-  /// <param name="retryInterval">Interval between publish attempts.</param>
-  /// <param name="initialDelay">Delay before first publish attempt.</param>
+  /// <param name="envelopeFactory">Factory to create the warmup envelope.</param>
+  /// <param name="warmupAwaiter">Awaiter the subscriber signals when it receives the warmup message.</param>
+  /// <param name="timeout">How long to wait for the signal. Defaults to <see cref="DefaultWarmupTimeout"/>.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <exception cref="TimeoutException">Thrown if warmup doesn't complete within timeout.</exception>
-  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public testing API surface — changing the signature is a source break for downstream test suites. Each parameter is a distinct warmup concern (transport, destination, envelope factory, signal, three independent timing knobs, cancellation).")]
+  /// <exception cref="TimeoutException">Thrown if the subscriber does not signal within the timeout.</exception>
+  /// <exception cref="OperationCanceledException">Thrown if <paramref name="cancellationToken"/> is canceled.</exception>
+  /// <tests>tests/Whizbang.Testing.Component.Tests/Transport/SubscriptionWarmupTests.cs</tests>
   public static async Task WarmupAsync<TEnvelope>(
     ITransport transport,
     TransportDestination destination,
     Func<TEnvelope> envelopeFactory,
     SignalAwaiter warmupAwaiter,
     TimeSpan? timeout = null,
-    TimeSpan? retryInterval = null,
-    TimeSpan? initialDelay = null,
     CancellationToken cancellationToken = default
   ) where TEnvelope : IMessageEnvelope {
-    timeout ??= DefaultWarmupTimeout;
-    retryInterval ??= DefaultRetryInterval;
-    initialDelay ??= DefaultInitialDelay;
-
-    // Give the processor time to establish its connection
-    await Task.Delay(initialDelay.Value, cancellationToken);
-
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout.Value);
-
-    while (!warmupAwaiter.IsSignaled && !cts.Token.IsCancellationRequested) {
-      var envelope = envelopeFactory();
-      await transport.PublishAsync(envelope, destination, cancellationToken: cts.Token);
-
-      // Wait for either warmup completion or retry interval
-      try {
-        await warmupAwaiter.WaitAsync(retryInterval.Value, cts.Token);
-        return; // Success!
-      } catch (TimeoutException) {
-        // Retry
-      } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-        // The overall warmup budget ran out while this retry interval was still waiting.
-        // That is a timeout, and this method documents a TimeoutException for it, so stop
-        // retrying and report it below. Only the CALLER's cancellation propagates as a
-        // cancellation; letting the internal deadline escape as one would tell a caller its
-        // own token was canceled when it never was.
-        break;
-      }
+    cancellationToken.ThrowIfCancellationRequested();
+    if (warmupAwaiter.IsSignaled) {
+      return;
     }
 
-    if (!warmupAwaiter.IsSignaled) {
-      throw new TimeoutException($"Subscription warmup timed out after {timeout}");
+    var budget = timeout ?? DefaultWarmupTimeout;
+    await transport.PublishAsync(envelopeFactory(), destination, cancellationToken: cancellationToken);
+
+    try {
+      await warmupAwaiter.WaitAsync(budget, cancellationToken);
+    } catch (TimeoutException ex) {
+      throw new TimeoutException($"Subscription warmup timed out after {budget}", ex);
     }
   }
 }

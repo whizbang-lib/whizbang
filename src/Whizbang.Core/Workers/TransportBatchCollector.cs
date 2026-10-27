@@ -26,6 +26,9 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer#batch-collector</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportBatchCollectorTests.cs</tests>
 public sealed class TransportBatchCollector<T> : IAsyncDisposable {
+  /// <summary>The flushes started by a full batch or a timer that are still running; disposal waits for them (#1721).</summary>
+  internal Messaging.DetachedLifecycleWork InFlightFlushes { get; } = new();
+
   private readonly TransportBatchOptions _options;
   private readonly Func<IReadOnlyList<T>, Task> _flushCallback;
 
@@ -89,9 +92,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     }
 
     if (shouldFlushNow) {
-#pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
-      _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
-#pragma warning restore RCS1075
+      _startBackgroundFlush();
     }
   }
 
@@ -106,6 +107,14 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     await _slideTimer.DisposeAsync();
     await _hardMaxTimer.DisposeAsync();
 
+    // The flushes already running finish first: each hands its batch to the callback, and the owner disposes the
+    // collector so that nothing is handed over after it is gone (#1721)
+    // Not from inside one of those flushes (its callback disposing its own subscription): that flush cannot finish
+    // until this disposal does, so waiting for it would never end. The flush finishes once the callback returns.
+    if (!TransportBatchFlushScope.IsInsideFlushOf(this)) {
+      await InFlightFlushes.DrainAsync(CancellationToken.None);
+    }
+
     // Flush any remaining pending messages
     await _flushBatchAsync();
   }
@@ -119,8 +128,13 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       return;
     }
 
+    _startBackgroundFlush();
+  }
+
+  // Recorded, so disposal waits for it instead of returning while it still hands a batch to the callback (#1721)
+  private void _startBackgroundFlush() {
 #pragma warning disable RCS1075 // Exceptions handled in _flushBatchAsync (batch re-queued for retry)
-    _ = Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } });
+    InFlightFlushes.Track(Task.Run(async () => { try { await _flushBatchAsync(); } catch { /* re-queued in _flushBatchAsync */ } }));
 #pragma warning restore RCS1075
   }
 
@@ -130,6 +144,9 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     // (fixes sonar S4144).
     SlideTimerTick(state);
   }
+
+  // Marks the callback as this collector's flush while it runs, so a disposal it reaches does not wait for it
+  private Task _invokeFlushCallbackAsync(List<T> batch) => TransportBatchFlushScope.Run(this, batch, _flushCallback);
 
   private async Task _flushBatchAsync() {
     List<T> batch;
@@ -148,7 +165,7 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
     }
 
     try {
-      await _flushCallback(batch);
+      await _invokeFlushCallbackAsync(batch);
       OnBatchFlushed?.Invoke(batch.Count);
     } catch (Exception) {
       // Re-add failed batch to pending for retry on next flush
@@ -163,4 +180,32 @@ public sealed class TransportBatchCollector<T> : IAsyncDisposable {
       throw;
     }
   }
+}
+
+/// <summary>
+/// Which transport batch collector's flush callback is running: on this thread, for the callback's synchronous part
+/// and every continuation it runs inline (an in-process request completing its reply), and along the callback's own
+/// awaited path. A disposal reached from either is inside that flush and must not wait for it (#1721).
+/// </summary>
+/// <remarks>Not in the generic collector, so one record serves every closed collector type.</remarks>
+internal static class TransportBatchFlushScope {
+  [ThreadStatic] private static object? _onThisThread;
+  private static readonly AsyncLocal<object?> _onThisPath = new();
+
+  /// <summary>Runs <paramref name="callback"/> as <paramref name="collector"/>'s flush.</summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1229:Use async/await when necessary", Justification = "Deliberate: the thread marker covers only the callback's synchronous part, which is where continuations it completes run inline, and is restored as soon as that part returns. The awaited path is covered by the async-local marker, which flows on its own.")]
+  public static Task Run<T>(object collector, List<T> batch, Func<IReadOnlyList<T>, Task> callback) {
+    var outer = _onThisThread;
+    _onThisThread = collector;
+    _onThisPath.Value = collector;
+    try {
+      return callback(batch);
+    } finally {
+      _onThisThread = outer;
+    }
+  }
+
+  /// <summary>Whether the caller is inside <paramref name="collector"/>'s flush.</summary>
+  public static bool IsInsideFlushOf(object collector) =>
+    ReferenceEquals(_onThisThread, collector) || ReferenceEquals(_onThisPath.Value, collector);
 }

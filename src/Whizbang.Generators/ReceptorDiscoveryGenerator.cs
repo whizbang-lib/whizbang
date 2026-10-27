@@ -79,17 +79,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(
           SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
 
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractReceptorInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Pipeline 2: Check for IPerspectiveFor implementations (for WHIZ002 diagnostic)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _hasPerspectiveInterface(ctx, ct)
     ).Where(static hasPerspective => hasPerspective);
 
@@ -125,26 +133,39 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Combine(genericSagaReceptors.Collect())
         .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
 
-    var compilationAndData = context.CompilationProvider.Combine(combined).Combine(allSagaReceptors);
+    var receptorsAndPerspectives = combined.Combine(allSagaReceptors);
+
+    // The facts the output reads from the compilation, projected to values before they meet the receptors: the
+    // assembly name and the concrete subtypes of each polymorphic message type. Combining the compilation itself
+    // would regenerate every receptor source on every edit, since every edit is a new compilation; the facts change
+    // only when a receptor or the types it handles do.
+    var compilationFacts = receptorsAndPerspectives
+        .Select(static (data, _) => _allReceptors(data.Left.Left, data.Right))
+        .Combine(context.CompilationProvider)
+        .Select(static (data, _) => ReceptorCompilationFacts.From(data.Right, data.Left));
 
     // Generate registration code with awareness of both receptors and perspectives
     context.RegisterSourceOutput(
-        compilationAndData,
+        receptorsAndPerspectives.Combine(compilationFacts),
         static (ctx, data) => {
-          var compilation = data.Left.Left;
-          var receptors = data.Left.Right.Left;
-          var perspectives = data.Left.Right.Right;
-          // Synthesized saga receptors join the discovered ones — everything downstream (DI
-          // registration, dispatcher routing, the receptor registry) is driven off this one array.
-          var allReceptors = receptors
-              .Where(static r => r is not null)
-              .Select(static r => r!)
-              .ToImmutableArray()
-              .AddRange(data.Right);
-          _generateDispatcherRegistrations(ctx, compilation, allReceptors, perspectives);
+          var facts = data.Right;
+          var perspectives = data.Left.Left.Right;
+          _generateDispatcherRegistrations(ctx, facts, _allReceptors(data.Left.Left.Left, data.Left.Right), perspectives);
         }
     );
   }
+
+  /// <summary>
+  /// The discovered receptors and the synthesized saga receptors together. Everything downstream (DI registration,
+  /// dispatcher routing, the receptor registry) is driven off this one array.
+  /// </summary>
+  private static ImmutableArray<ReceptorInfo> _allReceptors(
+      ImmutableArray<ReceptorInfo?> discovered, ImmutableArray<ReceptorInfo> synthesized) =>
+    discovered
+        .Where(static r => r is not null)
+        .Select(static r => r!)
+        .ToImmutableArray()
+        .AddRange(synthesized);
 
   /// <summary>
   /// Describes the recovery receptors the saga generator will emit into a <c>[Saga]</c>-marked
@@ -302,6 +323,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
 
       var messageTypeSymbol = found.TypeArguments[0];
+      var notInjectable = _likelyNotInjectableParameter(classSymbol);
       // 2-arg interfaces have a response type; 1-arg are void receptors
 #pragma warning disable RS0030 // local format keeps UseSpecialTypes and EscapeKeywordIdentifiers, which the shared FullyQualifiedWithNullability lacks
       var responseType = argCount == 2
@@ -323,8 +345,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
           IsIdempotent: isIdempotent,
           SuppressesRegistration: _suppressesRegistration(classSymbol),
-          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol),
-          IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol)
+          LikelyNotInjectableParameter: notInjectable?.Description,
+          IsOnceAcrossServices: _hasReceptorOnceAcrossServicesAttribute(classSymbol),
+          Priority: _receptorPriority(classSymbol),
+          NotInjectableLocation: notInjectable?.Location
       );
     }
 
@@ -354,7 +378,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Finds all concrete (non-abstract) types in the compilation that derive from or implement
   /// the given type. Used for polymorphic receptor expansion.
   /// </summary>
-  private static System.Collections.Generic.List<string> _findConcreteSubtypes(
+  internal static System.Collections.Generic.List<string> FindConcreteSubtypes(
       Compilation compilation, string baseTypeFQN) {
     var baseSymbol = compilation.GetTypeByMetadataName(
         baseTypeFQN.Replace("global::", ""));
@@ -525,7 +549,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Generates C# code for sync attributes array.
   /// Returns "null" if no sync attributes, otherwise returns the array initializer.
   /// </summary>
-  private static string _generateSyncAttributesCode(SyncAttributeInfo[]? syncAttributes) {
+  private static string _generateSyncAttributesCode(EquatableArray<SyncAttributeInfo>? syncAttributes) {
     if (syncAttributes is null || syncAttributes.Length == 0) {
       return "null";
     }
@@ -556,7 +580,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>Renders the EventTypes array literal or the string <c>null</c>.</summary>
-  private static string _formatEventTypesLiteral(string[]? eventTypes) {
+  private static string _formatEventTypesLiteral(EquatableArray<string>? eventTypes) {
     if (eventTypes is not { Length: > 0 }) {
       return "null";
     }
@@ -637,7 +661,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// is left alone, because guessing more aggressively would warn on legitimate code and train people
   /// to ignore the warning.
   /// </remarks>
-  private static string? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
+  private static (string Description, Location? Location)? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
     // Widest accessible constructor is the one the container would choose.
     IMethodSymbol? candidate = null;
     foreach (var ctor in classSymbol.InstanceConstructors) {
@@ -669,7 +693,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           or SpecialType.System_Decimal;
 
       if (isDelegate || isBarePrimitive) {
-        return parameter.Name + "|" + TypeNameUtilities.Display(type);
+        return (parameter.Name + "|" + TypeNameUtilities.Display(type), parameter.Locations.FirstOrDefault());
       }
     }
 
@@ -716,6 +740,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Returns true when the receptor is decorated with <c>[ReceptorOnceAcrossServices]</c>: it runs once
   /// for a message across every service, so a prior invocation recorded by any service stops it.
   /// </summary>
+  /// <summary>
+  /// The receptor's <c>[ReceptorPriority]</c> value, or the middle default when it declares none (#1412).
+  /// </summary>
+  private static int _receptorPriority(INamedTypeSymbol classSymbol) {
+    const string RECEPTOR_PRIORITY_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorPriorityAttribute";
+    var attribute = classSymbol.GetAttributes().FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_PRIORITY_ATTRIBUTE));
+    return attribute?.ConstructorArguments is [{ Value: int priority }] ? priority : ReceptorInfo.DEFAULT_PRIORITY;
+  }
+
   private static bool _hasReceptorOnceAcrossServicesAttribute(INamedTypeSymbol classSymbol) {
     const string RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorOnceAcrossServicesAttribute";
     return classSymbol.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, RECEPTOR_ONCE_ACROSS_SERVICES_ATTRIBUTE));
@@ -1038,11 +1071,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateDispatcherRegistrations(
       SourceProductionContext context,
-      Compilation compilation,
+      ReceptorCompilationFacts facts,
       ImmutableArray<ReceptorInfo> receptors,
       ImmutableArray<bool> hasPerspectives) {
 
-    var assemblyName = compilation.AssemblyName ?? "";
+    var assemblyName = facts.AssemblyName ?? "";
 
     // Only warn if BOTH IReceptor and IPerspectiveFor implementations are missing
     // Example: BFF with 5 IPerspectiveFor but no IReceptor should NOT warn
@@ -1082,16 +1115,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Validate: RPC handlers (non-void receptors) must have exactly one handler per message type
     _reportMultipleRpcHandlerConflicts(context, receptors);
 
-    var registrationSource = _generateRegistrationSource(compilation, receptors);
+    var registrationSource = _generateRegistrationSource(facts, receptors);
     context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
 
-    var dispatcherSource = _generateDispatcherSource(compilation, receptors);
+    var dispatcherSource = _generateDispatcherSource(facts, receptors);
     context.AddSource("Dispatcher.g.cs", dispatcherSource);
 
-    var receptorRegistrySource = _generateReceptorRegistrySource(compilation, receptors);
+    var receptorRegistrySource = _generateReceptorRegistrySource(facts, receptors);
     context.AddSource("ReceptorRegistry.g.cs", receptorRegistrySource);
 
-    var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
+    var diagnosticsSource = _generateDiagnosticsSource(facts, receptors);
     context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
 
@@ -1149,7 +1182,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ReceptorLikelyNotInjectable,
-          Location.None,
+          receptor.NotInjectableLocation,
           TypeNameUtilities.GetSimpleName(receptor.ClassName),
           parts[0],
           parts[1]
@@ -1163,9 +1196,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string _generateRegistrationSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateRegistrationSource(ReceptorCompilationFacts facts, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = facts.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template from embedded resource
@@ -1279,9 +1312,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S125:Sections of code should not be commented out",
     Justification = "Explanatory prose comments (containing parentheses/method-like phrasing) are misidentified as commented-out code. The comments describe the surrounding generated code intent and are not executable C#.")]
-  private static string _generateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateDispatcherSource(ReceptorCompilationFacts facts, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = facts.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Separate async and sync receptors, then further by void/non-void
@@ -1297,24 +1330,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var voidSyncReceptors = syncReceptors.Where(r => r.IsVoid).ToImmutableArray();
 
     // Group regular async receptors by message type to handle multi-destination routing
+    // Each group is in priority order (#1412), declaration order on ties, so the first is the earliest
     var regularReceptorsByMessage = regularReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group void async receptors by message type
     var voidReceptorsByMessage = voidReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group regular sync receptors by message type
     var regularSyncReceptorsByMessage = regularSyncReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // Group void sync receptors by message type
     var voidSyncReceptorsByMessage = voidSyncReceptors
         .GroupBy(r => r.MessageType)
-        .ToDictionary(g => g.Key, g => g.ToList());
+        .ToDictionary(g => g.Key, g => g.OrderBy(r => r.Priority).ToList());
 
     // The send lookups (SendAsync, SendManyAsync, LocalInvokeAsync) resolve a message's HANDLER: a
     // receptor local dispatch fires (no [FireAt], or a LocalImmediate stage). A receptor declared only
@@ -1333,7 +1367,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Where(r => r.IsPolymorphicMessageType)
         .Select(r => r.MessageType)
         .Distinct()
-        .ToDictionary(t => t, t => _findConcreteSubtypes(compilation, t).ToList());
+        .ToDictionary(t => t, t => facts.ConcreteSubtypesOf(t).ToList());
     IEnumerable<string> routingOrder(IEnumerable<string> messageTypes) =>
       messageTypes.OrderBy(t => concreteTypesByPolymorphicMessage.ContainsKey(t) ? 1 : 0);
     string widened(string generatedCode, string messageType) =>
@@ -1414,7 +1448,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // the message implements. A receptor declared only at a pipeline stage fires there through the
     // receptor invoker instead. A message type with none gets no publisher, so "has a local handler" is
     // exactly "a publisher exists" (#1410 follow-up).
-    var localRunReceptorsByMessage = _localRunReceptorsByMessage(compilation, receptors);
+    var localRunReceptorsByMessage = _localRunReceptorsByMessage(facts, receptors);
 
     var publishRouting = new StringBuilder();
     foreach (var messageType in localRunReceptorsByMessage.Keys) {
@@ -1576,6 +1610,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "UNTYPED_PUBLISH_ROUTING", untypedPublishRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "LOCAL_RUNNER_ROUTING", _buildLocalRunnerRouting(localRunReceptorsByMessage));
+    // The interfaces and base types local receptors are declared for, so a message with no receptor of its
+    // exact type finds them at runtime, whatever assembly it comes from (#1418)
+    var polymorphicTypes = receptors
+        .Where(r => r.IsPolymorphicMessageType && r.FiresOnLocalDispatch)
+        .Select(r => r.MessageType)
+        .Distinct()
+        .OrderBy(t => t, System.StringComparer.Ordinal)
+        .Select(t => $"typeof({t}),");
+    result = TemplateUtilities.ReplaceRegion(result, "POLYMORPHIC_RECEPTOR_MESSAGE_TYPES", string.Join("\n    ", polymorphicTypes));
     result = TemplateUtilities.ReplaceRegion(result, "SYNC_SEND_ROUTING", syncSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SYNC_SEND_ROUTING", voidSyncSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "ANY_SEND_ROUTING", anySendRouting.ToString());
@@ -1589,12 +1633,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
-  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached (never at an outbox stage)
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached (never at an outbox stage)
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
   /// </summary>
-  private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateReceptorRegistrySource(ReceptorCompilationFacts facts, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = facts.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Read template from embedded resource
@@ -1607,7 +1651,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var snippets = _loadRegistrySnippets();
 
     // Build routing entries with polymorphic expansion
-    var routingEntries = _buildRoutingEntries(compilation, receptors);
+    var routingEntries = _buildRoutingEntries(facts, receptors);
 
     // Group by (routingMessageType, stage) and generate routing code
     var routingCode = _generateRoutingCode(routingEntries, snippets);
@@ -1643,7 +1687,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage
       sb.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
-      sb.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
+      // Through object: a reply type that is sealed and not a message cannot be cast from IMessage (CS0030); such a
+      // value never matches here, since only messages are cascaded
+      sb.AppendLine($"        return PublishToOutboxAsync(({eventType})(object)message, messageType, messageId, sourceEnvelope{eventStoreOnlyParam});");
       sb.AppendLine(INDENT_6_CLOSE_BRACE);
       sb.AppendLine();
     }
@@ -1709,7 +1755,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// or base type. Receptors declared only at a pipeline stage are left out; they fire at that stage.
   /// </summary>
   private static Dictionary<string, List<ReceptorInfo>> _localRunReceptorsByMessage(
-      Compilation compilation,
+      ReceptorCompilationFacts facts,
       ImmutableArray<ReceptorInfo> receptors) {
     var byMessage = new Dictionary<string, List<ReceptorInfo>>();
     void add(string messageType, ReceptorInfo receptor) {
@@ -1727,12 +1773,74 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
       add(receptor.MessageType, receptor);
       if (receptor.IsPolymorphicMessageType) {
-        foreach (var concreteType in _findConcreteSubtypes(compilation, receptor.MessageType)) {
+        foreach (var concreteType in facts.ConcreteSubtypesOf(receptor.MessageType)) {
           add(concreteType, receptor);
         }
       }
     }
+    // Every local receptor runs in priority order (#1412); OrderBy is stable, so ties keep declaration order
+    foreach (var messageType in byMessage.Keys.ToList()) {
+      byMessage[messageType] = [.. byMessage[messageType].OrderBy(r => r.Priority)];
+    }
     return byMessage;
+  }
+
+  /// <summary>
+  /// The runner behind a send or local invoke of a message with two or more local receptors (#1412): it runs
+  /// every one, in priority order, and hands back the first result the caller asked for. Messages with one
+  /// receptor get no runner and keep the single-receptor lookups.
+  /// </summary>
+  private static string _buildLocalRunnerRouting(Dictionary<string, List<ReceptorInfo>> localRunReceptorsByMessage) {
+    var runnerSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "LOCAL_RUNNER_ROUTING_SNIPPET"
+    );
+    var routing = new StringBuilder();
+    foreach (var messageType in localRunReceptorsByMessage.Keys) {
+      var receptors = localRunReceptorsByMessage[messageType];
+      if (receptors.Count < 2) {
+        continue;
+      }
+      var invocations = new StringBuilder();
+      foreach (var receptor in receptors) {
+        _appendRunnerInvocation(invocations, messageType, receptor);
+      }
+      var generatedCode = runnerSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INVOCATIONS, invocations.ToString().TrimEnd());
+      routing.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
+    }
+    return routing.ToString();
+  }
+
+  /// <summary>
+  /// One receptor's block in a runner: its perspective wait when it has one, then the invocation. The first
+  /// result the caller asked for is kept as the answer; every other result cascades, as on a publish.
+  /// </summary>
+  private static void _appendRunnerInvocation(StringBuilder sb, string messageType, ReceptorInfo receptor) {
+    var receptorInterface = receptor.IsSync ? StandardInterfaceNames.I_SYNC_RECEPTOR : StandardInterfaceNames.I_RECEPTOR;
+    var typeArgs = receptor.IsVoid ? receptor.MessageType : $"{receptor.MessageType}, {receptor.ResponseType}";
+    var call = receptor.IsSync ? "r.Handle(typedMsg)" : "await r.HandleAsync(typedMsg, cancellationToken)";
+    sb.AppendLine("          {");
+    if (receptor.HasSyncAttributes) {
+      sb.AppendLine($"            SetSyncContext(await AwaitPerspectiveSyncForReceptorAsync(typedMsg, typeof({messageType}), \"{receptor.ClassName}\", cancellationToken));");
+    }
+    sb.AppendLine($"            var r = scope.ServiceProvider.GetKeyedService<{receptorInterface}<{typeArgs}>>(\"{receptor.ClassName}\");");
+    sb.AppendLine("            if (r is not null) {");
+    if (receptor.IsVoid) {
+      sb.AppendLine($"              {call};");
+    } else {
+      sb.AppendLine($"              var result = {call};");
+      sb.AppendLine($"              if (!answered && TryTakeLocalAnswer<TAnswer, {receptor.ResponseType}>(result, out var taken)) {{");
+      sb.AppendLine("                answer = taken;");
+      sb.AppendLine("                answered = true;");
+      sb.AppendLine("              } else {");
+      sb.AppendLine($"                await CascadeLocalResultAsync(result, typedMsg, typeof({messageType}), sourceEnvelope, cancellationToken);");
+      sb.AppendLine("              }");
+    }
+    sb.AppendLine("            }");
+    sb.AppendLine("          }");
   }
 
   /// <summary>
@@ -1778,18 +1886,19 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Builds routing entries from all receptors, expanding polymorphic types to concrete subtypes.
   /// </summary>
   private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
-      Compilation compilation,
+      ReceptorCompilationFacts facts,
       ImmutableArray<ReceptorInfo> receptors) {
-    // Default stages: LocalImmediateDetached + PostInboxDetached.
+    // Default stages: LocalImmediateInline + PostInboxDetached. The local caller waits for its handler and gets
+    // its result or exception, which is Inline (#1392).
     // LocalImmediate fires for locally-dispatched messages (this service).
     // PostInbox fires for messages arriving from other services via transport.
     // Source-service filtering in ReceptorInvoker prevents double-fire:
     //   LocalImmediate: only if source = this service
     //   PostInbox: only if source = other service
-    var defaultStages = new[] {
-      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached",
+    EquatableArray<string> defaultStages = [
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
       "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached"
-    };
+    ];
 
     var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();
     foreach (var receptor in receptors) {
@@ -1802,7 +1911,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Expand polymorphic receptors: for each concrete subtype, add a routing entry
     foreach (var (_, receptor, stage) in routingEntries.ToList()) {
       if (receptor.IsPolymorphicMessageType) {
-        var concreteTypes = _findConcreteSubtypes(compilation, receptor.MessageType);
+        var concreteTypes = facts.ConcreteSubtypesOf(receptor.MessageType);
         foreach (var concreteType in concreteTypes) {
           routingEntries.Add((concreteType, receptor, stage));
         }
@@ -1986,9 +2095,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Uses template-based generation for IDE support.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string _generateDiagnosticsSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateDiagnosticsSource(ReceptorCompilationFacts facts, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var assemblyName = facts.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Deterministic: wall-clock here would change the compiled output hash every build.
@@ -2037,3 +2146,30 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     return result;
   }
 }
+
+/// <summary>
+/// What the receptor sources read from the compilation, as values: the assembly name and the concrete subtypes of
+/// every polymorphic message type a receptor handles. Value-equal while those facts are, so an edit that changes
+/// none of them leaves the generated sources cached.
+/// </summary>
+/// <param name="AssemblyName">The compilation's assembly name.</param>
+/// <param name="Subtypes">The concrete subtypes of each polymorphic message type a receptor handles.</param>
+internal sealed record ReceptorCompilationFacts(string? AssemblyName, EquatableArray<PolymorphicMessageSubtypes> Subtypes) {
+  /// <summary>Reads the facts for <paramref name="receptors"/> from <paramref name="compilation"/>.</summary>
+  public static ReceptorCompilationFacts From(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) =>
+    new(compilation.AssemblyName, [.. receptors
+        .Where(static r => r.IsPolymorphicMessageType)
+        .Select(static r => r.MessageType)
+        .Distinct()
+        .Select(messageType => new PolymorphicMessageSubtypes(
+          messageType, [.. ReceptorDiscoveryGenerator.FindConcreteSubtypes(compilation, messageType)]))]);
+
+  /// <summary>The concrete subtypes of <paramref name="messageType"/>, one of the polymorphic types a receptor handles.</summary>
+  public EquatableArray<string> ConcreteSubtypesOf(string messageType) =>
+    Subtypes.First(s => s.MessageType == messageType).ConcreteTypes;
+}
+
+/// <summary>A polymorphic message type and the concrete types that derive from or implement it.</summary>
+/// <param name="MessageType">The fully qualified polymorphic message type.</param>
+/// <param name="ConcreteTypes">The fully qualified concrete subtypes, in discovery order.</param>
+internal sealed record PolymorphicMessageSubtypes(string MessageType, EquatableArray<string> ConcreteTypes);

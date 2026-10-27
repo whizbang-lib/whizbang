@@ -43,10 +43,12 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
   /// classes within one compilation. One service owns a command type; a duplicate claim means
   /// every command on the namespace inbox would be handled more than once.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz151</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/CommandOwnershipAnalyzerTests.cs:TwoReceptorClasses_SameCommand_ReportsWhiz151OnEachAsync</tests>
   public static readonly DiagnosticDescriptor DuplicateCommandOwnership = new(
     id: "WHIZ151",
     title: "Command type has more than one inbox receptor",
-    messageFormat: "Command '{0}' has inbox receptors in multiple classes ({1}) — one service "
+    messageFormat: "Command '{0}' has inbox receptors in multiple classes ({1}); one service "
       + "owns a command type; move the command's handling into a single receptor (lifecycle "
       + "observers should use [FireAt(...)] stages instead)",
     category: CATEGORY,
@@ -54,7 +56,7 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
     isEnabledByDefault: true,
     description: "One service owns each command type (single-handler command semantics). Under "
       + "per-namespace command inboxes, every inbox receptor's service subscribes to the "
-      + "command namespace's inbox entity — a second receptor class for the same command means "
+      + "command namespace's inbox entity, so a second receptor class for the same command means "
       + "a second claim on that entity, and every command would be delivered and handled twice. "
       + "Cross-service duplicates are caught at runtime by the provisioning topology-drift "
       + "check; this rule catches the duplicate registration units visible at build time.",

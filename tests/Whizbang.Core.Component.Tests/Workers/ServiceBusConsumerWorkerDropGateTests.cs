@@ -13,6 +13,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -84,8 +85,12 @@ public class ServiceBusConsumerWorkerDropGateTests {
   /// kept the message out of the storage path (or didn't, in the negative test).</summary>
   private sealed class CountingStrategy : IWorkCoordinatorStrategy {
     public int QueueInboxMessageCalls;
+    public InboxMessage? LastQueued { get; private set; }
     public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueInboxMessage(InboxMessage message) => Interlocked.Increment(ref QueueInboxMessageCalls);
+    public void QueueInboxMessage(InboxMessage message) {
+      LastQueued = message;
+      Interlocked.Increment(ref QueueInboxMessageCalls);
+    }
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) { }
     public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) { }
@@ -144,13 +149,17 @@ public class ServiceBusConsumerWorkerDropGateTests {
       ServiceProvider sp)
     _buildWorker(IReceptorRegistryQuery? registry, IReceptorRegistry? runtimeRegistry = null,
                  IEnvelopeSerializer? envelopeSerializer = null,
-                 IEventMarkerResolver? eventMarkerResolver = null) {
+                 IEventMarkerResolver? eventMarkerResolver = null,
+                 TransportMetrics? metrics = null) {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
     services.TryAddWhizbangDefaults();
     services.AddSingleton<IServiceInstanceProvider>(new FakeServiceInstanceProvider());
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
+    }
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     _ = new JsonSerializerOptions { TypeInfoResolver = DropGateTestJsonContext.Default };
@@ -193,9 +202,36 @@ public class ServiceBusConsumerWorkerDropGateTests {
     => typeof(MessageEnvelope<DropGateTestEvent>).AssemblyQualifiedName ?? throw new InvalidOperationException("AQN missing");
 
   [Test]
-  public async Task HandleMessage_RegistrySaysNoConsumer_DropsMessage_NoInboxQueueAsync() {
-    // Registry reports no consumer for the inner message type → gate fires and the message
-    // never reaches QueueInboxMessage. This is the load-bearing slice 3 invariant.
+  public async Task HandleMessage_RegistrySaysNoConsumer_CountsTheSkipUnderItsReasonAsync() {
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var meter = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, transport, _, sp) = _buildWorker(new FakeReceptorRegistry(hasAnyConsumer: false), metrics: metrics);
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+      var asReceived = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From((Guid)TrackedGuid.New()),
+        Payload = JsonElement.Parse("{\"value\":\"hi\"}"),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
+      };
+
+      await transport.BatchHandler!.Invoke([new TransportMessage(asReceived, _makeWrapperEnvelopeType())], cts.Token);
+
+      var discarded = meter.GetByName("whizbang.transport.inbox.messages_discarded").Where(m => m.Value > 0).ToList();
+      await Assert.That(discarded.Sum(m => m.Value)).IsEqualTo(1d);
+      await Assert.That(discarded.Single().Tags["reason"]).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER);
+
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  [Test]
+  public async Task HandleMessage_RegistrySaysNoConsumer_StoresTheMessageBeforeTheSkipAsync() {
+    // Registry reports no consumer for the inner message type. #1720: the message is stored first, and the skip is
+    // decided after storage, where it is durable and inspectable; dropping it here left no row anywhere.
     var registry = new FakeReceptorRegistry(hasAnyConsumer: false);
     var (worker, transport, strategy, sp) = _buildWorker(registry);
     await using (sp) {
@@ -206,12 +242,21 @@ public class ServiceBusConsumerWorkerDropGateTests {
       await Assert.That(transport.BatchHandler).IsNotNull()
         .Because("Worker must register a batch handler with the transport during StartAsync.");
 
+      // As received: the stored form needs no serializer this harness lacks.
+      var asReceived = new MessageEnvelope<JsonElement> {
+        MessageId = MessageId.From((Guid)TrackedGuid.New()),
+        Payload = JsonElement.Parse("{\"value\":\"hi\"}"),
+        Hops = [],
+        DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
+      };
       await transport.BatchHandler!.Invoke(
-        [new TransportMessage(_makeEnvelope(), _makeWrapperEnvelopeType())],
+        [new TransportMessage(asReceived, _makeWrapperEnvelopeType())],
         cts.Token);
 
-      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(0)
-        .Because("Drop gate must skip storage entirely for messages with no local consumer.");
+      await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1)
+        .Because("a message with no local consumer is stored, and skipped after storage (#1720)");
+      await Assert.That(strategy.LastQueued!.DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+        .Because("the row records why it is not processed, so the store writes it settled");
 
       await worker.StopAsync(CancellationToken.None);
     }

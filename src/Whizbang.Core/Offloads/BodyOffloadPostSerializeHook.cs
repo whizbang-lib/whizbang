@@ -143,9 +143,9 @@ public sealed partial class BodyOffloadPostSerializeHook(
     var claimBytes = Encoding.UTF8.GetBytes(claimJson);
 
     var addedMetadata = new Dictionary<string, JsonElement> {
-      [IS_CLAIM_METADATA_KEY] = JsonDocument.Parse("true").RootElement,
-      [BODY_STORE_METADATA_KEY] = JsonDocument.Parse(_jsonQuote(opts.ProviderName)).RootElement,
-      [ORIGINAL_TYPE_METADATA_KEY] = JsonDocument.Parse(_jsonQuote(context.EnvelopeType)).RootElement,
+      [IS_CLAIM_METADATA_KEY] = JsonElement.Parse("true"),
+      [BODY_STORE_METADATA_KEY] = JsonElement.Parse(_jsonQuote(opts.ProviderName)),
+      [ORIGINAL_TYPE_METADATA_KEY] = JsonElement.Parse(_jsonQuote(context.EnvelopeType)),
     };
 
     return new PostSerializeResult {

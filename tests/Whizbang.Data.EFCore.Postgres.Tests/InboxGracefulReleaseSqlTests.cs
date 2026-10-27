@@ -156,7 +156,7 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
     var row = await _readInboxRowAsync(conn, messageId);
     await Assert.That(row.Attempts).IsEqualTo(Attempts)
       .Because("a release from an instance that does not hold the claim must be a no-op");
-    await Assert.That(row.InstanceId).IsNotNull()
+    await Assert.That(row.InstanceId.HasValue).IsTrue()
       .Because("stealing the lease out from under the real owner would let two workers dispatch the "
              + "same message concurrently");
   }

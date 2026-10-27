@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 055_InstanceAliveAdvisoryLock.sql
 -- Date: 2026-06-10
 -- Description: Adds session-level advisory-lock-based instance liveness signal.

@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Messaging;
@@ -28,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <list type="bullet">
 /// <item><description>Receptors WITH [FireAt(X)] are registered at stage X only</description></item>
-/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateDetached and PostInboxDetached, never at an outbox stage</description></item>
+/// <item><description>Receptors WITHOUT [FireAt] are registered at LocalImmediateInline and PostInboxDetached, never at an outbox stage</description></item>
 /// </list>
 /// <para>
 /// No runtime logic is needed to determine when a receptor fires - it's all compile-time categorization.
@@ -164,7 +165,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var messageType = message.GetType();
 
     // Establish security context from the envelope BEFORE checking for receptors
-    var securityContext = await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+    var securityContext = await _establishStageSecurityContextAsync(envelope, stage, messageType, cancellationToken).ConfigureAwait(false);
 
     // Extract caller info from the first Current hop (captured at dispatch time)
     var callerInfo = _extractCallerInfo(envelope);
@@ -387,7 +388,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
   /// <summary>
   /// Cross-worker dedup: prevents the same message+stage from being processed twice (e.g.
-  /// TransportConsumerWorker and WorkCoordinatorPublisherWorker both firing PostInbox). For
+  /// TransportConsumerWorker and InboxDispatchWorker both firing PostInbox). For
   /// perspective-scoped stages the dedup key also includes context.PerspectiveType so each of
   /// N perspectives gets its own claim. Returns false when the stage was already claimed so the
   /// caller can short-circuit.
@@ -434,6 +435,27 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     }
 
     return message;
+  }
+
+  /// <summary>
+  /// The stage's security context, from <see cref="_establishSecurityContextAsync"/>. A stage of a dispatch handled
+  /// in this process, which its entry already admitted, runs without one rather than being refused (#1419).
+  /// </summary>
+  private async ValueTask<IScopeContext?> _establishStageSecurityContextAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      Type messageType,
+      CancellationToken cancellationToken) {
+    try {
+      return await _establishSecurityContextAsync(envelope, cancellationToken).ConfigureAwait(false);
+    } catch (SecurityContextRequiredException) when (Dispatch.LocalDispatchAdmission.IsAdmitted) {
+      // Refusing it here, after its handler ran, would protect nothing, so it runs without a context
+      _ensureLogger();
+      if (_logger is not null) {
+        Log.LocalStageRanWithoutContext(_logger, stage, messageType.Name, envelope.MessageId.Value);
+      }
+      return null;
+    }
   }
 
   /// <summary>
@@ -953,7 +975,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return ValueTask.CompletedTask;
     }
 
-    _ = _observeTagProcessingAsync(task.AsTask(), messageType, stage);
+    // Recorded, so a stopping host waits for the handler instead of disposing the provider it resolves from (#1721)
+    var observed = _observeTagProcessingAsync(task.AsTask(), messageType, stage);
+    _scopedProvider.GetService<DetachedLifecycleWork>()?.Track(observed);
     return ValueTask.CompletedTask;
   }
 
@@ -1096,6 +1120,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       Exception exception,
       string messageType,
       LifecycleStage stage);
+
+    [LoggerMessage(
+      EventId = 20,
+      Level = LogLevel.Debug,
+      Message = "[ReceptorInvoker] {Stage} for {MessageType} ({MessageId}) ran without a security context: a stage of a dispatch handled in this process")]
+    public static partial void LocalStageRanWithoutContext(ILogger logger, LifecycleStage stage, string messageType, Guid messageId);
   }
 }
 

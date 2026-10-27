@@ -38,23 +38,47 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
   private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
+  /// <summary>
+  /// Syntax predicate: admits a struct declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedStructCandidate(SyntaxNode node) =>
+      node is StructDeclarationSyntax { AttributeLists.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a property declaration with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedPropertyCandidate(SyntaxNode node) =>
+      node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 };
+
+  /// <summary>
+  /// Syntax predicate: admits a parameter with at least one attribute.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsAttributedParameterCandidate(SyntaxNode node) =>
+      node is ParameterSyntax { AttributeLists.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Phase 2.1: Type-based discovery - [WhizbangId] on struct declarations
     var typeBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is StructDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedStructCandidate(node),
         transform: static (ctx, ct) => _extractTypeBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.2: Property-based discovery - [WhizbangId] on property types
     var propertyBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedPropertyCandidate(node),
         transform: static (ctx, ct) => _extractPropertyBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.3: Parameter-based discovery - [WhizbangId] on primary constructor parameters
     var parameterBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is ParameterSyntax { AttributeLists.Count: > 0 },
+        predicate: static (node, _) => IsAttributedParameterCandidate(node),
         transform: static (ctx, ct) => _extractParameterBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -80,12 +104,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Generate WhizbangIdJsonContext for JSON serialization
     // Combine compilation with discovered IDs to get assembly name for namespace
-    var compilationAndIds = context.CompilationProvider.Combine(allIds);
+    var compilationAndIds = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(allIds);
 
     context.RegisterSourceOutput(
         compilationAndIds,
         static (ctx, data) => {
-          var (compilation, idsData) = data;
+          var (compilationAssemblyName, idsData) = data;
 
           var typeIds = idsData.Left.Left;
           var propertyIds = idsData.Left.Right;
@@ -94,7 +118,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           // Flatten all IDs into single array
           ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> allFlat = [.. typeIds, .. propertyIds, .. parameterIds];
 
-          _generateWhizbangIdJsonContext(ctx, compilation, allFlat);
+          _generateWhizbangIdJsonContext(ctx, compilationAssemblyName, allFlat);
         }
     );
   }
@@ -151,7 +175,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: structSymbol.Name,
         Namespace: targetNamespace,
         Source: DiscoverySource.ExplicitType,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -221,7 +247,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: typeName,
         Namespace: targetNamespace,
         Source: DiscoverySource.Property,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -275,7 +303,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         TypeName: typeName,
         Namespace: targetNamespace,
         Source: DiscoverySource.Parameter,
-        SuppressDuplicateWarning: suppressWarning
+        SuppressDuplicateWarning: suppressWarning,
+        // Where [WhizbangId] is written, so WHIZ024 can be suppressed there (#1429).
+        Location: LocationUtilities.ApplicationOrFallback(whizbangIdAttr, Location.None, ct)
     );
 
     return (idInfo, null, null);
@@ -422,7 +452,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
         if (!id1.SuppressDuplicateWarning && !id2.SuppressDuplicateWarning) {
           context.ReportDiagnostic(Diagnostic.Create(
               DiagnosticDescriptors.WhizbangIdDuplicateName,
-              Location.None,
+              id2.Location,
               id1.TypeName,
               id1.Namespace,
               id2.Namespace
@@ -802,7 +832,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateWhizbangIdJsonContext(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
 
     // Extract only valid IDs, leaving out the error results. Each discovery pipeline drops its null
@@ -821,7 +851,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
             .Select(group => group.First())];
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilationAssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template

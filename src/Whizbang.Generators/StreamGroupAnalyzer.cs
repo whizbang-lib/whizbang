@@ -18,7 +18,7 @@ namespace Whizbang.Generators;
 /// triggers (inert), and the bridge with nothing to cross into (meaningless). Each check makes the
 /// silence loud at build time.
 /// </summary>
-/// <docs>proposals/pre-destruction-seam</docs>
+/// <docs>fundamentals/perspectives/row-retention#stream-groups</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class StreamGroupAnalyzer : DiagnosticAnalyzer {
@@ -31,11 +31,13 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
   /// siblings evict — the exact half-dead-stream shape groups exist to kill. The associations are
   /// the drift ORACLE; the attribute stays the explicit opt-in authority.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz140</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs:UngroupedSharer_ReportsWHIZ140_IsolationMarkerSilencesItAsync</tests>
   public static readonly DiagnosticDescriptor GroupDrift = new(
     id: "WHIZ140",
     title: "Perspective shares stream event types with a group but joins none",
     messageFormat: "Perspective '{0}' applies event type(s) also feeding stream-group member(s) ({1}), "
-      + "but joins no group — its rows will linger after siblings evict. Join the group, or mark "
+      + "but joins no group, so its rows will linger after siblings evict. Join the group, or mark "
       + "[StreamGroupIsolated] to state the exclusion is deliberate.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
@@ -49,10 +51,12 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
   /// (<c>[RowTtl]</c>/<c>[RowCap]</c>). The group controls togetherness, not whether: something
   /// must still evict first, or the cascade never fires.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz141</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs:GroupWithNoAnnouncingEvictor_ReportsWHIZ141OnEachMemberAsync</tests>
   public static readonly DiagnosticDescriptor InertGroup = new(
     id: "WHIZ141",
     title: "Stream group has no announcing member with a row evictor",
-    messageFormat: "Stream group '{0}' has no announcing member with [RowTtl] or [RowCap] — nothing "
+    messageFormat: "Stream group '{0}' has no announcing member with [RowTtl] or [RowCap], so nothing "
       + "ever triggers its cascade. Give at least one announcing member a real evictor.",
     category: CATEGORY,
     defaultSeverity: DiagnosticSeverity.Warning,
@@ -66,6 +70,8 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
   /// RECEIVED eviction into the member's OTHER groups; with one membership there is nothing to
   /// cross into.
   /// </summary>
+  /// <docs>operations/diagnostics/whiz142</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamGroupAnalyzerTests.cs:BridgeOnSoleMembership_ReportsWHIZ142Async</tests>
   public static readonly DiagnosticDescriptor MeaninglessBridge = new(
     id: "WHIZ142",
     title: "Bridge on a sole stream-group membership",

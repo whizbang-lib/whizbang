@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Whizbang Infrastructure Schema for Postgres
 -- Generated: 2025-12-21 21:54:17 UTC
 -- Infrastructure Prefix: wh_

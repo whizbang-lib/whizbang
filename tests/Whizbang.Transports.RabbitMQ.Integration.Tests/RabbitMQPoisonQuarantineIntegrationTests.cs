@@ -33,7 +33,7 @@ namespace Whizbang.Transports.RabbitMQ.Integration.Tests;
 /// </para>
 /// Also locks the capability-honesty half: RabbitMQ's timestamp is publisher-set, so the transport
 /// stamps its own publishes; a message without that stamp must NOT be quarantined and must NOT
-/// silently stop enforcing.
+/// silently stop reporting. Since #1663 an aged message is accepted at receive, never quarantined.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("RabbitMQ")]
@@ -73,13 +73,43 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
 
   [Test]
   [Timeout(90000)]
-  public async Task Subscribe_AgedMessage_LandsInTheDeadLetterQueueAsync(CancellationToken cancellationToken) {
-    // Arrange — a real exchange/queue pair with the transport's own dead-letter exchange wiring.
-    // AgeThreshold = zero makes the just-published message aged; the derivation itself is
-    // property-locked in Whizbang.Core.Tests and is not re-derived here.
-    var exchange = $"poison-quarantine-{Guid.CreateVersion7():N}";
+  public async Task Subscribe_AgedMessage_IsDeliveredNotDeadLetteredAsync(CancellationToken cancellationToken) {
+    // Issue #1663: AgeThreshold = zero makes the just-published message aged, the shape of a backlog.
+    // The receive gate never quarantines on age, so the message reaches the handler (which stores it
+    // in a host) instead of the dead-letter exchange.
+    var exchange = $"poison-aged-{Guid.CreateVersion7():N}";
     var subscriber = $"sub-{Guid.CreateVersion7():N}";
     var transport = _buildTransport(_detector(TimeSpan.Zero));
+    await using var __transport = transport;
+    await transport.InitializeAsync(cancellationToken);
+
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
+    var subscription = await transport.SubscribeAsync(
+      awaiter.Handler, _destination(exchange, subscriber), cancellationToken);
+
+    try {
+      await transport.PublishAsync(
+        envelope, new TransportDestination(exchange, "#"), cancellationToken: cancellationToken);
+
+      var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString())
+        .Because("an aged message is accepted at receive; the gate never quarantines on age");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  [Timeout(90000)]
+  public async Task Subscribe_QuarantineVerdict_LandsInTheDeadLetterQueueAsync(CancellationToken cancellationToken) {
+    // Arrange — a real exchange/queue pair with the transport's own dead-letter exchange wiring.
+    // Since #1663 the default detector never quarantines at receive, so a detector that does (a
+    // custom policy) drives the mechanism: the verdict must land in the DLQ the recovery flow drains.
+    var exchange = $"poison-quarantine-{Guid.CreateVersion7():N}";
+    var subscriber = $"sub-{Guid.CreateVersion7():N}";
+    var transport = _buildTransport(new QuarantineEveryMessage());
     await using var __transport = transport;
     await transport.InitializeAsync(cancellationToken);
 
@@ -101,7 +131,7 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
         $"{subscriber}-{exchange}.dlq", envelope.MessageId.Value.ToString(), cancellationToken);
 
       await Assert.That(deadLettered).IsTrue()
-        .Because("an aged message must be nacked without requeue onto the dead-letter exchange");
+        .Because("a quarantine verdict must be nacked without requeue onto the dead-letter exchange");
       await Assert.That(Volatile.Read(ref handlerInvoked)).IsEqualTo(0)
         .Because("quarantine happens at the receive boundary, before the handler");
     } finally {
@@ -119,18 +149,20 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
     await using var __transport = transport;
     await transport.InitializeAsync(cancellationToken);
 
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS message, so the assertion proves the published message was delivered rather than
+    // that something arrived.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler, _destination(exchange, subscriber), cancellationToken);
 
     try {
-      var envelope = _createTestEnvelope();
       await transport.PublishAsync(
         envelope, new TransportDestination(exchange, "#"), cancellationToken: cancellationToken);
 
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
 
-      await Assert.That(receivedMessageId).IsNotNull()
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString())
         .Because("a fresh message must never be quarantined");
     } finally {
       subscription.Dispose();
@@ -152,18 +184,20 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
     await using var __transport = transport;
     await transport.InitializeAsync(cancellationToken);
 
-    var awaiter = new MessageIdAwaiter();
+    // Await THIS message, so the assertion proves the published message was delivered rather than
+    // that something arrived.
+    var envelope = _createTestEnvelope();
+    var awaiter = new MessageIdAwaiter(envelope.MessageId.ToString());
     var subscription = await transport.SubscribeAsync(
       awaiter.Handler, _destination(exchange, subscriber), cancellationToken);
 
     try {
-      var envelope = _createTestEnvelope();
       await _publishWithoutTimestampAsync(exchange, envelope, cancellationToken);
 
       var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
 
-      await Assert.That(receivedMessageId).IsNotNull()
-        .Because("no timestamp means layer 1 cannot judge age — it must not quarantine on a guess");
+      await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString())
+        .Because("no timestamp means the gate cannot judge age, and age never quarantines anyway");
       await Assert.That(capability.HasDegradedSurface).IsTrue()
         .Because("the fallback to layer 2 must be visible, never silent");
       await Assert.That(capability.DegradedSurfaces[0].Transport).IsEqualTo("rabbitmq");
@@ -189,7 +223,7 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
 
   private static TransportDestination _destination(string exchange, string subscriber) =>
     new(exchange, "#", new Dictionary<string, JsonElement> {
-      ["SubscriberName"] = JsonDocument.Parse($"\"{subscriber}\"").RootElement.Clone()
+      ["SubscriberName"] = JsonElement.Parse($"\"{subscriber}\"")
     });
 
   /// <summary>
@@ -258,4 +292,18 @@ public sealed class RabbitMQPoisonQuarantineIntegrationTests : IAsyncDisposable 
   }
 
   #endregion
+}
+
+/// <summary>A custom detector that quarantines every message, to lock the broker-tier DLQ mechanism.</summary>
+internal sealed class QuarantineEveryMessage : IPoisonMessageDetector {
+  public PoisonVerdict Evaluate(PoisonEvaluationContext context) =>
+    PoisonVerdict.Quarantine(PoisonQuarantineReason.ObservationCountExceeded, "custom policy");
+
+  public void RecordQuarantine(
+      PoisonQuarantineGate gate, PoisonVerdict verdict, PoisonEvaluationContext context,
+      IReadOnlyDictionary<string, object?>? additionalTags = null) {
+  }
+
+  public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) {
+  }
 }

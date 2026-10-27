@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- 090_IntegrityLedger.sql
 --
 -- Durable convergence state for stream integrity.

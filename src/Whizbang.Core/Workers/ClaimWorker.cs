@@ -10,6 +10,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
+using Whizbang.Core.RunControl;
 using Whizbang.Core.Signals;
 
 #pragma warning disable IDE0290  // Allow explicit constructor for optional channel writers
@@ -25,6 +26,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/ClaimWorkerMetricsTests.cs:AClaim_RecordsItsDurationAsync</tests>
 public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
@@ -44,6 +46,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly ClaimChurnFeedback? _churnFeedback;
   /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
   private readonly TimeProvider _time;
+  private readonly PerspectiveMetrics? _perspectiveMetrics;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
   /// <summary>
@@ -153,8 +156,11 @@ public sealed partial class ClaimWorker : BackgroundService {
     ClaimChurnFeedback? churnFeedback = null,
     TimeProvider? timeProvider = null,
     // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
-    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
+    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null,
+    // #1535: each claim's round trip is recorded as whizbang.perspective.claim.duration.
+    PerspectiveMetrics? perspectiveMetrics = null) {
     _priorityHooks = priorityHooks;
+    _perspectiveMetrics = perspectiveMetrics;
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
@@ -211,8 +217,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     _signalingGate.OnAvailabilityChanged += _onGateAvailabilityChanged;
 
     // Wake immediately when a strategy persists new outbox/inbox rows — eliminates the
-    // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that
-    // process_work_batch used to provide. Must remain attached for the lifetime of the
+    // ~250 ms poll-tick lag for the legacy synchronous-store-and-publish path that the
+    // removed process_work_batch function used to provide. Must remain attached for the lifetime of the
     // worker; BackgroundService disposal handles cleanup.
     _outboxChannel.OnNewWorkAvailable += SignalNewWork;
     _inboxChannel.OnNewInboxWorkAvailable += SignalNewWork;
@@ -421,11 +427,10 @@ public sealed partial class ClaimWorker : BackgroundService {
       LogInitialHeartbeatFailed(_logger, ex);
     }
 
-    // PerspectiveOnly mode: legacy WorkCoordinatorPublisherWorker is wired up and is the
-    // sole poller. Its process_work_batch handles outbox/inbox/perspective claiming and
-    // routes PerspectiveStreamIds onto the drain channel. ClaimWorker doing its own
-    // claim_work would race the publisher and break Phase 4.5B's event-store auto-create
-    // chain (orphan rows get leased before process_work_batch sees them).
+    // PerspectiveOnly mode: another poller is the sole claimer, so this worker claims nothing
+    // and idles until shutdown. The mode was added for the legacy WorkCoordinatorPublisherWorker,
+    // whose process_work_batch call (both since removed) ran the event-store chain over orphan
+    // rows; a second claim_work caller would lease those rows first.
     if (_options.PerspectiveOnly) {
       try {
         await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -932,15 +937,19 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxOutboxAcquireRows: maxOutboxRows,
       OutboxRunLength: Math.Max(1, _options.OutboxRunLength),
       PartitionAssignment: assignment,
-      AliveLockHeld: aliveLockHeld), ct);
+      AliveLockHeld: aliveLockHeld,
+      // #1638: the phase this instance announces. A row that records another one is reported stale, and the
+      // registration below writes it, so a lost transition write cannot leave a ready instance ineligible for work.
+      LifecyclePhase: _announcedPhase(scope.ServiceProvider)), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
+    _perspectiveMetrics?.ClaimDuration.Record(claimElapsed.TotalMilliseconds);
 
     // #1226: the claim reads this instance's registration and never writes it, because a write inside
     // the claim's transaction held the row until the claim committed and every heartbeat for this
     // instance waited behind it. When the claim found the row missing or stale, register now: the
     // claim has returned, so this is a statement of its own, on the same pinned connection.
     if (batch.InstanceRegistrationStale) {
-      await _refreshRegistrationAsync(coordinator, ct);
+      await _refreshRegistrationAsync(coordinator, scope.ServiceProvider, ct);
     }
 
     // #1254: the version this claim presented was superseded or expired; the next claim reads the published one.
@@ -1144,7 +1153,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    await _registerAsync(coordinator, ct);
+    await _registerAsync(coordinator, scope.ServiceProvider, ct);
   }
 
   /// <summary>
@@ -1152,21 +1161,33 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// reported and the claim's batch is still returned: the work it leased is this instance's either
   /// way, and the next claim that finds the row stale asks again.
   /// </summary>
-  private async Task _refreshRegistrationAsync(IWorkCoordinator coordinator, CancellationToken ct) {
+  private async Task _refreshRegistrationAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) {
     try {
-      await _registerAsync(coordinator, ct);
+      await _registerAsync(coordinator, services, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogRegistrationRefreshFailed(_logger, ex);
     }
   }
 
-  /// <summary>The registration: this instance's identity through <c>record_heartbeat</c>.</summary>
-  private Task<bool> _registerAsync(IWorkCoordinator coordinator, CancellationToken ct) =>
+  /// <summary>
+  /// The registration: this instance's identity through <c>record_heartbeat</c>, with the phase it announces (#1638).
+  /// A row it inserts records that phase rather than none, which would read as an older build; a row whose phase a lost
+  /// or overwritten transition left behind is corrected. Without a lifecycle the recorded phase is kept.
+  /// </summary>
+  private Task<bool> _registerAsync(IWorkCoordinator coordinator, IServiceProvider services, CancellationToken ct) =>
     coordinator.RecordHeartbeatAsync(new HeartbeatRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
-      ProcessId: _instanceProvider.ProcessId), ct);
+      ProcessId: _instanceProvider.ProcessId,
+      LifecyclePhase: _announcedPhase(services)), ct);
+
+  /// <summary>
+  /// The phase this instance announces (<see cref="IWhizbangLifecycleState.AnnouncedPhase"/>), resolved from the
+  /// claim's scope as the coordinator is; null in a host without a lifecycle, whose row is then judged by liveness alone.
+  /// </summary>
+  private static string? _announcedPhase(IServiceProvider services) =>
+    services.GetService<IWhizbangLifecycleState>()?.AnnouncedPhase.ToString();
 
 
   /// <summary>
@@ -1562,11 +1583,10 @@ public sealed class ClaimWorkerOptions {
   public int ClaimWindowGrowthStep { get; set; } = 25;
 
   /// <summary>
-  /// When true, ClaimWorker only distributes perspective stream IDs to the drain channel
-  /// and ignores any outbox/inbox/per-event-perspective work in the claim batch.
-  /// Set this when the legacy <c>WorkCoordinatorPublisherWorker</c> is also registered —
-  /// otherwise both workers race to claim inbox/outbox rows and Phase 4.5B's event-store
-  /// auto-create chain inside <c>process_work_batch</c> never sees the rows as orphans.
+  /// When true, ClaimWorker does not call <c>claim_work</c> at all: it records its initial
+  /// heartbeat and then idles until shutdown, leaving claiming to another poller. The mode was
+  /// added for the legacy <c>WorkCoordinatorPublisherWorker</c>, whose <c>process_work_batch</c>
+  /// call ran the event-store chain over orphan rows; both have since been removed.
   /// </summary>
   public bool PerspectiveOnly { get; set; }
   /// <summary>Modulo partition count. Default 10000.</summary>

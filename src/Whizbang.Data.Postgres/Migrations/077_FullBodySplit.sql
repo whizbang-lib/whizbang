@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 077_FullBodySplit.sql
 -- Date: 2026-07-16
 -- Description: Full pointer/body split (E1 #13b4-2). 072 offloaded ONLY ephemeral bodies to

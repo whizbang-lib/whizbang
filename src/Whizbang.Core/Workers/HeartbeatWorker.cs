@@ -15,7 +15,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Decoupled heartbeat timer. Fires <see cref="IWorkCoordinator.RecordHeartbeatAsync"/>
 /// on its own cadence independent of the polling claim worker. Replaces
-/// the legacy "heartbeat embedded in <c>process_work_batch</c>" coupling.
+/// the legacy "heartbeat embedded in <c>process_work_batch</c>" coupling (that function has since been removed).
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <remarks>
@@ -286,6 +286,11 @@ public partial class HeartbeatWorker(
       return false;
     }
     OnHeartbeatRecorded?.Invoke();
+    // #1636: an accepted beat means the row exists, so a startup stage held since before it did, or since its write
+    // was lost, is written now. Nothing to do (and no wait) when nothing is held.
+    if (scope.ServiceProvider.GetService<Startup.IStartupStageReporter>() is { } stages) {
+      await stages.InstanceRegisteredAsync(ct);
+    }
 
     // Announce InstanceJoined once, after the first successful heartbeat (which is the
     // moment wh_service_instances first has a row for this pod). Subscribers use this to
@@ -315,7 +320,9 @@ public partial class HeartbeatWorker(
     ServiceName: _instanceProvider.ServiceName,
     HostName: _instanceProvider.HostName,
     ProcessId: _instanceProvider.ProcessId,
-    LifecyclePhase: _lifecycleState.Phase.ToString(),
+    // #1638: the announced phase, not the settled one: a beat built while a transition's acks are awaited would
+    // otherwise write the phase before it over the one the transition just recorded.
+    LifecyclePhase: _lifecycleState.AnnouncedPhase.ToString(),
     LibraryVersion: _libraryVersion.LibraryVersion,
     StaleThresholdSeconds: HeartbeatLivenessThreshold.StaleThresholdSeconds(_options));
 

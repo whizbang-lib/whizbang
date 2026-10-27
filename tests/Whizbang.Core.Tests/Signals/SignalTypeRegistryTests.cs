@@ -63,7 +63,7 @@ public class SignalTypeRegistryTests {
       static (sink, ct) => sink.ReceiveAsync<SigA>(default, ct));
     await entry.Dispatch(bus, default);
 
-    await Assert.That(received).IsNotNull();
+    await Assert.That(received.HasValue).IsTrue();
   }
 
   [Test]

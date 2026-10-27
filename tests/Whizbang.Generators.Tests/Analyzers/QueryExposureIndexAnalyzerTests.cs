@@ -247,13 +247,29 @@ public class QueryExposureIndexAnalyzerTests {
 
   /// <summary>A blank configuration is the same as none.</summary>
   [Test]
-  public async Task ABlankConfigurationReportsNothingAsync() {
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task ABlankConfigurationReportsNothingAsync(string configured) {
     var messages = await _whiz306Async("""
       [Sortable]
       public interface IWideLens : ILensQuery<IndexedModel>;
       """, new Dictionary<string, string> {
-      ["build_property.WhizbangQueryComposingAttributes"] = "   ",
+      ["build_property.WhizbangQueryComposingAttributes"] = configured,
     });
+
+    await Assert.That(messages).IsEmpty();
+  }
+
+  /// <summary>
+  /// The package declares the property, so a project that never sets it hands the analyzer an empty value (#1660):
+  /// no extra attribute names, the same as no configuration.
+  /// </summary>
+  [Test]
+  public async Task TheDeclaredButUnsetPropertyReportsNothingAsync() {
+    var messages = await _whiz306Async("""
+      [Sortable]
+      public interface IWideLens : ILensQuery<IndexedModel>;
+      """, MSBuildGlobalOptions.For());
 
     await Assert.That(messages).IsEmpty();
   }

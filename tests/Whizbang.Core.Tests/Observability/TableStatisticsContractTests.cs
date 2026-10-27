@@ -42,5 +42,36 @@ public class TableStatisticsContractTests {
 
     await Assert.That(await provider.GetTableBloatRatiosAsync()).IsEmpty()
       .Because("a provider that cannot estimate bloat keeps working, and the gauge reports nothing");
+
+    await Assert.That(await provider.GetTableStorageAsync()).IsEmpty()
+      .Because("an empty storage reading tells the collector to ask for the sizes and bloat ratios "
+             + "separately, so a provider that predates the reading reports what it always did");
+  }
+
+  [Test]
+  public async Task AProviderWithoutIndexStatistics_ReportsNoUnusedIndexesAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetUnusedIndexesAsync()).IsEmpty()
+      .Because("an engine that does not count index scans reports nothing, rather than every index as unused");
+  }
+
+  [Test]
+  public async Task AProviderThatDoesNotSample_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    var sample = await provider.SampleEventTypeBytesAsync(new EventTypeSampleRequest("whizbang:event-type-bytes:0", 1, 50));
+
+    await Assert.That(sample).IsNull()
+      .Because("null is what an instance that did not take the window answers, so a provider that cannot "
+             + "sample is never mistaken for a store holding no events");
+  }
+
+  [Test]
+  public async Task AProviderThatCannotNameItsDatabase_AnswersNullAsync() {
+    ITableStatisticsProvider provider = new SizesOnlyProvider();
+
+    await Assert.That(await provider.GetDatabaseNameAsync()).IsNull()
+      .Because("a provider written before the database tag reports its gauges without one, as it always did");
   }
 }

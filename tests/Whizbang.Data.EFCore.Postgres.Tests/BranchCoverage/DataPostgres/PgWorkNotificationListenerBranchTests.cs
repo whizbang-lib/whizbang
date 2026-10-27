@@ -48,7 +48,7 @@ public class PgWorkNotificationListenerBranchTests {
     ((INotifySubscription)listener).OnNotification("not-a-known-category");
 
     await Assert.That(received.Count).IsEqualTo(0);
-    await Assert.That(listener.LastSignalAt).IsNotNull()
+    await Assert.That(listener.LastSignalAt.HasValue).IsTrue()
       .Because("the notification still arrived; only its category was unrecognized");
   }
 

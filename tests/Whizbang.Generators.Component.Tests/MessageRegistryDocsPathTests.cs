@@ -18,6 +18,7 @@ namespace Whizbang.Generators.Tests;
 public class MessageRegistryDocsPathTests {
   private const string DOCS_PATH_VARIABLE = "WHIZBANG_DOCS_PATH";
   private const string DOCS_URL = "fundamentals/events/order-placed#placing";
+  private const string TEST_METHOD = "OrderPlaced_IsPlaced_RecordsTheOrderAsync";
 
   private const string SOURCE = """
     using Whizbang.Core;
@@ -36,6 +37,8 @@ public class MessageRegistryDocsPathTests {
       var registry = _registry(new() { ["build_property.WhizbangDocsPath"] = docs });
 
       await Assert.That(registry).Contains(DOCS_URL);
+      await Assert.That(registry).Contains(TEST_METHOD)
+        .Because("the tests map enriches the registry too");
     } finally {
       Directory.Delete(docs, recursive: true);
     }
@@ -59,6 +62,19 @@ public class MessageRegistryDocsPathTests {
     }
   }
 
+  /// <summary>
+  /// A build that sets neither declared property hands the generator empty values (#1660): no docs checkout is read
+  /// and none is discovered, and the registry is still generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Registry_WithTheDeclaredPropertiesUnset_ReadsNoCheckoutAsync() {
+    var registry = _registry(MSBuildGlobalOptions.For());
+
+    await Assert.That(registry).Contains("OrderPlaced");
+    await Assert.That(registry).DoesNotContain(DOCS_URL);
+  }
+
   [RequiresAssemblyFiles]
   private static string _registry(Dictionary<string, string> globalOptions) =>
     GeneratorTestHelper.GetGeneratedSource(
@@ -68,8 +84,16 @@ public class MessageRegistryDocsPathTests {
     var root = Path.Combine(Path.GetTempPath(), "whizbang-docs-" + Guid.NewGuid().ToString("N"));
     var assets = Path.Combine(root, "src", "assets");
     Directory.CreateDirectory(assets);
+    // The shape the docs site writes: camelCase keys. A hand-written PascalCase fixture once hid that the loaders
+    // read case-sensitively and so read nothing from the real maps (#1428).
     File.WriteAllText(Path.Combine(assets, "code-docs-map.json"),
-      $$"""{ "OrderPlaced": { "File": "Shop/OrderPlaced.cs", "Symbol": "OrderPlaced", "Docs": "{{DOCS_URL}}" } }""");
+      $$"""{ "OrderPlaced": { "file": "Shop/OrderPlaced.cs", "line": 5, "symbol": "OrderPlaced", "docs": "{{DOCS_URL}}" } }""");
+    File.WriteAllText(Path.Combine(assets, "code-tests-map.json"),
+      $$"""
+      { "codeToTests": { "OrderPlaced": [
+        { "testFile": "tests/Shop.Tests/OrderPlacedTests.cs", "testMethod": "{{TEST_METHOD}}", "testLine": 12, "testClass": "OrderPlacedTests", "linkSource": "XmlTag" }
+      ] } }
+      """);
     return root;
   }
 }

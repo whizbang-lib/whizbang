@@ -53,7 +53,7 @@ public class WorkerPipelineExtensionsBranchCoverageTests {
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
-      Payload = JsonDocument.Parse("{}").RootElement,
+      Payload = JsonElement.Parse("{}"),
       Hops = [],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
     };

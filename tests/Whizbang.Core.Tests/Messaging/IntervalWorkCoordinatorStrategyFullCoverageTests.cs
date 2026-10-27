@@ -87,7 +87,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue one of each to ensure the unflushed-operations branch is reached
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -117,7 +117,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Queue completions and failures (not just messages) to test all unflushed counters
     sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
@@ -156,6 +156,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       metrics: metrics);
 
     try {
@@ -195,6 +196,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -227,7 +229,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var throwingCoordinator = new FullCoverageThrowingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: throwingCoordinator, instanceProvider: instanceProvider, options: options, logger: NullLogger<IntervalWorkCoordinatorStrategy>.Instance, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
@@ -253,7 +255,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     // Act — dispose with empty queues
     await sut.DisposeAsync();
@@ -290,7 +292,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
-      inboxChannelWriter: new InboxChannelWriter()
+      inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork()
     );
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -330,6 +332,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()),
       workChannelWriter: new WorkChannelWriter(),
       inboxChannelWriter: new InboxChannelWriter(),
+      detachedWork: new DetachedLifecycleWork(),
       metrics: metrics);
 
     sut.QueueOutboxMessage(_createOutboxMessage());
@@ -356,7 +359,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     sut.QueueInboxMessage(_createInboxMessage());
 
@@ -393,7 +396,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     var coordinator = new FullCoverageTrackingCoordinator();
     var instanceProvider = new FullCoverageInstanceProvider();
     var options = _createOptions(intervalMs: 60000);
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter());
+    var sut = new IntervalWorkCoordinatorStrategy(coordinator: coordinator, instanceProvider: instanceProvider, options: options, logger: logger, scopeFactory: new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(), tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions()), workChannelWriter: new WorkChannelWriter(), inboxChannelWriter: new InboxChannelWriter(), detachedWork: new DetachedLifecycleWork());
 
     sut.QueueInboxMessage(_createInboxMessage());
 
@@ -533,7 +536,7 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
     public MessageDispatchContext DispatchContext { get; } = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local };
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;
+    public JsonElement Payload { get; init; } = JsonElement.Parse("{}");
     object IMessageEnvelope.Payload => Payload;
 
     public void AddHop(MessageHop hop) => Hops.Add(hop);

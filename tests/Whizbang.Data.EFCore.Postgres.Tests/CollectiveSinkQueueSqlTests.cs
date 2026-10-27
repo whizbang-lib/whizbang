@@ -111,6 +111,207 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
     await Assert.That(queue.All(q => q.EventWorkId != Guid.Empty && q.CommitSequence is not null)).IsTrue();
   }
 
+  // ── #1524: the head and the membership, each reading only what it returns ─────────────────────────
+
+  [Test]
+  public async Task SinkQueueHead_CollectiveRowsCarryTheirEventsVersionAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    await _emitCollectiveAsync(conn, _firstCommitted, keyStream);
+    await _emitCollectiveAsync(conn, _secondCommitted, keyStream);
+    await using (var cmd = conn.CreateCommand()) {
+      // A row for any other perspective is not part of a sink queue and carries no version.
+      cmd.CommandText = """
+        INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at)
+        VALUES (gen_random_uuid(), @sid, 'Some.Perspective', @eid, 0, 1, 0, now())
+        """;
+      cmd.Parameters.AddWithValue("sid", keyStream);
+      cmd.Parameters.AddWithValue("eid", _secondCommitted);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var rows = new List<(string Perspective, long? RowVersion, long EventVersion)>();
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = """
+        SELECT pe.perspective_name, pe.stream_version, es.version
+        FROM wh_perspective_events pe
+        JOIN wh_event_store es ON es.stream_id = pe.stream_id AND es.event_id = pe.event_id
+        WHERE pe.stream_id = @sid
+        """;
+      cmd.Parameters.AddWithValue("sid", keyStream);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        rows.Add((reader.GetString(0), await reader.IsDBNullAsync(1) ? null : reader.GetInt64(1), reader.GetInt64(2)));
+      }
+    }
+
+    var sink = rows.Where(r => r.Perspective == CollectiveRouting.SINK_PERSPECTIVE_NAME).ToList();
+    await Assert.That(sink.Count).IsEqualTo(2);
+    await Assert.That(sink.All(r => r.RowVersion == r.EventVersion)).IsTrue()
+      .Because("Each sink row carries the version of the event it applies, set as the row is written.");
+    await Assert.That(rows.Single(r => r.Perspective == "Some.Perspective").RowVersion).IsNull();
+  }
+
+  [Test]
+  public async Task SinkQueueHead_StopsAtTheFirstRowTheCallerDoesNotNameAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var ids = Enumerable.Range(0, 4).Select(_ => Guid.CreateVersion7()).ToArray();
+    foreach (var id in ids) {
+      await _emitCollectiveAsync(conn, id, keyStream);
+    }
+    await _stampAsync(conn);
+    var work = (await _queueAsync(conn, keyStream)).Select(q => q.EventWorkId).ToArray();
+
+    var throughTwo = await _headAsync(conn, keyStream, [work[0], work[1]]);
+    var throughNone = await _headAsync(conn, keyStream, []);
+    var secondOnly = await _headAsync(conn, keyStream, [work[1]]);
+    var throughAll = await _headAsync(conn, keyStream, work);
+
+    await Assert.That(throughTwo.Select(q => q.EventWorkId)).IsEquivalentTo(
+      [work[0], work[1], work[2]], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("The walk goes past the named rows and stops after the first row it was not given.");
+    await Assert.That(throughNone.Select(q => q.EventWorkId)).IsEquivalentTo([work[0]]);
+    await Assert.That(secondOnly.Select(q => q.EventWorkId)).IsEquivalentTo([work[0]])
+      .Because("A named row behind one that is not named is not reached.");
+    await Assert.That(throughAll.Select(q => q.EventId)).IsEquivalentTo(ids, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    await Assert.That(throughAll.All(q => q.CommitSequence is not null)).IsTrue();
+  }
+
+  [Test]
+  public async Task SinkQueueHead_IsInVersionOrder_WhenIdsRunBackwardAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    await _emitCollectiveAsync(conn, _firstCommitted, keyStream);
+    await _emitCollectiveAsync(conn, _secondCommitted, keyStream);
+    await _stampAsync(conn);
+    var laterA = Guid.Parse("00000000-0000-7000-8000-0000000000a2");
+    var laterB = Guid.Parse("00000000-0000-7000-8000-0000000000a1");
+    await _emitCollectiveAsync(conn, laterA, keyStream);
+    await _emitCollectiveAsync(conn, laterB, keyStream);
+    var work = (await _queueAsync(conn, keyStream)).Select(q => q.EventWorkId).ToArray();
+
+    var head = await _headAsync(conn, keyStream, work);
+
+    await Assert.That(head.Select(q => q.EventId)).IsEquivalentTo(
+      [_firstCommitted, _secondCommitted, laterA, laterB], TUnit.Assertions.Enums.CollectionOrdering.Matching)
+      .Because("Stamped rows follow their commits, and unstamped rows follow the order they committed in, which is "
+        + "the order they will be stamped and replayed in, not the order of their ids.");
+    await Assert.That(head[2].CommitSequence).IsNull();
+  }
+
+  [Test]
+  public async Task SinkQueueHead_ReadsOnlyTheHead_NotTheWholeQueueAsync() {
+    const int queued = 200;
+    var keyStream = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    for (var i = 0; i < queued; i++) {
+      await _emitCollectiveAsync(conn, Guid.CreateVersion7(), keyStream);
+    }
+    await _stampAsync(conn);
+    var work = (await _queueAsync(conn, keyStream)).Select(q => q.EventWorkId).ToArray();
+    await using (var analyze = conn.CreateCommand()) {
+      analyze.CommandText = "ANALYZE wh_perspective_events";
+      await analyze.ExecuteNonQueryAsync();
+    }
+
+    // A connection of its own, unpooled: a backend's statistics not yet flushed include the setup's earlier
+    // statements, so only a fresh backend's transaction counts the head read and nothing else.
+    await using var measured = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(ConnectionString) { Pooling = false }.ConnectionString);
+    await measured.OpenAsync();
+    await using var tx = await measured.BeginTransactionAsync();
+    await using (var plan = measured.CreateCommand()) {
+      // On this small shared test table a scan costs less than an index walk, as it would not on a production-sized
+      // one. With scans and sorts priced out, the only way to stop early is an index in apply order: without one the
+      // planner reads and sorts every queued row, and the read count below fails.
+      plan.CommandText = "SET LOCAL enable_seqscan = off; SET LOCAL enable_sort = off";
+      await plan.ExecuteNonQueryAsync();
+    }
+    var head = await _headAsync(measured, keyStream, [work[0], work[1]]);
+    long rowsRead;
+    long seqScans;
+    await using (var stats = measured.CreateCommand()) {
+      // This transaction's own reads of the work table: deterministic, and nothing else's.
+      stats.CommandText = """
+        SELECT COALESCE(t.idx_tup_fetch, 0) + COALESCE(t.seq_tup_read, 0), COALESCE(t.seq_scan, 0)
+        FROM pg_stat_xact_user_tables t
+        WHERE t.relid = to_regclass('wh_perspective_events')
+        """;
+      await using var reader = await stats.ExecuteReaderAsync();
+      await reader.ReadAsync();
+      rowsRead = reader.GetInt64(0);
+      seqScans = reader.GetInt64(1);
+    }
+    await tx.RollbackAsync();
+
+    await Assert.That(head.Count).IsEqualTo(3);
+    await Assert.That(seqScans).IsEqualTo(0)
+      .Because("The queue is walked on an index, in order, not scanned.");
+    await Assert.That(rowsRead).IsLessThan(queued / 4)
+      .Because($"A run holding the head of a {queued}-row queue reads a handful of rows, not the queue.");
+  }
+
+  [Test]
+  public async Task SinkQueueMembers_AnswersForNamedRowsAndEventsOnlyAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using var conn = await _openAsync();
+    var ids = Enumerable.Range(0, 3).Select(_ => Guid.CreateVersion7()).ToArray();
+    foreach (var id in ids) {
+      await _emitCollectiveAsync(conn, id, keyStream);
+    }
+    var work = (await _queueAsync(conn, keyStream)).ToDictionary(q => q.EventId, q => q.EventWorkId);
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "UPDATE wh_perspective_events SET processed_at = now() WHERE event_id = @id";
+      cmd.Parameters.AddWithValue("id", ids[1]);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var members = await _membersAsync(conn, keyStream,
+      workIds: [work[ids[0]], work[ids[1]], Guid.CreateVersion7()], eventIds: [ids[2]]);
+
+    await Assert.That(members.Select(m => m.EventId)).IsEquivalentTo([ids[0], ids[2]])
+      .Because("A named row still queued is a member, by its work id or its event; a processed row and an unknown id are not.");
+  }
+
+  [Test]
+  public async Task FetchCollectiveSinkQueueHeadAsync_ReturnsTheHeadAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using (var conn = await _openAsync()) {
+      await _emitCollectiveAsync(conn, _firstCommitted, keyStream);
+      await _emitCollectiveAsync(conn, _secondCommitted, keyStream);
+      await _stampAsync(conn);
+    }
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var queue = await coordinator.FetchCollectiveSinkQueueAsync(keyStream);
+
+    var head = await coordinator.FetchCollectiveSinkQueueHeadAsync(keyStream, []);
+
+    await Assert.That(head).IsNotNull();
+    await Assert.That(head).IsEquivalentTo([queue![0]])
+      .Because("Naming no rows, the head is the first row of the queue and nothing after it.");
+  }
+
+  [Test]
+  public async Task FetchCollectiveSinkQueueMembersAsync_ReturnsTheNamedRowsStillQueuedAsync() {
+    var keyStream = Guid.CreateVersion7();
+    await using (var conn = await _openAsync()) {
+      await _emitCollectiveAsync(conn, _firstCommitted, keyStream);
+      await _emitCollectiveAsync(conn, _secondCommitted, keyStream);
+      await _stampAsync(conn);
+    }
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    var queue = await coordinator.FetchCollectiveSinkQueueAsync(keyStream);
+
+    var members = await coordinator.FetchCollectiveSinkQueueMembersAsync(
+      keyStream, workIds: [queue![1].EventWorkId], eventIds: []);
+
+    await Assert.That(members).IsEquivalentTo([queue[1]]);
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
   private async Task<NpgsqlConnection> _openAsync() {
@@ -149,6 +350,31 @@ public class CollectiveSinkQueueSqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT stamp_pending_commit_sequences()";
     await cmd.ExecuteScalarAsync();
+  }
+
+  private static Task<List<CollectiveSinkQueueEntry>> _headAsync(NpgsqlConnection conn, Guid streamId, Guid[] through) =>
+    _readAsync(conn, "SELECT * FROM wh_collective_sink_queue_head(@sid, @through)", cmd => {
+      cmd.Parameters.AddWithValue("sid", streamId);
+      cmd.Parameters.AddWithValue(nameof(through), NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, through);
+    });
+
+  private static Task<List<CollectiveSinkQueueEntry>> _membersAsync(NpgsqlConnection conn, Guid streamId, Guid[] workIds, Guid[] eventIds) =>
+    _readAsync(conn, "SELECT * FROM wh_collective_sink_queue_members(@sid, @work, @events)", cmd => {
+      cmd.Parameters.AddWithValue("sid", streamId);
+      cmd.Parameters.AddWithValue("work", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, workIds);
+      cmd.Parameters.AddWithValue("events", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid, eventIds);
+    });
+
+  private static async Task<List<CollectiveSinkQueueEntry>> _readAsync(NpgsqlConnection conn, string sql, Action<NpgsqlCommand> bind) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = sql;
+    bind(cmd);
+    var rows = new List<CollectiveSinkQueueEntry>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      rows.Add(new CollectiveSinkQueueEntry(reader.GetGuid(0), reader.GetGuid(1), await reader.IsDBNullAsync(2) ? null : reader.GetInt64(2)));
+    }
+    return rows;
   }
 
   private static async Task<List<CollectiveSinkQueueEntry>> _queueAsync(NpgsqlConnection conn, Guid streamId) {

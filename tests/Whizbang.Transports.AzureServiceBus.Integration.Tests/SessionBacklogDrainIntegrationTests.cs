@@ -198,7 +198,7 @@ public class SessionBacklogDrainIntegrationTests(ServiceBusEmulatorFixtureSource
 
   private static TransportDestination _destinationWithStream(string topic, Guid streamId) =>
     new(topic, null, new Dictionary<string, System.Text.Json.JsonElement> {
-      ["StreamId"] = System.Text.Json.JsonDocument.Parse($"\"{streamId}\"").RootElement
+      ["StreamId"] = System.Text.Json.JsonElement.Parse($"\"{streamId}\"")
     });
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope(string content) =>

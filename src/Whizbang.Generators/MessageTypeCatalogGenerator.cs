@@ -26,13 +26,20 @@ namespace Whizbang.Generators;
 /// </remarks>
 [Generator]
 public class MessageTypeCatalogGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Syntax predicate: admits a class, record or struct that can implement an interface (a base list, or
+  /// partial). The transform takes only messages and perspectives, which a type implements no other way.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsCatalogTypeCandidate(SyntaxNode node) =>
+      node is (ClassDeclarationSyntax or RecordDeclarationSyntax or StructDeclarationSyntax) and TypeDeclarationSyntax type &&
+      SyntaxCandidates.MayHaveBaseTypes(type);
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     var entries = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax
-                 or RecordDeclarationSyntax
-                 or StructDeclarationSyntax,
+        predicate: static (node, _) => IsCatalogTypeCandidate(node),
         transform: static (ctx, ct) => _extractEntry(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -44,15 +51,15 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
         .SelectMany(static (a, _) => a)
         .Collect();
 
-    var combined = context.CompilationProvider.Combine(entries.Collect()).Combine(ledgerFormers);
+    var combined = context.CompilationProvider.Select(static (compilation, _) => compilation.AssemblyName).Combine(entries.Collect()).Combine(ledgerFormers);
 
     context.RegisterSourceOutput(
         combined,
         static (ctx, data) => {
-          var compilation = data.Left.Left;
+          var compilationAssemblyName = data.Left.Left;
           var infos = data.Left.Right;
           var formerNames = data.Right;
-          _generateCatalog(ctx, compilation, infos!, formerNames);
+          _generateCatalog(ctx, compilationAssemblyName, infos!, formerNames);
         }
     );
   }
@@ -72,10 +79,10 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // The bind guard shares the abstract-type exit: neither an unbound declaration nor an abstract
-    // type is a message the catalog can name a constructible type for.
+    // The bind guard shares the abstract-type exit: neither an unbound declaration, an abstract type nor
+    // a generic declaration (an open type, #1481) is a message the catalog can name a constructible type for.
     if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol
-        || typeSymbol.IsAbstract) {
+        || typeSymbol.IsAbstract || typeSymbol.IsGenericType) {
       return null;
     }
 
@@ -270,7 +277,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
 
   private static void _generateCatalog(
       SourceProductionContext context,
-      Compilation compilation,
+      string? compilationAssemblyName,
       ImmutableArray<MessageTypeCatalogEntryInfo> infos,
       ImmutableArray<PinnedFormerName> formerNames) {
 
@@ -278,7 +285,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
       return;
     }
 
-    var assemblyName = compilation.AssemblyName ?? "UnknownAssembly";
+    var assemblyName = compilationAssemblyName ?? "UnknownAssembly";
     var namespaceName = $"{assemblyName}.Generated";
 
     var formerByPinnedId = _indexFormerNamesByPinnedId(formerNames);

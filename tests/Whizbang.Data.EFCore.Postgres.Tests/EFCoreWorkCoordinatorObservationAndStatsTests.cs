@@ -38,7 +38,7 @@ public class EFCoreWorkCoordinatorObservationAndStatsTests : EFCoreTestBase {
   private static InboxMessage _makeInbox(Guid messageId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(messageId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = messageId,
@@ -84,7 +84,7 @@ public class EFCoreWorkCoordinatorObservationAndStatsTests : EFCoreTestBase {
     await Assert.That(observed.MessageId).IsEqualTo(messageId);
     await Assert.That(observed.ObservationCount).IsEqualTo(2)
       .Because("the count includes the current delivery, so the second store reports two");
-    await Assert.That(observed.ProcessingAttempts).IsNotNull()
+    await Assert.That(observed.ProcessingAttempts.HasValue).IsTrue()
       .Because("the inbox row still exists, so attempts are MEASURED — null would mean unmeasured "
              + "and must never be read as zero failures");
   }

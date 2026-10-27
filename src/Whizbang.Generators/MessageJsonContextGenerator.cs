@@ -172,6 +172,25 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PRAGMA_DISABLE_CS0169 = "#pragma warning disable CS0169  // Field is never used";
   private const string PRAGMA_RESTORE_CS0169 = "#pragma warning restore CS0169";
 
+  /// <summary>
+  /// Syntax predicate: admits a class or record with a base list or an attribute, or nested in another type (a possible perspective model).
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsMessageTypeCandidate(SyntaxNode node) =>
+      (node is RecordDeclarationSyntax rec &&
+          (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
+      (node is ClassDeclarationSyntax cls &&
+          (cls.BaseList?.Types.Any() == true || cls.AttributeLists.Any() || cls.Parent is TypeDeclarationSyntax));
+
+  /// <summary>
+  /// Syntax predicate: admits a class with a base list, so it can implement the interfaces the transform looks for.
+  /// </summary>
+  /// <remarks>Public so the build-cost guard can run it over ordinary code (#1650).</remarks>
+  /// <tests>tests/Whizbang.Generators.Component.Tests/BuildCost/SyntaxCandidateGuardTests.cs</tests>
+  public static bool IsClassWithBaseListCandidate(SyntaxNode node) =>
+      node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
+
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
@@ -180,11 +199,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // 2. Records/classes with attributes ([WhizbangSerializable], [GraphQLName], etc.)
     // 3. Nested records/classes (potential perspective models like ChatSession.ChatSessionModel)
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            (node is RecordDeclarationSyntax rec &&
-                (rec.BaseList?.Types.Any() == true || rec.AttributeLists.Any() || rec.Parent is TypeDeclarationSyntax)) ||
-            (node is ClassDeclarationSyntax cls &&
-                (cls.BaseList?.Types.Any() == true || cls.AttributeLists.Any() || cls.Parent is TypeDeclarationSyntax)),
+        predicate: static (node, _) => IsMessageTypeCandidate(node),
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -196,8 +211,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // required for drain mode's DeserializeStreamEvents; handled message types must be resolvable by
     // this assembly's own context because a composite's inner list is polymorphic IMessage (#915).
     var perspectiveEventTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) =>
-            node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) => IsClassWithBaseListCandidate(node),
         transform: static (ctx, ct) => _extractConsumedMessageTypes(ctx, ct)
     ).Where(static info => !info.IsDefaultOrEmpty)
      .SelectMany(static (arr, _) => arr);
@@ -246,32 +260,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         .Combine(genericSagaEventTypes.Collect())
         .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
 
-    // Combine messages + perspective event types with compilation
-    var allDiscoveredTypes = messageTypes.Collect().Combine(perspectiveEventTypes.Collect());
-    var messagesWithCompilation = allDiscoveredTypes.Combine(context.CompilationProvider);
-    var messagesWithLedger = messagesWithCompilation.Combine(renameAliases);
-    var messagesWithSagaEvents = messagesWithLedger.Combine(allSagaEventTypes);
-    var messagesWithReferencedComposites = messagesWithSagaEvents.Combine(referencedComposites);
-
-    // Generate WhizbangJsonContext from collected message types
-    context.RegisterSourceOutput(
-        messagesWithReferencedComposites,
-        static (ctx, all) => {
-          var (data, referencedComposites) = all;
+    // Analyze the discovered types against the compilation, and generate from the analysis. The compilation is a
+    // new object on every edit, so it is read in this step and nowhere downstream: the analysis is a value, equal
+    // while the types it describes are, and an edit that changes none of them leaves the generated context cached.
+    var analysis = messageTypes.Collect()
+        .Combine(perspectiveEventTypes.Collect())
+        .Combine(allSagaEventTypes)
+        .Combine(referencedComposites)
+        .Combine(context.CompilationProvider)
+        .Select(static (all, _) => {
+          var ((((discovered, consumed), sagaEvents), composites), compilation) = all;
           // Merge message types (nullable-filtered) with perspective event types (non-nullable)
-          var messages = data.Left.Left.Left.Left!.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
-          // Saga events lead: _generateWhizbangJsonContext dedupes by fully qualified name keeping the
+          var messages = discovered.Where(static m => m is not null).Select(static m => m!).ToImmutableArray();
+          // Saga events lead: _analyzeJsonContext dedupes by fully qualified name keeping the
           // FIRST entry, and the synthesized description is the complete one. A consumer who also
           // hand-restated a saga event partial (a known workaround) would otherwise contribute a
           // property-less duplicate that wins and silently drops every property from the wire.
-          var combined = data.Right.Select(static e => e.Type).ToImmutableArray()
+          var combined = sagaEvents.Select(static e => e.Type).ToImmutableArray()
               .AddRange(messages)
-              .AddRange(data.Left.Left.Left.Right)
-              .AddRange(referencedComposites);
-          var sagaInheritance = data.Right.SelectMany(static e => e.Inheritance).ToImmutableArray();
-          _generateWhizbangJsonContext(ctx, combined, data.Left.Left.Right, data.Left.Right, sagaInheritance);
-        }
-    );
+              .AddRange(consumed)
+              .AddRange(composites);
+          var sagaInheritance = sagaEvents.SelectMany(static e => e.Inheritance).ToImmutableArray();
+          return _analyzeJsonContext(combined, compilation, sagaInheritance);
+        });
+
+    // Generate WhizbangJsonContext from the analysis
+    context.RegisterSourceOutput(
+        analysis.Combine(renameAliases),
+        static (ctx, all) => _generateWhizbangJsonContext(ctx, all.Left, all.Right));
   }
 
   /// <summary>
@@ -341,8 +357,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
               IsComposite: false,
               Properties: _mergeSagaEventProperties(shape, baseProperties),
               HasParameterizedConstructor: false),
-          Inheritance: _synthesizeSagaEventInheritance(
-              eventFullyQualifiedName, eventBase, inheritedFromBase, shape, context.SemanticModel.Compilation)));
+          Inheritance: [.. _synthesizeSagaEventInheritance(
+              eventFullyQualifiedName, eventBase, inheritedFromBase, shape, context.SemanticModel.Compilation)]));
     }
 
     return builder.ToImmutable();
@@ -382,7 +398,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private sealed record SagaSynthesizedEvent(
       JsonMessageTypeInfo Type,
-      ImmutableArray<InheritanceInfo> Inheritance);
+      EquatableArray<InheritanceInfo> Inheritance);
 
   /// <summary>
   /// Builds the polymorphic base relationships for one emitted saga event, matching what
@@ -610,6 +626,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return perspectiveModelInfo;
     }
 
+    // A generic declaration is an open type: it has no closed form to name a JsonTypeInfo for (#1481). A generic
+    // perspective class still names its model above, which is why this check comes after that path.
+    if (typeSymbol.IsGenericType) {
+      return null;
+    }
+
     return _buildMessageTypeInfo(typeSymbol, isCommand, isEvent, isSerializable, isComposite);
   }
 
@@ -673,7 +695,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Discovers and merges polymorphic types from both message inheritance and property analysis.
   /// </summary>
   private static ImmutableArray<PolymorphicTypeInfo> _discoverAndMergePolymorphicTypes(
-      SourceProductionContext context,
       ImmutableArray<JsonMessageTypeInfo> messages,
       ImmutableArray<PolymorphicTypeInfo> propertyPolymorphicTypes,
       Compilation compilation,
@@ -693,29 +714,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var polyType in propertyPolymorphicTypes) {
       polymorphicTypeDict[polyType.BaseTypeName] = polyType;
     }
-    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
-
-    foreach (var polyType in polymorphicTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
-          Location.None,
-          polyType.BaseSimpleName,
-          polyType.DerivedTypes.Length
-      ));
-    }
-
-    return polymorphicTypes;
+    return [.. polymorphicTypeDict.Values];
   }
 
   /// <summary>
-  /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
-  /// and Whizbang core types (MessageId, CorrelationId, etc.).
+  /// Reads, from the compilation, everything the generated JSON context needs beyond the discovered types: the nested
+  /// types their properties use, the enums among them, and the polymorphic base types with their derived types.
   /// </summary>
-  private static void _generateWhizbangJsonContext(
-      SourceProductionContext context,
+  private static JsonContextAnalysis _analyzeJsonContext(
       ImmutableArray<JsonMessageTypeInfo> allMessages,
       Compilation compilation,
-      ImmutableArray<RenameAlias> renameAliases,
       ImmutableArray<InheritanceInfo> synthesizedInheritance) {
 
     // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
@@ -724,24 +732,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var seen = new HashSet<string>();
     var messages = allMessages.Where(m => seen.Add(m.FullyQualifiedName)).ToImmutableArray();
 
+    // Discover nested custom types used in message properties
+    var (nestedTypes, propertyPolymorphicTypes) = _discoverNestedTypes(messages, compilation);
+
+    // Combine messages and nested types for code generation
+    var allTypes = messages.Concat(nestedTypes).ToImmutableArray();
+
+    // Discover and merge polymorphic types
+    var polymorphicTypes = _discoverAndMergePolymorphicTypes(
+        messages, propertyPolymorphicTypes, compilation, synthesizedInheritance);
+
+    return new JsonContextAnalysis(
+        compilation.AssemblyName,
+        [.. messages],
+        [.. nestedTypes],
+        [.. _discoverEnumTypes(allTypes, compilation)],
+        [.. polymorphicTypes]);
+  }
+
+  /// <summary>
+  /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
+  /// and Whizbang core types (MessageId, CorrelationId, etc.).
+  /// </summary>
+  private static void _generateWhizbangJsonContext(
+      SourceProductionContext context,
+      JsonContextAnalysis analysis,
+      ImmutableArray<RenameAlias> renameAliases) {
+
+    ImmutableArray<JsonMessageTypeInfo> messages = [.. analysis.Messages];
+    ImmutableArray<JsonMessageTypeInfo> nestedTypes = [.. analysis.NestedTypes];
+
     // Report that generator is running
     context.ReportDiagnostic(Diagnostic.Create(
-        new DiagnosticDescriptor(
-            "WHIZ099",
-            "MessageJsonContextGenerator Running",
-            "MessageJsonContextGenerator invoked for assembly '{0}' with {1} message type(s)",
-            "Whizbang.SourceGeneration",
-            DiagnosticSeverity.Info,
-            true),
+        DiagnosticDescriptors.MessageJsonContextRunning,
         Location.None,
-        compilation.AssemblyName ?? "Unknown",
+        analysis.AssemblyName ?? "Unknown",
         messages.Length
     ));
 
     _reportMessageTypeDiagnostics(context, messages);
-
-    // Discover nested custom types used in message properties
-    var (nestedTypes, propertyPolymorphicTypes) = _discoverNestedTypes(messages, compilation);
     _reportTypeDiscoveryDiagnostics(context, nestedTypes, "nested type");
 
     // Combine messages and nested types for code generation
@@ -752,17 +781,23 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var iReadOnlyListTypes = _discoverIReadOnlyListTypes(allTypes);
     var arrayTypes = _discoverArrayTypes(allTypes);
     var dictionaryTypes = _discoverDictionaryTypes(allTypes);
-    var enumTypes = _discoverEnumTypes(allTypes, compilation);
+    ImmutableArray<JsonEnumInfo> enumTypes = [.. analysis.EnumTypes];
 
     // Report collection/special type diagnostics
     _reportCollectionTypeDiagnostics(context, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes);
 
-    // Discover and merge polymorphic types
-    var polymorphicTypes = _discoverAndMergePolymorphicTypes(
-        context, messages, propertyPolymorphicTypes, compilation, synthesizedInheritance);
+    ImmutableArray<PolymorphicTypeInfo> polymorphicTypes = [.. analysis.PolymorphicTypes];
+    foreach (var polyType in polymorphicTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
+          Location.None,
+          polyType.BaseSimpleName,
+          polyType.DerivedTypes.Length
+      ));
+    }
 
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = analysis.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template
@@ -801,11 +836,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateInterfaceProperties(assembly, allTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation, renameAliases));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, analysis.AssemblyName, renameAliases));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly,
       new JsonTypeCollections(allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes)));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, analysis.AssemblyName));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", factories.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", _generateMessageEnvelopeFactories(assembly, messages));
@@ -1655,11 +1690,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// This avoids IL2057 trimming warnings by using static type references.
   /// NOTE: Deprecated in favor of JsonContextRegistry.GetTypeInfoByName for cross-assembly support.
   /// </summary>
-  private static string _generateGetTypeInfoByName(ImmutableArray<JsonMessageTypeInfo> allTypes, Compilation compilation) {
+  private static string _generateGetTypeInfoByName(ImmutableArray<JsonMessageTypeInfo> allTypes, string? compilationAssemblyName) {
     var sb = new StringBuilder();
 
     // Get the actual assembly name from the compilation
-    var actualAssemblyName = compilation.AssemblyName ?? "Unknown";
+    var actualAssemblyName = compilationAssemblyName ?? "Unknown";
 
     sb.AppendLine("/// <summary>");
     sb.AppendLine("/// Gets JsonTypeInfo for a message type by its assembly-qualified name.");
@@ -2063,7 +2098,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
   }
 
-  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation, ImmutableArray<RenameAlias> renameAliases) {
+  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, string? compilationAssemblyName, ImmutableArray<RenameAlias> renameAliases) {
     // Load snippet template
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -2071,7 +2106,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "HELPER_CREATE_OPTIONS");
 
     // Get assembly name for type registrations
-    var actualAssemblyName = compilation.AssemblyName ?? "Unknown";
+    var actualAssemblyName = compilationAssemblyName ?? "Unknown";
 
     // Build all registrations using helper methods
     var registrations = new System.Text.StringBuilder();
@@ -3895,7 +3930,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       registry.Add(new PolymorphicTypeInfo(
           BaseTypeName: baseTypeName,
           BaseSimpleName: simpleName,
-          DerivedTypes: derivedTypes
+          DerivedTypes: [.. derivedTypes]
       ));
     }
 
@@ -4076,7 +4111,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   /// <returns>Map of fully qualified derived type name to the discriminator to emit.</returns>
   /// <docs>extending/source-generators/polymorphic-serialization</docs>
-  private static Dictionary<string, string> _assignPolymorphicDiscriminators(ImmutableArray<string> derivedTypes) {
+  private static Dictionary<string, string> _assignPolymorphicDiscriminators(EquatableArray<string> derivedTypes) {
     var collidingSimpleNames = derivedTypes
         .GroupBy(_extractSimpleName, StringComparer.Ordinal)
         .Where(g => g.Count() > 1)

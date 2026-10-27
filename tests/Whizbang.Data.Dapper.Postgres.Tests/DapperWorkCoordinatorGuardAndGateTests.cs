@@ -28,7 +28,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 ///   <item><description>Heartbeat metadata (<c>GetRawText</c>) branch, per-table recompute counts,
 ///     NULL-column row mapping in <c>FetchOutboxBatchAsync</c>, and the internal
 ///     <see cref="WorkBatchRow"/> / <see cref="SerializedWorkBatchData"/> DTO shapes that are only
-///     hydrated by the retired <c>process_work_batch</c> pipeline.</description></item>
+///     hydrated by the removed <c>process_work_batch</c> pipeline.</description></item>
 /// </list>
 /// </summary>
 public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
@@ -45,7 +45,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   private static OutboxMessage _makeOutbox(Guid msgId, Guid? streamId, string? destination = "guard-topic") {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"k\":1}").RootElement,
+      JsonElement.Parse("{\"k\":1}"),
       []);
     return new OutboxMessage {
       MessageId = msgId,
@@ -62,7 +62,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
   private static InboxMessage _makeInbox(Guid msgId, Guid streamId) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
-      JsonDocument.Parse("{\"p\":1}").RootElement,
+      JsonElement.Parse("{\"p\":1}"),
       []);
     return new InboxMessage {
       MessageId = msgId,
@@ -421,7 +421,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await Assert.That(row.Error).IsNull();
   }
 
-  // ----- Internal DTOs only hydrated by the retired process_work_batch pipeline -----
+  // ----- Internal DTOs only hydrated by the removed process_work_batch pipeline -----
   //
   // ProcessWorkBatchAsync is now an IWorkCoordinator default-interface method returning an
   // empty batch, so nothing in DapperWorkCoordinator hydrates WorkBatchRow or builds

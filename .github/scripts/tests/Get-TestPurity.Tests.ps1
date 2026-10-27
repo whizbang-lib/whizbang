@@ -1,3 +1,6 @@
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 #Requires -Modules Pester
 
 # Tests for .github/scripts/Get-TestPurity.ps1 (#1264): the purity guard over Unit-type test projects and the

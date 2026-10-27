@@ -380,7 +380,7 @@ public class PerspectiveRowConflictRetryTests {
   }
 
   /// <summary>An event store with no history: the batch under test is all there is.</summary>
-  private sealed class EmptyEventStore : IEventStore {
+  internal sealed class EmptyEventStore : IEventStore {
     public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
     public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>

@@ -16,7 +16,7 @@ namespace Whizbang.Core;
 /// blind to every type declared elsewhere. Entries are materialized once at construction;
 /// duplicates (same CLR <see cref="MessageTypeCatalogEntry.Type"/>) keep the first occurrence.
 /// </summary>
-/// <docs>core-concepts/pinned-identity</docs>
+/// <docs>fundamentals/identity/pinned-identity</docs>
 public sealed class CompositeMessageTypeCatalog : IMessageTypeCatalog {
   private readonly IReadOnlyList<MessageTypeCatalogEntry> _entries;
 

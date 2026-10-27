@@ -1,3 +1,6 @@
+-- Copyright (c) whizbang-lib contributors.
+-- SPDX-License-Identifier: MIT
+
 -- Migration: 026_ClaimOrphanedReceptorWork.sql
 -- Date: 2025-12-25
 -- Description: Creates claim_orphaned_receptor_work function for claiming orphaned receptor processing work.

@@ -109,7 +109,7 @@ public class TransportConsumerWorkerDropGateTests {
 
   private static MessageEnvelope<JsonElement> _makeEnvelope() => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{}").RootElement,
+    Payload = JsonElement.Parse("{}"),
     Hops = [
       new MessageHop {
         Type = HopType.Current,
@@ -176,8 +176,9 @@ public class TransportConsumerWorkerDropGateTests {
 
     await cts.CancelAsync();
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("Drop gate must skip storage entirely for messages with no local consumer.");
+    await Assert.That(coordinator.StoredMessages.ConvertAll(m => m.DiscardedOnReceive ?? "(processed)"))
+      .IsEquivalentTo([InboxReceiveDiscard.NO_LOCAL_CONSUMER, InboxReceiveDiscard.NO_LOCAL_CONSUMER, InboxReceiveDiscard.NO_LOCAL_CONSUMER])
+      .Because("a message with no local consumer is stored settled with its reason, never dropped unstored (#1720)");
   }
 
   [Test]

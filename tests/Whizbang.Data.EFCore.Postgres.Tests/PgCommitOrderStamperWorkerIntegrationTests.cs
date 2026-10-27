@@ -140,7 +140,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await stampTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     var seq = await _readCommitSequenceAsync(eventId);
-    await Assert.That(seq).IsNotNull()
+    await Assert.That(seq.HasValue).IsTrue()
       .Because("polling tick must drive stamp_pending_commit_sequences; eventually the row gets a commit_sequence");
 
     await worker.StopAsync(CancellationToken.None);
@@ -491,7 +491,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
     await Assert.That(nextBatch).IsEqualTo(4)
       .Because("the call that timed out asked for 8, and a canceled call stamps nothing, so the next asks for half");
-    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+    await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue()
       .Because("once a call can complete, the backed-off batch stamps the pending row");
     await Assert.That(leaderships).IsEqualTo(1)
       .Because("a timeout is answered by a smaller batch, not by giving up the stamper's lock and electing again");
@@ -527,13 +527,52 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
     await Assert.That(logged).Contains("a stamp of 8 rows timed out").And.Contains("the next asks for 4")
       .Because("a stamper that backs off is visible as one: the warning names the size that failed and the next");
-    await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull();
+    await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue();
   }
 
   /// <summary>
   /// Completes on one of the worker's warnings (the timeout by default), so a test can act on it without subscribing
   /// to the event.
   /// </summary>
+  /// <summary>
+  /// The leader lock is a session-level advisory lock on a direct connection, held for the tenure; stopping the
+  /// leader releases it on the session that took it, with the key it was taken with, so the release finds the lock and
+  /// the next instance can lead at once.
+  /// </summary>
+  [Test]
+  public async Task Worker_StoppingTheLeader_ReleasesItsLockOnTheSessionThatTookItAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var logger = new WarningCapturingLogger();
+    var first = _newWorker(ConnectionString, logger: logger);
+    var firstLeads = await _whenBecomesLeaderAsync(first);
+    await first.StartAsync(cts.Token);
+    await firstLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await first.StopAsync(CancellationToken.None);
+
+    await Assert.That(logger.Warnings).IsEmpty()
+      .Because("a release that finds the lock gone is logged, and this one ran where the lock was taken");
+    var second = _newWorker(ConnectionString);
+    var secondLeads = await _whenBecomesLeaderAsync(second);
+    await second.StartAsync(cts.Token);
+    await secondLeads.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await second.StopAsync(CancellationToken.None);
+  }
+
+  private sealed class WarningCapturingLogger : ILogger<PgCommitOrderStamperWorker> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _warnings = [];
+    public List<string> Warnings { get { lock (_lock) { return [.. _warnings]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        lock (_lock) { _warnings.Add(formatter(state, exception)); }
+      }
+    }
+  }
+
   private sealed class TimeoutSignalingLogger(int eventIdToSignal = 18) : ILogger<PgCommitOrderStamperWorker> {
     public TaskCompletionSource<string> TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -579,7 +618,7 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(nextBatch).IsEqualTo(4)
       .Because("the first call filled its batch of 8 and took ten seconds, past the 2.5 s budget, so the next asks for half");
     foreach (var eventId in eventIds) {
-      await Assert.That(await _readCommitSequenceAsync(eventId)).IsNotNull()
+      await Assert.That((await _readCommitSequenceAsync(eventId)).HasValue).IsTrue()
         .Because("a call that ran long still committed what it stamped; the smaller calls stamp the rest");
     }
     await Assert.That(leaderships).IsEqualTo(1)

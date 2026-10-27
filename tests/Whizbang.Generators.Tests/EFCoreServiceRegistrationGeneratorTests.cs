@@ -137,6 +137,60 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Issue #1483: the registry entry for a model names the perspective that folds it, in the CLR form
+  /// its cursors and snapshots are keyed by, one entry per perspective. The SQL that evicts a model's row
+  /// has only the model's table; this is how it finds whose cursors and snapshots the row leaves behind.
+  /// </summary>
+  [Test]
+  public async Task Generator_RegistryEntries_CarryEachPerspectiveOfTheModelInClrFormAsync() {
+    // Arrange
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record SharedEvent : IEvent;
+
+      public record SharedModel {
+        public string Id { get; init; } = "";
+      }
+
+      public static class Holder {
+        public class NestedPerspective : IPerspectiveFor<SharedModel, SharedEvent> {
+          public SharedModel Apply(SharedModel currentData, SharedEvent eventData) => currentData;
+        }
+      }
+
+      public class SecondPerspective : IPerspectiveFor<SharedModel, SharedEvent> {
+        public SharedModel Apply(SharedModel currentData, SharedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var registryLine = schemaExtensions!.SourceText.ToString()
+      .Split('\n')
+      .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
+    await Assert.That(registryLine).IsNotNull();
+    await Assert.That(registryLine).Contains("PerspectiveName\\\":\\\"TestApp.Holder+NestedPerspective\\\"")
+      .Because("the perspective is named in the CLR form its cursors carry, '+' for the nesting");
+    await Assert.That(registryLine).Contains("PerspectiveName\\\":\\\"TestApp.SecondPerspective\\\"")
+      .Because("a model folded by two perspectives names both, so an eviction reaches both");
+  }
+
+  /// <summary>
   /// Test that a DbContext WITHOUT [WhizbangDbContext] attribute is NOT discovered.
   /// Explicit opt-in is required - no attribute = no participation.
   /// </summary>
@@ -786,9 +840,9 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use verbatim strings (@"...") for migration SQL in tuples
-    // Pattern: ("migration_name.sql", @"SQL content")
-    await Assert.That(sourceText).Contains(", @\"");
+    // Migration SQL is carried in tuples as verbatim UTF-8 literals decoded at run time (#1622)
+    // Pattern: ("migration_name.sql", global::System.Text.Encoding.UTF8.GetString(@"SQL content"u8))
+    await Assert.That(sourceText).Contains(".sql\", global::System.Text.Encoding.UTF8.GetString(@\"");
 
     // Should call ExecuteSqlRawAsync with migration SQL (variable names may vary: sql, transformedSql, etc.)
     await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(");
@@ -930,14 +984,11 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use transaction-level advisory lock (PgBouncer-safe), NOT session-level
-    await Assert.That(sourceText).Contains("pg_try_advisory_xact_lock");
-    // Should NOT use session-level lock or manual unlock
+    // Each step runs in a transaction of its own under the transaction-level advisory lock (PgBouncer-safe), which the
+    // step runner takes (pg_try_advisory_xact_lock; SchemaStepRunnerTests pins it). Nothing session-level is generated.
+    await Assert.That(sourceText).Contains("Whizbang.Data.EFCore.Postgres.SchemaStepRunner(");
     await Assert.That(sourceText).DoesNotContain("SELECT pg_try_advisory_lock(");
     await Assert.That(sourceText).DoesNotContain("pg_advisory_unlock");
-
-    // Should use BeginTransactionAsync for PgBouncer compatibility
-    await Assert.That(sourceText).Contains("BeginTransactionAsync");
 
     // Should have fast path with bulk hash comparison
     await Assert.That(sourceText).Contains("_bulkGetHashesAsync");
@@ -2257,7 +2308,7 @@ public partial class EFCoreServiceRegistrationGeneratorTests {
   /// <summary>
   /// Test that schema extensions include Step 5 comment indicating perspective association registration.
   /// Step 5 registers perspective→event type mappings in wh_message_associations table.
-  /// This enables process_work_batch Phase 4.6 to create perspective events.
+  /// This enables _emit_event_store_chain to create perspective events.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {

@@ -20,15 +20,21 @@ namespace Whizbang.Core.Attributes;
 /// covers base classes only, never interfaces).
 /// </para>
 /// <para>
-/// <strong>Enforced.</strong> The WHIZ130–139 analyzer band flags mixed-mode perspectives, illegal
-/// rebuild/rewind, ephemeral→Sourced laundering, mixed-mode streams, and ambiguous composition; a runtime
-/// guard backstops them.
+/// <strong>Enforced.</strong> The analyzer band WHIZ130-139 checks what the build can see: WHIZ130 flags a
+/// perspective that applies both ephemeral and Sourced events, WHIZ131 a rebuild or rewind of a perspective whose
+/// every event is ephemeral, WHIZ132 a receptor that turns an ephemeral message into a Sourced event (silenced by
+/// <see cref="DangerouslyAllowSourcedEventsFromEphemeralInputAttribute"/>), and WHIZ134 an ambiguous composition.
+/// Rebuilding or rewinding an ephemeral stream is refused at run time. A stream that mixes the two modes can only be
+/// known when its events are appended, so that check is a runtime guard rather than an analyzer: WHIZ133 refuses an
+/// event that would put both modes on one stream, in either order and with no opt-in (a write its caller awaits fails
+/// with <see cref="Whizbang.Core.Messaging.MixedStreamEventException"/>; any other write dead-letters the refused
+/// event). Publish ephemeral events on a stream of their own.
 /// </para>
 /// </remarks>
 /// <example>
 /// <code>
-/// // Presence: perspective state may live in RAM (lost on rebalance) — a deliberate opt-in.
-/// [Ephemeral(Destruction = Destruction.WhenConsumed, Storage = TransientStorage.InMemory)]
+/// // Presence: the event self-destructs once consumed; its read model is a row that ages out.
+/// [Ephemeral(Destruction = Destruction.AfterTtl, TtlSeconds = 30, Storage = TransientStorage.TtlRow)]
 /// public sealed record UserIsTyping(Guid ConversationId, Guid UserId) : IEvent;
 /// </code>
 /// </example>
@@ -60,7 +66,8 @@ public sealed class EphemeralAttribute : Attribute {
   /// (filtered from reads) and then physically reaps once its age exceeds this window, regardless of
   /// consumption. Defaults to <c>-1</c>, meaning <em>no age-based expiry</em>; it is meaningful only when
   /// <see cref="Destruction"/> is <see cref="Destruction.AfterTtl"/> (a <see cref="Destruction.WhenConsumed"/>
-  /// event has no TTL — it self-destructs on consumption instead).
+  /// event has no TTL; it self-destructs on consumption instead). An <see cref="Destruction.AfterTtl"/> event
+  /// without a TTL is reaped as soon as it is consumed.
   /// </summary>
   public int TtlSeconds { get; init; } = -1;
 }

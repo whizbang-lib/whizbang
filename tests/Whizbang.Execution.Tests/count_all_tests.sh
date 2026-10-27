@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) whizbang-lib contributors.
+# SPDX-License-Identifier: MIT
+
 
 echo "=== Counting All Tests ===" 
 

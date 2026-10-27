@@ -28,7 +28,7 @@ public class MessageEnvelopeHandlerNameTests {
 
   private static MessageEnvelope<JsonElement> _jsonEnvelope(MessageDispatchContext context) => new() {
     MessageId = MessageId.New(),
-    Payload = JsonDocument.Parse("{\"value\":1}").RootElement,
+    Payload = JsonElement.Parse("{\"value\":1}"),
     Hops = [],
     DispatchContext = context,
   };

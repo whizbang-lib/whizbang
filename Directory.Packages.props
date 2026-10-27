@@ -17,11 +17,11 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
   <ItemGroup>
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.6.1" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.3" />
+    <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.6.3" />
     <PackageVersion Include="Aspire.Hosting.NodeJs" Version="9.5.2" />
-    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.6.1" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.6.3" />
+    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.6.3" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.30.1" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
@@ -34,6 +34,7 @@
     <PackageVersion Include="FastEndpoints" Version="7.2.0" />
     <PackageVersion Include="FastEndpoints.Swagger" Version="7.2.0" />
     <PackageVersion Include="FsCheck" Version="3.4.0" />
+    <PackageVersion Include="HotChocolate" Version="15.1.14" />
     <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.14" />
     <PackageVersion Include="HotChocolate.Data" Version="15.1.14" />
     <PackageVersion Include="ILRepack.Lib.MSBuild.Task" Version="2.0.44.1" />
@@ -41,8 +42,9 @@
          (GHSA-hv8m-jj95-wg3x, LZ4 OOB read); 2.5.192 is vulnerable, 2.5.301 is the patched
          2.x release. Consumed via direct PackageReferences in the Whizbang.Hosting.* projects.
          The floor moved to 2.5.302 with Aspire.Hosting 13.5.4, whose StreamJsonRpc 2.25.29 asks
-         for it; a later release on the same 2.x line, so the patch above still holds. -->
-    <PackageVersion Include="MessagePack" Version="2.5.303" />
+         for it; a later release on the same 2.x line, so the patch above still holds. The floor
+         moved again to 2.5.307 with Aspire.Hosting 13.6.3. -->
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
     <!-- Transitively pinned to patch GHSA-v5pm-xwqc-g5wc (CVE-2026-49451): Microsoft.AspNetCore.OpenApi 10.0.2 pulls Microsoft.OpenApi 2.0.0, which is vulnerable. 2.7.5 is the first patched 2.x release. -->
     <PackageVersion Include="Microsoft.OpenApi" Version="2.12.2" />
@@ -54,14 +56,6 @@
     <PackageVersion Include="Roslynator.CodeAnalysis.Analyzers" Version="4.15.0" />
     <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="4.15.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.0.0" />
-    <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
-    <!-- Security pin: System.Security.Cryptography.Pkcs arrives transitively (Microsoft.Data.SqlClient 7.1.1 asks for
-         >= 9.0.18). 9.0.18 carries GHSA-846f-f764-76mx (high) and GHSA-2fmv-rv2c-59x7 (medium); both cover 10.0.0
-         through 10.0.12 as well, and 10.0.13 is the first patched release on the 10.0.x line the library's net10.0
-         dependencies use. SqlClient's requirement is a minimum, so 10.0.13 satisfies it. Consumed via a direct
-         PackageReference in Whizbang.Data.Dapper.Custom, which every project that pulls SqlClient references.
-         Remove once SqlClient flows a patched Pkcs on its own. -->
-    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <!-- Security pin: SSH.NET arrives transitively (Testcontainers). 2025.1.0 carries
          GHSA-q939-rpr3-3284 (high); pin the patched release. Remove once the transitive
          chain flows a patched SSH.NET on its own. -->
@@ -106,9 +100,8 @@
     <PackageVersion Include="TUnit.Core" Version="1.12.125" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.13" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.13" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.1" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.3" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
-    <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
     <!-- Language Server Protocol -->
     <PackageVersion Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
     <!-- Full-text search -->

@@ -97,8 +97,7 @@ public class EFCoreFetchPendingPerspectiveEventsTests : EFCoreTestBase {
     await Assert.That(rows.Count).IsEqualTo(1);
     await Assert.That(rows[0].EventWorkId).IsEqualTo(workId);
     await Assert.That(rows[0].EventId).IsEqualTo(eventId);
-    await Assert.That(rows[0].CommitSequence)
-      .IsNotNull()
+    await Assert.That(rows[0].CommitSequence.HasValue).IsTrue()
       .Because("backing event_store row is stamped, so the C# reader's non-null branch must surface the value");
   }
 
