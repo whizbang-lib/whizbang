@@ -134,6 +134,9 @@ PR #1570 (#1548). `v1.0.0/fundamentals/perspectives/row-retention.md` is publish
 
 **Status (2026-10-24):** done. The four SQL ledgers are #1572 (PR #1573). The durable-signal window
 (`WhizbangNotificationOptions.SignalRetention`) and the batched signal sweep are #1574 (PR #1575).
+Follow-up (2026-10-26): the signal sweep holds back only to the cursors of instances registered in
+`wh_service_instances`, the rule the #1758 carry uses, so a dead instance's cursor no longer stops it (#1771; the
+statement is the worker's own, no migration).
 
 - **Change.** Batched deletes in `perform_maintenance` (edit the latest definition in place;
   `debug_mode`-guarded) for `wh_log` (`log_retention_days`, default 14) and `wh_schedule_runs`

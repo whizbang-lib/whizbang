@@ -354,6 +354,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Statement statistics are read only while `pg_stat_statements` is Ready (#1754).** `GetExpensivePredicatesAsync`
+  on the Postgres table statistics consults the capability registry for its database before reading
+  `pg_stat_statements`, instead of reading it and catching every `PostgresException`. Any other state, or no
+  registry, answers empty without opening a connection. Both drivers pass the registry and the name their database is
+  probed under; a provider constructed directly takes them as the optional `capabilities` and `capabilityScope`
+  arguments, and without them reads no statement statistics. A read that fails while the capability reads Ready (the
+  extension dropped after the probe) is no longer swallowed.
 - **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
   Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
   `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
@@ -634,6 +641,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **The `wh_signals` row sweep is no longer held back by the cursor of an instance that is no longer registered
+  (#1771).** The sweep deleted up to the slowest cursor in `wh_signal_cursors`, dead or alive, so an instance that
+  stopped without being reaped left its cursor behind and the sweep removed nothing until the stale-instance reap
+  removed its row, while the table grew. The sweep now counts only the cursors of instances registered in
+  `wh_service_instances`, the rule the partition carry uses (#1758), so both paths agree on which instances are live.
+  With no registered instance's cursor the floor is 0 and nothing is deleted, as with an empty cursor table. No
+  migration: the sweep's statement is the worker's own.
 - **A heartbeat no longer rolls an instance's recorded lifecycle phase back behind its startup stage (#1781).** A beat
   reads the phase when it is built and writes it when it lands, so a beat built before a startup stage or transition
   was recorded wrote the earlier phase back over it: an instance that had entered Accept commands read Migrating again

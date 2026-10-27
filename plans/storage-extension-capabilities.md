@@ -244,8 +244,13 @@ Each slice is one red-then-green increment and its own commit.
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
-    **Status (2026-10-24):** open. `GetExpensivePredicatesAsync` still catches every `PostgresException`
-    (`PostgresTableStatisticsProvider.cs:536` on #1723's branch). Depends on slice 3 (done in #1723).
+    **Status (2026-10-26):** half done in #1754. `GetExpensivePredicatesAsync` reads `pg_stat_statements` only while
+    the registry has it Ready in the provider's database scope (both drivers pass the registry and their probe
+    name); any other state, or no registry, answers empty without opening a connection, and the
+    `catch (PostgresException)` is gone. The bloat estimate is unchanged: it never read pgstattuple or caught a
+    `PostgresException` (it estimates from `pg_stats`), so there was no catch to replace. Reading pgstattuple when
+    Ready, as the capability table above says, is a new measurement that scans tables on the statistics cadence and
+    is left for the owner to decide (cost, cadence, `pgstattuple_approx` or exact).
 11. **Unknown keys (defect 8).** Shipped: the recorded
     manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
     start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry
