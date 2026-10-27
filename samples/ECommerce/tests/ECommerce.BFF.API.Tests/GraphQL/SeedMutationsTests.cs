@@ -111,7 +111,6 @@ public class SeedMutationsTests {
   /// Tests that SeedProducts dispatches 12 CreateProductCommands when no products exist.
   /// </summary>
   [Test]
-  [Obsolete]
   public async Task SeedProducts_WhenNoProductsExist_Dispatches12CommandsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -126,7 +125,7 @@ public class SeedMutationsTests {
     // Assert - Verify 12 commands were dispatched
     await Assert.That(result).IsEqualTo(12);
     await Assert.That(dispatcher.SendCount).IsEqualTo(12);
-    await Assert.That(dispatcher.SentCommands).HasCount().EqualTo(12);
+    await Assert.That(dispatcher.SentCommands).Count().IsEqualTo(12);
     await Assert.That(dispatcher.SentCommands.All(c => c is CreateProductCommand)).IsTrue();
   }
 

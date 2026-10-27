@@ -99,7 +99,6 @@ public class UpdateProductReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_PublishesProductUpdatedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -120,7 +119,7 @@ public class UpdateProductReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
+    await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(1);
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductUpdatedEvent>();
 
     var publishedEvent = (ProductUpdatedEvent)dispatcher.PublishedEvents[0];
@@ -158,7 +157,6 @@ public class UpdateProductReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductUpdateAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -179,7 +177,7 @@ public class UpdateProductReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(logger.LoggedMessages).Count().IsGreaterThanOrEqualTo(1);
   }
 
   [Test]

@@ -46,7 +46,6 @@ public class GetMyOrdersEndpointTests {
 
 
   [Test]
-  [Obsolete]
   public async Task MockOrderLens_GetByCustomerId_ReturnsCorrectOrdersAsync() {
     // Arrange
     var testOrders = new List<OrderReadModel> {
@@ -76,7 +75,7 @@ public class GetMyOrdersEndpointTests {
     var result = await mockLens.GetByCustomerIdAsync("fedcba98-7654-7210-fedc-ba9876543210");
 
     // Assert
-    await Assert.That(result).HasCount().EqualTo(1);
+    await Assert.That(result).Count().IsEqualTo(1);
     var order = result.First();
     await Assert.That(order.OrderId).IsEqualTo(OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"));
     await Assert.That(order.CustomerId).IsEqualTo(CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"));

@@ -100,7 +100,6 @@ public class CreateOrderReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task CreateOrderReceptor_ValidOrder_PublishesEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -131,7 +130,7 @@ public class CreateOrderReceptorTests {
     await Assert.That(result).IsNotNull();
     await Assert.That(result.OrderId).IsEqualTo(command.OrderId);
     await Assert.That(result.CustomerId).IsEqualTo(command.CustomerId);
-    await Assert.That(result.LineItems).HasCount().EqualTo(1);
+    await Assert.That(result.LineItems).Count().IsEqualTo(1);
     await Assert.That(result.TotalAmount).IsEqualTo(39.98m);
 
     // Verify PublishAsync was called
@@ -214,7 +213,6 @@ public class CreateOrderReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task CreateOrderReceptor_ValidOrder_MapsAllPropertiesCorrectlyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -251,7 +249,7 @@ public class CreateOrderReceptorTests {
     // Assert
     await Assert.That(result.OrderId).IsEqualTo(orderId);
     await Assert.That(result.CustomerId).IsEqualTo(customerId);
-    await Assert.That(result.LineItems).HasCount().EqualTo(2);
+    await Assert.That(result.LineItems).Count().IsEqualTo(2);
     await Assert.That(result.TotalAmount).IsEqualTo(69.97m);
     await Assert.That(result.CreatedAt).IsGreaterThan(DateTime.UtcNow.AddSeconds(-5));
 

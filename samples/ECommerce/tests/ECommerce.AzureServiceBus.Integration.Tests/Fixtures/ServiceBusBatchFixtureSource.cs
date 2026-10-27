@@ -17,7 +17,6 @@ public sealed class ServiceBusBatchFixtureSource {
   /// <summary>
   /// Default constructor required by TUnit ClassDataSource.
   /// </summary>
-  [Obsolete]
   public ServiceBusBatchFixtureSource() {
     // Synchronously wait for initialization to complete
     // This ensures fixtures are ready before test classes are constructed
@@ -33,7 +32,6 @@ public sealed class ServiceBusBatchFixtureSource {
   /// Initializes the shared ServiceBus emulator fixture once per assembly.
   /// Reuses the emulator from SharedFixtureSource instead of starting a new one.
   /// </summary>
-  [Obsolete]
   private async Task _initializeAsync() {
     if (_initialized) {
       return;

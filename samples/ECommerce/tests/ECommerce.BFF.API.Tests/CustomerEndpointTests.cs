@@ -52,7 +52,6 @@ public class CustomerEndpointTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task CreateOrderRequest_WithValidData_CreatesValidRequestAsync() {
     // Arrange & Act
     var request = new CreateOrderRequest {
@@ -69,7 +68,7 @@ public class CustomerEndpointTests {
 
     // Assert
     await Assert.That(request.CustomerId).IsEqualTo("CUST-001");
-    await Assert.That(request.LineItems).HasCount().EqualTo(1);
+    await Assert.That(request.LineItems).Count().IsEqualTo(1);
     await Assert.That(request.LineItems[0].ProductId).IsEqualTo("PROD-001");
     await Assert.That(request.LineItems[0].Quantity).IsEqualTo(2);
     await Assert.That(request.LineItems[0].Price).IsEqualTo(50.00m);
