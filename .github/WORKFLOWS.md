@@ -14,6 +14,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | Release | `release.yml` | the release PR closing; dispatch for recovery | Promotes the tested packages as stable, tags `main`, syncs `develop` |
 | NuGet Publish | `nuget-publish.yml` | dispatch; called by the above | Pushes a packages artifact and creates the tag and GitHub release |
 | Git Flow Check | `git-flow-check.yml` | PRs | Refuses a branch direction the supported flows don't allow |
+| PR intake | `pr-intake.yml` | PRs (`pull_request_target`), issues, comments, reviews, the merge queue, a finished CI run, a `docs-pr-changed` dispatch, schedule (daily) | The process around the gates (`.github/scripts/Invoke-PrIntake.ps1`): issue labels and commands, `/recheck`, the pipeline-owner re-check after a review and in the queue, and re-running `Gate · Review checks` when the docs pull request that satisfies it is opened, edited or reopened (sent by the docs repository's `library-review-recheck.yml`), or when a run ends that the docs pull request outlived (#1806) |
 | Dependabot lock files | `dependabot-lockfiles.yml` | Dependabot PRs into `develop` that change packages | Regenerates the NuGet lock files Dependabot leaves stale and pushes them to its branch (below) |
 | CodeQL | `codeql.yml` | pushes, PRs, schedule | Static security analysis |
 | Secret Scanning | `security-secrets.yml` | pushes, PRs, dispatch | Scans for committed secrets |

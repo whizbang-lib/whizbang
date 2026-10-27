@@ -336,6 +336,7 @@ build admins and the release app, so nobody else can make a branch the environme
 | `v*` tag | `release.yml`, `nuget-publish.yml` | contents, workflows |
 | README numbers PR | `readme-refresh.yml` | contents, pull requests |
 | Docs site test status and security advisories, and its release | `ci.yml` → Report · Test status to docs, `security-advisories-docs.yml` | contents, pull requests, actions (docs repository only) |
+| `docs-pr-changed` dispatch to this repository, so a docs pull request re-runs the library review check it satisfies (#1806) | the docs repository's `library-review-recheck.yml`, in its own `release-app` environment | contents (this repository only: a repository dispatch is a contents write) |
 
 **Commits are created through the API, not pushed.** The develop, main and release rulesets require
 signed commits, and a `git push` of a workflow's own commit is unsigned. So the release branch (its
