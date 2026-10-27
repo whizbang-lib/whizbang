@@ -35,6 +35,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Shard4")]
 public class FanoutChildRefileSqlTests : EFCoreTestBase {
   private const string BALANCE_TABLE = "wh_per_rebuild_balance";
+  // A fixed instant: what the seeded rows record as their time is never what a test asserts on.
+  private static readonly DateTimeOffset _seededAt = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
   [Test]
   public async Task Refile_MovesAChildToTheStreamItsPayloadNames_AfterThatStreamsTailAsync() {
@@ -434,7 +436,7 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     var id = MessageId.New();
     // The lineage hop a fan-out gives every child: its causation is the composite envelope's id.
     List<MessageHop> hops = causedBy is { } composite
-      ? [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown, CausationId = new MessageId(composite) }]
+      ? [new MessageHop { Type = HopType.Current, Timestamp = _seededAt, ServiceInstance = ServiceInstanceInfo.Unknown, CausationId = new MessageId(composite) }]
       : [];
     var serialized = new EnvelopeSerializer(options).SerializeEnvelope(new MessageEnvelope<TEvent> {
       MessageId = id,
@@ -488,7 +490,7 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
 
   private async Task _seedRowAsync(Guid id) {
     await using var ctx = CreateDbContext();
-    var now = DateTime.UtcNow;
+    var now = _seededAt.UtcDateTime;
     ctx.Set<PerspectiveRow<RebuildBalanceModel>>().Add(new PerspectiveRow<RebuildBalanceModel> {
       Id = id,
       Data = new RebuildBalanceModel { Id = id, Balance = 1m },

@@ -1090,7 +1090,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       Payload = JsonSerializer.SerializeToElement(new { }),
       Hops = [new MessageHop {
         Type = HopType.Current,
-        Timestamp = DateTimeOffset.UtcNow,
+        Timestamp = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Metadata = new Dictionary<string, JsonElement> { ["AggregateId"] = JsonSerializer.SerializeToElement(compositeStream.ToString()) },
       }],
