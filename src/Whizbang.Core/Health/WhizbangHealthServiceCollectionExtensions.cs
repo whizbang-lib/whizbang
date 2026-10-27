@@ -17,6 +17,7 @@ namespace Whizbang.Core.Health;
 /// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AggregatesRegisteredSourcesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangHealthSource_SameSourceTwice_RegistersOnceAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_AppliesPolicyConfigurationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Health/WhizbangHealthDiTests.cs:AddWhizbangManagedHealth_TimesSourcesOnTheRegisteredClockAsync</tests>
 public static class WhizbangHealthServiceCollectionExtensions {
   /// <summary>
   /// Registers the health aggregator + policy options (idempotent). <paramref name="configure"/>
@@ -36,7 +37,10 @@ public static class WhizbangHealthServiceCollectionExtensions {
       sp.GetServices<IWhizbangHealthSource>(), sp.GetRequiredService<WhizbangHealthOptions>(),
       // A host that composes health without the worker pipeline records no stages; the pipeline's reporter wins
       // whenever it is registered, whichever of the two registrations runs first.
-      sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>() ?? Whizbang.Core.Startup.NullStartupStageReporter.Instance));
+      sp.GetService<Whizbang.Core.Startup.IStartupStageReporter>() ?? Whizbang.Core.Startup.NullStartupStageReporter.Instance,
+      // The per-source deadline runs on the host's clock when it registers one, so a host on a fake clock times its
+      // probes on that clock too.
+      sp.GetService<TimeProvider>() ?? TimeProvider.System));
     return services;
   }
 

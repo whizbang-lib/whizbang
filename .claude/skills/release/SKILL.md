@@ -109,7 +109,10 @@ signed commits, and only a commit created through the API is signed (docs/RELEAS
 identity writes"). A new workflow step that pushes, opens a PR or tags mints the app token the same way the existing ones
 do (`actions/create-github-app-token`, only the permissions it needs) and gets a row in *Which identity
 writes*. Its job declares `environment: release-app` (`release-cut` for cutting a release): the app's
-secrets are environment secrets, so a job without the environment reads nothing, and a caller never
-passes them to a reusable workflow, whose own job declares the environment (#1466,
-`.github/scripts/tests/ReleaseSecrets.Tests.ps1`). A cut now waits for a `build-admins` approval in
+secrets are environment secrets, so a job without the environment reads nothing (#1466,
+`.github/scripts/tests/ReleaseSecrets.Tests.ps1`). Mint the token in a job of the workflow the event
+started, and put shared steps in a composite action (as `.github/actions/sync-develop` does), not a
+reusable workflow: a reusable workflow's job gets an environment secret only when its caller passes it
+(`secrets: inherit`), and without that it reads an empty string with no error until the token step
+fails (#1796). A cut now waits for a `build-admins` approval in
 Actions before it runs.

@@ -20,12 +20,22 @@ name: PR intake
 #   - when a pull request enters the merge queue, runs the same pipeline-owner check from this base-branch
 #     copy and takes a pull request that fails it out of the queue (#1566). The CI gate runs from the pull
 #     request's own ci.yml, which the pull request can change; this file runs as the base branch has it.
+#   - when a docs-site pull request naming a pull request here is opened, edited or reopened (a
+#     docs-pr-changed repository_dispatch, sent by the docs repository's library-review-recheck.yml as the
+#     release app), and when a pull request's CI run ends in failure, re-runs its "Gate · Review checks" job,
+#     and the CI result after it, if that job failed before a docs pull request that satisfies its docs link
+#     last changed (#1806). The library pull request usually comes first, so its first review check almost
+#     always runs before the docs pull request exists.
 #
 # pull_request_target runs with the base branch's code and a token that can label a fork's pull request.
 # It never checks out or runs the pull request's code: the checkout below is the base branch's .github.
 # pull_request_review has no _target form: it runs this file as the pull request has it, with a token
 # that is read-only for a fork, so the review job runs only for pull requests from this repository, whose
 # authors can push here already. On a fork's pull request, /recheck re-runs the gate after an approval.
+#
+# repository_dispatch and workflow_run also run this file as the default branch has it, with this
+# repository's token. Neither reads code from a pull request: the dispatch's payload is only a number,
+# validated by the script, and the run's only a head commit, matched against the open pull requests.
 
 on:
   pull_request_target:
@@ -37,6 +47,11 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted, dismissed]
+  repository_dispatch:
+    types: [docs-pr-changed]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
   schedule:
     - cron: '23 13 * * *'   # daily, 09:23 EDT
   workflow_dispatch:
@@ -220,3 +235,51 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode Enqueued -Number "$PR"
+
+  docs-changed:
+    name: Re-run the review check a docs pull request satisfies
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'docs-pr-changed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # the open pull requests and their docs links
+      actions: write        # re-run the review-checks job
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Re-run the review check when it failed before the docs pull request changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Only a number is expected; the script ignores anything else.
+          PAYLOAD: ${{ github.event.client_payload.pull_request }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode DocsChanged -Payload "$PAYLOAD"
+
+  ci-completed:
+    name: Re-run the review check after a run its docs pull request outlived
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # the open pull requests and their docs links
+      actions: write        # re-run the review-checks job
+    steps:
+      - name: Checkout the pipeline scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Re-run the review check when it failed before a docs pull request changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: pwsh -NoProfile -File .github/scripts/Invoke-PrIntake.ps1 -Repository "$REPO" -Mode CiCompleted -HeadSha "$HEAD_SHA"

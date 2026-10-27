@@ -42,8 +42,10 @@ Code and docs live in two repositories, so a change and its documentation are tw
 link joins them. Open the code pull request first, then the docs pull request with
 `Docs for whizbang-lib/whizbang#N` in its description (N is the code pull request). GitHub shows that
 link on the code pull request's timeline, and the review checks find it there, so the code pull request
-needs no edit. Comment `/recheck` on the code pull request after opening the docs one. The docs pull
-request is open or merged; one closed without merging does not count.
+needs no edit. Opening, editing or reopening the docs pull request re-runs the code pull request's review
+check, and its CI result, on its own: right away when the code pull request's CI run has ended, or when
+it ends. `/recheck` is still there if a re-run is ever missed. The docs pull request is open or merged;
+one closed without merging does not count.
 
 ### Commands
 
@@ -55,7 +57,7 @@ Comment these as the first line of a comment:
 | `/decline <reason>` | issue | maintainer | Labels it `wontfix` and closes it as not planned, with the reason |
 | `/late-issue` | pull request | maintainer | Labels it `linked-issue:late`: its issue may be newer than it |
 | `/docs-not-needed` | pull request | maintainer | Labels it `docs:not-needed`: the library change needs no docs pull request |
-| `/recheck` | pull request | its author or a committer | Re-runs its failed checks, after opening the docs pull request or editing the description |
+| `/recheck` | pull request | its author or a committer | Re-runs its failed checks, after editing the description (a docs pull request re-runs the review check by itself) |
 
 ## Table of Contents
 

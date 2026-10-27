@@ -11,7 +11,6 @@ namespace ECommerce.BFF.API.Tests;
 /// </summary>
 public class OrderReadModelTests {
   [Test]
-  [Obsolete]
   public async Task OrderReadModel_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var createdAt = DateTime.UtcNow;
@@ -58,7 +57,7 @@ public class OrderReadModelTests {
     await Assert.That(order.PaymentStatus).IsEqualTo("Pending");
     await Assert.That(order.ShipmentId).IsEqualTo("SHIP-001");
     await Assert.That(order.TrackingNumber).IsEqualTo("TRACK-123");
-    await Assert.That(order.LineItems).HasCount().EqualTo(2);
+    await Assert.That(order.LineItems).Count().IsEqualTo(2);
   }
 
   [Test]

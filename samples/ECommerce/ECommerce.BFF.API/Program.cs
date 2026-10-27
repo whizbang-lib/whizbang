@@ -260,9 +260,7 @@ app.UseHttpsRedirection();
 app.UseCors();
 
 // FastEndpoints (REST API)
-app.UseFastEndpoints(config => {
-  config.Endpoints.RoutePrefix = "api";
-});
+app.UseFastEndpoints(config => config.Endpoints.RoutePrefix = "api");
 
 // Map SignalR hubs
 app.MapHub<OrderStatusHub>("/hubs/order-status");

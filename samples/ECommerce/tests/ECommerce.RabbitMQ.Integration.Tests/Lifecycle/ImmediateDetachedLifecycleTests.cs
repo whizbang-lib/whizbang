@@ -109,7 +109,8 @@ public class ImmediateDetachedLifecycleTests {
     // flakes under heavy parallel load.
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
       timeoutMilliseconds: 5000,
-      messageFilter: c => c.ProductId == command.ProductId);
+      messageFilter: c => c.ProductId == command.ProductId,
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -162,7 +163,8 @@ public class ImmediateDetachedLifecycleTests {
     var commandIds = commands.Select(c => c.ProductId).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
       timeoutMilliseconds: 10000,
-      messageFilter: c => commandIds.Contains(c.ProductId));
+      messageFilter: c => commandIds.Contains(c.ProductId),
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch all commands
     foreach (var command in commands) {
@@ -239,7 +241,8 @@ public class ImmediateDetachedLifecycleTests {
     // flakes under heavy parallel load.
     var receptorTask = fixture.InventoryHost.WaitForImmediateDetachedAsync<CreateProductCommand>(
       timeoutMilliseconds: 10000,
-      messageFilter: c => c.ProductId == command.ProductId);
+      messageFilter: c => c.ProductId == command.ProductId,
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch
     await fixture.Dispatcher.SendAsync(command);

@@ -12,7 +12,6 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for CreateProductCommand
 /// </summary>
 public class CreateProductCommandTests {
-  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task CreateProductCommand_WithAllProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act

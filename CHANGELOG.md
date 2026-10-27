@@ -634,6 +634,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A health source that blocks before it returns no longer stops the health probe answering (#1811).** The
+  aggregator called each source's `ReportAsync` on the probe's own thread and bounded the task it returned. A source
+  that blocked inside the call, before returning a task (a synchronous library call, or a wait on an asynchronous
+  one), held the probe there: its deadline was never armed, no later source was asked, and the probe never answered,
+  which is how a liveness probe gets a healthy pod restarted. Each source is now asked on a thread-pool thread, so such
+  a source is reported `Faulted` when its `SourceTimeout` elapses, like any other unresponsive source.
+- **The health probe's per-source deadline runs on the host's registered `TimeProvider` (#1811).** Each health source
+  is bounded by `WhizbangHealthOptions.SourceTimeout`, and that deadline always ran on the system clock, so a host or
+  test on a fake clock could not decide when it elapsed. `WhizbangHealthAggregator` gains a constructor that takes the
+  `TimeProvider`, and `AddWhizbangManagedHealth` passes the container's registered one, or `TimeProvider.System` when
+  none is registered. Behavior on the system clock is unchanged.
+- **`flush_completions` no longer deadlocks against another instance completing the same outbox rows (#1785).** The
+  composite flusher behind `IWorkCoordinator.FlushCompletionsAsync` completed outbox rows and later reported outbox
+  failures in the same transaction: two passes over `wh_outbox`, each in the canonical (stream_id, created_at,
+  message_id) order, which together are not one order. A flush that completed a later row and failed an earlier one
+  held the later row while it waited on the earlier, and a transaction completing both in order waited on it in turn.
+  Migration 245 redefines `flush_completions` to lock every outbox row it will write first, in one ordered pass: the
+  completed rows, the failed rows, and the rest of each failed row's run that the failure releases. It also runs its
+  steps in the canonical table order (outbox, inbox, perspective work). The signature is unchanged, so both drivers
+  call it as before. The flush workers, which send completions and failures in transactions of their own, were not
+  affected.
 - **A heartbeat no longer rolls an instance's recorded lifecycle phase back behind its startup stage (#1781).** A beat
   reads the phase when it is built and writes it when it lands, so a beat built before a startup stage or transition
   was recorded wrote the earlier phase back over it: an instance that had entered Accept commands read Migrating again

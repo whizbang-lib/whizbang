@@ -30,7 +30,7 @@ public class DomainOwnershipDetectorCoverageTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Contracts/PlaceOrderCommand.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasDetections).IsTrue()

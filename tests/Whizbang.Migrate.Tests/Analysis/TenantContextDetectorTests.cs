@@ -19,7 +19,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsTrue();
@@ -37,7 +37,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsTrue();
@@ -56,7 +56,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsTrue();
@@ -76,7 +76,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Services/OrderService.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.UsesMartenTenantFeatures).IsTrue();
@@ -95,7 +95,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Services/OrderService.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.UsesMartenTenantFeatures).IsTrue();
@@ -113,7 +113,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/Events.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(2);
@@ -130,7 +130,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsFalse();
@@ -146,7 +146,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsTrue();
@@ -193,7 +193,7 @@ public class TenantContextDetectorTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/DocumentEvents.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.HasTenantContext).IsTrue();

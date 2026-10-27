@@ -12,8 +12,6 @@ namespace ECommerce.Lifecycle.Integration.Tests;
 /// In root namespace so generated code lands in same namespace as perspective associations.
 /// </summary>
 [WhizbangDbContext(Schema = "public", ConnectionStringName = "lifecycle-test-db")]
-public partial class LifecycleTestDbContext : DbContext {
 #pragma warning disable IL2026, IL2046, IL3050
-  public LifecycleTestDbContext(DbContextOptions<LifecycleTestDbContext> options) : base(options) { }
+public partial class LifecycleTestDbContext(DbContextOptions<LifecycleTestDbContext> options) : DbContext(options);
 #pragma warning restore IL2026, IL2046, IL3050
-}

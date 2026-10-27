@@ -57,11 +57,13 @@ public class DutyHolderWorkerTests {
     public Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
       Attempts++;
       var answer = Answers.Count > 0 ? Answers.Dequeue() : () => DutyAttempt.Lost(DutyRefusal.Contended, "held elsewhere");
+      Task<DutyAttempt> attempt;
       try {
-        return _afterAsync(Proceed, answer());
+        attempt = _afterAsync(Proceed, answer());
       } finally {
         Attempted.TrySetResult(Attempts);
       }
+      return attempt;
     }
 
     private static async Task<DutyAttempt> _afterAsync(Task proceed, DutyAttempt attempt) {

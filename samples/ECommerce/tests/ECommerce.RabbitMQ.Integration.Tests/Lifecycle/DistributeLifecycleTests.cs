@@ -215,7 +215,8 @@ public class DistributeLifecycleTests {
     var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => commandIds.Contains(e.ProductId));
+      messageFilter: e => commandIds.Contains(e.ProductId),
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
@@ -343,11 +344,11 @@ public class DistributeLifecycleTests {
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     const int perStageTimeoutMs = 120_000;
     bool filter(ProductCreatedEvent e) => e.ProductId == command.ProductId.Value;
-    var preInlineTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
-    var preAsyncTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
-    var distributeAsyncTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
-    var postAsyncTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
-    var postInlineTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter);
+    var preInlineTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter, cancellationToken: cancellationToken);
+    var preAsyncTask = fixture.InventoryHost.WaitForPreDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter, cancellationToken: cancellationToken);
+    var distributeAsyncTask = fixture.InventoryHost.WaitForDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter, cancellationToken: cancellationToken);
+    var postAsyncTask = fixture.InventoryHost.WaitForPostDistributeDetachedAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter, cancellationToken: cancellationToken);
+    var postInlineTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(perStageTimeoutMs, messageFilter: filter, cancellationToken: cancellationToken);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -395,7 +396,8 @@ public class DistributeLifecycleTests {
     var commandIds = commands.Select(c => c.ProductId.Value).ToHashSet();
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => commandIds.Contains(e.ProductId));
+      messageFilter: e => commandIds.Contains(e.ProductId),
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {

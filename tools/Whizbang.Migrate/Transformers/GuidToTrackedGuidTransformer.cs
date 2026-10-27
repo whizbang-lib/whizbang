@@ -158,17 +158,17 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
     // Find methods that return Guid and contain Guid generation calls
     var methodsWithGuidReturn = root.DescendantNodes()
         .OfType<MethodDeclarationSyntax>()
-        .Where(m => m.ReturnType.ToString() == "Guid" ||
-                    m.ReturnType.ToString() == "System.Guid")
-        .Where(m => m.DescendantNodes()
-            .OfType<InvocationExpressionSyntax>()
-            .Any(inv => {
-              var expr = inv.Expression.ToString();
-              return expr == "Guid.NewGuid" ||
-                     expr == "Guid.CreateVersion7" ||
-                     expr == "System.Guid.NewGuid" ||
-                     expr == "System.Guid.CreateVersion7";
-            }))
+        .Where(m => (m.ReturnType.ToString() == "Guid" ||
+                     m.ReturnType.ToString() == "System.Guid")
+            && m.DescendantNodes()
+              .OfType<InvocationExpressionSyntax>()
+              .Any(inv => {
+                var expr = inv.Expression.ToString();
+                return expr == "Guid.NewGuid" ||
+                       expr == "Guid.CreateVersion7" ||
+                       expr == "System.Guid.NewGuid" ||
+                       expr == "System.Guid.CreateVersion7";
+              }))
         .ToList();
 
     foreach (var method in methodsWithGuidReturn) {
@@ -181,8 +181,7 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
     // Also warn about properties with Guid initializers
     var propertiesWithGuidInit = root.DescendantNodes()
         .OfType<PropertyDeclarationSyntax>()
-        .Where(p => p.Initializer != null)
-        .Where(p => p.Type.ToString() == "Guid" || p.Type.ToString() == "System.Guid")
+        .Where(p => p.Initializer != null && (p.Type.ToString() == "Guid" || p.Type.ToString() == "System.Guid"))
         .Where(p => {
           var initText = p.Initializer?.Value.ToString() ?? "";
           return initText.Contains("Guid.NewGuid") || initText.Contains("Guid.CreateVersion7");

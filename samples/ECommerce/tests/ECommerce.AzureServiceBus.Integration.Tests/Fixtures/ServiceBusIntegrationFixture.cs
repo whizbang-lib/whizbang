@@ -50,7 +50,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   private readonly string _topicB = "topic-01";
   private readonly int _batchIndex;
   private bool _isInitialized;
-  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
   private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
   private string? _connectionString;  // Connection string pointing to the fixture's unique database
@@ -292,7 +291,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
   private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
-    var maxAttempts = 30;
+    const int maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -375,7 +374,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -576,7 +575,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
@@ -1238,7 +1237,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // and stay on wh_inbox, while status is work state and moved to wh_inbox_state. A diagnostic
     // that reads both therefore joins both. LEFT JOIN rather than JOIN on purpose: a message row
     // with no state row would be a defect worth seeing here, not a row worth hiding.
-    var inboxQuery = @"
+    const string inboxQuery = @"
       SELECT
         i.message_id AS MessageId,
         i.message_type AS MessageType,
@@ -1265,7 +1264,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     // Query 2: Check event store for event
-    var eventStoreQuery = @"
+    const string eventStoreQuery = @"
       SELECT
         event_id AS EventId,
         stream_id AS StreamId,
@@ -1364,7 +1363,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     // Query 4: Check BFF schema as well
-    var bffEventStoreQuery = @"
+    const string bffEventStoreQuery = @"
       SELECT
         event_id AS EventId,
         stream_id AS StreamId,

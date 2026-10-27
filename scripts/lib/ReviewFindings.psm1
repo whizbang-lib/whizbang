@@ -226,7 +226,11 @@ function _readGateFile([string]$File) {
 function Read-UnifiedDiff {
   <#
   .SYNOPSIS
-      Every file in a unified diff, with each new-side line it shows (added or context).
+      Every file in a unified diff, with each new-side line it shows (added or context) and the text of
+      each line it removes.
+  .DESCRIPTION
+      A file header it cannot read (git quotes a path it cannot print as is) throws rather than leaving
+      the path empty, which would skip the file's added lines and report no findings (#1799).
   #>
   [CmdletBinding()]
   param([Parameter(Mandatory)][AllowEmptyString()][string]$DiffText)
@@ -238,9 +242,13 @@ function Read-UnifiedDiff {
   foreach ($line in $DiffText -split "`r?`n") {
     if ($line.StartsWith('diff --git ')) {
       $m = [regex]::Match($line, '^diff --git a/(?<a>.+) b/(?<b>.+)$')
+      if (-not $m.Success) {
+        throw "The review checks cannot read this file header in the diff, so they cannot check its lines: $line. Run git diff with core.quotePath=false, or rename the file."
+      }
       $file = [pscustomobject]@{
         Path = $m.Groups['b'].Value; OldPath = $m.Groups['a'].Value; IsNew = $false; IsDeleted = $false
         Lines = [System.Collections.Generic.List[object]]::new()
+        Removed = [System.Collections.Generic.List[string]]::new()
       }
       $files.Add($file)
       $inHunk = $false
@@ -266,8 +274,11 @@ function Read-UnifiedDiff {
     } elseif ($line.StartsWith(' ') -or $line -eq '') {
       $file.Lines.Add([pscustomobject]@{ Line = $next; Text = if ($line) { $line.Substring(1) } else { '' }; Added = $false })
       $next++
+    } elseif ($line.StartsWith('-')) {
+      # Old-side only: no new-side line number.
+      $file.Removed.Add($line.Substring(1))
     }
-    # "-" lines are old-side only; "\ No newline at end of file" is not a line.
+    # "\ No newline at end of file" is not a line.
   }
   return $files.ToArray()
 }
@@ -479,6 +490,12 @@ function Find-DiffFindings {
       Each finding's id is "rule:path:line", so a re-run on the same diff produces the same ids and a
       draft review never gets the same comment twice.
 
+      A line a new file adds that a file the same diff deletes removes word for word is carried over, not
+      added: git pairs a renamed file only above 50% similarity, and below it the move reads as a deleted
+      file and a new one. Without this, the same moved line passed a feature pull request (git paired the
+      rename) and was flagged on the release pull request against main (it did not) (#1799). A line taken
+      out of a file the diff keeps is still new where it lands.
+
       ReadMigrationVersions, when given, is called with an edited migration's old and new path and returns
       an object with Old and New (the file's text on each side), or $null when either cannot be read. An
       edit whose normalized SQL is unchanged (ConvertTo-NormalizedSql: comments, line-edge whitespace,
@@ -492,7 +509,11 @@ function Find-DiffFindings {
     [scriptblock]$ReadMigrationVersions
   )
 
-  foreach ($file in Read-UnifiedDiff -DiffText $DiffText) {
+  $files = @(Read-UnifiedDiff -DiffText $DiffText)
+  $carriedOver = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+  foreach ($deleted in @($files | Where-Object IsDeleted)) { $deleted.Removed | ForEach-Object { [void]$carriedOver.Add($_) } }
+
+  foreach ($file in $files) {
     $path = $file.Path
     if ($file.IsDeleted -or $path -like '*.g.cs' -or $path -like '*/.whizbang/cache/*') { continue }
     if (@($IgnorePaths | Where-Object { $path -like $_ }).Count -gt 0) { continue }
@@ -500,7 +521,9 @@ function Find-DiffFindings {
     $isText = $script:TextExtensions -contains $extension
     $isTest = $path.StartsWith('tests/') -and $extension -eq '.cs'
     $isLibrary = $path.StartsWith('src/') -and $extension -eq '.cs'
-    $added = @($file.Lines | Where-Object { $_.Added -and -not $_.Text.Contains('review-checks:allow') })
+    $added = @($file.Lines | Where-Object {
+        $_.Added -and -not $_.Text.Contains('review-checks:allow') -and -not ($file.IsNew -and $carriedOver.Contains($_.Text))
+      })
 
     if ($path -match '^src/[^/]+/Migrations/[^/]+\.sql$' -and -not $file.IsNew -and $added.Count -gt 0 -and
       -not (_isInertMigrationEdit $file $ReadMigrationVersions)) {
