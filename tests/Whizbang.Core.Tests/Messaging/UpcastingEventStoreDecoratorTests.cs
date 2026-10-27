@@ -156,6 +156,50 @@ public class UpcastingEventStoreDecoratorTests {
     await Assert.That(EventRekeys.RekeyedTo(payloads.Single())).IsNull();
   }
 
+  /// <summary>
+  /// The generated extractor reads an unset <c>[StreamId]</c> as <see cref="Guid.Empty"/>, not as null. An upcaster that
+  /// clears the stream leaves an empty id, which names no stream: recording it would route the event onto a row keyed by
+  /// the empty id on rebuild.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_UpcastLeavesAnEmptyStreamId_RecordsNoRekeyAsync() {
+    var sut = new UpcastingEventStoreDecorator(
+      new RecordingStore(yield: new RekeyableEvent { StreamId = Guid.NewGuid(), MoveTo = Guid.Empty, ClearStream = true }),
+      new EventUpcasterPipeline([new InPlaceRekeyUpcaster()]),
+      new EmptyReadingExtractor());
+
+    var payloads = new List<IEvent>();
+    await foreach (var env in sut.ReadPolymorphicAsync(Guid.NewGuid(), null, [typeof(RekeyableEvent)])) {
+      payloads.Add(env.Payload);
+    }
+
+    await Assert.That(((RekeyableEvent)payloads.Single()).StreamId).IsEqualTo(Guid.Empty)
+      .Because("setup: the upcaster cleared the stream, and the extractor reads it back as the empty id");
+    await Assert.That(EventRekeys.RekeyedTo(payloads.Single())).IsNull()
+      .Because("an empty stream id names no row, so the read records no re-key");
+  }
+
+  /// <summary>
+  /// An event stored naming no stream that an upcaster gives one is a re-key too: it now names a row the stored event
+  /// never did.
+  /// </summary>
+  [Test]
+  public async Task ReadPolymorphicAsync_UpcasterGivesAStreamToAnEventThatNamedNone_RecordsTheRekeyAsync() {
+    var to = Guid.NewGuid();
+    var sut = new UpcastingEventStoreDecorator(
+      new RecordingStore(yield: new RekeyableEvent { StreamId = Guid.Empty, MoveTo = to }),
+      new EventUpcasterPipeline([new InPlaceRekeyUpcaster()]),
+      new RekeyableEventExtractor());
+
+    var payloads = new List<IEvent>();
+    await foreach (var env in sut.ReadPolymorphicAsync(Guid.NewGuid(), null, [typeof(RekeyableEvent)])) {
+      payloads.Add(env.Payload);
+    }
+
+    await Assert.That(EventRekeys.RekeyedTo(payloads.Single())).IsEqualTo(to)
+      .Because("the stored event named no stream, so any stream the upcaster gives it is a move");
+  }
+
   /// <summary>Without an extractor of its own the decorator reads streams through the generated registry.</summary>
   [Test]
   public async Task ReadPolymorphicAsync_WithoutAnExtractor_StillAppliesTheUpcasterAsync() {
@@ -207,6 +251,11 @@ public class UpcastingEventStoreDecoratorTests {
       NewEvent { StreamId: var id } => id,
       _ => null,
     };
+  }
+
+  /// <summary>Reads <c>[StreamId]</c> as the generated extractor does: an unset id comes back as <see cref="Guid.Empty"/>.</summary>
+  private sealed class EmptyReadingExtractor : IStreamIdExtractor {
+    public Guid? ExtractStreamId(object message, Type messageType) => message is RekeyableEvent e ? e.StreamId : null;
   }
 
   private static MessageEnvelope<IEvent> _makeEnvelope(IEvent payload) => new() {
