@@ -56,7 +56,7 @@ public sealed class ExternalProcessRunnerTests {
     using var canceled = new CancellationTokenSource();
     await canceled.CancelAsync();
 
-    Func<Task> act = () => new ExternalProcessRunner().RunAsync(new ExternalProcessRequest(_dotnet, ["--version"]), canceled.Token);
+    Task act() => new ExternalProcessRunner().RunAsync(new ExternalProcessRequest(_dotnet, ["--version"]), canceled.Token);
 
     await Assert.That(act).Throws<OperationCanceledException>();
   }

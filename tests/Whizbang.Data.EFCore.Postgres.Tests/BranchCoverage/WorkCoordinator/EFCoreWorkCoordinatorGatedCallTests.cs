@@ -169,6 +169,9 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("SqueezeTable", "SqueezeTableAsync", async (c, _) =>
       await Assert.That(await c.SqueezeTableAsync("wh_settings")).IsNull()
         .Because("the test server has no pg_squeeze, so the prerequisite check reports it and nothing is rewritten"));
+    register("RewriteTableWith", "RewriteTableWithAsync", async (c, _) =>
+      await Assert.That(await c.RewriteTableWithAsync("wh_settings", (_, _) => Task.FromResult(false))).IsNull()
+        .Because("the program reported failure, so nothing is analyzed or re-measured"));
     register("RequestTableRewrite", "RequestTableRewriteAsync", (c, _) => c.RequestTableRewriteAsync("wh_settings"));
     register("ClearTableRewriteRequest", "ClearTableRewriteRequestAsync", (c, _) => c.ClearTableRewriteRequestAsync("wh_settings"));
     register("PruneAncientEphemeralPointers", "PruneAncientEphemeralPointersAsync", (c, _) => c.PruneAncientEphemeralPointersAsync());

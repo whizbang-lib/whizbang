@@ -97,10 +97,11 @@ public class ConfigurationManifestGenerator : IIncrementalGenerator {
       .Where(static binding => binding is not null)
       .Select(static (binding, _) => binding!);
 
-    // [RemovedConfigurationKey] on the assembly (a compilation unit's attribute list) or on a class or record.
+    // [RemovedConfigurationKey] on the assembly (a compilation unit's attribute list) or on a class or record. Its
+    // AttributeUsage allows no other target (anywhere else is a compile error), so every node the attribute is on counts.
     var removedKeys = context.SyntaxProvider.ForAttributeWithMetadataName(
         REMOVED_CONFIGURATION_KEY,
-        predicate: static (node, _) => node is CompilationUnitSyntax or TypeDeclarationSyntax,
+        predicate: static (_, _) => true,
         transform: static (ctx, _) => _extractRemovedKeys(ctx.Attributes))
       .SelectMany(static (keys, _) => keys);
 

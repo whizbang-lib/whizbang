@@ -110,7 +110,7 @@ public sealed class VacuumFullTableRewriterTests {
     await using var provider = services.BuildServiceProvider();
 
     var rewriters = provider.GetServices<ITableRewriter>().ToList();
-    var strategies = rewriters.Select(r => r.Strategy).ToList();
+    var strategies = rewriters.ConvertAll(r => r.Strategy);
 
     await Assert.That(strategies.Count(s => s == TableRewriteStrategies.VACUUM_FULL)).IsEqualTo(1)
       .Because("AddWhizbangWorkers is idempotent; a second call must not register a second rewriter");

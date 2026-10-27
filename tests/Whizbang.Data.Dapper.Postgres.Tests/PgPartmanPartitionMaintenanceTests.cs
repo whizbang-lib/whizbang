@@ -44,12 +44,12 @@ public class PgPartmanPartitionMaintenanceTests : PostgresTestBase {
   private DapperPartitionMaintenanceStep _step() => new(ConnectionString, _logger, new FixedClock(_now));
 
   private static async Task<ServiceProvider> _servicesAsync(
-      PartitionManagementStrategy strategy, CapabilityState? pgPartman, bool announcer = true) {
+      PartitionManagementStrategy strategy, CapabilityState? pgPartman, bool announcer = true, PartitionedTable? table = null) {
     var services = new ServiceCollection();
     services.AddSingleton(Options.Create(new MaintenanceWorkerOptions {
       Partitioning = new MaintenancePartitioningOptions { Enabled = true, CreateAhead = 2, Strategy = strategy },
     }));
-    services.AddPartitionedTable(_probe);
+    services.AddPartitionedTable(table ?? _probe);
     if (announcer) {
       services.AddSingleton(new PartitionStrategyAnnouncer());
     }
@@ -151,6 +151,26 @@ public class PgPartmanPartitionMaintenanceTests : PostgresTestBase {
     await Assert.That(await _passCallsAsync()).IsEqualTo(3L).Because("a re-bound takes three steps; a fourth means something is wrong");
     await Assert.That(_logged(LogLevel.Warning).Where(w => w.StartsWith("pg_partman did not create", StringComparison.Ordinal))).IsEmpty()
       .Because("until pg_partman maintains the table, the built-in manager creating its partitions is not a miss");
+  }
+
+  [Test]
+  public async Task WithPgPartman_APartitionTheBuiltInManagerDrops_IsNotReportedAsAMissAsync() {
+    await _standInPassAsync(reboundingCalls: 0);
+    await using (var connection = await _openAsync()) {
+      await connection.ExecuteAsync(
+        $"CREATE TABLE {TABLE}_p20261001 PARTITION OF {TABLE} FOR VALUES FROM ('2026-10-01') TO ('2026-10-02')");
+    }
+    var retained = PartitionedTable.RetainedFor(TABLE, "at", TimeSpan.FromDays(1), TimeSpan.FromDays(7));
+    await using var services = await _servicesAsync(PartitionManagementStrategy.PgPartman, CapabilityState.Ready, table: retained);
+
+    await _step().RunAsync(services, CancellationToken.None);
+
+    await Assert.That(await _partitionsAsync()).DoesNotContain(TABLE + "_p20261001")
+      .Because("with pg_partman creating partitions, the built-in manager still drops the expired ones");
+    var misses = _logged(LogLevel.Warning).Where(w => w.StartsWith("pg_partman did not create", StringComparison.Ordinal)).ToList();
+    await Assert.That(misses.Count).IsEqualTo(3).Because("only the three ranged partitions the built-in pass created are misses");
+    await Assert.That(misses.Any(w => w.Contains("_p20261001", StringComparison.Ordinal))).IsFalse()
+      .Because("a dropped partition is the built-in manager's own work, not something pg_partman failed to create");
   }
 
   [Test]

@@ -1079,7 +1079,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     // The heap size is what an online rewrite copies; the per-cycle budget is spent by it.
-    cmd.CommandText = $"SELECT r.table_name, r.bloat_ratio, r.requested, "
+    cmd.CommandText = "SELECT r.table_name, r.bloat_ratio, r.requested, "
       + $"COALESCE(pg_relation_size(to_regclass(@prefix || quote_ident(r.table_name))), 0) FROM {fn}() r";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("prefix", BuildSchemaQualifiedName(schema, ""));
