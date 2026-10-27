@@ -6,7 +6,8 @@
 
 <#
 .SYNOPSIS
-    The docs-site pull requests that document a code pull request, as JSON: [{number, state, referencesThis}].
+    The docs-site pull requests that document a code pull request, as JSON:
+    [{number, state, referencesThis, updatedAt}].
 
 .DESCRIPTION
     Code and docs live in two repositories, so a change and its documentation are two pull requests. One
@@ -16,7 +17,9 @@
     its own description names this pull request.
 
     The review checks (scripts/lib/ReviewFindings.psm1, rule pr.docs-link) decide what a library change
-    needs; this script only reads.
+    needs; this script only reads. updatedAt (when the docs pull request last changed) is what the docs
+    re-check (Invoke-PrIntake.ps1, DocsChanged and CiCompleted) compares with the review check's start, to
+    tell a review check that ran before its docs pull request existed (#1806).
 
 .PARAMETER Repository
     The code repository, owner/name.
@@ -61,7 +64,7 @@ function ConvertFrom-DocsCrossReferences {
     $src = $n.source
     if (-not $src -or -not $src.PSObject.Properties['repository'] -or $src.repository.nameWithOwner -ne $DocsRepository) { continue }
     if ($seen.Add([int]$src.number)) {
-      [pscustomobject]@{ Number = [int]$src.number; State = [string]$src.state; ReferencesThis = $true }
+      [pscustomobject]@{ Number = [int]$src.number; State = [string]$src.state; ReferencesThis = $true; UpdatedAt = ConvertTo-UpdatedAt $src.updatedAt }
     }
   }
 }
@@ -85,9 +88,26 @@ function Merge-DocsPullRequests {
     $pr = & $LookupDocsPullRequest $n
     if ($pr) {
       [pscustomobject]@{ Number = [int]$pr.Number; State = [string]$pr.State
-        ReferencesThis = Test-ReferencesPullRequest -Body ([string]$pr.Body) -Repository $Repository -Number $Number }
+        ReferencesThis = Test-ReferencesPullRequest -Body ([string]$pr.Body) -Repository $Repository -Number $Number
+        UpdatedAt = ConvertTo-UpdatedAt $pr.UpdatedAt }
     }
   }
+}
+
+function ConvertTo-UpdatedAt {
+  <# .SYNOPSIS A timestamp as ConvertFrom-Json reads it (a string or a date), or nothing, as a datetimeoffset. #>
+  param([AllowNull()][object]$Value)
+  if ($null -eq $Value -or "$Value" -eq '') { return $null }
+  return [datetimeoffset]$Value
+}
+
+function ConvertTo-DocsPullRequestsJson {
+  <# .SYNOPSIS The docs pull requests as this script's JSON output, updatedAt in round-trip form. #>
+  param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$DocsPullRequests)
+  ConvertTo-Json -Compress -InputObject @($DocsPullRequests | ForEach-Object {
+      [ordered]@{ number = $_.Number; state = $_.State; referencesThis = [bool]$_.ReferencesThis
+        updatedAt = $(if ($_.UpdatedAt) { ([datetimeoffset]$_.UpdatedAt).ToString('o', [cultureinfo]::InvariantCulture) } else { $null }) }
+    })
 }
 
 # Dot-sourcing for tests loads the functions without running anything.
@@ -95,13 +115,13 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 
 $owner, $name = $Repository -split '/', 2
 $query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){' +
-  'body timelineItems(itemTypes:[CROSS_REFERENCED_EVENT],last:100){nodes{... on CrossReferencedEvent{source{... on PullRequest{number state repository{nameWithOwner}}}}}}}}}'
+  'body timelineItems(itemTypes:[CROSS_REFERENCED_EVENT],last:100){nodes{... on CrossReferencedEvent{source{... on PullRequest{number state updatedAt repository{nameWithOwner}}}}}}}}}'
 $json = (gh api graphql -f query=$query -f owner=$owner -f name=$name -F number=$PullRequest) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw "Reading pull request #$PullRequest failed (gh exit $LASTEXITCODE)." }
 
 $body = [string](($json | ConvertFrom-Json).data.repository.pullRequest.body)
 $docsOwner, $docsName = $DocsRepository -split '/', 2
-$docsQuery = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){number state body}}}'
+$docsQuery = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){number state updatedAt body}}}'
 $lookup = {
   param([int]$DocsNumber)
   # A number that is an issue, or nothing at all, reads as nothing.
@@ -109,10 +129,10 @@ $lookup = {
   if ($LASTEXITCODE -ne 0) { return $null }
   $pr = (($found -join "`n") | ConvertFrom-Json).data.repository.pullRequest
   if (-not $pr) { return $null }
-  [pscustomobject]@{ Number = [int]$pr.number; State = [string]$pr.state; Body = [string]$pr.body }
+  [pscustomobject]@{ Number = [int]$pr.number; State = [string]$pr.state; Body = [string]$pr.body; UpdatedAt = $pr.updatedAt }
 }
 
 $all = @(Merge-DocsPullRequests -CrossReferenced @(ConvertFrom-DocsCrossReferences -Json $json -DocsRepository $DocsRepository) `
     -LinkedNumbers @(Get-DocsLinkNumbers -Body $body -DocsRepository $DocsRepository) -Repository $Repository -Number $PullRequest -LookupDocsPullRequest $lookup)
-ConvertTo-Json -InputObject @($all | ForEach-Object { [ordered]@{ number = $_.Number; state = $_.State; referencesThis = [bool]$_.ReferencesThis } }) -Compress
+ConvertTo-DocsPullRequestsJson -DocsPullRequests $all
 exit 0
