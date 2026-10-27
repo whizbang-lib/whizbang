@@ -95,7 +95,7 @@ public sealed partial class PostgresFanoutChildRefiler(
     while (true) {
       await using var page = new NpgsqlCommand(
         // A child with no body row reads as JSON null: unreadable, so left in place and counted.
-        $"SELECT es.event_id, es.stream_id, es.event_type, COALESCE(b.event_data::text, 'null') "
+        "SELECT es.event_id, es.stream_id, es.event_type, COALESCE(b.event_data::text, 'null') "
         + $"FROM {prefix}wh_event_store es LEFT JOIN {prefix}wh_event_body b ON b.event_id = es.event_id "
         + $"WHERE (COALESCE(es.flags, 0) & {(int)EventFlags.NoRebroadcast}) <> 0 AND es.event_id > $1 "
         + "ORDER BY es.event_id LIMIT $2",

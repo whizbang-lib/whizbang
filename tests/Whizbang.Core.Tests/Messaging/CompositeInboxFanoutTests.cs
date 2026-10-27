@@ -1028,6 +1028,70 @@ public class CompositeInboxFanoutTests {
     await Assert.That(result.Children.Single().StreamId).IsEqualTo(compositeStream);
   }
 
+  /// <summary>
+  /// A raw bundle that records no per-child stream (one minted before the bundle carried them) and whose wire hop names
+  /// no stream files its children under the composite's own <c>[StreamId]</c>, never under the bundle envelope's id
+  /// (#1798). The integrity re-delivery pump built exactly that bundle: its hop named no stream, so every repaired event
+  /// was filed under a random stream no row is keyed by.
+  /// </summary>
+  [Test]
+  public async Task TryExpand_RawCompositeWithNoStreamOnItsHop_FilesChildrenUnderTheCompositesOwnStreamAsync() {
+    var compositeStream = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = compositeStream,
+      InnerPayloads = [_raw("{\"a\":1}"), _raw("{\"b\":2}")],
+      InnerTypeNames = ["Contracts.RepairedA, Contracts", "Contracts.RepairedB, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+    };
+    var source = _hoplessSourceEnvelope();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Select(c => c.StreamId).ToList()).IsEquivalentTo(new Guid?[] { compositeStream, compositeStream })
+      .Because("the composite names the stream its events were stored on; its envelope id names nothing");
+  }
+
+  /// <summary>A typed child naming no stream, under a composite whose hop names none, takes the composite's own stream.</summary>
+  [Test]
+  public async Task TryExpand_TypedChildNamingNoStreamUnderAHoplessComposite_TakesTheCompositesOwnStreamAsync() {
+    var compositeStream = Guid.NewGuid();
+    var composite = new StreamedComposite { StreamId = compositeStream, Inner = [new InnerEvent("unkeyed")] };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _hoplessSourceEnvelope(), _provider());
+
+    await Assert.That(result.Children.Single().StreamId).IsEqualTo(compositeStream);
+  }
+
+  /// <summary>With neither a hop stream nor a composite stream, the envelope's id is the last resort, as for any message.</summary>
+  [Test]
+  public async Task TryExpand_RawCompositeNamingNoStreamAnywhere_FallsBackToTheEnvelopeIdAsync() {
+    var composite = new RedeliveryComposite {
+      InnerPayloads = [_raw("{\"a\":1}")],
+      InnerTypeNames = ["Contracts.RepairedA, Contracts"],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+    var source = _hoplessSourceEnvelope();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, _provider());
+
+    await Assert.That(result.Children.Single().StreamId).IsEqualTo(source.MessageId.Value);
+  }
+
+  private sealed class StreamedComposite : CompositeEventBase;
+
+  private static MessageEnvelope<JsonElement> _hoplessSourceEnvelope() {
+    var source = _sourceEnvelope(Guid.NewGuid());
+    return new MessageEnvelope<JsonElement> {
+      DispatchContext = source.DispatchContext,
+      MessageId = source.MessageId,
+      Payload = source.Payload,
+      Hops = [source.Hops![0] with { Metadata = null }],
+      SourceServiceId = source.SourceServiceId,
+      SourceCommitSequence = source.SourceCommitSequence,
+    };
+  }
+
   [Test]
   public async Task TryExpand_RawComposite_StreamIdCountMismatch_FailsStrictAsync() {
     // Machine-built parallel lists: a desync is a producer bug, never data — same strictness
