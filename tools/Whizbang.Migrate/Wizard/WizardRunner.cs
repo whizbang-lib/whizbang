@@ -51,7 +51,7 @@ public sealed class WizardRunner {
   /// <summary>
   /// Creates a new wizard runner for a project.
   /// </summary>
-  public static WizardRunner Create(string projectPath, string? decisionFilePath = null) {
+  public static WizardRunner Create(string projectPath) {
     var state = new WizardState {
       ProjectPath = projectPath,
       Status = MigrationStatus.NotStarted,

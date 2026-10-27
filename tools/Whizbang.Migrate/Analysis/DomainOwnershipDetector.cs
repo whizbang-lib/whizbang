@@ -65,12 +65,10 @@ public static class DomainOwnershipDetector {
   /// Detects domain ownership patterns from the given source code.
   /// </summary>
   /// <param name="sourceCode">C# source code to analyze.</param>
-  /// <param name="filePath">File path for reporting.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>Detection result with ranked domains.</returns>
   public static Task<DomainDetectionResult> DetectAsync(
       string sourceCode,
-      string filePath,
       CancellationToken ct = default) {
     if (string.IsNullOrWhiteSpace(sourceCode)) {
       return Task.FromResult(new DomainDetectionResult {
@@ -159,10 +157,10 @@ public static class DomainOwnershipDetector {
       CancellationToken ct = default) {
     var aggregatedOccurrences = new Dictionary<string, DomainInfo>(StringComparer.OrdinalIgnoreCase);
 
-    foreach (var (filePath, sourceCode) in files) {
+    foreach (var sourceCode in files.Values) {
       ct.ThrowIfCancellationRequested();
 
-      var fileResult = await DetectAsync(sourceCode, filePath, ct);
+      var fileResult = await DetectAsync(sourceCode, ct);
 
       foreach (var domain in fileResult.DetectedDomains) {
         if (aggregatedOccurrences.TryGetValue(domain.DomainName, out var existing)) {

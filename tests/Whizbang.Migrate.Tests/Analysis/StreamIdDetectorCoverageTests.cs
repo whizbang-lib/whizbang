@@ -29,7 +29,7 @@ public class StreamIdDetectorCoverageTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderCreated.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert -- the only record in the file is body-style, so nothing is detected from it
     await Assert.That(result.HasDetections).IsFalse()
