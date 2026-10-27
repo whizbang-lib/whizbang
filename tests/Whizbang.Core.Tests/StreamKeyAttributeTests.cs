@@ -81,4 +81,18 @@ public class StreamIdAttributeTests {
     await Assert.That(attributeUsage).IsNotNull();
     await Assert.That(attributeUsage!.Inherited).IsTrue();
   }
+  [Test]
+  public async Task StreamIdAttribute_Override_DefaultsToFalseAsync() {
+    // A plain [StreamId] stays what it always was: no override, so hiding an inherited one is still reported (#1833)
+    var attribute = new StreamIdAttribute();
+
+    await Assert.That(attribute.Override).IsFalse();
+  }
+
+  [Test]
+  public async Task StreamIdAttribute_Override_CanBeSetAsync() {
+    var attribute = new StreamIdAttribute { Override = true };
+
+    await Assert.That(attribute.Override).IsTrue();
+  }
 }
