@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -29,27 +30,32 @@ namespace Whizbang.Core.Tests.Health;
 /// <docs>operations/diagnostics/health-probes</docs>
 [Category("Health")]
 public class HealthProbeMustAlwaysAnswerTests {
+  // Every deadline in this class runs on a fake clock: a test decides when a source's deadline elapses by advancing
+  // it, so nothing here depends on how fast the machine is or how busy its thread pool is.
+  private static readonly TimeSpan _sourceTimeout = TimeSpan.FromSeconds(2);
 
   [Test]
   public async Task AHangingSourceDoesNotStopTheProbeAnsweringAsync() {
-    var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
+    var clock = new DeadlineClock();
+    var aggregator = _aggregator(clock, new HangingSource("transport"));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var result = await aggregator.EvaluateAsync(HealthProbe.Liveness, cts.Token);
+    var evaluation = aggregator.EvaluateAsync(HealthProbe.Liveness, CancellationToken.None).AsTask();
+    clock.Advance(_sourceTimeout);
+    var result = await evaluation;
 
-    // The whole point: an answer, not a hang. Without the timeout this awaits forever and kubelet
+    // The whole point: an answer, not a hang. Without the deadline this awaits forever and kubelet
     // eventually kills the process.
     await Assert.That(result.Components).IsNotEmpty();
   }
 
   [Test]
   public async Task LivenessStaysHealthyWhenASourceHangsAsync() {
-    var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
+    var clock = new DeadlineClock();
+    var aggregator = _aggregator(clock, new HangingSource("transport"));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var result = await aggregator.EvaluateAsync(HealthProbe.Liveness, cts.Token);
+    var evaluation = aggregator.EvaluateAsync(HealthProbe.Liveness, CancellationToken.None).AsTask();
+    clock.Advance(_sourceTimeout);
+    var result = await evaluation;
 
     // The policy says liveness never fails on a dependency state. An unreachable dependency must
     // not restart the pod, and neither must an unresponsive one.
@@ -60,11 +66,12 @@ public class HealthProbeMustAlwaysAnswerTests {
 
   [Test]
   public async Task ATimedOutSourceIsReportedAsFaultedAndNamedAsync() {
-    var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator([new HangingSource("transport")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
+    var clock = new DeadlineClock();
+    var aggregator = _aggregator(clock, new HangingSource("transport"));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, cts.Token);
+    var evaluation = aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None).AsTask();
+    clock.Advance(_sourceTimeout);
+    var result = await evaluation;
 
     var report = result.Components.Single(c => c.Component == "transport");
     // Silently reporting Healthy would hide the very thing that needs looking at.
@@ -74,12 +81,13 @@ public class HealthProbeMustAlwaysAnswerTests {
 
   [Test]
   public async Task AHealthySourceIsUnaffectedByAHangingOneAsync() {
-    var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(150) };
-    var aggregator = new WhizbangHealthAggregator(
-      [new HangingSource("transport"), new FastSource("schema", ComponentState.Operational)], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
+    var clock = new DeadlineClock();
+    var aggregator = _aggregator(
+      clock, new HangingSource("transport"), new FastSource("schema", ComponentState.Operational));
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var result = await aggregator.EvaluateAsync(HealthProbe.Readiness, cts.Token);
+    var evaluation = aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None).AsTask();
+    clock.Advance(_sourceTimeout);
+    var result = await evaluation;
 
     var schema = result.Components.Single(c => c.Component == "schema");
     await Assert.That(schema.State).IsEqualTo(ComponentState.Operational)
@@ -88,22 +96,47 @@ public class HealthProbeMustAlwaysAnswerTests {
 
   [Test]
   public async Task SeveralHangingSourcesDoNotAddUpAsync() {
-    var options = new WhizbangHealthOptions { SourceTimeout = TimeSpan.FromMilliseconds(300) };
-    var aggregator = new WhizbangHealthAggregator(
-      [new HangingSource("a"), new HangingSource("b"), new HangingSource("c"),
-       new HangingSource("d"), new HangingSource("e")], options, Whizbang.Core.Startup.NullStartupStageReporter.Instance);
+    var clock = new DeadlineClock();
+    var aggregator = _aggregator(
+      clock,
+      new HangingSource("a"), new HangingSource("b"), new HangingSource("c"),
+      new HangingSource("d"), new HangingSource("e"));
+    var started = clock.GetUtcNow();
 
-    var started = DateTimeOffset.UtcNow;
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-    _ = await aggregator.EvaluateAsync(HealthProbe.Liveness, cts.Token);
-    var elapsed = DateTimeOffset.UtcNow - started;
+    var evaluation = aggregator.EvaluateAsync(HealthProbe.Liveness, CancellationToken.None).AsTask();
 
-    // Sequentially this is five timeouts, and a probe with a two-second deadline still fails.
-    // Evaluated together it is one. This asserts a generous bound, not a tight one: the point is
-    // that the cost does not scale with the number of sources.
-    await Assert.That(elapsed).IsLessThan(TimeSpan.FromMilliseconds(1200))
+    // Every source's deadline is armed before any of them can elapse. Asked one after the other, only the first
+    // would be: the second deadline would start when the first one ran out, and five unresponsive sources at two
+    // seconds each would be ten seconds, past the probe's own timeout.
+    await Assert.That(clock.ArmedDeadlines).IsEqualTo(5)
       .Because("a per-source timeout that accumulates still times the probe out once enough "
              + "sources are unresponsive");
+
+    // One deadline's worth of time answers the probe for all five.
+    clock.Advance(_sourceTimeout);
+    var result = await evaluation;
+
+    await Assert.That(clock.GetUtcNow() - started).IsEqualTo(_sourceTimeout);
+    await Assert.That(result.Components.Count).IsEqualTo(5);
+    await Assert.That(result.Components.All(c => c.State == ComponentState.Faulted)).IsTrue()
+      .Because("each unresponsive source is reported as faulted once its own deadline elapses");
+  }
+
+  private static WhizbangHealthAggregator _aggregator(TimeProvider clock, params IWhizbangHealthSource[] sources)
+    => new(
+      sources, new WhizbangHealthOptions { SourceTimeout = _sourceTimeout },
+      Whizbang.Core.Startup.NullStartupStageReporter.Instance, clock);
+
+  /// <summary>A fake clock that counts the deadlines armed on it.</summary>
+  private sealed class DeadlineClock() : FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)) {
+    private int _armed;
+
+    public int ArmedDeadlines => Volatile.Read(ref _armed);
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      Interlocked.Increment(ref _armed);
+      return base.CreateTimer(callback, state, dueTime, period);
+    }
   }
 
   private sealed class HangingSource(string component) : IWhizbangHealthSource {

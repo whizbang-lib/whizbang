@@ -37,7 +37,7 @@ public sealed class WhizbangHealthAggregator {
   private readonly WhizbangHealthOptions _options;
   private readonly Startup.IStartupStageReporter _stages;
 
-  /// <summary>Creates an aggregator over the given health sources and policy options.</summary>
+  /// <summary>Creates an aggregator over the given health sources and policy options, timed by the system clock.</summary>
   /// <param name="sources">The health sources.</param>
   /// <param name="options">The per-component policies.</param>
   /// <param name="stages">
@@ -46,13 +46,36 @@ public sealed class WhizbangHealthAggregator {
   /// </param>
   public WhizbangHealthAggregator(
       IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
-      Startup.IStartupStageReporter stages) {
+      Startup.IStartupStageReporter stages)
+    : this(sources, options, stages, TimeProvider.System) {
+  }
+
+  /// <summary>
+  /// Creates an aggregator over the given health sources and policy options, timing each source's
+  /// <see cref="WhizbangHealthOptions.SourceTimeout"/> on <paramref name="timeProvider"/>.
+  /// </summary>
+  /// <param name="sources">The health sources.</param>
+  /// <param name="options">The per-component policies.</param>
+  /// <param name="stages">
+  /// The startup stage reporter, whose current stage every evaluation carries. A host with no stages passes
+  /// <see cref="Startup.NullStartupStageReporter.Instance"/>.
+  /// </param>
+  /// <param name="timeProvider">
+  /// The clock the per-source deadline runs on. The container passes its registered <see cref="TimeProvider"/>, or
+  /// <see cref="TimeProvider.System"/> when there is none; a test passes a fake clock to decide when a deadline elapses.
+  /// </param>
+  /// <docs>operations/diagnostics/health-probes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Health/HealthProbeMustAlwaysAnswerTests.cs:SeveralHangingSourcesDoNotAddUpAsync</tests>
+  public WhizbangHealthAggregator(
+      IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
+      Startup.IStartupStageReporter stages, TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(options);
     // Materialised once: the sources are asked concurrently and then indexed to pair each
     // result with its component, which a lazily-enumerated sequence cannot support.
     _sources = sources as IReadOnlyList<IWhizbangHealthSource> ?? [.. sources];
     ArgumentNullException.ThrowIfNull(stages);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _options = options;
     _stages = stages;
   }
