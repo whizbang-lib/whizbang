@@ -48,7 +48,9 @@ public class PostgresSchemaInitializerTypeCompareTests : IAsyncDisposable {
 
     await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
     await adminConnection.OpenAsync();
+#pragma warning disable S2077 // The database name is the test's own generated test_<guid>; a database name cannot be a query parameter.
     await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+#pragma warning restore S2077
 
     var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
       Database = _testDatabaseName
@@ -61,7 +63,9 @@ public class PostgresSchemaInitializerTypeCompareTests : IAsyncDisposable {
     if (_testDatabaseName != null) {
       await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
       await adminConnection.OpenAsync();
+#pragma warning disable S2077 // The database name is the test's own generated test_<guid>; a database name cannot be a query parameter.
       await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+#pragma warning restore S2077
 
       _testDatabaseName = null;
       _connectionString = null;

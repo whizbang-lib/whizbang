@@ -711,6 +711,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
+  replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
+  read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and
+  `character varying` where the DDL said `TIMESTAMPTZ` and `VARCHAR(n)`, and the DDL parser kept `UUID PRIMARY KEY`
+  as the type of `id UUID PRIMARY KEY DEFAULT ...`, so every perspective table's change (adding one column included)
+  was classified as destructive and rebuilt by a background event replay. Both sides are now compared in the spelling
+  `format_type` reports (`PostgresColumnType.Canonicalize`): `TIMESTAMPTZ`, `VARCHAR(n)`, `INT`/`INT4`, `BOOL`,
+  `DECIMAL`, `FLOAT8` and the other aliases match their long forms, and an array or schema-qualified type such as
+  `vector(n)` matches too. A real type change (`TEXT` to `INTEGER`, or a different length or precision) is still
+  destructive. The existing columns are now read from `pg_attribute`. No migration. The EF Core driver does not choose
+  a migration strategy from column types, so it is unaffected.
 - **A rebuild of a versioned perspective no longer refuses a stream whose events were appended out of event-id
   order (Fixes #1819).** A selected-streams rebuild folds a model marked `IVersionedApplyTarget` from an empty model
   in stream-version order, so its write carries the event id of the last event by version. When that event was minted

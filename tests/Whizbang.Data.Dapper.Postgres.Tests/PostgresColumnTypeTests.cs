@@ -69,6 +69,7 @@ public class PostgresColumnTypeTests {
   [Arguments("public.vector(1536)", "vector(1536)")]
   [Arguments("\"public\".\"vector\"(3)", "vector(3)")]
   [Arguments("  Double   Precision  ", "double precision")]
+  [Arguments("VARCHAR(10", "character varying(10)")]
   public async Task Canonicalize_AnAliasOrItsLongForm_IsTheFormatTypeSpellingAsync(string typeName, string expected) {
     await Assert.That(PostgresColumnType.Canonicalize(typeName)).IsEqualTo(expected);
   }

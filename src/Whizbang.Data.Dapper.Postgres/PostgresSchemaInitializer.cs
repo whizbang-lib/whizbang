@@ -982,7 +982,9 @@ public sealed class PostgresSchemaInitializer {
     // Check for destructive changes
     foreach (var (name, type) in oldColumns) {
       if (newColumns.TryGetValue(name, out var newType)) {
-        if (!string.Equals(newType, type, StringComparison.OrdinalIgnoreCase)) {
+        // Both sides are canonical (see _getTableColumnsAsync and _normalizeColumnType), so an alias such as
+        // TIMESTAMPTZ or VARCHAR(n) matches the spelling the database reports and only a real change differs.
+        if (!string.Equals(newType, type, StringComparison.Ordinal)) {
           return MigrationStrategy.EventReplay; // type changed
         }
       } else {
@@ -1043,9 +1045,12 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Queries information_schema.columns for a table's column names and types.
-  /// Returns empty dictionary if table does not exist.
+  /// Reads a table's column names and types from pg_attribute, each type in the canonical spelling of
+  /// <see cref="PostgresColumnType.Canonicalize"/> so it compares equal to the same type written in DDL (#1826).
+  /// <c>format_type</c> keeps the length, precision and array-ness that information_schema's <c>data_type</c>
+  /// drops. Returns an empty dictionary if the table does not exist.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs</tests>
   private static async Task<Dictionary<string, string>> _getTableColumnsAsync(
       NpgsqlConnection connection, string tableName, CancellationToken ct) {
 
@@ -1053,16 +1058,19 @@ public sealed class PostgresSchemaInitializer {
 
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_schema = current_schema() AND table_name = @tableName
-      ORDER BY ordinal_position";
+      SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = current_schema() AND c.relname = @tableName
+        AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attnum";
     cmd.Parameters.AddWithValue(nameof(tableName), tableName);
     cmd.CommandTimeout = 10;
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     while (await reader.ReadAsync(ct)) {
-      result[reader.GetString(0)] = reader.GetString(1);
+      result[reader.GetString(0)] = PostgresColumnType.Canonicalize(reader.GetString(1));
     }
 
     return result;
@@ -1182,26 +1190,33 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Normalizes a SQL column type string for comparison.
-  /// Extracts the core type, handling compound types and modifiers.
+  /// The type of a DDL column definition (everything after the column name), cut at the earliest constraint
+  /// keyword and put in the canonical spelling of <see cref="PostgresColumnType.Canonicalize"/>, so it compares
+  /// equal to the type the database reports for the same column (#1826).
   /// </summary>
+  /// <remarks>
+  /// The cut is at the earliest keyword, not the first one listed: <c>UUID PRIMARY KEY DEFAULT ...</c> is
+  /// <c>uuid</c>, where cutting at <c>DEFAULT</c> because it is checked before <c>PRIMARY</c> would leave
+  /// <c>UUID PRIMARY KEY</c> and make the column look retyped.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs:AddedColumn_OnTableWithAliasedTypes_IsColumnCopyNotEventReplayAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTypeCompareTests.cs:SameColumnsSpelledAsAliases_IsDirectDdlAsync</tests>
   private static string _normalizeColumnType(string typeStr) {
-    // Trim and take type up to first known modifier keyword
     var normalized = typeStr.Trim();
+    var end = normalized.Length;
 
-    // Handle compound types by extracting up to first modifier
-    string[] modifiers = ["NOT", "NULL", "DEFAULT", "PRIMARY", "UNIQUE", "CHECK", "REFERENCES", "GENERATED", "CONSTRAINT"];
-
-    foreach (var modifier in modifiers) {
+    foreach (var modifier in _columnConstraintKeywords) {
       var idx = normalized.IndexOf($" {modifier}", StringComparison.OrdinalIgnoreCase);
-      if (idx > 0) {
-        normalized = normalized[..idx].Trim();
-        break;
+      if (idx > 0 && idx < end) {
+        end = idx;
       }
     }
 
-    return normalized.ToUpperInvariant();
+    return PostgresColumnType.Canonicalize(normalized[..end]);
   }
+
+  private static readonly string[] _columnConstraintKeywords =
+    ["NOT", "NULL", "DEFAULT", "PRIMARY", "UNIQUE", "CHECK", "REFERENCES", "GENERATED", "CONSTRAINT", "COLLATE"];
 
   /// <summary>
   /// Validates that a string is a safe PostgreSQL identifier (letters, digits, underscores only).
