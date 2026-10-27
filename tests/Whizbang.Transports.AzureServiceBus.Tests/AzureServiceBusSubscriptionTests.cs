@@ -205,6 +205,23 @@ public class AzureServiceBusSubscriptionTests {
   }
 
   [Test]
+  public async Task RaiseDisconnected_Twice_NotifiesTheSubscriberOnceAsync() {
+    // A processor that lost its entity reports every failed receive; the subscription is replaced once, so a second
+    // notification would start a second reconnect for the same loss (#1838).
+    var logger = new CapturingLogger();
+    using var subscription = _subscription(logger);
+    var raised = 0;
+    subscription.OnDisconnected += (_, _) => raised++;
+
+    subscription.RaiseDisconnected("entity not found", exception: null);
+    subscription.RaiseDisconnected("entity still not found", exception: null);
+
+    await Assert.That(raised).IsEqualTo(1);
+    await Assert.That(logger.Messages.Count(m => m.Contains("disconnected", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the repeat is not a new disconnect and is not reported as one");
+  }
+
+  [Test]
   public async Task RaiseDisconnected_ReportsTheReasonAsync() {
     var logger = new CapturingLogger();
     using var subscription = _subscription(logger);
