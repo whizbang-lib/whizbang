@@ -19,12 +19,12 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// needing real <c>ProcessMessageEventArgs</c> instances.
 /// </summary>
 /// <remarks>
-/// Slice 1 hotfix scope: type-resolution failures (<c>MissingJsonTypeInfo</c>,
-/// <c>DeserializationFailed</c>) become <see cref="AsbReceiveAction.AckAndDrop"/> instead of
-/// the broker-coupled DLQ. Operators see a structured warning log; messages exit the topic
-/// without accumulating in ASB DLQ. Genuine broker-metadata failures
-/// (<c>MissingEnvelopeType</c>) still route to <see cref="AsbReceiveAction.DeadLetter"/>
-/// because the broker has nothing to redeliver against.
+/// #1720: every message whose body is a valid envelope is handed on to be stored before the broker is told anything:
+/// as its typed envelope when this service can read it, otherwise as received (an envelope of <c>JsonElement</c>, with
+/// the type the producer named), so a registry miss, a typed read the body does not fit, a payload no local consumer
+/// takes, a raw receptor match and a missing <c>EnvelopeType</c> property are all stored, and any skip is decided after
+/// storage. Only a body that is not a readable envelope is refused, and it is dead-lettered at the broker, where the
+/// dead-letter drain gives it custody, never acked and dropped. A raw receptor runs once the message is stored.
 /// </remarks>
 [SuppressMessage("Performance", "CA1822:Mark members as static",
   Justification = "Instance method enables DI registration as singleton; future revisions may inject ILogger / counters.")]
@@ -39,15 +39,8 @@ internal class AsbReceiveDecisionMaker {
   /// <see cref="JsonTypeInfo"/> from the local <c>JsonContextRegistry</c>. Returns null when
   /// the type isn't registered in this service.</param>
   /// <param name="jsonOptions">Options to thread through to the JsonTypeInfo resolver.</param>
-  /// <param name="isHandledLocally">Optional predicate (slice 2) — given the deserialized
-  /// envelope's payload runtime type, returns true if this service has a receptor or
-  /// perspective that consumes it. When non-null and returns false, the message is
-  /// <see cref="AsbReceiveAction.AckAndDrop"/>'d with reason
-  /// <see cref="AsbReceiveReason.NoLocalConsumer"/>. When null, no filtering happens
-  /// (legacy / pre-slice-2 callers).</param>
   /// <param name="rawReceptorRegistry">Opt-in raw-receptor registry (slice 5).</param>
   /// <param name="typeBinder">Multi-pass type binder fallback (slice 4).</param>
-  /// <param name="absorbedNamespaces">Namespaces whose unconsumed events are kept, not dropped.</param>
   /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
   /// means pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom).</param>
   /// <param name="poisonContext">Transport-neutral facts for <paramref name="poisonDetector"/>,
@@ -59,10 +52,8 @@ internal class AsbReceiveDecisionMaker {
       string bodyJson,
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
       JsonSerializerOptions jsonOptions,
-      Func<Type, bool>? isHandledLocally = null,
       IRawReceptorRegistry? rawReceptorRegistry = null,
       IMessageTypeBinder? typeBinder = null,
-      IReadOnlySet<string>? absorbedNamespaces = null,
       Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
       Whizbang.Core.Routing.PoisonEvaluationContext poisonContext = default) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
@@ -94,37 +85,67 @@ internal class AsbReceiveDecisionMaker {
     }
 
     var decision = _decidePayload(
-      applicationProperties, bodyJson, getTypeInfoByName, jsonOptions, isHandledLocally,
-      rawReceptorRegistry, typeBinder, absorbedNamespaces);
+      applicationProperties, bodyJson, getTypeInfoByName, jsonOptions, rawReceptorRegistry, typeBinder);
     return agedVerdict is null ? decision : decision with { PoisonVerdict = agedVerdict };
   }
 
   /// <summary>
-  /// Everything <see cref="Decide"/> does after the poison gate: envelope-type resolution,
-  /// deserialization, the raw-receptor fallback and the no-local-consumer filter.
+  /// Everything <see cref="Decide"/> does after the poison gate: envelope-type resolution, the typed read, and the read
+  /// as received that keeps every valid envelope (#1720).
   /// </summary>
-  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
-    Justification = "The same independent receive-side policy seams Decide takes, passed through unchanged.")]
-  [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "One decision answers a received message with one of five actions, and reaching each means ruling out the ones before it: a missing envelope-type property, a type name no context knows, a raw receptor that can take it anyway, a body that will not deserialize, and a payload no receptor here handles. The order is the policy, and the three deserialization catches are three different reasons the same message is undeliverable.")]
   private static AsbReceiveDecision _decidePayload(
       IReadOnlyDictionary<string, object> applicationProperties,
       string bodyJson,
       Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
       JsonSerializerOptions jsonOptions,
-      Func<Type, bool>? isHandledLocally,
       IRawReceptorRegistry? rawReceptorRegistry,
-      IMessageTypeBinder? typeBinder,
-      IReadOnlySet<string>? absorbedNamespaces) {
+      IMessageTypeBinder? typeBinder) {
     if (!applicationProperties.TryGetValue(AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY, out var envelopeTypeObj)
         || envelopeTypeObj is not string envelopeTypeName
         || string.IsNullOrEmpty(envelopeTypeName)) {
-      return new AsbReceiveDecision {
-        Action = AsbReceiveAction.DeadLetter,
-        Reason = AsbReceiveReason.MISSING_ENVELOPE_TYPE,
-        Description = "Message does not contain EnvelopeType metadata",
-      };
+      // The consumer cannot store a row without the type, so it gives the message dead-letter custody with its body.
+      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName: null,
+        AsbReceiveReason.MISSING_ENVELOPE_TYPE, "Message does not contain EnvelopeType metadata", rawReceptor: null);
     }
 
+    var typeInfo = _resolveTypeInfo(applicationProperties, envelopeTypeName, getTypeInfoByName, jsonOptions, typeBinder);
+
+    if (typeInfo == null) {
+      // No context here describes the type: stored as received; a raw receptor for it runs once it is stored.
+      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
+        AsbReceiveReason.MISSING_JSON_TYPE_INFO, $"No JsonTypeInfo registered locally for envelope type '{envelopeTypeName}'",
+        _findRawReceptor(envelopeTypeName, rawReceptorRegistry));
+    }
+
+    var envelope = _tryReadTyped(bodyJson, typeInfo);
+    if (envelope is null) {
+      return _asReceivedOrDeadLetter(bodyJson, jsonOptions, envelopeTypeName,
+        AsbReceiveReason.DESERIALIZATION_FAILED, $"Could not deserialize envelope as '{envelopeTypeName}'", rawReceptor: null);
+    }
+    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
+
+    // #1720: no local-consumer filter here. A payload no receptor or perspective on this service takes is stored, and
+    // the consumer settles it unprocessed with the reason, so the skip is durable and inspectable.
+    return new AsbReceiveDecision {
+      Action = AsbReceiveAction.Process,
+      Envelope = envelope,
+      EnvelopeTypeName = envelopeTypeName,
+      Reason = AsbReceiveReason.OK,
+      Description = "Envelope deserialized; ready for handler dispatch",
+    };
+  }
+
+  /// <summary>
+  /// The metadata to read the body with: the registry's for the named envelope type (or the claim envelope's, for a
+  /// body-offload claim), falling back to the multi-pass type binder on a registry miss for a non-claim message.
+  /// <see langword="null"/> when nothing here describes the type.
+  /// </summary>
+  private static JsonTypeInfo? _resolveTypeInfo(
+      IReadOnlyDictionary<string, object> applicationProperties,
+      string envelopeTypeName,
+      Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
+      JsonSerializerOptions jsonOptions,
+      IMessageTypeBinder? typeBinder) {
     // Body-offload claim detection: when the producer's post-serialize hook
     // substituted the wire body, the bytes are MessageEnvelope<BodyClaimEnvelopePayload>
     // while ENVELOPE_TYPE_PROPERTY still names the original type (so transport-level
@@ -139,21 +160,17 @@ internal class AsbReceiveDecisionMaker {
     var typeInfo = Whizbang.Core.Offloads.BodyClaimWireHelper.ResolveDeserializeTypeInfo(
       envelopeTypeName, isClaimHeader, jsonOptions, getTypeInfoByName);
 
-    // Slice 4 (ASB-specific) — on a registry miss for a non-claim message, fall back to the
+    // Slice 4 (ASB-specific): on a registry miss for a non-claim message, fall back to the
     // multi-pass type binder, which finds the type under a renamed assembly or a different version.
     // Binding never widens what can be read: only a type some registered JSON context describes yields
-    // a JsonTypeInfo, so a sender naming any other loadable type is dropped below.
+    // a JsonTypeInfo. A binder-bound type is LOADABLE but not necessarily SERVABLE: when no registered
+    // context holds metadata for it, GetTypeInfo throws, and an unguarded throw would escape the decision
+    // entirely and the broker would redeliver the message forever, so it reads as a miss instead.
     if (typeInfo == null
         && !Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader)
         && typeBinder != null) {
       var bound = typeBinder.Bind(envelopeTypeName);
       if (bound != null) {
-        // A binder-bound type is LOADABLE but not necessarily SERVABLE — when no registered
-        // context holds metadata for it, GetTypeInfo throws NotSupportedException. An unguarded
-        // throw here escapes the decision entirely: the transport abandons the delivery and the
-        // broker redelivers the same undeserializable message forever. Degrade to the registry-miss
-        // path instead (raw receptor, then ack-and-drop) — the graceful outcome every other
-        // unbindable message gets.
         try {
           typeInfo = jsonOptions.GetTypeInfo(bound);
         } catch (NotSupportedException) {
@@ -164,137 +181,57 @@ internal class AsbReceiveDecisionMaker {
       }
     }
 
-    if (typeInfo == null) {
-      // Slice 5 — try raw receptor before giving up on this message.
-      var rawDecision = _tryRawReceptor(envelopeTypeName, bodyJson, rawReceptorRegistry);
-      return rawDecision ?? new AsbReceiveDecision {
-        Action = AsbReceiveAction.AckAndDrop,
-        EnvelopeTypeName = envelopeTypeName,
-        Reason = AsbReceiveReason.MISSING_JSON_TYPE_INFO,
-        Description = $"No JsonTypeInfo registered locally for envelope type '{envelopeTypeName}' — broker ack + drop",
-      };
-    }
+    return typeInfo;
+  }
 
-    IMessageEnvelope? envelope = null;
+  /// <summary>
+  /// The body read as the typed envelope, or <see langword="null"/> when the typed read rejects it: not the type's JSON,
+  /// or a message id that is not a UUIDv7 (an <see cref="ArgumentException"/> as it is read). The caller then reads it
+  /// as received (#1720).
+  /// </summary>
+  private static IMessageEnvelope? _tryReadTyped(string bodyJson, JsonTypeInfo typeInfo) {
     try {
-      envelope = JsonSerializer.Deserialize(bodyJson, typeInfo) as IMessageEnvelope;
-    } catch (JsonException) {
-      // fall through to AckAndDrop
+      return JsonSerializer.Deserialize(bodyJson, typeInfo) as IMessageEnvelope;
+    } catch (Exception ex) when (ex is JsonException or ArgumentException) {
+      return null;
     }
+  }
 
-    if (envelope is null) {
+  /// <summary>
+  /// The decision for a message this service cannot read as its typed envelope (#1720): handed on as received when the
+  /// body is a valid envelope, so it is stored first; otherwise dead-lettered at the broker, the one refusal, which the
+  /// dead-letter drain turns into custody.
+  /// </summary>
+  private static AsbReceiveDecision _asReceivedOrDeadLetter(
+      string bodyJson, JsonSerializerOptions jsonOptions, string? envelopeTypeName, string reason, string description,
+      IRawReceptor? rawReceptor) {
+    var received = Whizbang.Core.Transports.ReceivedEnvelopeReader.TryRead(bodyJson, jsonOptions);
+    if (received is null) {
       return new AsbReceiveDecision {
-        Action = AsbReceiveAction.AckAndDrop,
+        Action = AsbReceiveAction.DeadLetter,
         EnvelopeTypeName = envelopeTypeName,
-        Reason = AsbReceiveReason.DESERIALIZATION_FAILED,
-        Description = $"Could not deserialize envelope as '{envelopeTypeName}' — broker ack + drop",
+        Reason = reason,
+        Description = description + "; the body is not a readable envelope, so it cannot be stored",
       };
     }
-    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
-
-    // Slice 2 — receptor-registry filter at receive. If this service has no consumer
-    // for the payload type, drop the message instead of storing it in the inbox.
-    //
-    // EXCEPTION — body-offload (claim-check): an offloaded message carries the internal
-    // BodyClaimEnvelopePayload on the wire; the ORIGINAL message is rehydrated downstream by
-    // TransportConsumerWorker/BodyClaimRehydrator (keyed off the payload type). No service registers
-    // a receptor for BodyClaimEnvelopePayload, so running this filter against the claim type would
-    // silently AckAndDrop EVERY offloaded message before it can rehydrate. Skip the filter for claims
-    // — the transport SqlFilter already matched this service's owned namespace, and the rehydrated
-    // original type flows through normal dispatch. (Regression: a production bulk-status-transition no-op.)
-    // EXCEPTION — composites: a composite event (redelivery bundle, coalesced batch, audit
-    // composite) is wire-only; NO service registers a receptor or perspective for the composite
-    // type itself — its consumers are the INNER events, addressable only after the dispatch-seam
-    // fan-out. Running this filter against the composite type ack+drops the ENTIRE bundle at
-    // every receiver (including the service that requested it), invisibly — the worker-level
-    // no-consumer gates already exempt composites via CompositeInboxFanout.IsCompositeWireType,
-    // and this transport-level filter must mirror that. The payload is typed here, so the marker
-    // interface is the authoritative check. (Regression: stream-integrity repair bundles never
-    // landed; deficits re-requested forever, amplifying broker ops-rate load.)
-    var payloadType = envelope.Payload?.GetType();
-    if (isHandledLocally != null && payloadType != null
-        && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
-        && envelope.Payload is not Whizbang.Core.Minting.ICompositeEvent
-        && !isHandledLocally(payloadType)
-        && !_isAbsorbedNamespace(payloadType, absorbedNamespaces)) {
-      return new AsbReceiveDecision {
-        Action = AsbReceiveAction.AckAndDrop,
-        Envelope = envelope,
-        EnvelopeTypeName = envelopeTypeName,
-        Reason = AsbReceiveReason.NO_LOCAL_CONSUMER,
-        Description = $"No local receptor or perspective consumes payload type '{TypeNameFormatter.DisplayName(payloadType)}' — broker ack + drop",
-      };
-    }
-
+    MessageParseDiagnostics.Record(received.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
     return new AsbReceiveDecision {
       Action = AsbReceiveAction.Process,
-      Envelope = envelope,
+      Envelope = received,
       EnvelopeTypeName = envelopeTypeName,
-      Reason = AsbReceiveReason.OK,
-      Description = "Envelope deserialized; ready for handler dispatch",
+      Reason = rawReceptor is null ? reason : AsbReceiveReason.RAW_RECEPTOR_MATCH,
+      Description = description + "; stored as received",
+      RawReceptor = rawReceptor,
+      RawPayload = rawReceptor is null ? null : received.Payload,
     };
   }
 
-  /// <summary>
-  /// True when the payload's namespace is in the caller's absorbed-namespace set. An unconsumed event on an
-  /// absorbed namespace is KEPT (persisted for a later rebuild) instead of dropped at the Slice-2 no-consumer
-  /// filter — mirrors the core <c>MessageDiscardPolicy</c> absorb bypass for the ASB receive path.
-  /// </summary>
-  private static bool _isAbsorbedNamespace(Type payloadType, IReadOnlySet<string>? absorbedNamespaces) {
-    if (absorbedNamespaces is null || absorbedNamespaces.Count == 0) {
-      return false;
-    }
-    var ns = payloadType.Namespace;
-    return ns != null && absorbedNamespaces.Contains(ns);
-  }
-
-  /// <summary>
-  /// Slice 5 — when the typed JsonTypeInfo lookup misses, look for an
-  /// <see cref="IRawReceptor"/> registered for the envelope's inner message type. If found,
-  /// extract the envelope's <c>"p"</c> payload as a JsonElement and return an
-  /// <see cref="AsbReceiveAction.InvokeRawReceptor"/> decision. Returns null when no raw
-  /// receptor matches (caller falls through to the standard AckAndDrop path).
-  /// </summary>
-  private static AsbReceiveDecision? _tryRawReceptor(
-      string envelopeTypeName,
-      string bodyJson,
-      IRawReceptorRegistry? rawReceptorRegistry) {
+  /// <summary>Slice 5: the opt-in raw receptor registered for the envelope's inner message type, if any.</summary>
+  private static IRawReceptor? _findRawReceptor(string envelopeTypeName, IRawReceptorRegistry? rawReceptorRegistry) {
     if (rawReceptorRegistry is null) {
       return null;
     }
-
     var innerTypeName = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName);
-    if (string.IsNullOrEmpty(innerTypeName)) {
-      return null;
-    }
-
-    var receptor = rawReceptorRegistry.FindByTypeName(innerTypeName);
-    if (receptor is null) {
-      return null;
-    }
-
-    JsonElement? payload = null;
-    try {
-      using var doc = JsonDocument.Parse(bodyJson);
-      if (doc.RootElement.TryGetProperty("p", out var p)) {
-        payload = p.Clone();
-      }
-    } catch (JsonException) {
-      // Malformed envelope JSON — can't extract payload; fall through to AckAndDrop.
-      return null;
-    }
-
-    if (payload is null) {
-      return null;
-    }
-
-    return new AsbReceiveDecision {
-      Action = AsbReceiveAction.InvokeRawReceptor,
-      EnvelopeTypeName = envelopeTypeName,
-      Reason = AsbReceiveReason.RAW_RECEPTOR_MATCH,
-      Description = $"Inner type '{innerTypeName}' matched IRawReceptor '{TypeNameFormatter.DisplayName(receptor.GetType())}'",
-      RawReceptor = receptor,
-      RawPayload = payload,
-    };
+    return string.IsNullOrEmpty(innerTypeName) ? null : rawReceptorRegistry.FindByTypeName(innerTypeName);
   }
 }

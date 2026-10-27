@@ -3274,6 +3274,16 @@ public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <docs>operations/dead-letter-queue/transport-recovery</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RecoveredDeadLetterReentrySqlTests.cs:ARecoveredMessage_IsStoredInTheSameWorkShapeAsADeliveryOfTheSameEnvelopeAsync</tests>
   public Guid? RecoveredFromDeadLetterId { get; init; }
+
+  /// <summary>
+  /// Why the consumer decided not to process this message, set when it skipped it on receive (one of
+  /// <see cref="InboxReceiveDiscard"/>). The message is still stored, so the skip is durable and inspectable: the store
+  /// writes the row already settled (Stored and Published) with the reason in its error column, and never claims,
+  /// copies or dispatches it (#1720). Null for every message the consumer processes.
+  /// </summary>
+  /// <docs>messaging/transports/transport-consumer#batch-handler</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxDiscardedOnReceiveSqlTests.cs:AMessageDiscardedOnReceive_IsStoredSettled_WithItsReason_AndNeverClaimedOrCopiedAsync</tests>
+  public string? DiscardedOnReceive { get; init; }
 }
 
 /// <summary>

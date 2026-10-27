@@ -488,7 +488,7 @@ internal sealed class MissTypeBinder : IMessageTypeBinder {
   public (Type? Type, MessageTypeBinderPass Pass) BindWithDiagnostics(string assemblyQualifiedName) => (null, MessageTypeBinderPass.Miss);
 }
 
-/// <summary>Recording IRawReceptor for the slice-5 InvokeRawReceptor receive branch.</summary>
+/// <summary>Recording IRawReceptor for the slice-5 raw receptor, which runs once the message is stored (#1720).</summary>
 internal sealed class RecordingRawReceptor(string targetMessageTypeName) : IRawReceptor {
   public List<JsonElement> Handled { get; } = [];
 
@@ -509,8 +509,8 @@ internal sealed class SingleRawReceptorRegistry(IRawReceptor receptor) : IRawRec
 }
 
 /// <summary>
-/// Recording IMessageDiscardPolicy — captures RecordDiscard calls so the session ack+drop
-/// NoLocalConsumer telemetry routing can be asserted without a meter listener.
+/// Recording IMessageDiscardPolicy: captures RecordDiscard calls, so a test can assert the transport records no
+/// receive-time discard now that it stores every message and the consumer decides any skip (#1720).
 /// </summary>
 internal sealed class RecordingDiscardPolicy : IMessageDiscardPolicy {
   public List<(MessageDiscardGate Gate, MessageDiscardDecision Decision, string PayloadClrType)> Recorded { get; } = [];

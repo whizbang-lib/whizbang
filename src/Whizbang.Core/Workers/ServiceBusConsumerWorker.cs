@@ -235,22 +235,18 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-    // Slice 3 of pump-then-process.md (Half A): drop messages whose type has NO consumer
-    // anywhere on this service — no inbox handler, no lifecycle receptor, no perspective,
-    // no tag-attribute. They cannot do useful work, so the inbox row + dispatch path are
-    // pure waste. Dropping at the receive boundary keeps wh_inbox clean for the BFF
-    // pattern where many cross-service events flow through with no local consumer.
-    // Null registry → legacy behavior (always store) for back-compat in test harnesses.
-    // EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; we
-    // skip the gate in that case rather than misclassifying — never drop a message
-    // because of a registry-side parse miss.
-    // EXEMPTION — body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>,
-    // which no service consumes. Dropping it here would kill every offloaded message before rehydration.
-    // Skip the gate for claims; BodyClaimRehydrator restores the original type downstream.
-    // EXEMPTION — composites: a composite is wire-only, so nothing consumes the composite type
-    // itself; its consumers are registered for the INNER events, which only become addressable
-    // after the dispatch seam fans it out. Dropping here loses the whole bundle before any inbox
-    // row is written. See CompositeInboxFanout.IsCompositeWireType.
+    // #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
+    // perspective or tag-attribute) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
+    // skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped here, unstored,
+    // and the transport then completed it with the broker. Null registry: legacy behavior (always process) for test
+    // harnesses. EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; the gate is skipped then
+    // rather than misclassifying.
+    // EXEMPTION, body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>, which no
+    // service consumes; BodyClaimRehydrator restores the original type downstream.
+    // EXEMPTION, composites: a composite is wire-only, so nothing consumes the composite type itself; its consumers are
+    // registered for the INNER events, addressable after the dispatch seam fans it out. See
+    // CompositeInboxFanout.IsCompositeWireType.
+    string? discardedOnReceive = null;
     if (!string.IsNullOrWhiteSpace(envelopeType)
         && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
       var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
@@ -259,7 +255,7 @@ public partial class ServiceBusConsumerWorker(
           && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
           && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
         LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
-        return;
+        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
       }
     }
 
@@ -278,7 +274,7 @@ public partial class ServiceBusConsumerWorker(
       LogProcessingMessage(_logger, envelope.MessageId);
 
       // Serialize and deduplicate via per-message flush
-      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scopedProvider, ct);
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, discardedOnReceive, strategy, scopedProvider, ct);
 
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
@@ -334,9 +330,16 @@ public partial class ServiceBusConsumerWorker(
   /// Serializes envelope to InboxMessage and flushes through work coordinator for deduplication.
   /// </summary>
   private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
-    IMessageEnvelope envelope, string? envelopeType,
+    IMessageEnvelope envelope, string? envelopeType, string? discardedOnReceive,
     IWorkCoordinatorStrategy strategy, IServiceProvider scopedProvider, CancellationToken ct) {
     var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+    if (discardedOnReceive is not null) {
+      // #1720: stored settled, never claimed or dispatched, and counted under the reason.
+      newInboxMessage = newInboxMessage with { DiscardedOnReceive = discardedOnReceive };
+      scopedProvider.GetService<TransportMetrics>()?.InboxMessagesDiscarded.Add(1,
+        new KeyValuePair<string, object?>("reason", discardedOnReceive),
+        new KeyValuePair<string, object?>("message_type", newInboxMessage.MessageType));
+    }
     strategy.QueueInboxMessage(newInboxMessage);
     LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
     var workBatch = await strategy.FlushAndGetBatchAsync(WorkBatchOptions.SkipInboxClaiming, ct);
@@ -865,7 +868,7 @@ public partial class ServiceBusConsumerWorker(
   [LoggerMessage(
     EventId = 26,
     Level = LogLevel.Debug,
-    Message = "ServiceBus dropped message {MessageId} of unsubscribed type {EnvelopeType} — no consumer registered on this service"
+    Message = "ServiceBus message {MessageId} of unsubscribed type {EnvelopeType} stored settled without processing: no consumer registered on this service"
   )]
   static partial void LogDroppedUnsubscribedType(ILogger logger, global::Whizbang.Core.ValueObjects.MessageId messageId, string envelopeType);
 }

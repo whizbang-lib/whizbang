@@ -20,7 +20,7 @@ public class MultiPassMessageTypeBinderCoverageTests {
   // (stale build metadata, truncated in transport, etc.), pass 1's raw Type.GetType call
   // must fail closed instead of throwing, and pass 2 must still resolve the type after
   // stripping the unusable metadata - otherwise a recoverable envelope becomes a hard miss
-  // and the message is ack+dropped instead of dispatched.
+  // and the message is stored as received (or dead-lettered) instead of dispatched as its type.
   [Test]
   public async Task BindWithDiagnostics_MalformedVersionSegment_RecoversViaPass2Async() {
     var binder = new MultiPassMessageTypeBinder();

@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -47,7 +48,6 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// container build still get their broker DLQs drained.
   /// </summary>
   internal IReadOnlyCollection<string> ActiveDeadLetterQueues => [.. _declaredDeadLetterQueues.Keys];
-  private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IPoisonMessageDetector? _poisonDetector;
   private readonly TimeProvider _timeProvider;
 
@@ -65,7 +65,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <param name="channelPool">Thread-safe channel pool</param>
   /// <param name="options">Transport configuration options</param>
   /// <param name="logger">Optional logger instance</param>
-  /// <param name="discardPolicy">Optional shared no-consumer discard policy.</param>
+  /// <param name="discardPolicy">No longer consulted on receive (#1720): every message is stored and the consumer decides
+  /// any skip after storage. Kept so existing registrations compile.</param>
   /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
   /// keeps pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom — no new ITransport member).</param>
   /// <param name="timeProvider">Clock used for message-age evaluation and publish stamping.</param>
@@ -90,7 +91,10 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _channelPool = channelPool;
     _options = options;
     _logger = logger;
-    _discardPolicy = discardPolicy;
+    // #1720: the discard policy decided which received messages were acked unstored because nothing here consumes
+    // them. Every message is stored now and the consumer decides any skip after storage, so it is no longer consulted
+    // on receive; the parameter stays so existing registrations compile.
+    _ = discardPolicy;
     _poisonDetector = poisonDetector;
     _timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -976,15 +980,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         return;
       }
 
-      // Slice 3 (discard-policy): ack-and-skip when no local consumer exists for the
-      // payload type. Telemetry routes through the shared policy (Debug + counter),
-      // matching the ASB transport's NoLocalConsumer path. When no policy is wired,
-      // behaviour is unchanged.
-      if (ShouldSkipReceive(_discardPolicy, envelopeTypeName, queueName, args.BasicProperties.MessageId)) {
-        await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
-        return;
-      }
-
+      // #1720: no ack-and-skip for a payload no local consumer takes. The handler stores it first and any skip is
+      // decided after storage, where it is durable and inspectable; acking it here left no row anywhere.
       await handler(envelope, envelopeTypeName, cancellationToken);
       await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
 
@@ -1086,41 +1083,6 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         + "{QueueName} — broker will redeliver and the quarantine re-evaluates",
         messageId, queueName);
     }
-    return true;
-  }
-
-  /// <summary>
-  /// Asks the discard policy whether a just-deserialised envelope's payload type has no
-  /// local consumer; when so, records the skip telemetry (Debug log + OTel counter) and
-  /// returns <c>true</c> so the caller acks the broker without invoking the handler.
-  /// Returns <c>false</c> (legacy behaviour) when no policy is wired or the envelope's
-  /// type name is unknown.
-  /// </summary>
-  /// <remarks>
-  /// Mirrors <c>AzureServiceBusTransport.EmitAckDropTelemetry</c>'s NoLocalConsumer
-  /// branch — kept as an internal-static helper so it can be unit-tested without
-  /// standing up an <c>IConnection</c>.
-  /// </remarks>
-  internal static bool ShouldSkipReceive(
-      IMessageDiscardPolicy? discardPolicy,
-      string? envelopeTypeName,
-      string queueName,
-      string? messageId) {
-    if (discardPolicy is null || string.IsNullOrEmpty(envelopeTypeName)) {
-      return false;
-    }
-    var decision = discardPolicy.EvaluateReceive(envelopeTypeName, topic: queueName, subscription: queueName);
-    if (!decision.ShouldDiscard) {
-      return false;
-    }
-    discardPolicy.RecordDiscard(
-      gate: MessageDiscardGate.Receive,
-      decision: decision,
-      payloadClrType: envelopeTypeName,
-      additionalTags: new Dictionary<string, object?> {
-        ["queue"] = queueName,
-        ["message_id"] = messageId,
-      });
     return true;
   }
 
@@ -1298,14 +1260,6 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return null;
     }
 
-    // Get envelope type from headers
-    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
-        envelopeTypeObj is not byte[] envelopeTypeBytes) {
-      _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
-      return null;
-    }
-
-    envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
     var json = Encoding.UTF8.GetString(body);
 
     if (string.IsNullOrWhiteSpace(json) || json[0] == '\0') {
@@ -1314,6 +1268,17 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID, hex);
       return null;
     }
+
+    // Get envelope type from headers
+    if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
+        envelopeTypeObj is not byte[] envelopeTypeBytes) {
+      _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+      // #1720: a valid envelope is still handed on as received; the consumer, which cannot store a row without its
+      // type, gives it dead-letter custody with its body.
+      return _readAsReceived(json, args.BasicProperties.MessageId, envelopeTypeName: null);
+    }
+
+    envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
 
     // Body-offload claim detection: when the producer's post-serialize hook
     // substituted the body, the wire bytes are MessageEnvelope<BodyClaimEnvelopePayload>
@@ -1329,17 +1294,50 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     if (typeInfo == null) {
       _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType} (claim={IsClaim})",
         envelopeTypeName, Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader));
-      return null;
+      return _readAsReceived(json, args.BasicProperties.MessageId, envelopeTypeName);
     }
 
-    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
-        args.BasicProperties.MessageId, envelopeTypeName);
-      return null;
+    return _readTypedOrAsReceived(json, typeInfo, args.BasicProperties.MessageId, envelopeTypeName);
+  }
+
+  /// <summary>
+  /// Reads the body as the typed envelope, or as received when the typed read rejects it (#1720). A
+  /// <see cref="JsonException"/> from the typed read, or the <see cref="ArgumentException"/> a message id that is not a
+  /// UUIDv7 raises as it is read, is caught here: on the batch path it used to escape
+  /// <see cref="FlushBatchAsync"/>, and the batch collector re-queues a batch whose flush throws, so the message and
+  /// every neighbor in its batch were flushed again on every sliding window and never settled.
+  /// </summary>
+  /// <returns>The envelope, or <see langword="null"/> when the body is not a readable envelope.</returns>
+  private IMessageEnvelope? _readTypedOrAsReceived(string json, JsonTypeInfo typeInfo, string? messageId, string envelopeTypeName) {
+    IMessageEnvelope? envelope = null;
+    try {
+      envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
+    } catch (Exception ex) when (ex is JsonException or ArgumentException) {
+      // the typed read rejects the body; it is read as received below
+    }
+    if (envelope is null) {
+      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}", messageId, envelopeTypeName);
+      return _readAsReceived(json, messageId, envelopeTypeName);
     }
     MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
-
     return envelope;
+  }
+
+  /// <summary>
+  /// A valid envelope this service cannot read as its typed form, handed on as received so the consumer stores it before
+  /// the broker is told anything (#1720); <see langword="null"/> when the body is not a readable envelope, which the
+  /// caller dead-letters.
+  /// </summary>
+  private MessageEnvelope<JsonElement>? _readAsReceived(string json, string? messageId, string? envelopeTypeName) {
+    var received = ReceivedEnvelopeReader.TryRead(json, _jsonOptions);
+    if (received is null) {
+      return null;
+    }
+    MessageParseDiagnostics.Record(received.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
+    if (_logger?.IsEnabled(LogLevel.Information) == true) {
+      _logger.LogInformation("Message {MessageId} ({EnvelopeType}) handed on to be stored as received", messageId, envelopeTypeName);
+    }
+    return received;
   }
 
   /// <summary>
@@ -1364,15 +1362,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private IMessageEnvelope? _deserializeMessage(BasicDeliverEventArgs args, out string? envelopeTypeName) {
     envelopeTypeName = null;
 
+    var json = Encoding.UTF8.GetString(args.Body.Span);
+
     // Get envelope type from headers
     if (args.BasicProperties.Headers?.TryGetValue(ENVELOPE_TYPE_HEADER, out var envelopeTypeObj) != true ||
         envelopeTypeObj is not byte[] envelopeTypeBytes) {
       _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
-      return null;
+      return _readAsReceived(json, args.BasicProperties.MessageId, envelopeTypeName: null);
     }
 
     envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
-    var json = Encoding.UTF8.GetString(args.Body.Span);
 
     // Body-offload claim detection (see _deserializeMessageFromBody for details).
     var isClaimHeader = TryReadStringHeader(args.BasicProperties.Headers,
@@ -1382,7 +1381,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     if (typeInfo == null) {
       _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType} (claim={IsClaim})",
         envelopeTypeName, Whizbang.Core.Offloads.BodyClaimWireHelper.IsClaimHeader(isClaimHeader));
-      return null;
+      return _readAsReceived(json, args.BasicProperties.MessageId, envelopeTypeName);
     }
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
@@ -1394,12 +1393,10 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       );
     }
 
-    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
-        args.BasicProperties.MessageId, envelopeTypeName);
+    var envelope = _readTypedOrAsReceived(json, typeInfo, args.BasicProperties.MessageId, envelopeTypeName);
+    if (envelope is null) {
       return null;
     }
-    MessageParseDiagnostics.Record(envelope.MessageId.Value, MessageParseSource.TransportReceive, MessageParseKind.Envelope);
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       var envelopeType = TypeNameFormatter.DisplayName(envelope.GetType());

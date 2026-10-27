@@ -397,9 +397,10 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
   [Test]
   public async Task SubscribeAsync_MessageWithoutEnvelopeTypeHeader_DeadLettersWithMissingEnvelopeTypeReasonAsync() {
-    // Arrange — a message with no EnvelopeType ApplicationProperty has nothing to
-    // route on; the decision maker returns DeadLetter and the transport settles it
-    // via _safeDeadLetterAsync with the decision's reason + description
+    // Arrange: a message with no EnvelopeType ApplicationProperty whose body is not a readable envelope ("{}" has no
+    // id) cannot be stored, so the decision maker returns DeadLetter and the transport settles it via
+    // _safeDeadLetterAsync with the decision's reason and description (#1720: a readable envelope without the
+    // property is handed on instead, and the consumer gives it custody with its body)
     var options = new AzureServiceBusOptions { EnableSessions = false };
     var transport = _createTransport(JsonContextRegistry.CreateCombinedOptions(), options);
     await transport.InitializeAsync();
@@ -430,7 +431,8 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
         .Because("a message without EnvelopeType metadata must be dead-lettered by the transport");
       await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("MissingEnvelopeType");
       await Assert.That(deadLettered.DeadLetterErrorDescription)
-        .IsEqualTo("Message does not contain EnvelopeType metadata");
+        .IsEqualTo("Message does not contain EnvelopeType metadata; the body is not a readable envelope, so it cannot be stored")
+        .Because("the description names both the missing metadata and why the message could not be stored instead");
     } finally {
       subscription.Dispose();
     }
@@ -650,11 +652,11 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       new System.Diagnostics.Metrics.Meter("Whizbang.Transports.AzureServiceBus.Integration.Tests.Poison"));
 
   [Test]
-  public async Task SubscribeAsync_MalformedJsonBody_AcksAndDropsWithoutDeadLetteringAsync() {
-    // Arrange — slice 1 hotfix behavior: a body that fails deserialization for a
-    // KNOWN envelope type is acked + dropped (completed at the broker), NOT
-    // dead-lettered. MaxConcurrentCalls=1 guarantees the malformed message is fully
-    // settled before the subsequent valid message reaches the handler.
+  public async Task SubscribeAsync_MalformedJsonBody_DeadLettersItAndNeverHandsItOnAsync() {
+    // Arrange: #1720. A body that is not JSON for a KNOWN envelope type is the one thing refused before storage, and it
+    // is dead-lettered (custody at the broker, which the dead-letter drain imports), never acked and dropped, and never
+    // handed to the handler. MaxConcurrentCalls=1 guarantees the malformed message is fully settled before the
+    // subsequent valid message reaches the handler.
     var options = new AzureServiceBusOptions { EnableSessions = false, MaxConcurrentCalls = 1 };
     var transport = _createTransport(JsonContextRegistry.CreateCombinedOptions(), options);
     await transport.InitializeAsync();
@@ -665,9 +667,13 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var validAwaiter = new MessageAwaiter<IMessageEnvelope>(
       envelope => envelope.MessageId.Value == validEnvelope.MessageId.Value ? envelope : null
     );
+    var handled = new System.Collections.Concurrent.ConcurrentBag<Guid>();
 
     var subscription = await transport.SubscribeAsync(
-      validAwaiter.Handler,
+      (envelope, envelopeType, token) => {
+        handled.Add(envelope.MessageId.Value);
+        return validAwaiter.Handler(envelope, envelopeType, token);
+      },
       new TransportDestination("topic-01", "sub-01-a")
     );
 
@@ -698,18 +704,16 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
       subscription.Dispose();
     }
 
-    // Assert — NOT dead-lettered: the DLQ contains no trace of the malformed message
-    var dlqReceiver = _fixture.Client.CreateReceiver("topic-01", "sub-01-a",
-      new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, ReceiveMode = ServiceBusReceiveMode.PeekLock });
-    try {
-      var dlqMessages = await dlqReceiver.PeekMessagesAsync(maxMessages: 100);
-      await Assert.That(dlqMessages.Any(m => m.MessageId == malformedMessageId)).IsFalse()
-        .Because("deserialization failures are acked + dropped, never dead-lettered (slice 1 hotfix)");
-    } finally {
-      await dlqReceiver.DisposeAsync();
-    }
+    await Assert.That(handled).IsEquivalentTo([validEnvelope.MessageId.Value])
+      .Because("a body that is not JSON is never handed on: only the valid message reaches the handler");
 
-    // Assert — completed at the broker: the malformed message is gone from the subscription
+    // Assert: dead-lettered, with the reason the typed read gave
+    var deadLettered = await _receiveDeadLetteredMessageAsync("topic-01", "sub-01-a", malformedMessageId);
+    await Assert.That(deadLettered).IsNotNull()
+      .Because("invalid JSON is refused before storage and dead-lettered with custody, never dropped (#1720)");
+    await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("DeserializationFailed");
+
+    // Assert: not left on the subscription either
     var receiver = _fixture.Client.CreateReceiver("topic-01", "sub-01-a");
     try {
       for (var i = 0; i < 2; i++) {
@@ -718,7 +722,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
           break;
         }
         await Assert.That(residual.MessageId).IsNotEqualTo(malformedMessageId)
-          .Because("the malformed message must have been completed (acked) by the transport");
+          .Because("the malformed message was settled (dead-lettered) by the transport, not left for redelivery");
         await receiver.CompleteMessageAsync(residual);
       }
     } finally {

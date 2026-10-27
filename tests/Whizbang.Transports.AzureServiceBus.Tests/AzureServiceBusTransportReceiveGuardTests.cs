@@ -37,10 +37,8 @@ public class AzureServiceBusTransportReceiveGuardTests {
         string bodyJson,
         Func<string, JsonSerializerOptions, JsonTypeInfo?> getTypeInfoByName,
         JsonSerializerOptions jsonOptions,
-        Func<Type, bool>? isHandledLocally = null,
         IRawReceptorRegistry? rawReceptorRegistry = null,
         IMessageTypeBinder? typeBinder = null,
-        IReadOnlySet<string>? absorbedNamespaces = null,
         Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
         Whizbang.Core.Routing.PoisonEvaluationContext poisonContext = default) =>
       new() {

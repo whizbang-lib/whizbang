@@ -550,8 +550,9 @@ public class TransportConsumerWorkerResilienceEdgeTests {
     var envelope = _envelope(MessageId.New(), echoServiceName: "edge-svc");
     await transport.DeliverBatchAsync([new TransportMessage(envelope, OWNED_COMMAND_ENVELOPE_TYPE)]);
 
-    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("A self-echo command in an owned child namespace must be discarded at the receive boundary — storing it would loop the command back into our own inbox.");
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("a self-echo command in an owned child namespace is stored settled, so it never loops back into processing (#1720)");
+    await Assert.That(coordinator.StoredMessages[0].DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.SELF_ECHO);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

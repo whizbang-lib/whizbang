@@ -1,10 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 
@@ -70,11 +73,11 @@ public class AzureServiceBusTransportBatchPipelineTests {
   }
 
   /// <summary>
-  /// A session batch message whose envelope type cannot be resolved is acked and dropped by
-  /// the deserializer — the batch handler never sees it.
+  /// A session batch message whose envelope type cannot be resolved and whose body is not a readable
+  /// envelope is dead-lettered by the read step (#1720); the batch handler never sees it.
   /// </summary>
   [Test]
-  public async Task SessionBatch_UnknownEnvelopeType_AcksWithoutInvokingHandlerAsync() {
+  public async Task SessionBatch_UnknownEnvelopeTypeWithABodyThatIsNotAnEnvelope_DeadLettersWithoutInvokingHandlerAsync() {
     var (transport, client) = _createTransport(enableSessions: true);
     var handlerInvoked = false;
     await transport.SubscribeBatchAsync(
@@ -86,8 +89,9 @@ public class AzureServiceBusTransportBatchPipelineTests {
     await client.LastSessionProcessor!.RaiseSessionMessageAsync(AsbTransportTestData.SessionArgs(
       AsbTransportTestData.RawMessage("{}", "Unknown.Namespace.NoSuchEnvelope, NoSuchAssembly"), receiver));
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("unresolvable types are acked so they exit the topic without DLQ accumulation");
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("a body that is not a readable envelope is dead-lettered, never acked and dropped (#1720)");
+    await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(handlerInvoked).IsFalse();
   }
 
@@ -164,8 +168,50 @@ public class AzureServiceBusTransportBatchPipelineTests {
   }
 
   /// <summary>
-  /// When every message in the flushed batch fails deserialization (ack+drop), the flush
-  /// returns without invoking the batch handler.
+  /// Batch pipeline: a message only a raw receptor takes is handed to the batch handler, which stores it, then the raw
+  /// receptor runs, then the message is completed (#1720).
+  /// </summary>
+  [Test]
+  public async Task NonSessionBatch_RawReceptorMatch_StoresThenInvokesTheReceptorThenCompletesAsync() {
+    var rawReceptor = new RecordingRawReceptor(RAW_INNER_TYPE_NAME);
+    var (transport, client) = _createTransport(enableSessions: false, rawReceptor: rawReceptor);
+    var receptorRunsWhenHandled = -1;
+    await transport.SubscribeBatchAsync(
+      (_, _) => { receptorRunsWhenHandled = rawReceptor.Handled.Count; return Task.CompletedTask; },
+      _destination(),
+      _sizeOnlyBatchOptions());
+    var receiver = new RecordingTransportReceiver();
+
+    await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
+      AsbTransportTestData.RawMessage(_rawEnvelopeBody(), RAW_ENVELOPE_TYPE_NAME), receiver));
+    await receiver.CompletedSignal.Task;
+
+    await Assert.That(receptorRunsWhenHandled).IsEqualTo(0).Because("the message is stored before the raw receptor runs");
+    await Assert.That(rawReceptor.Handled).Count().IsEqualTo(1);
+    await Assert.That(receiver.Completed).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Batch pipeline: a raw receptor that throws fails only its own message, which is abandoned for redelivery rather
+  /// than completed (#1720).
+  /// </summary>
+  [Test]
+  public async Task NonSessionBatch_RawReceptorThrows_AbandonsTheMessageInsteadOfCompletingItAsync() {
+    var (transport, client) = _createTransport(enableSessions: false, rawReceptor: new ThrowingRawReceptor());
+    await transport.SubscribeBatchAsync((_, _) => Task.CompletedTask, _destination(), _sizeOnlyBatchOptions());
+    var receiver = new RecordingTransportReceiver();
+
+    await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
+      AsbTransportTestData.RawMessage(_rawEnvelopeBody(), RAW_ENVELOPE_TYPE_NAME), receiver));
+    await receiver.NotCompletedSignal.Task;
+
+    await Assert.That(receiver.Abandoned).Count().IsEqualTo(1);
+    await Assert.That(receiver.Completed).IsEmpty();
+  }
+
+  /// <summary>
+  /// When every message in the flushed batch is not a readable envelope (dead-lettered, #1720), the
+  /// flush returns without invoking the batch handler.
   /// </summary>
   [Test]
   public async Task NonSessionBatch_AllMessagesFailDeserialization_SkipsHandlerAsync() {
@@ -179,10 +225,11 @@ public class AzureServiceBusTransportBatchPipelineTests {
 
     await client.LastProcessor!.RaiseMessageAsync(AsbTransportTestData.MessageArgs(
       AsbTransportTestData.RawMessage("{}", "Unknown.Namespace.NoSuchEnvelope, NoSuchAssembly"), receiver));
-    await receiver.CompletedSignal.Task;
+    await receiver.NotCompletedSignal.Task;
 
-    await Assert.That(receiver.Completed).Count().IsEqualTo(1)
-      .Because("the undeserializable message is acked during the flush's deserialize step");
+    await Assert.That(receiver.DeadLettered).Count().IsEqualTo(1)
+      .Because("the message that is not a readable envelope is dead-lettered during the flush's read step");
+    await Assert.That(receiver.Completed).IsEmpty();
     await Assert.That(handlerInvocations).IsEqualTo(0)
       .Because("an all-dropped batch must not invoke the handler with an empty list");
   }
@@ -323,7 +370,8 @@ public class AzureServiceBusTransportBatchPipelineTests {
   private static (AzureServiceBusTransport Transport, RaisableServiceBusClient Client) _createTransport(
     bool enableSessions,
     RecordingTransportLogger? logger = null,
-    int maxDeliveryAttempts = 10) {
+    int maxDeliveryAttempts = 10,
+    IRawReceptor? rawReceptor = null) {
     var client = new RaisableServiceBusClient();
     var options = new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
@@ -334,8 +382,34 @@ public class AzureServiceBusTransportBatchPipelineTests {
       client,
       AsbTransportTestData.CombinedOptions,
       options,
-      (ILogger<AzureServiceBusTransport>?)logger ?? NullLogger<AzureServiceBusTransport>.Instance);
+      (ILogger<AzureServiceBusTransport>?)logger ?? NullLogger<AzureServiceBusTransport>.Instance,
+      rawReceptorRegistry: rawReceptor is null ? null : new SingleRawReceptorRegistry(rawReceptor),
+      typeBinder: new MissTypeBinder());
     return (transport, client);
+  }
+
+  private const string RAW_INNER_TYPE_NAME = "Contracts.External.RawOnlyMessage, Contracts.External";
+  private const string RAW_ENVELOPE_TYPE_NAME =
+    "Whizbang.Core.Observability.MessageEnvelope`1[[Contracts.External.RawOnlyMessage, Contracts.External]], Whizbang.Core";
+
+  /// <summary>A full envelope whose payload this service has no type for, as its producer writes it.</summary>
+  private static string _rawEnvelopeBody() {
+    var envelope = AsbTransportTestData.CreateEnvelope();
+    var asReceived = new MessageEnvelope<JsonElement> {
+      MessageId = envelope.MessageId,
+      Payload = JsonElement.Parse("{\"content\":\"raw\"}"),
+      Hops = envelope.Hops,
+      DispatchContext = envelope.DispatchContext,
+    };
+    return JsonSerializer.Serialize(asReceived,
+      AsbTransportTestData.CombinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>)));
+  }
+
+  /// <summary>A raw receptor that fails, as a consumer's handler can.</summary>
+  private sealed class ThrowingRawReceptor : IRawReceptor {
+    public string TargetMessageTypeName => RAW_INNER_TYPE_NAME;
+    public Task HandleAsync(JsonElement payload, CancellationToken cancellationToken) =>
+      throw new InvalidOperationException("raw receptor failed");
   }
 
   /// <summary>

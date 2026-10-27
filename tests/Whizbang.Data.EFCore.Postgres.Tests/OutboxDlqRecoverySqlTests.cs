@@ -27,8 +27,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <list type="bullet">
 /// <item><description>A wh_dead_letters row with source_table=wh_outbox can be
 /// recovered: <c>recover_dead_letter</c> returns true, the wh_outbox row
-/// reappears with attempts=0, the DLQ row is marked Recovered (status=3),
-/// <c>recovered_at</c> is non-NULL.</description></item>
+/// reappears with attempts=0, and once it is published (here in debug mode, so the row
+/// stays readable) the DLQ row is marked Recovered (status=3) with
+/// <c>recovered_at</c> non-NULL (#1722).</description></item>
 /// <item><description>The original generation tag is appended to
 /// <c>retried_on_generations</c> on the DLQ row so the generation-replay sweep
 /// never double-replays a recovered row.</description></item>
@@ -143,6 +144,14 @@ public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
     var attempts = await _outboxAttemptsAsync(conn, messageId);
     await Assert.That(attempts).IsEqualTo(0)
       .Because("Recovery resets attempts to 0 so the row gets a fresh retry budget — the prior failure had its forensic record preserved in wh_dead_letters.");
+
+    await Assert.That((await _dlqRowAsync(conn, deadLetterId)).Status).IsEqualTo(1)
+      .Because("since 241 (#1722) the store claims the dead letter (Recovering); it reads Recovered once the message is published");
+    await using (var complete = conn.CreateCommand()) {
+      complete.CommandText = "SELECT complete_outbox_published(ARRAY[@id]::uuid[], TRUE)";
+      complete.Parameters.AddWithValue("id", messageId);
+      await complete.ExecuteScalarAsync();
+    }
 
     var (status, recoveredAt, generations, fingerprintAfterRecovery) = await _dlqRowAsync(conn, deadLetterId);
     await Assert.That(status).IsEqualTo(3)

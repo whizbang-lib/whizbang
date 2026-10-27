@@ -118,8 +118,12 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
       .Because("the composite row is what the drain claims and publishes; its number must be the folded one, not the default");
   }
 
+  /// <summary>
+  /// Since 241 (#1722) a recovered outbox row re-enters through <c>store_outbox_messages</c> with the priority its dead
+  /// letter kept, as every other field it was stored with, rather than in the background band.
+  /// </summary>
   [Test]
-  public async Task RecoverDeadLetter_OutboxRow_ReentersAsBackgroundAsync() {
+  public async Task RecoverDeadLetter_OutboxRow_ReentersWithThePriorityItWasStoredWithAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     var messageId = (Guid)TrackedGuid.New();
@@ -131,8 +135,8 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
 
     await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
 
-    await Assert.That(await _priorityAsync(conn, "wh_outbox", "message_id", messageId)).IsEqualTo(WorkPriority.BACKGROUND)
-      .Because("a recovered row is repair work nobody waits on; the number it once had is not the number it re-enters with");
+    await Assert.That(await _priorityAsync(conn, "wh_outbox", "message_id", messageId)).IsEqualTo(50)
+      .Because("recovery re-enters the message as it was stored, and its number is part of that");
   }
 
   /// <summary>
@@ -164,20 +168,30 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
     await Assert.That((bool)(await cmd.ExecuteScalarAsync())!).IsFalse();
   }
 
+  /// <summary>
+  /// Since 241 (#1722) recovered perspective work re-enters through <c>store_perspective_events</c> with the priority
+  /// its dead letter kept, rather than in the background band.
+  /// </summary>
   [Test]
-  public async Task RecoverDeadLetter_PerspectiveRow_ReentersAsBackgroundAsync() {
+  public async Task RecoverDeadLetter_PerspectiveRow_ReentersWithThePriorityItWasStoredWithAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     var workId = (Guid)TrackedGuid.New();
+    var streamId = (Guid)TrackedGuid.New();
+    var eventId = (Guid)TrackedGuid.New();
+    await _execAsync(conn, @"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at)
+      VALUES (@event, @stream, @stream, 'Test', 'TestEvent', 1, NOW())",
+      ("event", eventId), ("stream", streamId));
     await _execAsync(conn, @"
       INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, priority)
       VALUES (@work, @stream, 'TestPerspective', @event, 0, 1, 11, NOW(), 50)",
-      ("work", workId), ("stream", (Guid)TrackedGuid.New()), ("event", (Guid)TrackedGuid.New()));
+      ("work", workId), ("stream", streamId), ("event", eventId));
     var dlqId = await _moveToDlqAsync(conn, "wh_perspective_events", workId);
 
     await Assert.That(await _recoverAsync(conn, dlqId)).IsTrue();
 
-    await Assert.That(await _priorityAsync(conn, "wh_perspective_events", "event_work_id", workId)).IsEqualTo(WorkPriority.BACKGROUND)
-      .Because("a recovered projection catches up behind live projections, the same as a replayed one");
+    await Assert.That(await _priorityAsync(conn, "wh_perspective_events", "event_work_id", workId)).IsEqualTo(50)
+      .Because("recovery re-enters the work as it was stored, and its number is part of that");
   }
 }

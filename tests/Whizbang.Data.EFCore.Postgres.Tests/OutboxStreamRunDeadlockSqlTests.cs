@@ -295,7 +295,7 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
   private async Task _concurrentRoundsAsync(
       bool registerInstances, bool registerAfterAStaleClaim = true, Func<NpgsqlConnection, Task>? afterTheRounds = null) {
     // Four instances drain one outbox. Each round releases every instance's claim, drain fetch,
-    // continuation and completion flush (with its failure releases) together on one signal, over
+    // continuation and completion flush (then its failure releases) together on one signal, over
     // streams the instances share, and the round ends when all of them have returned. A deadlock is
     // recorded rather than thrown so the rounds carry on, and the assertion is that there was none.
     const int iterations = 8;
@@ -462,22 +462,24 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
       if (_completed.Count == 0 && _failed.Count == 0) {
         return;
       }
-      // One transaction, completions then failures, the order flush_completions runs them in. The
+      // Completions and failures each in a transaction of its own, one statement each, as the
+      // production flush workers send them (OutboxCompletionFlushWorker, FailureFlushWorker). Each
+      // statement takes its rows in one ascending pass, so neither can be half of a cycle. Running
+      // both in ONE transaction is two passes, which deadlocks against another instance's completion
+      // of the same rows; that shape is flush_completions', tracked and fixed on its own (#1785). The
       // retry is due at once (p_now an hour back) so a failed stream keeps moving inside the test.
-      await using var tx = await _sessions[3].BeginTransactionAsync();
-      await using (var complete = _sessions[3].CreateCommand()) {
-        complete.Transaction = tx;
+      if (_completed.Count > 0) {
+        await using var complete = _sessions[3].CreateCommand();
         complete.CommandText = "SELECT complete_outbox_published(@ids)";
         complete.Parameters.AddWithValue("ids", _completed.ToArray());
         await complete.ExecuteNonQueryAsync();
       }
-      await using (var fail = _sessions[3].CreateCommand()) {
-        fail.Transaction = tx;
+      if (_failed.Count > 0) {
+        await using var fail = _sessions[3].CreateCommand();
         fail.CommandText = "SELECT process_outbox_failures(@f::jsonb, NOW() - INTERVAL '1 hour')";
         fail.Parameters.AddWithValue("f", _failuresJson(_failed));
         await fail.ExecuteNonQueryAsync();
       }
-      await tx.CommitAsync();
     }
 
     /// <summary>Publishes rows in stream order; a row marked to fail stops its stream.</summary>

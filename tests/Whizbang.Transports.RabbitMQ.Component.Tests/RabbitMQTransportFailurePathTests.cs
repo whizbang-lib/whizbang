@@ -1,11 +1,9 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
-using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Exceptions;
 using TUnit.Assertions;
@@ -319,27 +317,6 @@ public class RabbitMQTransportFailurePathTests {
     await Assert.That(handled).IsEmpty();
     await Assert.That(channel.NackAttempts).Count().IsEqualTo(1);
     await Assert.That(channel.NackAttempts[0].Requeue).IsFalse();
-  }
-
-  [Test]
-  public async Task ProcessMessage_DiscardPolicySaysSkip_AcksWithoutInvokingHandlerAsync() {
-    using var meter = new Meter("Whizbang.Tests.RabbitMQTransportFailurePathTests.Discard");
-    var policy = new MessageDiscardPolicy(
-      registry: new EmptyReceptorRegistry(),
-      logger: new CapturingLogger<MessageDiscardPolicy>(),
-      meter: meter,
-      routingOptions: Options.Create(new RoutingOptions()),
-      markerResolver: new EventMarkerResolver(NullMessageTypeCatalog.Instance));
-    var (channel, handled, _, _) = await _subscribeAsync(discardPolicy: policy);
-
-    var (props, body) = RabbitTestWire.ValidWireMessage("skipped");
-    await RabbitTestWire.DeliverAsync(channel, props, body, 5);
-
-    await Assert.That(handled).IsEmpty()
-      .Because("With no local consumer for the payload type, the message must be acked-and-skipped without touching the handler.");
-    await Assert.That(channel.AckAttempts).Count().IsEqualTo(1);
-    await Assert.That(channel.AckAttempts[0]).IsEqualTo(5UL);
-    await Assert.That(channel.NackAttempts).IsEmpty();
   }
 
   [Test]

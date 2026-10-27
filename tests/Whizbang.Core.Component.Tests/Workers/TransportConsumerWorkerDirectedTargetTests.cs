@@ -55,10 +55,9 @@ public class TransportConsumerWorkerDirectedTargetTests {
     await worker.SimulateMessageAsync(envelope, _eventType);
 
     await worker.StopAsync();
-    await Assert.That(worker.StoredInboxCount).IsEqualTo(0)
-      .Because("a message directed at another service is point-to-point traffic this service " +
-               "must discard at the receive seam — storing it costs every uninvolved service " +
-               "deserialize + fan-out + conflict-skip work for traffic that was never for them.");
+    await Assert.That(worker.StoredInboxCount).IsEqualTo(1)
+      .Because("a message directed at another service is stored settled with its reason (#1720): " +
+               "durable and inspectable, and never claimed, copied or dispatched here.");
   }
 
   [Test]

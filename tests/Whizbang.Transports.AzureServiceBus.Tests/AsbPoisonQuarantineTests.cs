@@ -102,7 +102,7 @@ public class AsbPoisonQuarantineTests {
       poisonDetector: detector,
       poisonContext: _context(_now));
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
     await Assert.That(decision.PoisonVerdict).IsNull();
   }
@@ -116,7 +116,7 @@ public class AsbPoisonQuarantineTests {
 
     var decision = decider.Decide(props, "{}", _resolveAlwaysNull, _jsonOptions);
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.PoisonVerdict).IsNull();
   }
 
@@ -133,7 +133,7 @@ public class AsbPoisonQuarantineTests {
       poisonDetector: new StubPoisonDetector(aged),
       poisonContext: _context(_now - TimeSpan.FromDays(1)));
 
-    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.AckAndDrop);
+    await Assert.That(decision.Action).IsEqualTo(AsbReceiveAction.DeadLetter);
     await Assert.That(decision.Reason).IsEqualTo("MissingJsonTypeInfo");
     await Assert.That(decision.PoisonVerdict).IsEqualTo(aged);
   }

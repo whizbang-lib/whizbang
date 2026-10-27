@@ -367,12 +367,11 @@ public static class ServiceCollectionExtensions {
     // JsonContextRegistry. Optional; transport instantiates a default when missing.
     var typeBinder = sp.GetService<Whizbang.Core.Messaging.IMessageTypeBinder>();
 
-    // Shared discard policy — routes NoLocalConsumer drops through structured
-    // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
+    // Shared discard policy. No longer consulted on receive (#1720): every message is stored and the consumer
+    // decides any skip after storage; still passed so the constructor keeps its contract.
     var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
 
-    // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
-    // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
+    // Absorbed namespaces. No longer consulted on receive either (#1720): nothing is dropped at the ASB receive gate.
     // Required for the same reason AzureServiceBusOptions is: the registration adds the options
     // infrastructure, so the open-generic IOptions<> always resolves; unconfigured, it is empty.
     var absorbedNamespaces = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()

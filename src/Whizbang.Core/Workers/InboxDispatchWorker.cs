@@ -1337,10 +1337,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// machinery. Returns <c>false</c> (legacy behaviour) when no policy is wired.
   /// </summary>
   /// <remarks>
-  /// Internal-static for unit testability without spinning up the full worker. Mirrors
-  /// the receive-time gates in <c>AzureServiceBusTransport.EmitAckDropTelemetry</c> and
-  /// <c>RabbitMQTransport.ShouldSkipReceive</c> — discard reason here is
-  /// <see cref="MessageDiscardReason.RegistryChanged"/>, which logs at Information so
+  /// Internal-static for unit testability without spinning up the full worker. The transports no longer skip a
+  /// message with no local consumer on receive (#1720): it is stored, and this gate decides the skip after storage.
+  /// The discard reason here is <see cref="MessageDiscardReason.RegistryChanged"/>, which logs at Information so
   /// rolling-deploy drift is visible without being noisy.
   /// </remarks>
   internal static bool ShouldSkipInbox(

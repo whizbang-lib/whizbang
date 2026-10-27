@@ -210,9 +210,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
     await transport.SimulateBatchReceivedAsync([new TransportMessage(selfEchoEnvelope, envelopeType)]);
     await cts.CancelAsync();
 
-    // Assert — self-echo should be discarded before inbox insert
-    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
-      .Because("Self-echo messages should be discarded in batch handler");
+    // Assert: a self-echo is stored settled with its reason, never dropped unstored (#1720)
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("a self-echo is stored, so the skip is durable and inspectable");
+    await Assert.That(noOpCoordinator.StoredMessages[0].DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.SELF_ECHO);
   }
 
   // ========================================
