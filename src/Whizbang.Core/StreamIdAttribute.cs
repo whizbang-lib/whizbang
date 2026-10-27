@@ -34,12 +34,45 @@ namespace Whizbang.Core;
 /// </para>
 /// <para>
 /// Requirements:
-/// - Property must be of type <see cref="Guid"/>, <see cref="Guid"/>?, or a WhizbangId type
-/// - Only one property per message type should have this attribute
-/// - Attribute is inherited by derived message types
+/// - Any property type works: the extractor keys the stream by the value's string form
+/// - Only one property per message type should have this attribute (WHIZ006)
+/// - Attribute is inherited by derived message types; a derived type replaces an inherited one with
+///   <see cref="Override"/>
 /// </para>
 /// </remarks>
 /// <docs>extending/attributes/streamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class StreamIdAttribute : Attribute;
+public sealed class StreamIdAttribute : Attribute {
+  /// <summary>
+  /// Marks this stream id as replacing the <c>[StreamId]</c> the type inherits, on purpose. Defaults to
+  /// <see langword="false"/>, so a plain <c>[StreamId]</c> is unchanged.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A base command or event often declares a default stream id that a derived type replaces with its own key. With
+  /// <c>Override = true</c> on the derived property or record primary-constructor parameter, that key is the stream
+  /// id, ahead of any inherited <c>[StreamId]</c> (including where an inherited property would otherwise beat a
+  /// derived record's parameter), and hiding the inherited one is not reported as WHIZ006.
+  /// </para>
+  /// <para>
+  /// WHIZ006 is still reported for two <c>[StreamId]</c> declared on one type, override or not, and for a hide
+  /// without the option. An override where no base type declares a <c>[StreamId]</c> is reported as WHIZ016.
+  /// </para>
+  /// <code>
+  /// public abstract class CommandBase : ICommand {
+  ///   [StreamId] public virtual Guid StreamId { get; set; }
+  /// }
+  ///
+  /// public class AcknowledgeAlert : CommandBase {
+  ///   [StreamId(Override = true)] public Guid AckId { get; set; }
+  /// }
+  /// </code>
+  /// </remarks>
+  /// <docs>extending/attributes/streamid#overriding-an-inherited-stream-id</docs>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyAttributeTests.cs:StreamIdAttribute_Override_DefaultsToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/StreamKeyAttributeTests.cs:StreamIdAttribute_Override_CanBeSetAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/StreamIdOverrideGeneratorTests.cs:AnEventOverrideParameter_IsTheStreamIdAheadOfAnInheritedPropertyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/StreamIdAttributeAnalyzerTests.cs:ADerivedOverridePropertyOverAnInheritedOne_IsNotReportedAsync</tests>
+  public bool Override { get; init; }
+}

@@ -434,29 +434,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts the StreamId property name from an event type.
-  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type: the one the generated extractor reads, or null when
+  /// the event has no [StreamId].
   /// </summary>
   private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
-    // Walk the inheritance chain: the [StreamId]-marked property may be declared on a base type
-    // (e.g. a consumer's BaseSagaItemEvent), and GetMembers() returns only declared members. Most-derived
-    // first so a re-declaration on the concrete type wins over the inherited one.
-    for (ITypeSymbol? type = eventTypeSymbol;
-        type != null && type.SpecialType != SpecialType.System_Object;
-        type = (type as INamedTypeSymbol)?.BaseType) {
-      foreach (var member in type.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute"));
-
-          if (hasStreamIdAttribute) {
-            return property.Name;
-          }
-        }
-      }
-    }
-
-    return null;
+    // The [StreamId] the extractor uses (#1833): searched from the most derived type up, an override ahead of an
+    // inherited one. GetMembers() returns only declared members, so the chain is walked by StreamIdSelection.
+    return eventTypeSymbol is INamedTypeSymbol namedType ? StreamIdSelection.Select(namedType)?.Property.Name : null;
   }
 
   /// <summary>
