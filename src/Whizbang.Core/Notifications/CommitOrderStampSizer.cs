@@ -31,27 +31,18 @@ namespace Whizbang.Core.Notifications;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/commit-sequence#batch-size</docs>
 /// <tests>tests/Whizbang.Core.Tests/Notifications/CommitOrderStampSizerTests.cs</tests>
-public sealed class CommitOrderStampSizer {
-  private readonly int _configured;
-  private readonly int _ceiling;
+/// <param name="configured">The steady-state size, which a drained set returns to and the first call asks for.</param>
+/// <param name="ceiling">The largest size to grow to.</param>
+public sealed class CommitOrderStampSizer(int configured, int ceiling) {
+  private readonly int _configured = configured;
+  private readonly int _ceiling = ceiling;
   // Whether the current size is where a halving stopped making calls cheaper. Set, the size holds through slow calls.
   private bool _atFloor;
   // The last full call that ran past the budget, which the next one is compared with.
   private (int Asked, TimeSpan Took)? _lastSlow;
 
-  /// <summary>
-  /// Starts at the steady-state size.
-  /// </summary>
-  /// <param name="configured">The steady-state size, which a drained set returns to.</param>
-  /// <param name="ceiling">The largest size to grow to.</param>
-  public CommitOrderStampSizer(int configured, int ceiling) {
-    _configured = configured;
-    _ceiling = ceiling;
-    Size = configured;
-  }
-
   /// <summary>The size the next call asks for.</summary>
-  public int Size { get; private set; }
+  public int Size { get; private set; } = configured;
 
   /// <summary>
   /// Sizes the next call from what this one returned and how long it took.
