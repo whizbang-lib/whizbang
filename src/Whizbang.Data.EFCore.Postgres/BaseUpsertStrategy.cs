@@ -440,12 +440,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // is SagaItemModel) opt in by implementing IVersionedApplyTarget. A production saga
     // showed a small fraction of per-item rows survived the affinity gate and reverted to
     // State=Running — this marker closes that gap at the storage layer.
-    var isVersionedTarget = typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel));
+    // A rebuild's write is the exception (#1819): it re-derived the row from every event and ends on the stream's
+    // last event by version, whose id can sort below the stored one, so it is not ordered on the event id.
+    var ordersOnEventId = Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrdersOnEventId(
+      typeof(IVersionedApplyTarget).IsAssignableFrom(typeof(TModel)),
+      Whizbang.Core.Messaging.ProcessingModeAccessor.Current);
     // The ordering guard, written against the incoming metadata: EXCLUDED.metadata in the upsert, the bound
     // parameter in the conditional UPDATE. The unconditional text is byte-identical to what it always was.
     string guard(string incoming) =>
       Whizbang.Data.Postgres.Perspectives.PerspectiveRowVersionCommands.OrderingGuard(
-        qualifiedTable, incoming, isVersionedTarget);
+        qualifiedTable, incoming, ordersOnEventId);
     var whereClause = $@"
         WHERE {guard("EXCLUDED.metadata")}";
 
