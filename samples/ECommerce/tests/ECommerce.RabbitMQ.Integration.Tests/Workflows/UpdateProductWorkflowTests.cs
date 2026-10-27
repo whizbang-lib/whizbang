@@ -90,7 +90,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify InventoryWorker perspective updated
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo("Updated Name");
     await Assert.That(inventoryProduct.Description).IsEqualTo("Original description"); // Unchanged
@@ -142,7 +142,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify InventoryWorker perspective fully updated
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo("Completely Updated Product");
     await Assert.That(inventoryProduct.Description).IsEqualTo("Brand new description");
@@ -200,7 +200,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify only price changed
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Price).IsEqualTo(35.00m); // Updated
     await Assert.That(inventoryProduct.Name).IsEqualTo("Price Test Product"); // Unchanged
@@ -253,7 +253,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify description and image updated
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Description).IsEqualTo("Completely new and improved description");
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo("/images/new-and-improved.png");
@@ -335,7 +335,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify all changes accumulated
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo("Updated Name"); // From update1
     await Assert.That(inventoryProduct.Price).IsEqualTo(20.00m); // From update2
@@ -371,7 +371,7 @@ public class UpdateProductWorkflowTests {
 
     // Verify initial inventory
     fixture.RefreshLensScopes();
-    var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
+    var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(initialInventory).IsNotNull();
     await Assert.That(initialInventory!.Quantity).IsEqualTo(75);
 
@@ -394,7 +394,7 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify inventory unchanged
-    var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
+    var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value, cancellationToken);
     await Assert.That(updatedInventory).IsNotNull();
     await Assert.That(updatedInventory!.Quantity).IsEqualTo(75); // No change
     await Assert.That(updatedInventory.Available).IsEqualTo(75); // No change

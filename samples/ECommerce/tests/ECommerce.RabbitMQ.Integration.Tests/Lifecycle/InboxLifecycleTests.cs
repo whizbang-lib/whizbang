@@ -44,12 +44,12 @@ public class InboxLifecycleTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync(CancellationToken cancellationToken) {
-    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync();
-    await _fixture.CleanupDatabaseAsync();
+    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync(cancellationToken);
+    await _fixture.CleanupDatabaseAsync(cancellationToken);
   }
 
   [After(Test)]
-  public Task CleanupAsync(CancellationToken cancellationToken) {
+  public Task CleanupAsync(CancellationToken _) {
     // Shared fixture is reused across tests — don't dispose
     return Task.CompletedTask;
   }

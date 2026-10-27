@@ -40,12 +40,12 @@ public class BatchReceiveLifecycleTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync(CancellationToken cancellationToken) {
-    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync();
-    await _fixture.CleanupDatabaseAsync();
+    _fixture = await SharedRabbitMqFixtureSource.GetFixtureAsync(cancellationToken);
+    await _fixture.CleanupDatabaseAsync(cancellationToken);
   }
 
   [After(Test)]
-  public Task CleanupAsync(CancellationToken cancellationToken) {
+  public Task CleanupAsync(CancellationToken _) {
     return Task.CompletedTask;
   }
 
@@ -60,7 +60,7 @@ public class BatchReceiveLifecycleTests {
   /// </summary>
   [Test]
   [Timeout(120_000)]
-  public async Task BatchReceive_SingleMessage_ProcessesEndToEndAsync(CancellationToken cancellationToken) {
+  public async Task BatchReceive_SingleMessage_ProcessesEndToEndAsync(CancellationToken _) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -106,7 +106,7 @@ public class BatchReceiveLifecycleTests {
   /// </summary>
   [Test]
   [Timeout(180_000)]
-  public async Task BatchReceive_MultipleMessages_AllProcessedAsync(CancellationToken cancellationToken) {
+  public async Task BatchReceive_MultipleMessages_AllProcessedAsync(CancellationToken _) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 

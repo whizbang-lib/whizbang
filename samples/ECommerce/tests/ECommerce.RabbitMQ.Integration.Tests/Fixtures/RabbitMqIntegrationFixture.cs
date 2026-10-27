@@ -310,9 +310,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _waitForWorkersReadyAsync(cancellationToken);
 
     // 2. Purge RabbitMQ queues to prevent stale messages from previous tests
-    await _purgeQueueAsync($"bff-products-queue-{_testId}");
-    await _purgeQueueAsync($"inventory-products-queue-{_testId}");
-    await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
+    await _purgeQueueAsync($"bff-products-queue-{_testId}", cancellationToken);
+    await _purgeQueueAsync($"inventory-products-queue-{_testId}", cancellationToken);
+    await _purgeQueueAsync($"bff-inventory-queue-{_testId}", cancellationToken);
 
     // 3. Delete all Whizbang infrastructure table data from BOTH databases (explicit ordering for FK safety)
     const int maxRetries = 5;
