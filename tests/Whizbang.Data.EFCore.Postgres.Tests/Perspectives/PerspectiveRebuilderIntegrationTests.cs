@@ -889,6 +889,104 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       .Because("a write the store refused left the row untouched, and must not be counted as a row the rebuild wrote");
   }
 
+  /// <summary>
+  /// A row whose recorded position came from an event on ANOTHER stream is still rebuilt from its own stream (#1798).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Measured in a deployed environment: a row's metadata named an event stored on a different stream, committed after
+  /// every event on the row's own stream. A rebuild of the row's stream folds its own events and writes them at its own
+  /// stream head, which is below the foreign position, so the store's ordering guard refuses the write as stale and the
+  /// run reports the stream folded but unchanged. No rebuild can repair such a row.
+  /// </para>
+  /// <para>
+  /// The foreign position is produced here by real code, not seeded: a rebuild of stream A routes an event stored on A
+  /// whose <c>[StreamId]</c> names B onto B's row (the re-key routing in the generated runner's RunRebuildAsync), and
+  /// writes it with A's commit sequence. The row's balance is then corrupted out of band, so a rebuild of B that wrote
+  /// nothing cannot pass by leaving a coincidentally right value in place.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheRowRecordsAPositionFromAnotherStream_StillRewritesTheRowAsync() {
+    await using var sp = _buildRebuildServices();
+    var (ownStream, _) = await _arrangeRowPositionedOnAForeignStreamAsync(sp);
+
+    var result = await _rebuildAsync(sp, ownStream);
+
+    var row = await _rowAsync(ownStream);
+    await Assert.That(row.Data.Balance).IsEqualTo(5m)
+      .Because("the rebuild re-derives the row from its own stream's events; a position recorded from another stream must not make that write look stale");
+    await Assert.That(result.StreamsProcessed).IsEqualTo(1)
+      .Because($"the row was rewritten, so the stream is not one that folded but left the row unchanged ({result.Error})");
+    await Assert.That(result.Success).IsTrue().Because($"the rebuild must report success ({result.Error})");
+  }
+
+  /// <summary>
+  /// The named-record path an operator reaches for (#1798): an in-place <see cref="RebuildPerspectiveCommand"/> that selects
+  /// the row's stream repairs a row whose recorded position came from another stream.
+  /// </summary>
+  [Test]
+  public async Task RebuildPerspectiveCommand_SelectingAStreamWhoseRowRecordsAPositionFromAnotherStream_RewritesTheRowAsync() {
+    await using var sp = _buildRebuildServices();
+    var (ownStream, _) = await _arrangeRowPositionedOnAForeignStreamAsync(sp);
+
+    var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor>>());
+    await receptor.HandleAsync(new RebuildPerspectiveCommand(
+        PerspectiveNames: [RebuildBalancePerspectiveName],
+        Mode: RebuildMode.InPlace,
+        IncludeStreamIds: [ownStream]));
+
+    var row = await _rowAsync(ownStream);
+    await Assert.That(row.Data.Balance).IsEqualTo(5m)
+      .Because("a selected-streams in-place rebuild re-derives the row from its own stream, whatever stream its recorded position came from");
+  }
+
+  /// <summary>
+  /// Leaves stream B's row recording the position of an event stored on stream A, committed after B's head, with its
+  /// balance corrupted, and returns (B, A). Asserts each precondition, so a failure later is the rebuild's and not the setup's.
+  /// </summary>
+  private async Task<(Guid OwnStream, Guid ForeignStream)> _arrangeRowPositionedOnAForeignStreamAsync(ServiceProvider sp) {
+    var ownStream = Guid.NewGuid();
+    var foreignStream = Guid.NewGuid();
+    var ownEvent = MessageId.New();
+    var foreignEvent = MessageId.New();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendCommittedAsync(eventStore, ownStream, new RebuildBalanceSetEvent { StreamId = ownStream, Balance = 5m }, ownEvent);
+      // Stored on the foreign stream, keyed by the own stream, committed later.
+      await _appendCommittedAsync(eventStore, foreignStream, new RebuildLabelSetEvent { StreamId = ownStream, Label = "foreign" }, foreignEvent);
+    }
+
+    var ownRebuild = await _rebuildAsync(sp, ownStream);
+    await Assert.That(ownRebuild.StreamsProcessed).IsEqualTo(1).Because("setup: the own stream's row is created first");
+    var foreignRebuild = await _rebuildAsync(sp, foreignStream);
+    await Assert.That(foreignRebuild.Success).IsTrue().Because($"setup: the foreign stream's rebuild runs ({foreignRebuild.Error})");
+
+    long ownHead;
+    long foreignPosition;
+    await using (var read = CreateDbContext()) {
+      ownHead = (await read.Database.SqlQueryRaw<long>(
+        "SELECT MAX(commit_sequence) AS \"Value\" FROM wh_event_store WHERE stream_id = {0}", ownStream).ToListAsync()).Single();
+      foreignPosition = (await read.Database.SqlQueryRaw<long>(
+        "SELECT commit_sequence AS \"Value\" FROM wh_event_store WHERE event_id = {0}", foreignEvent.Value).ToListAsync()).Single();
+    }
+    var positioned = await _rowAsync(ownStream);
+    await Assert.That(positioned.Metadata.EventId).IsEqualTo(foreignEvent.Value.ToString())
+      .Because("setup: the own stream's row records the event stored on the foreign stream");
+    await Assert.That(positioned.Metadata.CommitSequence).IsEqualTo(foreignPosition);
+    await Assert.That(foreignPosition).IsGreaterThan(ownHead)
+      .Because("setup: the recorded position sits above every event on the row's own stream");
+
+    await using (var corrupt = CreateDbContext()) {
+      await corrupt.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET data = jsonb_set(data, '{{Balance}}', '999') WHERE id = {0}", ownStream);
+    }
+    await Assert.That((await _rowAsync(ownStream)).Data.Balance).IsEqualTo(999m).Because("setup: the row needs repair");
+    return (ownStream, foreignStream);
+  }
+
   [Test]
   public async Task RebuildStreamsAsync_WhenItWritesTheRow_CountsItProcessedAndNotAsAFoldWithoutWritingAsync() {
     // The other side of the same signal: a rebuild that really repairs a row must be distinguishable
