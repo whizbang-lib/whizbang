@@ -214,8 +214,8 @@ public class RebuildRowRoutingTests {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(runner.RekeyedFolds.Count).IsEqualTo(2);
-    var fold = runner.RekeyedFolds.Single(f => f.Row == target);
-    await Assert.That(fold.SourceCount).IsEqualTo(2).Because("both sources re-keyed onto the row are folded together, once");
+    var sourceCount = runner.RekeyedFolds.Single(f => f.Row == target).SourceCount;
+    await Assert.That(sourceCount).IsEqualTo(2).Because("both sources re-keyed onto the row are folded together, once");
     await Assert.That(runner.ReadBeforeFold).IsTrue().Because("the row is folded after every stream was read");
     await Assert.That(result.StreamsProcessed).IsEqualTo(1)
       .Because("the folded row counts as rebuilt; the failed one and the two sources that only carried re-keys do not");

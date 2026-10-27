@@ -67,6 +67,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// <returns>The inbox row to store.</returns>
   /// <exception cref="InvalidOperationException">The stored envelope is empty or names another message.</exception>
   /// <tests>tests/Whizbang.Core.Tests/Workers/ReceivedInboxMessageBuilderRedeliveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage BuildRedelivery(IServiceProvider scope, DeadLetterRedelivery redelivery) {
     var jsonOptions = scope.GetService<JsonSerializerOptions>() ?? Serialization.JsonContextRegistry.CreateCombinedOptions();
     var typeInfo = jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
@@ -109,6 +110,7 @@ internal static class ReceivedInboxMessageBuilder {
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
   /// <param name="originMonitor">Counts received events with and without the producer's origin (#1029), when registered.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   internal static InboxMessage Build(
       ReceivedEnvelope received,
       int priority,

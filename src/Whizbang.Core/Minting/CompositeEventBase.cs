@@ -19,9 +19,10 @@ namespace Whizbang.Core.Minting;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The base carries the shared <c>[StreamId]</c>: every inner event inherits the composite's stream
-/// at the receiver (see <see cref="ICompositeEvent"/>), so pre-mint the target stream id and set it
-/// here. <see cref="InnerEvents"/> yields <see cref="Inner"/> in the order supplied (producer-yielded
+/// The base carries the composite's own <c>[StreamId]</c>. An inner event whose payload names a stream is
+/// stored on that stream at the receiver, as its producer stored it; one that names none takes the
+/// composite's (see <see cref="ICompositeEvent"/>), so pre-mint the target stream id and set it here.
+/// <see cref="InnerEvents"/> yields <see cref="Inner"/> in the order supplied (producer-yielded
 /// order, which the receiver preserves).
 /// </para>
 /// <para>
@@ -37,8 +38,8 @@ namespace Whizbang.Core.Minting;
 /// <docs>fundamentals/messaging/composite-events</docs>
 public abstract class CompositeEventBase : ICompositeEvent {
   /// <summary>
-  /// The stream every inner event inherits at the receiver. Pre-mint this (e.g.
-  /// <c>TrackedGuid.New()</c>) so all inner events land on the intended stream.
+  /// The composite's stream, which an inner event naming no stream of its own takes at the receiver.
+  /// Pre-mint this (e.g. <c>TrackedGuid.New()</c>) so those inner events land on the intended stream.
   /// </summary>
   [StreamId]
   public Guid StreamId { get; init; }

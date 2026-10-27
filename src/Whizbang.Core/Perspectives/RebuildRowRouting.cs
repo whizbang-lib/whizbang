@@ -26,6 +26,8 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/RekeyThroughRebuildTests.cs</tests>
 public static class RebuildRowRouting {
   /// <summary>
   /// The row an event read from <paramref name="storedOn"/> folds onto during a rebuild: the stream an upcaster
@@ -35,6 +37,7 @@ public static class RebuildRowRouting {
   /// <param name="storedOn">The stream it is stored on.</param>
   /// <returns>The row's stream.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Perspectives/RebuildRowRoutingTests.cs:RowOf_OnlyAGenuineRekeyLeavesTheStoredStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:Rebuild_FoldsEachStoredEventOntoTheRowLiveApplyKeysItByAsync</tests>
   public static Guid RowOf(MessageEnvelope<IEvent> envelope, Guid storedOn) {
     ArgumentNullException.ThrowIfNull(envelope);
     return EventRekeys.RekeyedTo(envelope.Payload) is { } to && to != Guid.Empty ? to : storedOn;

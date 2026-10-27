@@ -27,11 +27,16 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <para>
 /// There were three byte-for-byte copies of the hop read (the outbox, the receive builder and the fan-out) and a
-/// fourth reader in the dispatcher's cascade path. Every site now calls this class.
+/// fourth reader in the dispatcher's cascade path. Every site now calls this class. <c>StreamResolutionParityTests</c>
+/// holds every delivery shape against it, and <c>StreamResolutionSourceGuardTests</c> fails when a new site reads the
+/// hop key itself or builds an inbox row the parity table does not cover.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/stream-identity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionSitesTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Messaging/StreamResolutionSourceGuardTests.cs</tests>
 internal static class StreamIdentity {
   /// <summary>The hop metadata key a producer names a message's stream under.</summary>
   internal const string HOP_KEY = "AggregateId";

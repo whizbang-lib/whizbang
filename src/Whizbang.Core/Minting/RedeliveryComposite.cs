@@ -35,8 +35,8 @@ public interface IRawInnerComposite : ICompositeEvent {
 
   /// <summary>
   /// Each child's ORIGINAL stream id, parallel to <see cref="InnerPayloads"/> — or null/empty
-  /// when the producer predates the field (#596), in which case children inherit the
-  /// composite's stream as before. When present, expansion restores each child to its own
+  /// when the producer predates the field (#596), in which case children take the composite's own
+  /// stream (its hop, then its own <c>[StreamId]</c>; #1798). When present, expansion restores each child to its own
   /// stream: the composite is transport packaging, never a stream-identity rewrite —
   /// collapsing many source streams onto one serialized the producer's parallelism behind a
   /// single drain lane at every receiver.

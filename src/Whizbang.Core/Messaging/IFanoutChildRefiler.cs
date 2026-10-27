@@ -38,7 +38,7 @@ public interface IFanoutChildRefiler {
 
 /// <summary>A request to refile misfiled composite children.</summary>
 /// <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FanoutChildRefileSqlTests.cs:Request_WithoutAReason_IsRefusedAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FanoutChildRefileSqlTests.cs:Request_WithoutWhoOrWhyOrAPositiveBatch_IsRefusedAsync</tests>
 public sealed record FanoutChildRefileRequest {
   /// <summary>The most events one transaction moves, unless one composite stream holds more (it is never split).</summary>
   public const int DEFAULT_BATCH_SIZE = 500;

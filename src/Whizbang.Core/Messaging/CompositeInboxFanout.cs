@@ -119,6 +119,7 @@ public static partial class CompositeInboxFanout {
   /// <param name="scope">The dispatch scope (serializer, catalog, resolvers, logging).</param>
   /// <param name="replacementInner">A pre-fanout directive's replacement for the inner events.</param>
   /// <param name="hasConsumer">Answers whether this consumer subscribes to a child type (by wire type name); a child it does not subscribe to is dropped at expansion and counted (#736). Null keeps every child.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   [SuppressMessage("Major Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Expanding a composite checks five things that can disagree (the inner count against the cap, against the carried ids, against the carried sequences, each inner against null, and each child against the consumer's subscriptions) and every disagreement has a different outcome under Atomic than under Independent. The branching is the atomicity contract, and the two modes have to be read together to see that a drop is logged exactly once.")]
   public static FanoutResult TryExpand(
       ICompositeEvent? composite,

@@ -6146,6 +6146,7 @@ public abstract partial class Dispatcher(
   /// Extracts stream_id from aggregate ID or falls back to message ID.
   /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
     MessageEnvelope<TMessage> envelope,
     TMessage payload,

@@ -164,6 +164,11 @@ public sealed class RedeliveryPump(
     return published;
   }
 
+  /// <summary>
+  /// One chunk's repair bundle: the stored payloads and type names raw, the original ids, origin and commit sequences,
+  /// and the stream each event is stored on, which the receiver files it under (#1798).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private static RedeliveryComposite _buildComposite(IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId, bool operatorRequested) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
