@@ -38,10 +38,8 @@ public static class SharedFixtureSource {
   /// Initializes shared ServiceBus emulator and creates single static ServiceBusClient.
   /// Called once before any tests run.
   /// </summary>
-  /// <param name="testIndex">The test index (not used, kept for compatibility).</param>
   /// <param name="cancellationToken">Cancellation token with default timeout of 120 seconds.</param>
   public static async Task<(string ConnectionString, ServiceBusClient Client)> GetSharedResourcesAsync(
-      int testIndex,
       CancellationToken cancellationToken = default) {
 
     // If already initialized successfully, return immediately
@@ -52,7 +50,7 @@ public static class SharedFixtureSource {
     // If previous initialization failed, throw the error immediately (don't retry)
     if (_initializationFailed) {
       throw new InvalidOperationException(
-        $"Shared ServiceBus emulator initialization previously failed and cannot be retried. " +
+        "Shared ServiceBus emulator initialization previously failed and cannot be retried. " +
         $"Original error: {_lastInitializationError?.Message}",
         _lastInitializationError
       );
@@ -117,9 +115,9 @@ public static class SharedFixtureSource {
         await _cleanupAfterFailureAsync();
 
         throw new InvalidOperationException(
-          $"Failed to initialize shared ServiceBus emulator. " +
+          "Failed to initialize shared ServiceBus emulator. " +
           $"Error: {ex.Message}. " +
-          $"This is a fatal error - remaining tests will be skipped.",
+          "This is a fatal error - remaining tests will be skipped.",
           ex
         );
       }

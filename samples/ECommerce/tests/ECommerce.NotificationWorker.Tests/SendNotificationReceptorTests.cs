@@ -60,7 +60,7 @@ public class SendNotificationReceptorTests {
     await receptor.HandleAsync(command, CancellationToken.None);
 
     // Assert
-    var publishedEvent = dispatcher.PublishedEvents.First() as NotificationSentEvent;
+    var publishedEvent = dispatcher.PublishedEvents[0] as NotificationSentEvent;
     await Assert.That(publishedEvent).IsNotNull();
     await Assert.That(publishedEvent!.CustomerId).IsEqualTo("customer-456");
   }
@@ -129,8 +129,6 @@ public class SendNotificationReceptorTests {
     }
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) =>
         throw new NotImplementedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 

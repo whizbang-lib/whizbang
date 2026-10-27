@@ -65,7 +65,7 @@ public sealed class DebugSessionManager : IDisposable {
 
   /// <summary>Notifies the manager that the debugger has paused. Idempotent — multiple calls while already paused are no-ops.</summary>
   public void NotifyPaused() {
-    Action? handler = null;
+    Action? handler;
 
     lock (_lock) {
       if (_disposed || _isPaused) {
@@ -84,7 +84,7 @@ public sealed class DebugSessionManager : IDisposable {
 
   /// <summary>Notifies the manager that the debugger has resumed. Safe to call when not paused — it is a no-op.</summary>
   public void NotifyResumed() {
-    Action? handler = null;
+    Action? handler;
 
     lock (_lock) {
       if (_disposed || !_isPaused) {

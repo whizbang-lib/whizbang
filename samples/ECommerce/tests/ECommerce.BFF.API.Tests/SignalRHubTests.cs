@@ -10,7 +10,6 @@ namespace ECommerce.BFF.API.Tests;
 /// </summary>
 public class SignalRHubTests {
   [Test]
-  [Obsolete]
   public async Task OrderStatusUpdate_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var timestamp = DateTime.UtcNow;
@@ -33,7 +32,7 @@ public class SignalRHubTests {
     await Assert.That(update.Timestamp).IsEqualTo(timestamp);
     await Assert.That(update.Message).IsEqualTo("Order is being processed");
     await Assert.That(update.Details).IsNotNull();
-    await Assert.That(update.Details!).HasCount().EqualTo(2);
+    await Assert.That(update.Details).Count().IsEqualTo(2);
     await Assert.That(update.Details["warehouse"]).IsEqualTo("US-WEST-1");
     await Assert.That(update.Details["priority"]).IsEqualTo("high");
   }
@@ -52,7 +51,7 @@ public class SignalRHubTests {
     await Assert.That(update.OrderId).IsEqualTo("ORD-002");
     await Assert.That(update.Status).IsEqualTo("Shipped");
     await Assert.That(update.Message).IsNull();
-    await Assert.That(update.Details!).IsNull();
+    await Assert.That(update.Details).IsNull();
   }
 
   [Test]
@@ -76,7 +75,6 @@ public class SignalRHubTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task OrderUpdateNotification_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var timestamp = DateTime.UtcNow;
@@ -97,7 +95,7 @@ public class SignalRHubTests {
     await Assert.That(notification.UpdateType).IsEqualTo("PaymentProcessed");
     await Assert.That(notification.Timestamp).IsEqualTo(timestamp);
     await Assert.That(notification.Data).IsNotNull();
-    await Assert.That(notification.Data!).HasCount().EqualTo(2);
+    await Assert.That(notification.Data).Count().IsEqualTo(2);
   }
 
   [Test]
@@ -110,7 +108,7 @@ public class SignalRHubTests {
     };
 
     // Assert
-    await Assert.That(notification.Data!).IsNull();
+    await Assert.That(notification.Data).IsNull();
   }
 
   [Test]

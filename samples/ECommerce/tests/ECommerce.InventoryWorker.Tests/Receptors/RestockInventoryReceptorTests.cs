@@ -42,7 +42,6 @@ public class RestockInventoryReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_PublishesInventoryRestockedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -61,7 +60,7 @@ public class RestockInventoryReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
+    await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(1);
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<InventoryRestockedEvent>();
 
     var publishedEvent = (InventoryRestockedEvent)dispatcher.PublishedEvents[0];
@@ -97,7 +96,6 @@ public class RestockInventoryReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutRestockingAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -116,7 +114,7 @@ public class RestockInventoryReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(logger.LoggedMessages).Count().IsGreaterThanOrEqualTo(1);
   }
 
   [Test]

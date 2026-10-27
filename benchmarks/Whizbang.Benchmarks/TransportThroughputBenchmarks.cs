@@ -57,7 +57,7 @@ public class TransportThroughputBenchmarks {
   public async Task SingleTopic_SingleSubscriber_100K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "transport-single";
+    const string topic = "transport-single";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {
@@ -82,7 +82,7 @@ public class TransportThroughputBenchmarks {
   [Benchmark]
   [Arguments(50_000, 5)] // 50K messages to 5 subscribers = 250K deliveries
   public async Task SingleTopic_MultipleSubscribers_FanOutAsync(int messageCount, int subscriberCount) {
-    var topic = "transport-fanout";
+    const string topic = "transport-fanout";
     var expectedTotal = messageCount * subscriberCount;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -160,12 +160,10 @@ public class TransportThroughputBenchmarks {
   [Benchmark]
   [Arguments(10_000)]
   public async Task SubscribeUnsubscribe_10K_OperationsAsync(int operationCount) {
-    var topic = "transport-subscribe-test";
+    const string topic = "transport-subscribe-test";
 
     for (int i = 0; i < operationCount; i++) {
-      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
-        await Task.CompletedTask;
-      }, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
+      var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => await Task.CompletedTask, new TransportDestination(topic), new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
 
       subscription.Dispose();
     }
@@ -181,7 +179,7 @@ public class TransportThroughputBenchmarks {
     var totalMessages = publisherCount * messagesPerPublisher;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "transport-concurrent-pub";
+    const string topic = "transport-concurrent-pub";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {
@@ -214,7 +212,7 @@ public class TransportThroughputBenchmarks {
   [Benchmark]
   [Arguments(100_000)]
   public async Task BatchedPublish_100K_FireAndForgetAsync(int messageCount) {
-    var topic = "transport-batched";
+    const string topic = "transport-batched";
     var receivedCount = 0;
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
@@ -248,7 +246,7 @@ public class TransportThroughputBenchmarks {
   public async Task WithRoutingKeys_50K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
-    var topic = "transport.routing.test";
+    const string topic = "transport.routing.test";
 
     var subscription = await _transport.SubscribeBatchAsync(async (batch, ct) => {
       foreach (var msg in batch) {

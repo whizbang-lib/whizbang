@@ -69,7 +69,6 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
@@ -112,7 +111,6 @@ public class SeedMutationsTests {
   /// Tests that SeedProducts dispatches 12 CreateProductCommands when no products exist.
   /// </summary>
   [Test]
-  [Obsolete]
   public async Task SeedProducts_WhenNoProductsExist_Dispatches12CommandsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -127,7 +125,7 @@ public class SeedMutationsTests {
     // Assert - Verify 12 commands were dispatched
     await Assert.That(result).IsEqualTo(12);
     await Assert.That(dispatcher.SendCount).IsEqualTo(12);
-    await Assert.That(dispatcher.SentCommands).HasCount().EqualTo(12);
+    await Assert.That(dispatcher.SentCommands).Count().IsEqualTo(12);
     await Assert.That(dispatcher.SentCommands.All(c => c is CreateProductCommand)).IsTrue();
   }
 
@@ -182,7 +180,7 @@ public class SeedMutationsTests {
 
     foreach (var command in dispatcher.SentCommands.Cast<CreateProductCommand>()) {
       // Verify all required fields are populated
-      await Assert.That(command.ProductId).IsNotEqualTo(default(ProductId));
+      await Assert.That(command.ProductId).IsNotEqualTo(default);
       await Assert.That(command.Name).IsNotNull();
       await Assert.That(command.Name).IsNotEmpty();
       await Assert.That(command.Description).IsNotNull();
@@ -255,7 +253,6 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {

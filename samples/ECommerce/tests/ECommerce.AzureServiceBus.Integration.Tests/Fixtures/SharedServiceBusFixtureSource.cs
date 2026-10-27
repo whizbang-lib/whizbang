@@ -22,7 +22,7 @@ public static class SharedServiceBusFixtureSource {
     await _lock.WaitAsync();
     try {
       if (_fixture == null) {
-        var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
+        var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync();
         _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
         await _fixture.InitializeAsync();
       }

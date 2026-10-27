@@ -30,7 +30,7 @@ public class IEventStoreRegistrationTests {
     var builder = Host.CreateApplicationBuilder();
 
     // Use in-memory connection for this diagnostic test
-    var connectionString = "Host=localhost;Port=5432;Database=test;Username=test;Password=test";
+    const string connectionString = "Host=localhost;Port=5432;Database=test;Username=test;Password=test";
 
     // Add connection string to configuration (required by generated turnkey code)
     // A context that names no connection string reads ConnectionStrings:db
@@ -39,7 +39,7 @@ public class IEventStoreRegistrationTests {
     });
 
     // Register service instance provider
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ =>
       new TestServiceInstanceProvider(Guid.NewGuid(), "DiagnosticTest"));
 
     // IMPORTANT: Call module initializers

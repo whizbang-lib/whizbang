@@ -172,8 +172,8 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Generated registrations (receptors, dispatcher, lifecycle deserializer)
-    Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
+    builder.Services.AddReceptors();
+    builder.Services.AddWhizbangLifecycleMessageDeserializer();
     builder.Services.AddSingleton<IEventTypeProvider, MockEventTypeProvider>();
 
     // Security (allow anonymous for tests)
@@ -185,7 +185,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
       new Generated.TopicRegistry());
 
     // Dispatcher
-    Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
+    builder.Services.AddWhizbangDispatcher();
 
     // Perspective stores (manual registration to avoid ModelRegistrationRegistry issues)
     _registerPerspectiveStore<MockBatchModelA>(builder.Services, "wh_per_mock_batch_model_a");
@@ -195,7 +195,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     _registerPerspectiveStore<MockBatchModelE>(builder.Services, "wh_per_mock_batch_model_e");
 
     // Perspective runners
-    Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
+    builder.Services.AddPerspectiveRunners();
     builder.Services.AddScoped<MockBatchPerspectiveA>();
     builder.Services.AddScoped<MockBatchPerspectiveB>();
     builder.Services.AddScoped<MockBatchPerspectiveC>();

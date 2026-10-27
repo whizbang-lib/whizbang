@@ -42,7 +42,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private readonly string _topicB = "inventory";
   private readonly int _batchIndex;
   private bool _isInitialized;
-  private readonly Guid _testPollerInstanceId = Whizbang.Core.ValueObjects.TrackedGuid.New().Value;
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
 
   // Per-test resources (created during InitializeAsync)
@@ -148,7 +147,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Create service hosts (InventoryWorker + BFF)
     // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[AspireFixture] Creating service hosts...");
-    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA);
     _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
@@ -267,9 +266,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     var appHost = await DistributedApplicationTestingBuilder
       .CreateAsync<Projects.ECommerce_AzureServiceBus_Integration_Tests_AppHost>(cancellationToken: cancellationToken);
 
-    appHost.Services.ConfigureHttpClientDefaults(http => {
-      http.AddStandardResilienceHandler();
-    });
+    appHost.Services.ConfigureHttpClientDefaults(http => http.AddStandardResilienceHandler());
 
     return await appHost.BuildAsync(cancellationToken);
   }
@@ -296,7 +293,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
   private static async Task _waitForPostgresAsync(string connectionString, CancellationToken cancellationToken = default) {
-    var maxAttempts = 30;
+    const int maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -319,8 +316,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
-    string topicA,
-    string topicB
+    string topicA
   ) {
     var builder = Host.CreateApplicationBuilder();
 
@@ -331,7 +327,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -438,14 +434,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        options: consumerOptions,
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
         runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
         eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
-        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>(),
+        options: consumerOptions
       )
     );
 
@@ -476,7 +472,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ => new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
@@ -583,14 +579,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        options: consumerOptions,
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
         runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
         eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
-        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>(),
+        options: consumerOptions
       )
     );
 

@@ -310,9 +310,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     await _waitForWorkersReadyAsync(cancellationToken);
 
     // 2. Purge RabbitMQ queues to prevent stale messages from previous tests
-    await _purgeQueueAsync($"bff-products-queue-{_testId}");
-    await _purgeQueueAsync($"inventory-products-queue-{_testId}");
-    await _purgeQueueAsync($"bff-inventory-queue-{_testId}");
+    await _purgeQueueAsync($"bff-products-queue-{_testId}", cancellationToken);
+    await _purgeQueueAsync($"inventory-products-queue-{_testId}", cancellationToken);
+    await _purgeQueueAsync($"bff-inventory-queue-{_testId}", cancellationToken);
 
     // 3. Delete all Whizbang infrastructure table data from BOTH databases (explicit ordering for FK safety)
     const int maxRetries = 5;
@@ -400,7 +400,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ =>
       new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "InventoryWorker"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -568,7 +568,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     });
 
     // Register service instance provider (unique instance ID per test)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
+    builder.Services.AddSingleton<IServiceInstanceProvider>(_ =>
       new TestServiceInstanceProvider(Whizbang.Core.ValueObjects.TrackedGuid.New().Value, "BFF.API"));
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -908,7 +908,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Waits for all workers on both hosts to become idle.
   /// Useful after perspective processing to ensure DB commits are flushed.
   /// </summary>
-  public async Task WaitForWorkersIdleAsync(int timeoutMilliseconds = 15000) {
+  public async Task WaitForWorkersIdleAsync() {
     await _waitForWorkersReadyAsync(default);
   }
 

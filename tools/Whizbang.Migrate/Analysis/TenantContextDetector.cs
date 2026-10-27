@@ -38,12 +38,10 @@ public static class TenantContextDetector {
   /// Detects tenant context patterns in the given source code.
   /// </summary>
   /// <param name="sourceCode">C# source code to analyze.</param>
-  /// <param name="filePath">File path for reporting.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>Detection result with tenant context information.</returns>
   public static Task<TenantContextDetectionResult> DetectAsync(
       string sourceCode,
-      string filePath,
       CancellationToken ct = default) {
     var tree = CSharpSyntaxTree.ParseText(sourceCode, cancellationToken: ct);
     var root = tree.GetRoot(ct);
@@ -91,10 +89,10 @@ public static class TenantContextDetector {
     var aggregatedOccurrences = new Dictionary<string, TenantPropertyInfo>(StringComparer.Ordinal);
     var allMartenPatterns = new HashSet<string>(StringComparer.Ordinal);
 
-    foreach (var (filePath, sourceCode) in files) {
+    foreach (var sourceCode in files.Values) {
       ct.ThrowIfCancellationRequested();
 
-      var fileResult = await DetectAsync(sourceCode, filePath, ct);
+      var fileResult = await DetectAsync(sourceCode, ct);
 
       foreach (var prop in fileResult.DetectedProperties) {
         if (aggregatedOccurrences.TryGetValue(prop.PropertyName, out var existing)) {

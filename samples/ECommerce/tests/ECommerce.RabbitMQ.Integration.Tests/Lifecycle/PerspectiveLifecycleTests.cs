@@ -194,7 +194,8 @@ public class PerspectiveLifecycleTests {
     // flakes under heavy parallel load.
     var receptorTask = fixture.BffHost.WaitForPrePerspectiveDetachedAsync<ProductCreatedEvent>(
       timeoutMilliseconds: 60000,
-      messageFilter: e => e.ProductId == command.ProductId.Value);
+      messageFilter: e => e.ProductId == command.ProductId.Value,
+      cancellationToken: cancellationToken);
 
     // Act - Dispatch command
     await fixture.Dispatcher.SendAsync(command);
@@ -484,7 +485,7 @@ public class PerspectiveLifecycleTests {
   /// </summary>
   [Test]
   [Timeout(120_000)]
-  public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync(CancellationToken cancellationToken) {
+  public async Task PostAllPerspectivesDetached_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync(CancellationToken _) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
