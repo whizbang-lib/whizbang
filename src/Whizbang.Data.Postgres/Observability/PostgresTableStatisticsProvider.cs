@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Npgsql;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -196,12 +197,15 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   public PostgresTableStatisticsProvider(
       Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnectionAsync,
       string? schema = "public",
-      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES) {
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES,
+      ICapabilityRegistry? capabilities = null,
+      string? capabilityScope = null) {
     ArgumentNullException.ThrowIfNull(openConnectionAsync);
     ArgumentOutOfRangeException.ThrowIfLessThan(maxTrackedTables, 1);
     _openConnectionAsync = openConnectionAsync;
     _schema = schema;
     _maxTrackedTables = maxTrackedTables;
+    _ = (capabilities, capabilityScope);
   }
 
   /// <summary>Reads the statistics of the schema's tables through a data source.</summary>
@@ -214,8 +218,10 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   public PostgresTableStatisticsProvider(
       NpgsqlDataSource dataSource,
       string? schema = "public",
-      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES)
-    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables) {
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES,
+      ICapabilityRegistry? capabilities = null,
+      string? capabilityScope = null)
+    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables, capabilities, capabilityScope) {
   }
 
   /// <inheritdoc />

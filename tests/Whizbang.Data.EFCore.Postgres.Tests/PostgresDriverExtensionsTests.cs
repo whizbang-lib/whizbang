@@ -41,6 +41,11 @@ public class PostgresTestDbContext(DbContextOptions<PostgresTestDbContext> optio
 }
 
 /// <summary>
+/// A context with no entities, so its model builds in memory: the table statistics read its default schema.
+/// </summary>
+public class StatisticsWiringDbContext(DbContextOptions<StatisticsWiringDbContext> options) : DbContext(options);
+
+/// <summary>
 /// Tests for PostgresDriverExtensions (.Postgres property).
 /// Verifies driver registration, service configuration, and error handling.
 /// Target: 100% branch coverage.
@@ -143,6 +148,56 @@ public class PostgresDriverExtensionsTests {
     await Assert.That(registry.GetState(new Whizbang.Core.Capabilities.CapabilityId(PostgresExtensionCatalog.PROVIDER, "pg_squeeze"), "orders-db"))
       .IsEqualTo(Whizbang.Core.Capabilities.CapabilityState.Missing);
     await Assert.That(sp.GetServices<Whizbang.Core.Startup.IStartupStep>().OfType<Whizbang.Core.Capabilities.CapabilitiesStartupStep>().Count()).IsEqualTo(1);
+  }
+
+  /// <summary>Answers one state for everything and records what it was asked.</summary>
+  private sealed class FixedStateRegistry(Whizbang.Core.Capabilities.CapabilityState state)
+      : Whizbang.Core.Capabilities.ICapabilityRegistry {
+    public List<(Whizbang.Core.Capabilities.CapabilityId Id, string Scope)> Asked { get; } = [];
+    public IReadOnlyList<Whizbang.Core.Capabilities.ICapabilityProvider> Providers => [];
+    public IReadOnlyList<Whizbang.Core.Capabilities.CapabilityStatus> Statuses => [];
+    public Whizbang.Core.Capabilities.CapabilityVerdict Verdict => Whizbang.Core.Capabilities.CapabilityVerdict.Empty;
+
+    public Whizbang.Core.Capabilities.CapabilityState GetState(Whizbang.Core.Capabilities.CapabilityId id, string scope) {
+      Asked.Add((id, scope));
+      return state;
+    }
+
+    public Task RefreshAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public void Record(IReadOnlyList<Whizbang.Core.Capabilities.CapabilityStatus> statuses) {
+      // Nothing to record: the state is fixed.
+    }
+    public void PublishVerdict(Whizbang.Core.Capabilities.CapabilityVerdict verdict) {
+      // Nothing to publish: the verdict is not under test.
+    }
+    public Task<Whizbang.Core.Capabilities.CapabilityVerdict> WaitForVerdictAsync(CancellationToken cancellationToken) =>
+      Task.FromResult(Whizbang.Core.Capabilities.CapabilityVerdict.Empty);
+  }
+
+  /// <summary>
+  /// Issue #1754: the driver hands its table statistics the registry and the name its database is probed under, so
+  /// statement statistics are read only while the probe found pg_stat_statements Ready on that database.
+  /// </summary>
+  [Test]
+  public async Task Postgres_TableStatistics_ConsultTheStatementStatisticsCapability_OfItsOwnDatabaseAsync() {
+    var registry = new FixedStateRegistry(Whizbang.Core.Capabilities.CapabilityState.NeedsServerChange);
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<Whizbang.Core.Capabilities.ICapabilityRegistry>(registry);
+    // A context with no entities: resolving the statistics builds its model to read the default schema.
+    services.AddDbContext<StatisticsWiringDbContext>(o => o.UseInMemoryDatabase("StatisticsWiring"));
+    await using var dataSource = NpgsqlDataSource.Create("Host=localhost;Database=unused;Username=unused;Password=unused");
+    services.AddSingleton(dataSource);
+    _ = new WhizbangPerspectiveBuilder(services).WithEFCore<StatisticsWiringDbContext>("orders-db").WithDriver.Postgres;
+    await using var sp = services.BuildServiceProvider();
+
+    var predicates = await sp.GetRequiredService<Whizbang.Core.Observability.ITableStatisticsProvider>()
+      .GetExpensivePredicatesAsync();
+
+    await Assert.That(predicates).IsEmpty();
+    await Assert.That(registry.Asked).IsEquivalentTo([(
+      new Whizbang.Core.Capabilities.CapabilityId(PostgresExtensionCatalog.PROVIDER, "pg_stat_statements"), "orders-db")])
+      .Because("the scope is the name the driver registered its database under for the probe");
   }
 
   // ── Turnkey IClaimedEmissionStore registration ────────────────────────────────
