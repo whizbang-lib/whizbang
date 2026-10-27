@@ -38,6 +38,18 @@ public readonly record struct PostgresExtensionProbeRow(
   /// (<c>pg_available_extensions.default_version</c>), or null when the server has no files for it.
   /// </summary>
   public string? DefaultVersion { get; init; }
+
+  /// <summary>
+  /// The server's <c>wal_level</c> (<c>minimal</c>, <c>replica</c> or <c>logical</c>), which every role can read, or null
+  /// when it was not read. An extension that decodes the WAL reads <see cref="PostgresExtensionState.Unknown"/> without it.
+  /// </summary>
+  public string? WalLevel { get; init; }
+
+  /// <summary>
+  /// The server's <c>server_version_num</c>, for example <c>170004</c>, or 0 when it was not read. From Postgres 19 logical
+  /// decoding is enabled on demand, so <c>wal_level = logical</c> is not needed there.
+  /// </summary>
+  public int ServerVersionNum { get; init; }
 }
 
 /// <summary>
@@ -80,7 +92,9 @@ public static class PostgresCapabilityProbe {
            (SELECT s.setting FROM pg_catalog.pg_settings s WHERE s.name = 'shared_preload_libraries') AS preload,
            has_database_privilege(current_database(), 'CREATE') AS can_create,
            current_setting('is_superuser') = 'on' AS is_superuser,
-           a.default_version
+           a.default_version,
+           current_setting('wal_level') AS wal_level,
+           current_setting('server_version_num')::INT AS server_version_num
     FROM unnest(@names::text[]) WITH ORDINALITY AS n(name, ord)
     LEFT JOIN pg_catalog.pg_extension e ON e.extname = n.name
     LEFT JOIN pg_catalog.pg_available_extensions a ON a.name = n.name
@@ -111,18 +125,16 @@ public static class PostgresCapabilityProbe {
   /// <returns>
   /// The state, checked in the order the states are declared. An extension that needs preloading reads
   /// <see cref="PostgresExtensionState.Unknown"/> where the answer would turn on a preload list this role
-  /// cannot read.
+  /// cannot read. An extension that needs a logical WAL level is checked for it after the preload, so a
+  /// server missing both reads <see cref="PostgresExtensionState.NeedsPreload"/> first.
   /// </returns>
   public static PostgresExtensionState DeriveState(PostgresExtensionInfo extension, PostgresExtensionProbeRow row) {
     ArgumentNullException.ThrowIfNull(extension);
-    // True, false, or null when the list could not be read.
+    // True, false, or null when the setting could not be read.
     var preloaded = extension.NeedsPreload ? _listed(row.SharedPreloadLibraries, extension.Name) : true;
+    var logicalWal = extension.Prerequisites.HasFlag(PostgresExtensionPrerequisites.LogicalWalLevel) ? _logicalWal(row) : true;
     if (row.InstalledVersion is not null) {
-      return preloaded switch {
-        true => PostgresExtensionState.Installed,
-        false => PostgresExtensionState.NeedsPreload,
-        null => PostgresExtensionState.Unknown,
-      };
+      return _serverNotReady(preloaded, logicalWal) ?? PostgresExtensionState.Installed;
     }
     if (!row.ControlFilesPresent) {
       return PostgresExtensionState.Missing;
@@ -130,16 +142,32 @@ public static class PostgresCapabilityProbe {
     if (_listed(row.Allowlist, extension.Name) == false) {
       return PostgresExtensionState.NotAllowlisted;
     }
-    return preloaded switch {
-      null => PostgresExtensionState.Unknown,
-      false => PostgresExtensionState.NeedsPreload,
-      true => _canCreate(row) ? PostgresExtensionState.Available : PostgresExtensionState.NoPrivilege,
-    };
+    return _serverNotReady(preloaded, logicalWal)
+      ?? (_canCreate(row) ? PostgresExtensionState.Available : PostgresExtensionState.NoPrivilege);
   }
 
   /// <summary>
+  /// What the server-level settings leave in the way, the preload before the WAL level, or null when both are met. An
+  /// unreadable setting is <see cref="PostgresExtensionState.Unknown"/>.
+  /// </summary>
+  private static PostgresExtensionState? _serverNotReady(bool? preloaded, bool? logicalWal) => (preloaded, logicalWal) switch {
+    (false, _) => PostgresExtensionState.NeedsPreload,
+    (null, _) => PostgresExtensionState.Unknown,
+    (true, false) => PostgresExtensionState.NeedsLogicalWalLevel,
+    (true, null) => PostgresExtensionState.Unknown,
+    _ => null,
+  };
+
+  /// <summary>Whether logical decoding is available: <c>wal_level = logical</c>, or Postgres 19 and later; null when the level was not read.</summary>
+  private static bool? _logicalWal(PostgresExtensionProbeRow row) =>
+    row.WalLevel is null ? null : row.ServerVersionNum >= LOGICAL_DECODING_ON_DEMAND || string.Equals(row.WalLevel, "logical", StringComparison.Ordinal);
+
+  /// <summary>The first Postgres version that enables logical decoding on demand.</summary>
+  private const int LOGICAL_DECODING_ON_DEMAND = 190_000;
+
+  /// <summary>
   /// Maps a Postgres state onto the generic capability state: Installed is Ready, Available is
-  /// Provisionable, NotAllowlisted is NotPermitted, NeedsPreload is NeedsServerChange; NoPrivilege, Missing
+  /// Provisionable, NotAllowlisted is NotPermitted, NeedsPreload and NeedsLogicalWalLevel are NeedsServerChange; NoPrivilege, Missing
   /// and Unknown keep their names.
   /// </summary>
   /// <param name="state">The Postgres state.</param>
@@ -149,6 +177,7 @@ public static class PostgresCapabilityProbe {
     PostgresExtensionState.Available => CapabilityState.Provisionable,
     PostgresExtensionState.NotAllowlisted => CapabilityState.NotPermitted,
     PostgresExtensionState.NeedsPreload => CapabilityState.NeedsServerChange,
+    PostgresExtensionState.NeedsLogicalWalLevel => CapabilityState.NeedsServerChange,
     PostgresExtensionState.NoPrivilege => CapabilityState.NoPrivilege,
     PostgresExtensionState.Missing => CapabilityState.Missing,
     _ => CapabilityState.Unknown,
@@ -173,6 +202,8 @@ public static class PostgresCapabilityProbe {
         CanCreateInDatabase: reader.GetBoolean(6),
         IsSuperuser: reader.GetBoolean(7)) {
         DefaultVersion = _nullableString(reader, 8),
+        WalLevel = reader.GetString(9),
+        ServerVersionNum = reader.GetInt32(10),
       };
       rows[row.Name] = row;
     }

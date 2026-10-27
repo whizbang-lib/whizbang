@@ -30,9 +30,10 @@ namespace Whizbang.Core.Startup;
 /// <remarks>
 /// Previously this work ran on the <em>runtime</em> maintenance cadence, taking an ACCESS
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
-/// The maintenance cycle now only detects and records. A strategy that resolves to no rewrite, or to a strategy
-/// with no registered rewriter (<see cref="TableRewriteStrategy.PgSqueeze"/> in this version), skips with the
-/// resolution as its reason, and so does a rewriter that cannot run. <c>VACUUM FULL</c> stays behind the operator permission
+/// The maintenance cycle detects and records. A strategy that resolves to no rewrite, or to a strategy
+/// with no registered rewriter, skips with the resolution as its reason, and so does a rewriter that cannot run.
+/// <see cref="TableRewriteStrategy.PgSqueeze"/> is left to the maintenance cycle (<see cref="OnlineTableRewriteStep"/>),
+/// which rewrites online within a per-cycle byte budget. <c>VACUUM FULL</c> stays behind the operator permission
 /// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
 /// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
@@ -95,6 +96,11 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     if (plan.Strategy is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
+    if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal)) {
+      // The online rewrite is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it would be unbounded.
+      return new StartupStepReport(StartupStepOutcome.Skipped,
+        $"{plan.Reason}; the maintenance cycle performs it, largest bloat first, up to {ONLINE_BUDGET_KEY} bytes per cycle");
+    }
     var rewriter = Array.Find(_rewriters, r => string.Equals(r.Strategy, plan.Strategy, StringComparison.Ordinal));
     if (rewriter is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped,
@@ -153,6 +159,7 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
   }
 
   private const string PG_SQUEEZE_EXTENSION = "pg_squeeze";
+  private const string ONLINE_BUDGET_KEY = "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle";
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Rewrite step: {Table} rewritten, bloat {Before}x -> {After}x")]

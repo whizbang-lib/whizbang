@@ -14,6 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **Online table rewrite through pg_squeeze, driven by the maintenance cycle (#1743).** With
+  `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze`, the `online-table-rewrite` maintenance step rewrites
+  the tables queued in `pending_table_rewrites` through `squeeze.squeeze_table`, largest bloat ratio first, within
+  `Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle` heap bytes per cycle (default 1 GiB; a table that does not
+  fit waits for a later cycle, `0` rewrites nothing). It runs only when pg_squeeze is Ready on every probed database, and
+  before each call it checks the extension and the right to call it, logical WAL below Postgres 19, a free replication
+  slot, a primary key or replica identity index, a role with `REPLICATION` (pg_squeeze creates a replication slot as the
+  caller) and table ownership, logging the first unmet one instead of calling. A request is cleared only when the
+  re-measure shows the rewrite improved the table. The boot-time `Rewrite` step no longer runs `PgSqueeze`. Each
+  rewrite candidate now carries its heap size (`TableRewriteCandidate.SizeBytes`), and `IWorkCoordinator` gains
+  `SqueezeTableAsync`.
+
+- **pg_squeeze's logical WAL prerequisite is probed (#1751).** The Postgres capability probe reads `wal_level` and the
+  server version, and an extension that decodes the WAL (pg_squeeze) reads the new state `NeedsLogicalWalLevel`
+  (capability state `NeedsServerChange`) below Postgres 19 when `wal_level` is not `logical`, instead of `Ready`. An
+  explicit `TableRewriteStrategy = PgSqueeze` on such a server fails start with the fix
+  `set wal_level = logical (and max_replication_slots to at least one more than the slots in use), then restart the server`.
+  A capability descriptor can now give a fix per provider detail (`CapabilityDescriptor.DetailRemedies`), which the
+  verdict and the report use before the state's own fix.
+
 - **A built-in partition manager for time-ordered framework tables (#1611).** With
   `Whizbang:Workers:Maintenance:Partitioning:Enabled` (default `false`), the maintenance cycle converts `wh_log` once
   to weekly partitions by `logged_at` (primary key `(log_id, logged_at)`, every writer unchanged, gated on the
@@ -22,6 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holder changes partitions, and no lock is waited for: an expired partition is emptied while writers are on the
   table and detached later. Migration 226.
   table and detached later. Migration 226.
+
+- **pg_partman can create the partitions (#1752).** `Whizbang:Workers:Maintenance:Partitioning:Strategy` (default
+  `Auto`) picks who creates them: `Auto` uses pg_partman where it is already Ready on every probed database and
+  otherwise keeps the built-in manager, saying why once (it never installs pg_partman); `BuiltIn` never uses it;
+  `PgPartman` requires it (`[RequiresPostgresExtension("pg_partman")]`), so it is provisioned where allowed and start
+  fails with the fix where the server cannot provide it. Under pg_partman each table is registered once with
+  `create_parent` (premake = `CreateAhead`, from the first interval no partition covers, no default table of its own,
+  automatic maintenance off, the version-7 encoder for a uuid key) and gets `run_maintenance` each cycle. A converted
+  table's oldest partition is first re-bounded from `MINVALUE` to the smallest key, which pg_partman can read, in three
+  committed steps that never scan under a lock writers wait on. pg_partman's retention stays off: the built-in manager
+  still drops expired partitions, so unconsumed signals are carried first (#1758). pg_partman's WARNINGs are logged,
+  and a partition the built-in pass had to create after pg_partman maintained the table is logged as a miss. Under
+  `Auto` a failed pass falls back to the built-in manager for the cycle; under `PgPartman` it fails the cycle.
+  Migration 246.
 
 - **`wh_signals` and `wh_lifecycle_completions` are partitioned by the partition manager (#1646).** While
   partitioning is enabled, `wh_signals` converts once to daily partitions by `created_at` (primary key
@@ -172,6 +206,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Whizbang:Housekeeping:SettledCooldown` and `Whizbang:Housekeeping:MaxDeferral`.
   `Whizbang:Configuration:UnknownKeys` (default `Warn`) selects `Warn`, `Throw` (fail start, naming every
   unknown key) or `Ignore`.
+- **pg_repack table rewrites, in process or by an external job** (#1753): `TableRewriteStrategy = PgRepack` rewrites
+  requested tables online with pg_repack and requires the pg_repack extension.
+  `Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode` picks who runs the client: `InProcess` (default; the
+  maintainer-duty holder runs it per table in the `Rewrite` step) or `External` (Whizbang never starts a process; the
+  tables stay queued for an operator's job). In process, the client (`:ClientPath`, default `pg_repack` from `PATH`)
+  is a probed prerequisite, `program/pg_repack`: missing, it fails start when `Mode` was set explicitly and degrades
+  with a warning when left at its default. The connection reaches the client only as libpq environment variables
+  (`PGPASSWORD` among them), never as process arguments, and the client runs with `--no-superuser-check` and
+  `--no-kill-backend`. `IExternalProcessRunner` is the seam every process start goes through, and
+  `IWorkCoordinator.RewriteTableWithAsync` hands an external rewrite its table and connection and re-measures after.
+- **Removed configuration keys are declared with `[RemovedConfigurationKey]`** (#1755): the hand-kept table is gone.
+  The configuration manifest generator records each declaration (on the assembly, or on the replacement's options
+  type) in the assembly's manifest, `ConfigurationManifestRegistry.FindRemovedKey` answers the startup check, and a
+  package built on Whizbang declares its own removed keys the same way. All eight former entries moved to the
+  attribute. A key removed with nothing in its place logs event 3, naming no replacement.
 
 #### Messaging & delivery
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
@@ -354,6 +403,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Statement statistics are read only while `pg_stat_statements` is Ready (#1754).** `GetExpensivePredicatesAsync`
+  on the Postgres table statistics consults the capability registry for its database before reading
+  `pg_stat_statements`, instead of reading it and catching every `PostgresException`. Any other state, or no
+  registry, answers empty without opening a connection. Both drivers pass the registry and the name their database is
+  probed under; a provider constructed directly takes them as the optional `capabilities` and `capabilityScope`
+  arguments, and without them reads no statement statistics. A read that fails while the capability reads Ready (the
+  extension dropped after the probe) is no longer swallowed.
 - **The gated prefix truncate is named for what it does: `close_stream` is now `wh_truncate_stream_prefix` (#1731).
   Breaking.** "Close" is left to closing the books, a different and higher-level operation. Migration 240 drops every
   `close_stream` overload and creates `wh_truncate_stream_prefix` with the same arguments and behavior; its result column
@@ -634,6 +690,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **The `wh_signals` row sweep is no longer held back by the cursor of an instance that is no longer registered
+  (#1771).** The sweep deleted up to the slowest cursor in `wh_signal_cursors`, dead or alive, so an instance that
+  stopped without being reaped left its cursor behind and the sweep removed nothing until the stale-instance reap
+  removed its row, while the table grew. The sweep now counts only the cursors of instances registered in
+  `wh_service_instances`, the rule the partition carry uses (#1758), so both paths agree on which instances are live.
+  With no registered instance's cursor the floor is 0 and nothing is deleted, as with an empty cursor table. No
+  migration: the sweep's statement is the worker's own.
 - **A health source that blocks before it returns no longer stops the health probe answering (#1811).** The
   aggregator called each source's `ReportAsync` on the probe's own thread and bounded the task it returned. A source
   that blocked inside the call, before returning a task (a synchronous library call, or a wait on an asynchronous

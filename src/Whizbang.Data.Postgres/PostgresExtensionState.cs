@@ -45,4 +45,10 @@ public enum PostgresExtensionState {
 
   /// <summary>The server has no files for it (<c>pg_available_extensions</c> does not list it).</summary>
   Missing,
+
+  /// <summary>
+  /// Installed or creatable and preloaded, but it decodes changes from the WAL and the server's <c>wal_level</c> is
+  /// not <c>logical</c> (pg_squeeze below Postgres 19).
+  /// </summary>
+  NeedsLogicalWalLevel,
 }

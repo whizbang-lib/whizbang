@@ -1,11 +1,13 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Observability;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Data.Postgres;
@@ -119,21 +121,38 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
   /// Statement statistics are read where they exist, and their absence is not a failure.
   /// </summary>
   /// <remarks>
-  /// The extension has to be installed and also loaded at startup, and a test container has done
-  /// neither. That is the path worth executing here, because it is the one most deployments take:
-  /// the read is refused and the provider answers empty, so the advisory still names the table.
+  /// A fresh database has not created the extension, so the probe reads it as something other than
+  /// Ready, and the provider answers empty without asking the server (#1754). That is the path most
+  /// deployments take, and the advisory still names the table.
   /// </remarks>
   [Test]
   [Timeout(120000)]
   public async Task StatementStatisticsAreEmptyRatherThanFatalWhenNotCollectedAsync(
       CancellationToken cancellationToken) {
-    var provider = new PostgresTableStatisticsProvider(_dataSource);
+    await using var capabilities = await _probedAsync(cancellationToken);
+    var registry = capabilities.GetRequiredService<ICapabilityRegistry>();
+    var provider = new PostgresTableStatisticsProvider(_dataSource, capabilities: registry, capabilityScope: SCOPE);
 
     var predicates = await provider.GetExpensivePredicatesAsync(cancellationToken);
 
-    await Assert.That(predicates).IsNotNull()
+    await Assert.That(registry.GetState(_statementStatistics, SCOPE)).IsNotEqualTo(CapabilityState.Ready)
+      .Because("the extension is not created in a fresh database");
+    await Assert.That(predicates).IsEmpty()
       .Because("naming the filter sharpens the advice and was never a condition of giving it, so "
              + "an engine that records nothing has to answer nothing rather than throw");
+  }
+
+  private const string SCOPE = "stats";
+  private static readonly CapabilityId _statementStatistics = new(PostgresExtensionCatalog.PROVIDER, "pg_stat_statements");
+
+  /// <summary>The capability registry over this test's database, probed once, as the Capabilities step probes it.</summary>
+  private async Task<ServiceProvider> _probedAsync(CancellationToken cancellationToken) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangPostgresCapabilities(SCOPE, (_, ct) => _dataSource.OpenConnectionAsync(ct));
+    var provider = services.BuildServiceProvider();
+    await provider.GetRequiredService<ICapabilityRegistry>().RefreshAsync(cancellationToken);
+    return provider;
   }
 
   /// <summary>
@@ -299,7 +318,11 @@ public class TableStatisticsProviderTests : IAsyncDisposable {
       }
     }
 
-    var provider = new PostgresTableStatisticsProvider(_dataSource);
+    // The statistics are read only while the capability is Ready (#1754): created and loaded, as here.
+    await using var capabilities = await _probedAsync(cancellationToken);
+    var registry = capabilities.GetRequiredService<ICapabilityRegistry>();
+    await Assert.That(registry.GetState(_statementStatistics, SCOPE)).IsEqualTo(CapabilityState.Ready);
+    var provider = new PostgresTableStatisticsProvider(_dataSource, capabilities: registry, capabilityScope: SCOPE);
     var predicates = await provider.GetExpensivePredicatesAsync(cancellationToken);
 
     await Assert.That(predicates.ContainsKey("wh_per_tagged_probe")).IsTrue()

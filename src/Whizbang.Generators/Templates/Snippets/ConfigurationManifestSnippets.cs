@@ -4,7 +4,7 @@
 namespace Whizbang.Generators.Templates.Snippets;
 
 /// <summary>
-/// Snippets for the configuration manifest: one binding, and one capability requirement inside it.
+/// Snippets for the configuration manifest: one binding, one capability requirement inside it, and one removed key.
 /// </summary>
 public class ConfigurationManifestSnippets {
 
@@ -24,5 +24,14 @@ public class ConfigurationManifestSnippets {
       new global::Whizbang.Core.Capabilities.CapabilityRequirement(new global::Whizbang.Core.Capabilities.CapabilityId(__PROVIDER__, __NAME__), __FEATURE__, __KEY__, __VALUE__, __DEFAULT__)
       #endregion
       ;
+  }
+
+  /// <summary>One removed configuration key and the keys that replaced it.</summary>
+  public object[] RemovedKeyExample() {
+    return [
+      #region REMOVED_KEY
+      new global::Whizbang.Core.Configuration.RemovedConfigurationKeyEntry(__KEY__, [__REPLACED_BY__]),
+      #endregion
+    ];
   }
 }

@@ -7,7 +7,7 @@ using Whizbang.Core.Capabilities;
 namespace Whizbang.Core.Configuration;
 
 /// <summary>
-/// Every loaded assembly's configuration manifest, registered at module load by the code the configuration
+/// Every loaded assembly's configuration manifest (bindings, requirements and removed keys), registered at module load by the code the configuration
 /// manifest generator emits into each assembly that binds a section from a literal key.
 /// </summary>
 /// <remarks>
@@ -36,6 +36,23 @@ public static class ConfigurationManifestRegistry {
   /// <summary>Every registered manifest, ordered by assembly name so the order is the same on every start.</summary>
   public static IReadOnlyList<ConfigurationManifest> Manifests =>
     [.. _byAssembly.Values.OrderBy(manifest => manifest.Assembly, StringComparer.Ordinal)];
+
+  /// <summary>Every removed key across every manifest, in manifest order.</summary>
+  /// <docs>operations/configuration/configuration-reference#removed-keys</docs>
+  public static IReadOnlyList<RemovedConfigurationKeyEntry> RemovedKeys =>
+    [.. Manifests.SelectMany(manifest => manifest.RemovedKeys)];
+
+  /// <summary>
+  /// The removed-key entry for a configured key, ignoring case as configuration does. When two assemblies declare the
+  /// same key, the one first by assembly name answers, so the answer is the same on every start.
+  /// </summary>
+  /// <param name="key">The configured key.</param>
+  /// <returns>The entry, or <see langword="null"/> when no loaded assembly declares the key removed.</returns>
+  /// <docs>operations/configuration/configuration-reference#removed-keys</docs>
+  public static RemovedConfigurationKeyEntry? FindRemovedKey(string key) {
+    ArgumentNullException.ThrowIfNull(key);
+    return RemovedKeys.FirstOrDefault(removed => string.Equals(removed.Key, key, StringComparison.OrdinalIgnoreCase));
+  }
 
   /// <summary>Every binding's requirements across every manifest, each stated once, in manifest order.</summary>
   public static IReadOnlyList<CapabilityRequirement> Requirements =>
