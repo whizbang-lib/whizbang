@@ -58,7 +58,9 @@ if (Test-Path -LiteralPath $IgnoreFile) {
 }
 
 # Three dots: the changes since the branch left its base, which is what the pull request shows.
-$diff = (git diff --no-color --unified=3 --find-renames "$Base...$Head" | Out-String)
+# core.quotePath=false prints a non-ASCII path as is: a quoted header cannot be read, and Read-UnifiedDiff
+# throws on one rather than skip the file (#1799).
+$diff = (git -c core.quotePath=false diff --no-color --unified=3 --find-renames "$Base...$Head" | Out-String)
 if ($LASTEXITCODE -ne 0) { throw "git diff $Base...$Head failed (exit $LASTEXITCODE)" }
 
 # An edited migration is read whole on both sides, so an edit that changes no executable SQL (a comment, a
