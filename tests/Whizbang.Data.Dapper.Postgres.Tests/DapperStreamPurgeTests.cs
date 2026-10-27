@@ -33,7 +33,25 @@ public class DapperStreamPurgeTests : PostgresTestBase {
       await using var provider = services.BuildServiceProvider();
       await Assert.That(provider.GetRequiredService<IPerspectivePurgeMarkerStore>()).IsTypeOf<PostgresPerspectivePurgeMarkerStore>();
       await Assert.That(provider.GetRequiredService<IStreamPurger>()).IsTypeOf<PostgresStreamPurger>();
+      await Assert.That(provider.GetRequiredService<IFanoutChildRefiler>()).IsTypeOf<PostgresFanoutChildRefiler>();
     }
+  }
+
+  /// <summary>The composite-child repair (#1798) runs on a Dapper-migrated database through the driver's registration.</summary>
+  [Test]
+  public async Task Refile_OnADapperMigratedDatabase_RunsThroughTheDriversRegistrationAsync() {
+    var services = new ServiceCollection().AddLogging();
+    services.AddWhizbangPostgres(ConnectionString, JsonContextRegistry.CreateCombinedOptions(), initializeSchema: false, _noEntries, configureOptions: null);
+    await using var provider = services.BuildServiceProvider();
+
+    var report = await provider.GetRequiredService<IFanoutChildRefiler>().RefileAsync(new FanoutChildRefileRequest {
+      RequestedBy = "operator-1",
+      Reason = "checking first",
+      DryRun = true,
+    });
+
+    await Assert.That(report.Scanned).IsEqualTo(0).Because("a fresh database stores no composite children");
+    await Assert.That(report.Moves).IsEmpty();
   }
 
   [Test]

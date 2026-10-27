@@ -142,6 +142,8 @@ public static partial class CompositeInboxFanout {
     // (non-marker) types. Both optional — fan-out never fails for lack of them.
     var eventMarkerResolver = scope.GetService<IEventMarkerResolver>();
     var ephemeralModeResolver = scope.GetService<IEphemeralModeResolver>();
+    // Reads the stream each typed child's payload names, the one its producer stored it on (#1798).
+    var streamIdExtractor = scope.GetService<IStreamIdExtractor>();
     // Null-object default so a dropped inner event is ALWAYS logged (NullLogger no-ops only when the
     // host has no logging configured).
     var logger = scope.GetLoggerOrNullLogger(LOG_CATEGORY);
@@ -236,7 +238,7 @@ public static partial class CompositeInboxFanout {
         // whatever each of them drops.
         var child = _buildChildInbox(
           inner, source, childHops, identityIds?[count - 1], count - 1, originOverride, identitySequences?[count - 1],
-          serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver);
+          serializer, eventTypeProvider, eventMarkerResolver, ephemeralModeResolver, streamIdExtractor);
         if (hasConsumer is not null && !hasConsumer(child.MessageType)) {
           // A child nobody here subscribes to would be stored, leased, fetched and then discarded at
           // dispatch; dropping it at expansion costs nothing and is counted (#736).
@@ -432,7 +434,8 @@ public static partial class CompositeInboxFanout {
       IEnvelopeSerializer serializer,
       IEventTypeProvider? eventTypeProvider,
       IEventMarkerResolver? eventMarkerResolver,
-      IEphemeralModeResolver? ephemeralModeResolver) {
+      IEphemeralModeResolver? ephemeralModeResolver,
+      IStreamIdExtractor? streamIdExtractor) {
     // Phase B: a re-delivery bundle names the ORIGIN its events were emitted by, and each child's
     // ORIGINAL commit sequence — windowed integrity accounting keys on both, so a repaired window
     // must recount under the identity the live delivery would have carried.
@@ -478,7 +481,7 @@ public static partial class CompositeInboxFanout {
     var isEvent = inner is IEvent
       || (eventTypeProvider is { IsAvailable: true } && EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypeProvider.GetEventTypes()));
 
-    var streamId = _extractStreamId(source);
+    var streamId = _childStreamId(inner, source, streamIdExtractor);
     if (isEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, childEnvelope.MessageId.Value, "InboxDispatch.CompositeFanout", messageTypeName);
     }
@@ -542,6 +545,17 @@ public static partial class CompositeInboxFanout {
     }
     return hops;
   }
+
+  /// <summary>
+  /// The stream a typed child is filed under: the one its payload's <c>[StreamId]</c> names, which is the stream its
+  /// producer stored it on, so a row keyed by that stream receives it on every path (#1798). A child whose payload names
+  /// none keeps the composite's stream, as before. Filed under the composite's stream, a child was folded live onto a row
+  /// keyed by the composite, a row nobody reads, and never reached the row it is about.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_TypedChildNamingItsOwnStream_IsFiledUnderThatStreamAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_TypedChildNamingNoStream_KeepsTheCompositesStreamAsync</tests>
+  private static Guid _childStreamId(IMessage inner, IMessageEnvelope source, IStreamIdExtractor? streamIdExtractor) =>
+    streamIdExtractor?.ExtractStreamId(inner, inner.GetType()) is { } own && own != Guid.Empty ? own : _extractStreamId(source);
 
   /// <summary>
   /// Resolves the stream the child lands on: the composite's StreamId, recorded as the first hop's

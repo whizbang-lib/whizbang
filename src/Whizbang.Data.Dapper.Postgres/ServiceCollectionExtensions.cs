@@ -447,7 +447,8 @@ public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers the purge markers that keep a purged perspective row purged (<see cref="IPerspectivePurgeMarkerStore"/>)
   /// and the operator stream purge (<see cref="IStreamPurger"/>), both the shared Postgres implementations over a
-  /// connection of their own per call. A host's own registration wins.
+  /// connection of their own per call, and the repair for composite children filed under the composite's stream
+  /// (<see cref="IFanoutChildRefiler"/>, #1798). A host's own registration wins.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <param name="connectionString">The service's database.</param>
@@ -460,6 +461,13 @@ public static class ServiceCollectionExtensions {
       new PostgresStreamPurger(
         ct => OpenConnectionAsync(connectionString, ct),
         logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+    services.TryAddSingleton<IFanoutChildRefiler>(sp =>
+      new PostgresFanoutChildRefiler(
+        ct => OpenConnectionAsync(connectionString, ct),
+        sp.GetService<global::Whizbang.Core.IStreamIdExtractor>(),
+        jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+        schema: null,
+        logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
   }
 
   /// <summary>

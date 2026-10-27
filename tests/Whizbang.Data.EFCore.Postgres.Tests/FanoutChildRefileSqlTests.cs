@@ -43,18 +43,19 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await _appendAsync(own, new RebuildBalanceSetEvent { StreamId = own, Balance = 1m });
     await _appendAsync(own, new RebuildBalanceSetEvent { StreamId = own, Balance = 2m });
     var child = await _appendChildAsync(composite, new RebuildLabelSetEvent { StreamId = own, Label = "x" });
+    var tail = await _tailAsync(own);
 
     var report = await _refiler().RefileAsync(_request());
 
     await Assert.That(report.Moves).Count().IsEqualTo(1);
-    await Assert.That(report.Moves[0]).IsEqualTo(new RefiledEvent(child, composite, own, 3));
+    await Assert.That(report.Moves[0]).IsEqualTo(new RefiledEvent(child, composite, own, tail + 1));
     await Assert.That(report.StreamsToRebuild).IsEquivalentTo([own]);
     await using var conn = await _openAsync();
     await Assert.That(await _scalarAsync<Guid>(conn, "SELECT stream_id FROM wh_event_store WHERE event_id = $1", child)).IsEqualTo(own);
     await Assert.That(await _scalarAsync<Guid>(conn, "SELECT aggregate_id FROM wh_event_store WHERE event_id = $1", child)).IsEqualTo(own);
     await Assert.That(await _scalarAsync<int>(conn, "SELECT version FROM wh_event_store WHERE event_id = $1", child))
-      .IsEqualTo(3).Because("the child takes the next version of its stream, after everything already there");
-    await Assert.That(await _versionsAsync(conn, own)).IsEquivalentTo([1, 2, 3]);
+      .IsEqualTo(tail + 1).Because("the child takes the next version of its stream, after everything already there");
+    await Assert.That(await _versionsAsync(conn, own)).IsEquivalentTo([tail - 1, tail, tail + 1]);
     await Assert.That(await _scalarAsync<long>(conn, "SELECT count(*) FROM wh_event_store WHERE stream_id = $1", composite)).IsEqualTo(0L);
   }
 
@@ -198,11 +199,12 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     var composite = Guid.NewGuid();
     await _appendAsync(own, new RebuildBalanceSetEvent { StreamId = own, Balance = 1m });
     var child = await _appendChildAsync(composite, new RebuildLabelSetEvent { StreamId = own, Label = "x" });
+    var tail = await _tailAsync(own);
 
     var report = await _refiler().RefileAsync(_request() with { DryRun = true });
 
     await Assert.That(report.DryRun).IsTrue();
-    await Assert.That(report.Moves).IsEquivalentTo([new RefiledEvent(child, composite, own, 2)]);
+    await Assert.That(report.Moves).IsEquivalentTo([new RefiledEvent(child, composite, own, tail + 1)]);
     await Assert.That(report.EmptiedStreams).IsEquivalentTo([composite]);
     await Assert.That(report.Format()).Contains("Dry run: would move 1 composite child(ren)");
     await using var conn = await _openAsync();
@@ -219,6 +221,7 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await _appendChildAsync(first, new RebuildLabelSetEvent { StreamId = own, Label = "a" });
     await _appendChildAsync(first, new RebuildLabelSetEvent { StreamId = own, Label = "b" });
     await _appendChildAsync(second, new RebuildLabelSetEvent { StreamId = own, Label = "c" });
+    var tail = await _tailAsync(own);
     var logger = new ListLogger();
 
     var report = await _refiler(logger).RefileAsync(_request() with { BatchSize = 1 });
@@ -228,7 +231,8 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
       .Because("a stream larger than a batch still moves whole, so the batch that empties it also purges it");
     await Assert.That(logger.Messages.Count(m => m.Contains("batch", StringComparison.Ordinal))).IsEqualTo(2);
     await using var conn = await _openAsync();
-    await Assert.That(await _versionsAsync(conn, own)).IsEquivalentTo([1, 2, 3, 4]);
+    await Assert.That(await _versionsAsync(conn, own)).IsEquivalentTo([tail, tail + 1, tail + 2, tail + 3])
+      .Because("the three children follow the stream's tail with no gap");
   }
 
   [Test]
@@ -249,6 +253,59 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await Assert.That(report.Undecidable).IsEqualTo(1).Because("a type this service cannot read names no stream it can trust");
     await Assert.That(report.Moves).IsEmpty();
     await Assert.That(await _scalarAsync<Guid>(conn, "SELECT stream_id FROM wh_event_store WHERE event_id = $1", unkeyed)).IsEqualTo(composite);
+  }
+
+  [Test]
+  public async Task Refile_LeavesAChildWithoutABodyOrWithAnUnreadableOne_AndCountsBothAsync() {
+    var composite = Guid.NewGuid();
+    var bodiless = Guid.NewGuid();
+    var garbled = Guid.NewGuid();
+    var labelType = await _storedTypeOfAsync(await _appendChildAsync(composite, new RebuildLabelSetEvent { StreamId = composite, Label = "x" }));
+    await using var conn = await _openAsync();
+    foreach (var (id, version) in new[] { (bodiless, 2), (garbled, 3) }) {
+      await _executeAsync(conn, """
+        INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, version, created_at, flags)
+        VALUES ($1, $2, $2, 'T', $3, $4, NOW(), 4)
+        """, id, composite, labelType, version);
+    }
+    await _executeAsync(conn, "INSERT INTO wh_event_body (event_id, event_data, metadata) VALUES ($1, '{\"Label\": [1]}'::jsonb, '{}'::jsonb)", garbled);
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Scanned).IsEqualTo(3);
+    await Assert.That(report.Undecidable).IsEqualTo(2)
+      .Because("a child whose body is missing or does not read as its type names no stream that can be trusted");
+    await Assert.That(report.Moves).IsEmpty();
+  }
+
+  [Test]
+  public async Task Refile_LeavesAChildWhosePayloadNamesNoStream_WithoutCountingItUnreadableAsync() {
+    var composite = Guid.NewGuid();
+    await _appendChildAsync(composite, new RebuildLabelSetEvent { StreamId = Guid.Empty, Label = "x" });
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Scanned).IsEqualTo(1);
+    await Assert.That(report.Undecidable).IsEqualTo(0).Because("the payload was read; it simply names no stream, so it belongs where it is");
+    await Assert.That(report.Moves).IsEmpty();
+  }
+
+  [Test]
+  public async Task Refile_WithASchemaOfItsOwn_QualifiesEveryTableAsync() {
+    var own = Guid.NewGuid();
+    var composite = Guid.NewGuid();
+    await _appendAsync(own, new RebuildBalanceSetEvent { StreamId = own, Balance = 1m });
+    var child = await _appendChildAsync(composite, new RebuildLabelSetEvent { StreamId = own, Label = "x" });
+    string schema;
+    await using (var conn = await _openAsync()) {
+      schema = await _scalarAsync<string>(conn, "SELECT n.nspname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = 'wh_event_store'::regclass");
+    }
+
+    var report = await new PostgresFanoutChildRefiler(
+        NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync, streamIds: null, jsonOptions: null, schema: schema)
+      .RefileAsync(_request());
+
+    await Assert.That(report.Moves.Single().EventId).IsEqualTo(child);
   }
 
   [Test]
@@ -354,6 +411,16 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await Assert.That(await _scalarAsync<int>(conn, "SELECT flags & 4 FROM wh_event_store WHERE event_id = $1", id.Value))
       .IsEqualTo(4).Because("setup: the child is stored as a fan-out child");
     return id.Value;
+  }
+
+  private async Task<int> _tailAsync(Guid stream) {
+    await using var conn = await _openAsync();
+    return await _scalarAsync<int>(conn, "SELECT MAX(version) FROM wh_event_store WHERE stream_id = $1", stream);
+  }
+
+  private async Task<string> _storedTypeOfAsync(Guid eventId) {
+    await using var conn = await _openAsync();
+    return await _scalarAsync<string>(conn, "SELECT event_type FROM wh_event_store WHERE event_id = $1", eventId);
   }
 
   private async Task _registerBalanceTableAsync() {

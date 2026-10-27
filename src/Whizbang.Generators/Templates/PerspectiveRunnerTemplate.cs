@@ -192,7 +192,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Rebuild-only replay that honours re-key upcasters. Reads the physical stream's events
   /// (upcasted on the polymorphic read seam), partitions them by their post-upcast target stream
-  /// id, and applies each partition onto its own row via <see cref="RunWithEventsAsync"/>. Returns
+  /// id, and applies each partition onto its own row via <see cref="RunWithEventsAsync"/>. Only an
+  /// event an upcaster re-keyed (<see cref="global::Whizbang.Core.Messaging.EventRekeys"/>) leaves
+  /// the physical stream; an event whose payload merely names another stream stays on the stream it is
+  /// stored on, as live apply and the rewind keep it (#1798). Returns
   /// one completion per target stream. When no upcaster re-keys, every event maps to
   /// <paramref name="physicalStreamId"/> — a single partition that is byte-for-byte the old
   /// rebuild path. The live drain (<see cref="RunAsync"/>/<see cref="RunWithEventsAsync"/>) is
@@ -222,7 +225,12 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var partitions = new Dictionary<Guid, List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>();
     var order = new List<Guid>();
     foreach (var envelope in events) {
-      var target = ResolveTargetStreamId(envelope.Payload, physicalStreamId);
+      // Every path keys a row by the stream an event is stored on; only a genuine re-key, an upcaster that moved the
+      // event's [StreamId] as it was read, routes it elsewhere. Routing by the payload alone let a rebuild of one stream
+      // replace another stream's row with its own fold and stamp that row with this stream's position (#1798).
+      var target = global::Whizbang.Core.Messaging.EventRekeys.RekeyedTo(envelope.Payload) is null
+          ? physicalStreamId
+          : ResolveTargetStreamId(envelope.Payload, physicalStreamId);
       if (!partitions.TryGetValue(target, out var bucket)) {
         bucket = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
         partitions[target] = bucket;
