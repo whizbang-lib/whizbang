@@ -251,6 +251,102 @@ public class OutboxStreamRunDeadlockSqlTests : EFCoreTestBase {
     await Assert.That(free).IsEquivalentTo(streams.Skip(1));
   }
 
+  // --- flush_completions takes every outbox row it writes in one pass (#1785) ----------------------
+
+  [Test]
+  public async Task FlushCompletions_FailingARowAnotherTransactionCompletesFirst_NeverDeadlocksAsync() {
+    // R0 sorts before R1. Another transaction completes R0 and then R1, in the canonical order. The flush
+    // completes R1 and fails R0. Taken as two passes (complete, then fail) the flush holds R1 while it
+    // waits on R0, and the other transaction then waits on R1: a cycle. Taken in one pass, the flush
+    // waits on R0 before it holds anything, so the other transaction finishes and the flush follows.
+    var instance = Guid.CreateVersion7();
+    var streams = _ascending(2);
+    var r0 = Guid.CreateVersion7();
+    var r1 = Guid.CreateVersion7();
+    await using var setup = await _openAsync();
+    await _insertRowAsync(setup, r0, streams[0], instance);
+    await _insertRowAsync(setup, r1, streams[1], instance);
+
+    var deadlock = await _flushWhileAnotherTransactionCompletesAsync(
+      firstCompleted: r0, thenCompleted: r1, flushCompletes: [r1], flushFails: [r0]);
+
+    await Assert.That(deadlock).IsNull()
+      .Because("flush_completions must lock its completed and failed outbox rows in one ordered pass");
+    await Assert.That(await _countAsync(setup, [r0, r1])).IsEqualTo(0)
+      .Because("the other transaction completed both rows; the flush found them gone and wrote nothing");
+  }
+
+  [Test]
+  public async Task FlushCompletions_ReleasingARunAnotherTransactionCompletesFirst_NeverDeadlocksAsync() {
+    // The failed row F heads a run: T, the next row of its stream, is leased to the same holder, and
+    // process_outbox_failures releases it behind F. T sorts before R1. Another transaction completes T and
+    // then R1. A pass over only the flush's own ids (F, R1) holds R1 while the release waits on T; the
+    // run's rows have to be in the one pass too.
+    var instance = Guid.CreateVersion7();
+    var streams = _ascending(2);
+    var f = Guid.CreateVersion7();
+    var t = Guid.CreateVersion7();
+    var r1 = Guid.CreateVersion7();
+    await using var setup = await _openAsync();
+    await _insertRowAsync(setup, f, streams[0], instance);
+    await _insertRowAsync(setup, t, streams[0], instance);
+    await _insertRowAsync(setup, r1, streams[1], instance);
+
+    var deadlock = await _flushWhileAnotherTransactionCompletesAsync(
+      firstCompleted: t, thenCompleted: r1, flushCompletes: [r1], flushFails: [f]);
+
+    await Assert.That(deadlock).IsNull()
+      .Because("flush_completions must lock the runs its failures release in the same ordered pass");
+    await Assert.That(await _countAsync(setup, [f], "instance_id IS NULL AND (status & 32768) <> 0")).IsEqualTo(1)
+      .Because("the flush still records the failure once the other transaction is done");
+    await Assert.That(await _countAsync(setup, [t, r1])).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Another transaction completes <paramref name="firstCompleted"/>, then flush_completions starts and is
+  /// left waiting on a lock, then the other transaction completes <paramref name="thenCompleted"/> and
+  /// commits. Returns the deadlock either side was chosen to lose, or null.
+  /// </summary>
+  private async Task<string?> _flushWhileAnotherTransactionCompletesAsync(
+      Guid firstCompleted, Guid thenCompleted, Guid[] flushCompletes, Guid[] flushFails) {
+    await using var other = await _openAsync();
+    await using var otherTx = await other.BeginTransactionAsync();
+    await _completeAsync(other, otherTx, firstCompleted);
+
+    await using var flusher = await _openAsync();
+    async Task FlushAsync() {
+      await using var cmd = flusher.CreateCommand();
+      cmd.CommandText = "SELECT flush_completions(@outbox, '[]'::jsonb, ARRAY[]::uuid[], @failures::jsonb)";
+      cmd.Parameters.AddWithValue("outbox", flushCompletes);
+      cmd.Parameters.AddWithValue("failures", $"[{{\"Category\":\"outbox\",\"Items\":{_failuresJson(flushFails)}}}]");
+      await cmd.ExecuteNonQueryAsync();
+    }
+    var flushing = FlushAsync();
+    await _waitUntilWaitingOnALockAsync(flusher.ProcessID, flushing);
+
+    string? deadlock = null;
+    try {
+      await _completeAsync(other, otherTx, thenCompleted);
+      await otherTx.CommitAsync();
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected) {
+      deadlock = $"the other transaction lost: {ex.Detail}";
+    }
+    try {
+      await flushing;
+    } catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected) {
+      deadlock = $"flush_completions lost: {ex.Detail}";
+    }
+    return deadlock;
+  }
+
+  private static async Task _completeAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.Transaction = tx;
+    cmd.CommandText = "SELECT complete_outbox_published(@ids)";
+    cmd.Parameters.AddWithValue("ids", new[] { messageId });
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   // --- all of it at once ---------------------------------------------------------------------------
 
   [Test]
