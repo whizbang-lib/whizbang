@@ -65,7 +65,7 @@ public sealed class WhizbangHealthAggregator {
   /// The clock the per-source deadline runs on. The container passes its registered <see cref="TimeProvider"/>, or
   /// <see cref="TimeProvider.System"/> when there is none; a test passes a fake clock to decide when a deadline elapses.
   /// </param>
-  /// <docs>operations/diagnostics/health-probes</docs>
+  /// <docs>resilience/managed-resource-health</docs>
   /// <tests>tests/Whizbang.Core.Component.Tests/Health/HealthProbeMustAlwaysAnswerTests.cs:SeveralHangingSourcesDoNotAddUpAsync</tests>
   public WhizbangHealthAggregator(
       IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
