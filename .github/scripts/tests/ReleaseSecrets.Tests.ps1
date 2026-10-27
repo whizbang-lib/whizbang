@@ -72,6 +72,37 @@ Describe 'Release app secrets' {
     $undeclared | Should -BeNullOrEmpty
   }
 
+  It 'reach a job inside a reusable workflow only through callers that pass secrets: inherit (#1796)' {
+    # GitHub hands an environment secret to a reusable workflow's job only when the CALLER passes it,
+    # by name or with secrets: inherit, even though the value comes from the called job's environment.
+    # A caller that passes nothing leaves the secret an empty string, with no error until the step that
+    # reads it fails. Declaring it under workflow_call does not change that: #1477 tried, and three
+    # stable releases still could not mint the merge-back's token.
+    $offenders = @(foreach ($reusable in @($SecretJobs | ForEach-Object Workflow | Sort-Object -Unique)) {
+        $raw = Get-Content -Raw (Join-Path $Root '.github' 'workflows' $reusable)
+        if ($raw -notmatch '(?m)^  workflow_call:') { continue }
+        $Jobs | Where-Object { ($_.Lines -join "`n") -match "(?m)^    uses:\s*\./\.github/workflows/$([regex]::Escape($reusable))\s*$" } |
+          Where-Object { -not (($_.Lines -join "`n") -match '(?m)^    secrets:\s*inherit\s*$') } |
+          ForEach-Object { "$($_.Workflow): $($_.Name) calls $reusable without secrets: inherit" }
+      })
+    $offenders | Should -BeNullOrEmpty
+  }
+
+  It 'are read by each merge-back job itself, which declares release-app and is not a reusable-workflow call (#1796)' {
+    # The merge-back is shaped like the publish jobs that mint the token on every release: an ordinary
+    # job of the workflow the event started, declaring the environment, with the shared steps in the
+    # sync-develop composite action.
+    $mergeBacks = @($Jobs | Where-Object { "$($_.Workflow): $($_.Name)" -in @('release.yml: sync-develop', 'ci.yml: release-sync-develop') })
+    $mergeBacks.Count | Should -Be 2
+    foreach ($job in $mergeBacks) {
+      $text = $job.Lines -join "`n"
+      $text | Should -Not -Match '(?m)^    uses:' -Because "$($job.Workflow): $($job.Name) must run its own steps"
+      $text | Should -Match '(?m)^    environment:\s*release-app\s*$' -Because "$($job.Workflow): $($job.Name) reads the release app's secrets"
+      $text | Should -Match 'client-id:\s*\$\{\{\s*secrets\.RELEASE_APP_ID\s*\}\}' -Because "$($job.Workflow): $($job.Name) mints the token"
+      $text | Should -Match '(?m)^\s+(- )?uses:\s*\./\.github/actions/sync-develop\s*$' -Because "$($job.Workflow): $($job.Name) runs the one merge-back"
+    }
+  }
+
   It 'cut a release only after a build admin approves (release-cut)' {
     $cut = @($Jobs | Where-Object { $_.Workflow -eq 'start-release.yml' -and ($_.Lines -join "`n") -match 'secrets\.RELEASE_APP_' })
     $cut.Count | Should -Be 1
