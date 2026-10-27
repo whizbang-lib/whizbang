@@ -190,9 +190,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
-  /// Rebuild-only replay that honours re-key upcasters. Reads the physical stream's events
-  /// (upcasted on the polymorphic read seam), partitions them by their post-upcast target stream
-  /// id, and applies each partition onto its own row via <see cref="RunWithEventsAsync"/>. Only an
+  /// Rebuild-only replay that honors re-key upcasters. Reads the physical stream's events
+  /// (upcasted on the polymorphic read seam), partitions them by the row each folds onto
+  /// (<see cref="global::Whizbang.Core.Perspectives.RebuildRowRouting"/>), and applies each partition onto its own
+  /// row via <see cref="RunWithEventsAsync"/>, a re-keyed one via <see cref="RunRekeyedRowAsync"/>. Only an
   /// event an upcaster re-keyed (<see cref="global::Whizbang.Core.Messaging.EventRekeys"/>) leaves
   /// the physical stream; an event whose payload merely names another stream stays on the stream it is
   /// stored on, as live apply and the rewind keep it (#1798). Returns
@@ -219,29 +220,29 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       events.Add(envelope);
     }
 
-    // Partition by post-upcast target stream id, preserving read order within each partition.
-    // Fast path: every event maps to physicalStreamId (no re-key) → one partition that behaves
-    // exactly like a single RunWithEventsAsync(physicalStreamId, ...) call.
-    var partitions = new Dictionary<Guid, List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>();
-    var order = new List<Guid>();
-    foreach (var envelope in events) {
-      // Every path keys a row by the stream an event is stored on; only a genuine re-key, an upcaster that moved the
-      // event's [StreamId] as it was read, routes it elsewhere. Routing by the payload alone let a rebuild of one stream
-      // replace another stream's row with its own fold and stamp that row with this stream's position (#1798).
-      var target = global::Whizbang.Core.Messaging.EventRekeys.RekeyedTo(envelope.Payload) is null
-          ? physicalStreamId
-          : ResolveTargetStreamId(envelope.Payload, physicalStreamId);
-      if (!partitions.TryGetValue(target, out var bucket)) {
-        bucket = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-        partitions[target] = bucket;
-        order.Add(target);
+    // Every path keys a row by the stream an event is stored on; only a genuine re-key, an upcaster that moved the
+    // event's [StreamId] as it was read, routes it elsewhere (#1798). The routing and the merge of a re-keyed row are
+    // the shared RebuildRowRouting's, so every runner decides them the same way.
+    var partitions = global::Whizbang.Core.Perspectives.RebuildRowRouting.Partition(physicalStreamId, events);
+
+    // A re-keyed row is folded from its own stream and every source re-keyed onto it (#1820). Inside a rebuild run
+    // the run collects the sources and folds the row once it has read them all; called on its own, this stream is
+    // the only source known.
+    var ledger = global::Whizbang.Core.Perspectives.RebuildRekeyLedger.Current;
+    var completions = new List<PerspectiveCursorCompletion>(partitions.Count);
+    foreach (var partition in partitions) {
+      if (!partition.IsRekeyed) {
+        completions.Add(await RunWithEventsAsync(partition.Row, perspectiveName, null, partition.Events, cancellationToken));
+      } else if (ledger is not null) {
+        ledger.Add(partition);
+      } else {
+        completions.Add(await RunRekeyedRowAsync(partition.Row, perspectiveName, new[] { partition.Events }, cancellationToken));
       }
-      bucket.Add(envelope);
     }
 
-    // No events: return a single no-op completion for the physical stream so the rebuilder's
-    // counters/cursor bookkeeping stay coherent with the one-completion-per-stream contract.
-    if (order.Count == 0) {
+    // No events, or every one re-keyed onto a row the run folds later: a single no-op completion for the physical
+    // stream keeps the rebuilder's one-completion-per-stream contract.
+    if (completions.Count == 0) {
       return new[] {
         new PerspectiveCursorCompletion {
           StreamId = physicalStreamId,
@@ -249,16 +250,40 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           LastEventId = Guid.Empty,
           Status = PerspectiveProcessingStatus.None,
-          RowChanged = false,  // no events for this perspective, so the row was never touched
+          RowChanged = false,  // no events folded onto a row here, so no row was touched
         }
       };
     }
-
-    var completions = new List<PerspectiveCursorCompletion>(order.Count);
-    foreach (var target in order) {
-      completions.Add(await RunWithEventsAsync(target, perspectiveName, null, partitions[target], cancellationToken));
-    }
     return completions;
+  }
+
+  /// <summary>
+  /// Folds a row that receives re-keyed events (#1820): reads the row's own stream (upcasted), keeps the events no
+  /// upcaster moved away, merges them with every re-keyed source in commit order and folds the result from an empty
+  /// model, through the same <see cref="RunWithEventsAsync"/> every other path uses.
+  /// </summary>
+  public async Task<PerspectiveCursorCompletion> RunRekeyedRowAsync(
+      Guid rowStreamId,
+      string perspectiveName,
+      IReadOnlyList<IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>> rekeyedSources,
+      CancellationToken cancellationToken = default) {
+
+    var eventTypes = new[] {
+      #region REKEYED_ROW_EVENT_TYPES
+      // Generated event type list goes here
+      #endregion
+    };
+
+    var own = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
+    await foreach (var envelope in _eventStore.ReadPolymorphicAsync(rowStreamId, null, eventTypes, cancellationToken)) {
+      own.Add(envelope);
+    }
+    var sources = new List<IReadOnlyList<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>>(rekeyedSources.Count + 1) {
+      global::Whizbang.Core.Perspectives.RebuildRowRouting.StaysOn(rowStreamId, own)
+    };
+    sources.AddRange(rekeyedSources);
+    return await RunWithEventsAsync(
+        rowStreamId, perspectiveName, null, global::Whizbang.Core.Perspectives.RebuildRowRouting.Merge(sources), cancellationToken);
   }
 
   public async Task<PerspectiveCursorCompletion> RunWithEventsAsync(
@@ -1234,20 +1259,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   #endregion
 
   /// <summary>
-  /// Resolves the target stream id an event belongs to AFTER upcasting, used by
-  /// <see cref="RunRebuildAsync"/> to route re-keyed events onto the correct row. Returns the
-  /// event's post-upcast <c>[StreamId]</c> for known event types; falls back to
-  /// <paramref name="physicalStreamId"/> for event types without a <c>[StreamId]</c> (they stay on
-  /// the physical stream). The generated switch contains one arm per <c>[StreamId]</c>-bearing
-  /// event type this perspective handles.
-  /// </summary>
-  private static Guid ResolveTargetStreamId(global::Whizbang.Core.IEvent @event, Guid physicalStreamId) {
-    #region RESOLVE_TARGET_STREAM_ID
-    return physicalStreamId;
-    #endregion
-  }
-
-  /// <summary>
   /// The scope this apply writes, decided by the model's [InheritScope] over the row the apply read.
   /// </summary>
   private static global::Whizbang.Core.Lenses.ScopeWrite _resolveScopeWrite(
@@ -1742,7 +1753,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           }
         }
       }
-      } // closes foreach (var envelope in events)
+      } // closes foreach (var envelope in foldEvents)
 
       // v0.688 — advance the catch-up anchor past everything this pass READ so the next
       // iteration's ReadPolymorphicAsync only returns events appended since. The anchor is
