@@ -39,7 +39,8 @@ public class VersionedRebuildOrderingTests : EFCoreTestBase {
   [Test]
   public async Task RebuildStreamsAsync_VersionedModelWithEventsAppendedOutOfIdOrder_WritesTheFoldedRowAsync() {
     var streamId = Guid.CreateVersion7();
-    var minted = DateTimeOffset.UtcNow;
+    // Fixed instants: only their order matters, and a fixed clock keeps the ids deterministic.
+    var minted = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     var earlier = Guid.CreateVersion7(minted);
     var later = Guid.CreateVersion7(minted.AddSeconds(1));
     await using var sp = _buildServices();
@@ -50,7 +51,7 @@ public class VersionedRebuildOrderingTests : EFCoreTestBase {
       await eventStore.AppendAsync(streamId, _envelope(earlier, new ItemProgressCompletedEvent { StreamId = streamId }));
     }
     await using (var seed = CreateDbContext()) {
-      var then = DateTime.UtcNow.AddDays(-1);
+      var then = new DateTime(2025, 12, 31, 0, 0, 0, DateTimeKind.Utc);
       seed.Set<PerspectiveRow<ItemProgress>>().Add(new PerspectiveRow<ItemProgress> {
         Id = streamId,
         Data = new ItemProgress { Id = streamId, Started = true, Attempts = 1, Completed = false },
