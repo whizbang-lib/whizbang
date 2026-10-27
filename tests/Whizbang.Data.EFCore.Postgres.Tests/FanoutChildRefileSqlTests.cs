@@ -232,6 +232,9 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await Assert.That(report.EmptiedStreams).IsEquivalentTo([first, second])
       .Because("a stream larger than a batch still moves whole, so the batch that empties it also purges it");
     await Assert.That(logger.Messages.Count(m => m.Contains("batch", StringComparison.Ordinal))).IsEqualTo(2);
+    await Assert.That(logger.Messages.Count(m => m.Contains("started", StringComparison.Ordinal)
+        && m.Contains("requested by operator-1: composite children filed under the composite", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("who asked and why is logged once, when the run starts, not with every batch");
     await using var conn = await _openAsync();
     await Assert.That(await _versionsAsync(conn, own)).IsEquivalentTo([tail, tail + 1, tail + 2, tail + 3])
       .Because("the three children follow the stream's tail with no gap");

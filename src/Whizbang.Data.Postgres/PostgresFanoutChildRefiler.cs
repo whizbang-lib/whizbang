@@ -43,6 +43,9 @@ public sealed partial class PostgresFanoutChildRefiler(
   public async Task<FanoutChildRefileReport> RefileAsync(FanoutChildRefileRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     request.Validate();
+    if (logger is not null) {
+      LogStarting(logger, request.RepairId, request.DryRun, request.RequestedBy, request.Reason);
+    }
     var prefix = schema is null ? string.Empty : SqlText.Identifier(schema) + ".";
     await using var connection = await openConnection(cancellationToken).ConfigureAwait(false);
 
@@ -71,7 +74,7 @@ public sealed partial class PostgresFanoutChildRefiler(
       moves.AddRange(batchMoves);
       emptied.AddRange(batchEmptied);
       if (logger is not null) {
-        LogBatch(logger, request.RepairId, batchIndex, request.DryRun, batchMoves.Count, batchEmptied.Count, request.RequestedBy, request.Reason);
+        LogBatch(logger, request.RepairId, batchIndex, request.DryRun, batchMoves.Count, batchEmptied.Count);
       }
       batchIndex++;
     }
@@ -225,8 +228,12 @@ public sealed partial class PostgresFanoutChildRefiler(
   }
 
   [LoggerMessage(Level = LogLevel.Information,
-    Message = "Composite child refile {RepairId} batch {BatchIndex} (dry run: {DryRun}): {Moved} event(s) moved, {Emptied} composite stream(s) emptied and purged; requested by {RequestedBy}: {Reason}")]
-  static partial void LogBatch(ILogger logger, Guid repairId, int batchIndex, bool dryRun, int moved, int emptied, string requestedBy, string reason);
+    Message = "Composite child refile {RepairId} started (dry run: {DryRun}); requested by {RequestedBy}: {Reason}")]
+  static partial void LogStarting(ILogger logger, Guid repairId, bool dryRun, string requestedBy, string reason);
+
+  [LoggerMessage(Level = LogLevel.Information,
+    Message = "Composite child refile {RepairId} batch {BatchIndex} (dry run: {DryRun}): {Moved} event(s) moved, {Emptied} composite stream(s) emptied and purged")]
+  static partial void LogBatch(ILogger logger, Guid repairId, int batchIndex, bool dryRun, int moved, int emptied);
 
   [LoggerMessage(Level = LogLevel.Warning,
     Message = "Composite child refile {RepairId} (dry run: {DryRun}): {Scanned} fan-out child(ren) examined, {Moved} moved to the stream their payload names, {Emptied} composite stream(s) emptied, {Undecidable} unreadable here and left in place. Rebuild every perspective for the streams that received events")]
