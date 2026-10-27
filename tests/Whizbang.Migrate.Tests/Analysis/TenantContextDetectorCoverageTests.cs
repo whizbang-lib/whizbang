@@ -55,7 +55,7 @@ public class TenantContextDetectorCoverageTests {
       """;
 
     // Act
-    var result = await TenantContextDetector.DetectAsync(sourceCode, "Events/OrderStatusChanged.cs");
+    var result = await TenantContextDetector.DetectAsync(sourceCode);
 
     // Assert - the record name matches the event heuristic (ends with "Changed"), but with no
     // ParameterList there are no parameters to inspect, so TenantId is never detected.

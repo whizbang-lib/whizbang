@@ -373,6 +373,104 @@ csharp_style_prefer_extended_property_pattern = true:suggestion
 # Ban reflection attributes via BannedApiAnalyzers (RS0030)
 dotnet_diagnostic.RS0030.severity = error
 
+###############################
+# Imported analyzer rules     #
+###############################
+# Every Roslynator, IDE, CA, ASP and SYSLIB rule SonarCloud has imported from this project's build
+# (external_roslyn:*) reports at warning, so TreatWarningsAsErrors fails the build on any instance
+# anywhere (#1804). At their default info level they never failed the build, yet Sonar counts them
+# and the pull request quality gate allows none; Sonar can also leave a finding out of a pull
+# request's analysis when the change causes it on an unchanged line, so such findings first failed
+# on the release pull request. The build is now the gate, independent of Sonar's new-code tracking.
+#
+# The list was derived by machine on 2026-10-26: every external_roslyn rule key Sonar reported for
+# the project (all statuses, main and recent pull requests), cross-checked against the info-level
+# diagnostics of a Release build of Whizbang.slnx on SDK 10, which CI uses. Every build finding is
+# in the Sonar list. Two Sonar rules stay off on purpose, in the decisions section below: IDE0031
+# and RCS1130. Rules set to none for tests or benchmarks below stay none there; tests/.editorconfig
+# keeps RCS1118 off for the test projects. New rules join this list when Sonar first reports them.
+dotnet_diagnostic.ASP0015.severity = warning
+dotnet_diagnostic.ASP0018.severity = warning
+dotnet_diagnostic.CA1041.severity = warning
+dotnet_diagnostic.CA1873.severity = warning
+dotnet_diagnostic.CA2016.severity = warning
+dotnet_diagnostic.IDE0017.severity = warning
+dotnet_diagnostic.IDE0019.severity = warning
+dotnet_diagnostic.IDE0028.severity = warning
+dotnet_diagnostic.IDE0033.severity = warning
+dotnet_diagnostic.IDE0034.severity = warning
+dotnet_diagnostic.IDE0037.severity = warning
+dotnet_diagnostic.IDE0039.severity = warning
+dotnet_diagnostic.IDE0042.severity = warning
+dotnet_diagnostic.IDE0044.severity = warning
+dotnet_diagnostic.IDE0057.severity = warning
+dotnet_diagnostic.IDE0059.severity = warning
+dotnet_diagnostic.IDE0060.severity = warning
+dotnet_diagnostic.IDE0063.severity = warning
+dotnet_diagnostic.IDE0066.severity = warning
+dotnet_diagnostic.IDE0071.severity = warning
+dotnet_diagnostic.IDE0075.severity = warning
+dotnet_diagnostic.IDE0090.severity = warning
+dotnet_diagnostic.IDE0150.severity = warning
+dotnet_diagnostic.IDE0270.severity = warning
+dotnet_diagnostic.IDE0290.severity = warning
+dotnet_diagnostic.IDE0300.severity = warning
+dotnet_diagnostic.IDE0301.severity = warning
+dotnet_diagnostic.IDE0305.severity = warning
+dotnet_diagnostic.IDE0306.severity = warning
+dotnet_diagnostic.IDE0330.severity = warning
+dotnet_diagnostic.IDE0340.severity = warning
+dotnet_diagnostic.RCS1015.severity = warning
+dotnet_diagnostic.RCS1021.severity = warning
+dotnet_diagnostic.RCS1032.severity = warning
+dotnet_diagnostic.RCS1047.severity = warning
+dotnet_diagnostic.RCS1049.severity = warning
+dotnet_diagnostic.RCS1068.severity = warning
+dotnet_diagnostic.RCS1073.severity = warning
+dotnet_diagnostic.RCS1077.severity = warning
+dotnet_diagnostic.RCS1085.severity = warning
+dotnet_diagnostic.RCS1089.severity = warning
+dotnet_diagnostic.RCS1097.severity = warning
+dotnet_diagnostic.RCS1104.severity = warning
+dotnet_diagnostic.RCS1112.severity = warning
+dotnet_diagnostic.RCS1118.severity = warning
+dotnet_diagnostic.RCS1123.severity = warning
+dotnet_diagnostic.RCS1146.severity = warning
+dotnet_diagnostic.RCS1154.severity = warning
+dotnet_diagnostic.RCS1158.severity = warning
+dotnet_diagnostic.RCS1163.severity = warning
+dotnet_diagnostic.RCS1170.severity = warning
+dotnet_diagnostic.RCS1173.severity = warning
+dotnet_diagnostic.RCS1187.severity = warning
+dotnet_diagnostic.RCS1190.severity = warning
+dotnet_diagnostic.RCS1192.severity = warning
+dotnet_diagnostic.RCS1196.severity = warning
+dotnet_diagnostic.RCS1197.severity = warning
+dotnet_diagnostic.RCS1199.severity = warning
+dotnet_diagnostic.RCS1205.severity = warning
+dotnet_diagnostic.RCS1212.severity = warning
+dotnet_diagnostic.RCS1213.severity = warning
+dotnet_diagnostic.RCS1214.severity = warning
+dotnet_diagnostic.RCS1222.severity = warning
+dotnet_diagnostic.RCS1226.severity = warning
+dotnet_diagnostic.RCS1227.severity = warning
+dotnet_diagnostic.RCS1229.severity = warning
+dotnet_diagnostic.RCS1232.severity = warning
+dotnet_diagnostic.RCS1235.severity = warning
+dotnet_diagnostic.RCS1239.severity = warning
+dotnet_diagnostic.RCS1243.severity = warning
+dotnet_diagnostic.RCS1246.severity = warning
+dotnet_diagnostic.RCS1247.severity = warning
+dotnet_diagnostic.RCS1249.severity = warning
+dotnet_diagnostic.RCS1251.severity = warning
+dotnet_diagnostic.RCS1259.severity = warning
+dotnet_diagnostic.RCS1261.severity = warning
+dotnet_diagnostic.RCS1262.severity = warning
+dotnet_diagnostic.RCS1266.severity = warning
+dotnet_diagnostic.RCS9004.severity = warning
+dotnet_diagnostic.SYSLIB1006.severity = warning
+dotnet_diagnostic.SYSLIB1045.severity = warning
+
 # JSON files
 [*.json]
 indent_size = 2
@@ -470,3 +568,11 @@ dotnet_diagnostic.IDE0060.severity = none
 # registration. A test fixture's optional collaborators are the test's defaults, not registrations.
 dotnet_diagnostic.WHIZ501.severity = none
 
+
+[samples/**.cs]
+# CA1873 (avoid a potentially expensive logging argument) stays at its default in the samples
+# pending a decision (#1804). Its 75 sample instances are structured log calls whose arguments box
+# a value type; the fix is an IsEnabled guard around each call or a move to [LoggerMessage], and
+# either one reshapes code people copy from. Sonar does not analyze the samples, so nothing reaches
+# the quality gate from here. Library and test code have no instance and report it at warning.
+dotnet_diagnostic.CA1873.severity = suggestion

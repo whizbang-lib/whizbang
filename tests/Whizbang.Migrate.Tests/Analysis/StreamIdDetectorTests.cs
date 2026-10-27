@@ -20,7 +20,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
@@ -38,7 +38,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/ItemEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
@@ -57,7 +57,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
@@ -77,7 +77,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(2);
@@ -97,7 +97,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).IsEmpty();
@@ -116,7 +116,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
@@ -138,7 +138,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     // Should only count from the event record, not the service class
@@ -156,7 +156,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
@@ -175,7 +175,7 @@ public class StreamIdDetectorTests {
       """;
 
     // Act
-    var result = await StreamIdDetector.DetectAsync(sourceCode, "Services/OrderService.cs");
+    var result = await StreamIdDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedProperties).IsEmpty();

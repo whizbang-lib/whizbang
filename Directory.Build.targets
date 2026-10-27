@@ -7,6 +7,16 @@
     <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" ILLinkPackVersion="10.0.12" />
   </ItemGroup>
 
+  <!-- C# language version pinned to the one the .NET 10 SDK calls "latest", as AnalysisLevel is (#1678).
+       global.json rolls forward to the newest installed SDK, where "latest" means the next language
+       version: code written to it does not compile on CI, which builds on SDK 10, and IDE0028 (a build
+       error since #1804) asks for that version's collection-expression arguments in place of
+       new(comparer), about a hundred findings that exist only on the newer SDK. Set here, after the
+       project files, because many of them set LangVersion to latest themselves. Move it when CI moves. -->
+  <PropertyGroup Condition="'$(LangVersion)' == 'latest'">
+    <LangVersion>14.0</LangVersion>
+  </PropertyGroup>
+
   <!-- Custom task to add retry logic with exponential backoff for file locking issues -->
   <UsingTask TaskName="RetryFileOperation" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
     <ParameterGroup>

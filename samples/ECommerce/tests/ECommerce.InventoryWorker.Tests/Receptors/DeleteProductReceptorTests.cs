@@ -35,7 +35,6 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_PublishesProductDeletedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -52,7 +51,7 @@ public class DeleteProductReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
+    await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(1);
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductDeletedEvent>();
 
     var publishedEvent = (ProductDeletedEvent)dispatcher.PublishedEvents[0];
@@ -85,7 +84,6 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductDeletionAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -102,7 +100,7 @@ public class DeleteProductReceptorTests {
     await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(logger.LoggedMessages).Count().IsGreaterThanOrEqualTo(1);
   }
 
   [Test]
@@ -128,7 +126,6 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task HandleAsync_WithDifferentProductIds_CreatesCorrectEventsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -147,6 +144,6 @@ public class DeleteProductReceptorTests {
     // Assert
     await Assert.That(result1.ProductId).IsEqualTo(productId1);
     await Assert.That(result2.ProductId).IsEqualTo(productId2);
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(2);
+    await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(2);
   }
 }

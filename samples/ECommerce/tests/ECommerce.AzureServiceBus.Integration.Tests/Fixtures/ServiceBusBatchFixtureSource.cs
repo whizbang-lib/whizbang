@@ -17,7 +17,6 @@ public sealed class ServiceBusBatchFixtureSource {
   /// <summary>
   /// Default constructor required by TUnit ClassDataSource.
   /// </summary>
-  [Obsolete]
   public ServiceBusBatchFixtureSource() {
     // Synchronously wait for initialization to complete
     // This ensures fixtures are ready before test classes are constructed
@@ -33,7 +32,6 @@ public sealed class ServiceBusBatchFixtureSource {
   /// Initializes the shared ServiceBus emulator fixture once per assembly.
   /// Reuses the emulator from SharedFixtureSource instead of starting a new one.
   /// </summary>
-  [Obsolete]
   private async Task _initializeAsync() {
     if (_initialized) {
       return;
@@ -51,7 +49,7 @@ public sealed class ServiceBusBatchFixtureSource {
 
       // Reuse the emulator from SharedFixtureSource (already running on port 5672)
       // This avoids Docker container name conflicts
-      var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
+      var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync();
 
       // Create a lightweight fixture wrapper that doesn't start its own emulator
       _serviceBusFixture = new ServiceBusBatchFixture(0);

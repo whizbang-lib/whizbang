@@ -56,7 +56,7 @@ public class CreateShipmentReceptorTests {
 
     // Assert
     await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(1);
-    var publishedEvent = dispatcher.PublishedEvents.First() as ShipmentCreatedEvent;
+    var publishedEvent = dispatcher.PublishedEvents[0] as ShipmentCreatedEvent;
     await Assert.That(publishedEvent).IsNotNull();
     await Assert.That(publishedEvent!.OrderId).IsEqualTo("order-456");
   }
@@ -125,8 +125,6 @@ public class CreateShipmentReceptorTests {
     }
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) =>
         throw new NotImplementedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 

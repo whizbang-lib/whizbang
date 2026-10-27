@@ -158,7 +158,7 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
                   .WithTrailingTrivia(SyntaxFactory.Space));
 
           // Add leading space if there are existing parameters (for ", " spacing after comma)
-          if (node.ParameterList.Parameters.Count > 0) {
+          if (node.ParameterList.Parameters.Any()) {
             newParam = newParam.WithLeadingTrivia(SyntaxFactory.Space);
           }
 
@@ -213,7 +213,7 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
                   .WithTrailingTrivia(SyntaxFactory.Space));
 
           // Add leading space if there are existing parameters (for ", " spacing after comma)
-          if (node.ParameterList.Parameters.Count > 0) {
+          if (node.ParameterList.Parameters.Any()) {
             newParam = newParam.WithLeadingTrivia(SyntaxFactory.Space);
           }
 

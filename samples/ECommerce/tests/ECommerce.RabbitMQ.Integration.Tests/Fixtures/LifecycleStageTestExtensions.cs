@@ -425,7 +425,7 @@ public static class LifecycleStageTestExtensions {
         // Legacy/back-compat path for callers that don't plumb their CT
         // through — fall back to the scaled internal timer.
         var effectiveTimeout = Whizbang.Testing.TestTimeouts.Scale(timeoutMilliseconds);
-        await observerTask.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout));
+        await observerTask.WaitAsync(TimeSpan.FromMilliseconds(effectiveTimeout), cancellationToken);
       }
     } finally {
       registry.Unregister<TMessage>(receptor, stage);

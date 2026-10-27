@@ -122,7 +122,7 @@ public class AllocationProfilingBenchmarks {
   [Benchmark]
   public async Task<int> ParallelExecutor_PooledContextAsync() {
     var pooled = PolicyContextPool.Rent(
-      ((TestCommand)_context.Message),
+      (TestCommand)_context.Message,
       _envelope,
       _context.Services,
       _context.Environment

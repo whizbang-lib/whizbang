@@ -109,9 +109,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
     var transformed = rewriter.Visit(root);
 
     // Transform ShouldDelete methods to ModelAction Apply methods
-    transformed = _transformShouldDeleteMethods(transformed, changes, warnings);
-
-    return transformed;
+    return _transformShouldDeleteMethods(transformed, changes, warnings);
   }
 
   /// <summary>
@@ -310,7 +308,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
 
       foreach (var method in projectionMethods) {
         var parameters = method.ParameterList.Parameters;
-        if (parameters.Count == 0) {
+        if (!parameters.Any()) {
           continue;
         }
 
@@ -435,7 +433,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
 
     private static string? _extractEventType(MethodDeclarationSyntax method) {
       var parameters = method.ParameterList.Parameters;
-      if (parameters.Count == 0) {
+      if (!parameters.Any()) {
         return null;
       }
 
