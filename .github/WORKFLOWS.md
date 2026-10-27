@@ -35,7 +35,6 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | `reusable-quality.yml` | CI | Sonar analysis and the coverage gates, on this run's or a covering run's coverage |
 | `reusable-pack.yml` | CI, Release Prerelease | Pack a tested build without rebuilding |
 | `reusable-version.yml` | CI | Resolve the version (release PR title, release branch name, or GitVersion) |
-| `reusable-sync-develop.yml` | Release, CI | The one merge-back into `develop` |
 | `reusable-mutation.yml` | Mutation Testing | One mutation run |
 | `nuget-push.yml` | every publish path | The only workflow nuget.org's trusted publishing accepts; attests, then pushes |
 | `notify-build-status.yml` | CI | Build notifications |
@@ -45,6 +44,7 @@ names, the version rules, and recovery. This file is only a map of the workflow 
 | `.github/actions/find-tested-run` | Which run tested a commit (queue run, or the PR run on a fast-forward) |
 | `.github/actions/require-pr-gate` | Refuse to publish a commit whose PR gate (coverage, Sonar) did not pass |
 | `.github/actions/verify-packages` | Exactly the packages in `.github/nuget-packages.txt`, at exactly one version |
+| `.github/actions/sync-develop` | The one merge-back into `develop` (Release, CI); the calling job declares `release-app` and mints the app token, since a reusable workflow's job cannot read that environment's secrets unless its caller passes them (#1796) |
 | `.github/actions/use-ci-image-mirror` | Pull Docker Hub images from the GHCR mirror when it is complete; record the baseline for the pull check |
 | `.github/actions/setup-dotnet-retry`, `notify-pushover` | Setup and notification helpers |
 
