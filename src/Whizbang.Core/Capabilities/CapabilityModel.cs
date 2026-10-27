@@ -69,11 +69,25 @@ public sealed record CapabilityDescriptor(
   bool Provisionable,
   IReadOnlyList<string> Prerequisites,
   IReadOnlyDictionary<CapabilityState, string> Remedies) {
-  /// <summary>Fixes keyed by a provider detail.</summary>
+  /// <summary>
+  /// The operator's fix per provider detail (<see cref="CapabilityStatus.Detail"/>), used before the state's own fix.
+  /// For details that share one generic state but need different fixes: Postgres reads both a missing preload and a
+  /// WAL level that is not logical as <see cref="CapabilityState.NeedsServerChange"/>. Empty by default.
+  /// </summary>
   public IReadOnlyDictionary<string, string> DetailRemedies { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
-  /// <summary>Stub.</summary>
-  public string Remedy(CapabilityState state, string? detail) => Remedy(state);
+  /// <summary>What an operator does about this capability in <paramref name="state"/>, given the provider's detail.</summary>
+  /// <param name="state">Its state in some scope.</param>
+  /// <param name="detail">The provider's finer state, or null.</param>
+  /// <returns>
+  /// <c>none</c> for a usable state; otherwise the fix for <paramref name="detail"/> when the provider gave one, else
+  /// <see cref="Remedy(CapabilityState)"/>.
+  /// </returns>
+  public string Remedy(CapabilityState state, string? detail) =>
+    detail is not null && state is not (CapabilityState.Ready or CapabilityState.Provisionable)
+      && DetailRemedies.TryGetValue(detail, out var fix)
+      ? fix
+      : Remedy(state);
 
   /// <summary>What an operator does about this capability in <paramref name="state"/>.</summary>
   /// <param name="state">Its state in some scope.</param>

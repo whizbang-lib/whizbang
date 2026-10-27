@@ -1019,7 +1019,7 @@ public sealed partial class MaintenanceWorker(
   static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
-    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; the post-ready Rewrite step performs it on the next boot as Whizbang:Workers:Maintenance:TableRewriteStrategy and AllowTableRewrite decide (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
+    Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded; Whizbang:Workers:Maintenance:TableRewriteStrategy decides what rewrites it: PgSqueeze rewrites it online from the maintenance cycle, and otherwise the post-ready Rewrite step performs it on the next boot as AllowTableRewrite permits (VACUUM FULL takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]
   static partial void LogRewriteNeeded(ILogger logger, string table, double ratio);
 
   [LoggerMessage(EventId = 33, Level = LogLevel.Warning, Message = "Recording the rewrite request for {Table} failed")]
@@ -1142,8 +1142,16 @@ public sealed class MaintenanceWorkerOptions {
   /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
 
-  /// <summary>Stub.</summary>
-  public long OnlineRewriteMaxBytesPerCycle { get; set; }
+  /// <summary>
+  /// The most heap bytes one maintenance cycle rewrites online when <see cref="TableRewriteStrategy"/> is
+  /// <see cref="Workers.TableRewriteStrategy.PgSqueeze"/> (<c>Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle</c>).
+  /// Default 1 GiB. pg_squeeze writes a full copy of each table it rewrites, plus the WAL for it, so this bounds the extra
+  /// disk and WAL one cycle can cause. Queued tables are taken largest bloat first; one that does not fit what is left
+  /// waits for a later cycle, and one larger than the whole budget is never rewritten until it is raised. <c>0</c>
+  /// rewrites nothing.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  public long OnlineRewriteMaxBytesPerCycle { get; set; } = 1L << 30;
 
   /// <summary>
   /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how

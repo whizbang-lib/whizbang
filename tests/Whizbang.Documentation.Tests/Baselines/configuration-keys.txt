@@ -524,6 +524,7 @@ Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
+Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle
 Whizbang:Workers:Maintenance:Partitioning:CreateAhead
 Whizbang:Workers:Maintenance:Partitioning:Enabled
 Whizbang:Workers:Maintenance:Partitioning:Strategy

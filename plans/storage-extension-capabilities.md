@@ -228,7 +228,13 @@ Each slice is one red-then-green increment and its own commit.
 7. **pg_squeeze managed.** Requirement on `TableRewriteStrategy.PgSqueeze`; provisioning; the
    rewriter strategy itself is `storage-bloat.md` slice 3. RED: explicit PgSqueeze on a server
    without preload fails start with the preload fix text.
-   **Status (2026-10-24):** open. Depends on slice 4; the rewriter itself is `storage-bloat.md` slice 3.
+   **Status (2026-10-26):** done on branch `feat/1743-1751-online-rewrite` (#1751). Already in place from #1742/#1750
+   (PR #1772): the requirement on `TableRewriteStrategy.PgSqueeze`, generic provisioning (`CREATE EXTENSION` when
+   Provisionable, `ALTER EXTENSION UPDATE` when older) and the RED test "explicit PgSqueeze without preload fails start
+   with the preload fix" (`TableRewriteStrategyTests`). Added here: the catalog declared `wal_level = logical` but the
+   probe never read it, so pg_squeeze read Ready on a server where it cannot run. The probe now reads `wal_level` and
+   `server_version_num`; new Postgres state `NeedsLogicalWalLevel` (NeedsServerChange) below Postgres 19, checked after
+   the preload; a per-detail fix on the descriptor (`DetailRemedies`) so the verdict names `wal_level`, not the preload.
 8. **pg_partman managed.** Requirement on `PartitionManagementStrategy.PgPartman`; `create_parent`
    on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
    `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back

@@ -14,6 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Storage
+- **Online table rewrite through pg_squeeze, driven by the maintenance cycle (#1743).** With
+  `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze`, the `online-table-rewrite` maintenance step rewrites
+  the tables queued in `pending_table_rewrites` through `squeeze.squeeze_table`, largest bloat ratio first, within
+  `Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle` heap bytes per cycle (default 1 GiB; a table that does not
+  fit waits for a later cycle, `0` rewrites nothing). It runs only when pg_squeeze is Ready on every probed database, and
+  before each call it checks the extension and the right to call it, logical WAL below Postgres 19, a free replication
+  slot, a primary key or replica identity index, a role with `REPLICATION` (pg_squeeze creates a replication slot as the
+  caller) and table ownership, logging the first unmet one instead of calling. A request is cleared only when the
+  re-measure shows the rewrite improved the table. The boot-time `Rewrite` step no longer runs `PgSqueeze`. Each
+  rewrite candidate now carries its heap size (`TableRewriteCandidate.SizeBytes`), and `IWorkCoordinator` gains
+  `SqueezeTableAsync`.
+
+- **pg_squeeze's logical WAL prerequisite is probed (#1751).** The Postgres capability probe reads `wal_level` and the
+  server version, and an extension that decodes the WAL (pg_squeeze) reads the new state `NeedsLogicalWalLevel`
+  (capability state `NeedsServerChange`) below Postgres 19 when `wal_level` is not `logical`, instead of `Ready`. An
+  explicit `TableRewriteStrategy = PgSqueeze` on such a server fails start with the fix
+  `set wal_level = logical (and max_replication_slots to at least one more than the slots in use), then restart the server`.
+  A capability descriptor can now give a fix per provider detail (`CapabilityDescriptor.DetailRemedies`), which the
+  verdict and the report use before the state's own fix.
+
 - **A built-in partition manager for time-ordered framework tables (#1611).** With
   `Whizbang:Workers:Maintenance:Partitioning:Enabled` (default `false`), the maintenance cycle converts `wh_log` once
   to weekly partitions by `logged_at` (primary key `(log_id, logged_at)`, every writer unchanged, gated on the

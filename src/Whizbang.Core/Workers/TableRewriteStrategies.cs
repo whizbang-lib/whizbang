@@ -14,8 +14,8 @@ public static class TableRewriteStrategies {
   public const string VACUUM_FULL = "VacuumFull";
 
   /// <summary>
-  /// Online rewrite through pg_squeeze, selected by <see cref="TableRewriteStrategy.PgSqueeze"/>. No rewriter is
-  /// registered under it in this version, so the step reports that and leaves requested tables queued.
+  /// Online rewrite through pg_squeeze, selected by <see cref="TableRewriteStrategy.PgSqueeze"/> and run by
+  /// <see cref="PgSqueezeTableRewriter"/> from the maintenance cycle.
   /// </summary>
   public const string PG_SQUEEZE = "PgSqueeze";
 

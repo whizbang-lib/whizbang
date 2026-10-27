@@ -246,6 +246,15 @@ public static class WorkerPipelineExtensions {
         sp.GetRequiredService<Whizbang.Core.Processes.IExternalProcessRunner>())));
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Capabilities.ICapabilityRequirementSource, PgRepackClientRequirementSource>(sp =>
       new PgRepackClientRequirementSource(sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>())));
+    // The online strategy: pg_squeeze, run from the maintenance cycle within a byte budget when TableRewriteStrategy is
+    // PgSqueeze (the step does nothing, not even a scan, for any other strategy).
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITableRewriter, PgSqueezeTableRewriter>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IMaintenanceStep, OnlineTableRewriteStep>(sp =>
+      new OnlineTableRewriteStep(
+        sp.GetServices<ITableRewriter>(),
+        sp.GetRequiredService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetService<Whizbang.Core.Capabilities.ICapabilityRegistry>(),
+        sp.GetRequiredService<ILogger<OnlineTableRewriteStep>>())));
     // The strategy is resolved from TableRewriteStrategy and AllowTableRewrite at each run. A capability registry,
     // registered only with the Capabilities step (AddWhizbangCapabilities), tells it whether pg_squeeze is usable.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>

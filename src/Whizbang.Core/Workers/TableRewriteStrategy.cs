@@ -22,10 +22,10 @@ public enum TableRewriteStrategy {
   Auto,
 
   /// <summary>
-  /// Online rewrite through the pg_squeeze extension, without a long exclusive lock. Chosen explicitly, it requires
-  /// pg_squeeze, so a server that cannot provide it stops start with the capability verdict's fix. It is never
-  /// replaced by a blocking rewrite. This version has no pg_squeeze rewriter yet: the step reports that, and requested
-  /// tables stay queued.
+  /// Online rewrite through the pg_squeeze extension, without a long exclusive lock, driven by the maintenance cycle
+  /// (<see cref="OnlineTableRewriteStep"/>) within <see cref="MaintenanceWorkerOptions.OnlineRewriteMaxBytesPerCycle"/>.
+  /// Chosen explicitly, it requires pg_squeeze, so a server that cannot provide it stops start with the capability
+  /// verdict's fix. It is never replaced by a blocking rewrite, and the boot-time step does not run it.
   /// </summary>
   [RequiresPostgresExtension("pg_squeeze", Feature = "Online table rewrite")]
   PgSqueeze,

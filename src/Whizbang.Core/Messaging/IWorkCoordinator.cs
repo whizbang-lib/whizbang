@@ -1595,7 +1595,22 @@ public interface IWorkCoordinator {
       string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
-  /// <summary>Stub.</summary>
+  /// <summary>
+  /// Rewrites a table online through pg_squeeze (<c>squeeze.squeeze_table</c>), which copies it while it stays readable
+  /// and writable and takes an exclusive lock only for the final swap, then returns the ratio afterwards so the caller
+  /// can confirm it worked.
+  /// </summary>
+  /// <remarks>
+  /// The <see cref="Whizbang.Core.Workers.PgSqueezeTableRewriter"/> strategy's rewrite. The prerequisites pg_squeeze has
+  /// (the extension, logical WAL, a free replication slot, an identity index, a role allowed to create a replication
+  /// slot and owning the table) are checked first, and an unmet one is logged and returns null rather than calling it.
+  /// Default: nothing is rewritten (null).
+  /// </remarks>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The re-measured bloat ratio, or null when nothing was rewritten.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OnlineTableRewriteSqlTests.cs</tests>
   Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
@@ -4059,7 +4074,10 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
 public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
-  /// <summary>Stub.</summary>
+  /// <summary>
+  /// The table's heap size in bytes (<c>pg_relation_size</c>), what an online rewrite copies; 0 when the backend does not
+  /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
+  /// </summary>
   public long SizeBytes { get; init; }
 }
 

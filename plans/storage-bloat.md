@@ -116,9 +116,23 @@ Each slice is one red-then-green increment and its own commit.
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
    Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
    bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
-   **Status (2026-10-24):** open. No pg_squeeze rewriter and no `OnlineRewriteMaxBytesPerCycle`. Depends on
-   slice 2, WS-8 slices 4 and 7, and a mirrored CI image with pg_squeeze. Decision 4 (#1671) adds the
-   managed-server privilege investigation as a prerequisite.
+   **Status (2026-10-26):** done on branch `feat/1743-1751-online-rewrite` (#1743), except the real-server test.
+   `OnlineTableRewriteStep` (a framework `IMaintenanceStep`, so idle-gated and maintainer-only like the rest of the
+   cycle) runs only with `PgSqueeze` and pg_squeeze Ready on every probed database; it takes `Requested` candidates
+   largest ratio first (ties by name) within `OnlineRewriteMaxBytesPerCycle` (default 1 GiB; a table that does not fit
+   is deferred and a smaller one taken; one larger than the budget is never taken and says so), and clears a request
+   only when the re-measure improved. The boot `Rewrite` step now skips `PgSqueeze` and names the cycle.
+   `PgSqueezeTableRewriter` calls `IWorkCoordinator.SqueezeTableAsync`; the EF Core coordinator reads
+   `PgSqueezePrerequisites` (extension and EXECUTE, logical WAL below 19, a free slot, PK or replica identity index,
+   REPLICATION or superuser, ownership) on the rewrite's connection, logs the first unmet one, else calls
+   `squeeze.squeeze_table(schema, table, NULL, NULL, NULL)`, `ANALYZE`s and re-measures. Candidates carry
+   `SizeBytes`. Privilege investigation (decision 4) is on the storage-maintenance docs page: from pg_squeeze 1.9's
+   source, `squeeze_table` needs REPLICATION or superuser (its worker creates a logical slot as the caller, checked
+   from Postgres 15), EXECUTE is not revoked from PUBLIC, and ownership is not checked by pg_squeeze. **Not done:** an
+   integration test on a server with pg_squeeze. No test image ships it (`.github/ci-images.txt` has only
+   `pgvector/pgvector:pg17`); the SQL is covered against the shared server with a stand-in `squeeze.squeeze_table`
+   and the decision seam replaced. A real test needs a mirrored image with pg_squeeze, `shared_preload_libraries`,
+   `wal_level = logical` and free replication slots (`ai-docs/ci-image-mirror.md`).
 4. **Retire the unread `table_rewrite_policy` key.** A new migration (CI blocks edits to existing
    ones) deletes the row; 089 keeps inserting it, so the new migration runs after it on fresh
    databases too. RED: a migration test that the key is absent after apply.

@@ -162,7 +162,7 @@ public class TableRewriteStrategyTests {
 
     var failure = verdict.Failures.Single();
     await Assert.That(failure.Line).IsEqualTo(
-      "capability postgres/pg_squeeze on 'orders': NotPermitted, 1.0. Fix: add PG_SQUEEZE to the server's extension "
+      "capability postgres/pg_squeeze on 'orders': NotPermitted, 1.0; NotAllowlisted. Fix: add PG_SQUEEZE to the server's extension "
       + "allowlist (azure.extensions on Azure Database for PostgreSQL) and pg_squeeze to shared_preload_libraries, then "
       + "restart the server. Required by: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze, explicit)");
   }

@@ -413,6 +413,7 @@ public class OnlineTableRewriteStepTests {
     services.TryAddWhizbangDefaults();
     services.AddLogging();
     services.AddWhizbangWorkers();
+    services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
     await Assert.That(provider.GetServices<ITableRewriter>().Select(r => r.Strategy))
