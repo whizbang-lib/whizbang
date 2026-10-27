@@ -265,4 +265,34 @@ public class RekeyThroughRebuildTests : EFCoreTestBase {
       .Because("a re-key is a re-key whether the upcaster changes the event in place or returns a new one");
     await _assertPositionedOnAsync(row, last);
   }
+
+  /// <summary>
+  /// Called outside a rebuild run (no run collecting re-keys), the runner folds a re-keyed row at once, from the row's
+  /// own stream and the one source it read.
+  /// </summary>
+  [Test]
+  public async Task RunRebuildAsync_OutsideARun_FoldsTheTargetFromItsOwnStreamAndThisSourceAsync() {
+    var source = Guid.NewGuid();
+    var target = Guid.NewGuid();
+    await using var sp = _buildRekeyServices();
+    await _appendCommittedAsync(sp, target, "t1");
+    await _appendCommittedAsync(sp, source, "p1", target);
+
+    await using (var scope = sp.CreateAsyncScope()) {
+      var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>().GetRunner(RekeyPerspectiveName, scope.ServiceProvider)!;
+      var previous = ProcessingModeAccessor.Current;
+      ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+      try {
+        await Assert.That(RebuildRekeyLedger.Current).IsNull().Because("setup: no rebuild run is open");
+        var completions = await runner.RunRebuildAsync(source, RekeyPerspectiveName, CancellationToken.None);
+        await Assert.That(completions.Select(c => c.StreamId).ToList()).IsEquivalentTo([target]);
+      } finally {
+        ProcessingModeAccessor.Current = previous;
+      }
+    }
+
+    await using var verify = CreateDbContext();
+    var row = await verify.Set<PerspectiveRow<RekeyTestModel>>().AsNoTracking().FirstAsync(r => r.Id == target);
+    await Assert.That(row.Data.Marker).IsEqualTo("t1|p1");
+  }
 }
