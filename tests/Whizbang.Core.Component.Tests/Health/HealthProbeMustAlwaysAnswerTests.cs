@@ -234,11 +234,13 @@ public class HealthProbeMustAlwaysAnswerTests {
     /// <summary>Makes the call, marking this thread as inside it until the call returns its first task.</summary>
     public static ValueTask<AggregatedHealth> CallAsync(Func<ValueTask<AggregatedHealth>> call) {
       _insideTheCall = true;
+      ValueTask<AggregatedHealth> pending;
       try {
-        return call();
+        pending = call();
       } finally {
         _insideTheCall = false;
       }
+      return pending;
     }
 
     public string Component { get; } = component;
