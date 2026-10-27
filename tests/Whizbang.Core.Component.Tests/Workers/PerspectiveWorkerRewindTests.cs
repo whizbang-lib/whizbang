@@ -614,7 +614,8 @@ public class PerspectiveWorkerRewindTests {
   #region Event Completion Tests
 
   [Test]
-  public async Task Worker_CollectsWorkIds_InPerspectiveEventCompletionsAsync() {
+  [Timeout(30000)]
+  public async Task Worker_CollectsWorkIds_InPerspectiveEventCompletionsAsync(CancellationToken ct) {
     // Arrange
     var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -650,6 +651,10 @@ public class PerspectiveWorkerRewindTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var harness = new PerspectiveWorkerTestHarness();
+    // The capture whose wait completes on the exact transition asserted: each work id reaching the
+    // completion channel. The worker buffers a batch's completions and writes them on a later
+    // cycle (the next batch or an idle tick), so a fixed sleep raced that cycle under load (#1811).
+    var completions = new Whizbang.Testing.Workers.CapturingPerspectiveCompletionChannel();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
@@ -669,7 +674,7 @@ public class PerspectiveWorkerRewindTests {
       workChannelWriter: new WorkChannelWriter(),
       rewindOptions: Options.Create(new PerspectiveRewindOptions()),
       perspectiveChannelWriter: harness.ChannelWriter,
-      perspectiveCompletionChannel: harness.CompletionCapture,
+      perspectiveCompletionChannel: completions,
       failureChannel: harness.FailureCapture,
       leaseRenewalChannel: new CapturingLeaseRenewalChannel(),
       perspectiveDrainChannel: harness.DrainChannel,
@@ -686,14 +691,16 @@ public class PerspectiveWorkerRewindTests {
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
-    await Task.Delay(600);
+    await completions.EventWorkIdsCaptured(workId1, workId2).WaitAsync(ct);
     await cts.CancelAsync();
     await _waitForWorkerStoppedAsync(worker);
 
     // Assert - Event work IDs flow through the completion channel (channel architecture
     // replaces the legacy CapturedRequests.PerspectiveEventCompletions assertion).
-    await Assert.That(harness.CompletionCapture.EventWorkIds.Count).IsGreaterThanOrEqualTo(1)
+    await Assert.That(completions.EventWorkIds).Contains(workId1)
       .Because("Worker should enqueue completed event work IDs to the perspective completion channel");
+    await Assert.That(completions.EventWorkIds).Contains(workId2)
+      .Because("every completed work item's id is enqueued, not only the first of the batch");
   }
 
   #endregion
