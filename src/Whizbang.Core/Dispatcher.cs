@@ -4795,7 +4795,7 @@ public abstract partial class Dispatcher(
 
       // Build and queue the outbox message
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
-        ?? ExtractStreamIdFromMetadata(hopMetadata)
+        ?? StreamIdentity.FromHopMetadata(hopMetadata)
         ?? messageId.Value;
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
@@ -4957,30 +4957,6 @@ public abstract partial class Dispatcher(
   private static PerspectiveScope? _extractScope(IMessageEnvelope envelope) {
     var scopeContext = envelope.GetCurrentScope();
     return scopeContext?.Scope;
-  }
-
-  /// <summary>
-  /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
-  /// </summary>
-  /// <remarks>
-  /// Internal rather than private so the "no usable aggregate id" answer can be asserted. The only
-  /// caller passes metadata this class built, which is either null or carries a parsable id, so the
-  /// final fallback cannot fire today — it is what keeps a hop carrying someone else's metadata
-  /// shape from producing a stream id out of an unparsable string.
-  /// </remarks>
-  internal static Guid? ExtractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
-    if (metadata == null) {
-      return null;
-    }
-
-    // Try both AggregateId (generated key) and aggregateId (legacy key)
-    if ((metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement))
-        && aggIdElement.ValueKind == JsonValueKind.String
-        && Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
-      return guidValue;
-    }
-
-    return null;
   }
 
   /// <summary>
@@ -6220,8 +6196,9 @@ public abstract partial class Dispatcher(
     // stores and sends, from the injected clock. A message with no QueuedAt property is returned as is.
     envelope.Payload = (TMessage)AutoPopulatePopulatorRegistry.PopulateQueued(envelope.Payload!, _timeProvider.GetUtcNow());
 
-    // Extract stream_id: try aggregate ID from first hop, fall back to message ID
-    var streamId = _extractStreamId(envelope);
+    // The stream its first hop names, or its message id: read the way every receiver reads it, so a consumer stores
+    // the message on the stream this producer stores it on (#1798).
+    var streamId = StreamIdentity.Of(envelope);
 
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
@@ -6299,27 +6276,6 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get stream ID from first hop metadata, falls back to message ID.
-  /// </summary>
-  private static Guid _extractStreamId<TMessage>(MessageEnvelope<TMessage> envelope) {
-    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility).
-    // Every outbox path builds its envelope with that hop before serializing (_createEnvelope,
-    // _createOutboxEnvelopeWithHop, the deferred-publish path), and Hops is required.
-    var firstHopMetadata = envelope.Hops[0].Metadata;
-    if (firstHopMetadata != null && firstHopMetadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    // Fall back to message ID (ensures all messages have a stream)
-    return envelope.MessageId.Value;
-  }
-
-  /// <summary>
   /// Creates hop metadata with StreamId extracted from the message using [StreamId] attribute.
   /// Returns null if no stream ID extractor is configured or no ID found.
   /// </summary>
@@ -6333,16 +6289,8 @@ public abstract partial class Dispatcher(
       return null;
     }
 
-    // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
-    // Wrap GUID string in quotes for valid JSON string value
-    // Note: Key is "AggregateId" for backward compatibility with existing envelopes
-    var jsonString = "\"" + streamId.Value + "\"";
-    using var doc = JsonDocument.Parse(jsonString);
-    var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
-
-    return new Dictionary<string, JsonElement> {
-      ["AggregateId"] = streamIdElement
-    };
+    // The one writer of the hop's stream key; StreamIdentity reads it back on every storing site (#1798).
+    return StreamIdentity.HopMetadata(streamId.Value);
   }
 
   /// <summary>

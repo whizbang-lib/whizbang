@@ -332,7 +332,7 @@ public static partial class CompositeInboxFanout {
     }
 
     var childHops = _buildLineageHops(composite, source);
-    var streamId = _extractStreamId(source);
+    var streamId = StreamIdentity.Of(source);
     // #596: when the producer recorded each child's own stream, restore it — otherwise the
     // legacy inherit. Machine-built parallel lists: a count desync is a producer bug.
     var innerStreams = composite.InnerStreamIds;
@@ -555,25 +555,7 @@ public static partial class CompositeInboxFanout {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_TypedChildNamingItsOwnStream_IsFiledUnderThatStreamAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_TypedChildNamingNoStream_KeepsTheCompositesStreamAsync</tests>
   private static Guid _childStreamId(IMessage inner, IMessageEnvelope source, IStreamIdExtractor? streamIdExtractor) =>
-    streamIdExtractor?.ExtractStreamId(inner, inner.GetType()) is { } own && own != Guid.Empty ? own : _extractStreamId(source);
-
-  /// <summary>
-  /// Resolves the stream the child lands on: the composite's StreamId, recorded as the first hop's
-  /// <c>AggregateId</c> metadata; falls back to the child's own MessageId when absent. Mirrors the
-  /// transport-edge <c>_extractStreamId</c> so dispatch-time fan-out routes identically.
-  /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null
-        && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem)
-        && streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-    return envelope.MessageId.Value;
-  }
+    streamIdExtractor?.ExtractStreamId(inner, inner.GetType()) is { } own && own != Guid.Empty ? own : StreamIdentity.Of(source);
 
   [LoggerMessage(
     Level = LogLevel.Warning,

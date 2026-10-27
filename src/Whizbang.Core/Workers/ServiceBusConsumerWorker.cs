@@ -678,7 +678,7 @@ public partial class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) => ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
+  private static Guid _extractStreamId(IMessageEnvelope envelope) => StreamIdentity.Of(envelope);
 
   /// <summary>
   /// Stops the worker and disposes all subscriptions.

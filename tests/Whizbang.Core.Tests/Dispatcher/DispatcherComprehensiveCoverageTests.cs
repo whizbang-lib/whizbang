@@ -1580,43 +1580,4 @@ public class DispatcherComprehensiveCoverageTests {
       .Because("a plain event has no inner events, so a fan-out of it must publish nothing rather "
         + "than treat the event itself as its own child");
   }
-
-  // The stream id decides which stream an event is appended to and which perspective gate serializes
-  // it, so guessing one is worse than having none: the caller falls back to the message id, which at
-  // least keeps the event on a stream of its own. A hop whose metadata carries no parsable aggregate
-  // id must therefore yield nothing rather than something.
-  [Test]
-  public async Task ExtractStreamIdFromMetadata_NoParsableAggregateId_YieldsNothingAsync() {
-    var withoutTheKey = new Dictionary<string, JsonElement> {
-      ["SomethingElse"] = JsonElement.Parse("\"" + Guid.CreateVersion7() + "\"")
-    };
-    var withANonStringValue = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonElement.Parse("42")
-    };
-    var withAnUnparsableString = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonElement.Parse("\"not-a-guid\"")
-    };
-
-    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withoutTheKey)).IsNull()
-      .Because("metadata that never named an aggregate id has none to give");
-    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withANonStringValue)).IsNull()
-      .Because("a number is not an aggregate id, and reading one as a stream key would put the "
-        + "event on a stream nothing else writes to");
-    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(withAnUnparsableString)).IsNull()
-      .Because("a string that is not a GUID must fall through to the caller's message-id fallback "
-        + "rather than become a stream id of its own");
-  }
-
-  // The control for the three above: a well-formed aggregate id IS read, so the nulls are about the
-  // metadata rather than about the reader never working.
-  [Test]
-  public async Task ExtractStreamIdFromMetadata_WellFormedAggregateId_IsReadAsync() {
-    var streamId = Guid.CreateVersion7();
-    var metadata = new Dictionary<string, JsonElement> {
-      ["AggregateId"] = JsonElement.Parse("\"" + streamId + "\"")
-    };
-
-    await Assert.That(Core.Dispatcher.ExtractStreamIdFromMetadata(metadata)).IsEqualTo(streamId)
-      .Because("the hop's aggregate id is the stream the event belongs to");
-  }
 }

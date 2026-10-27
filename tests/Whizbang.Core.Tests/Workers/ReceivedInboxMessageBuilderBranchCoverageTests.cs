@@ -13,25 +13,12 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// <see cref="ReceivedInboxMessageBuilder.ExtractStreamId"/> for an envelope that arrived with no hop
-/// list at all. The envelope's JSON constructor takes the hop list as given, so a producer that wrote
-/// a null hop list yields an envelope whose hops are null rather than empty.
+/// Branches of <see cref="ReceivedInboxMessageBuilder"/> the delivery tests do not reach. The stream a received message
+/// is stored on is <see cref="Whizbang.Core.Messaging.StreamIdentity"/>'s, tested in <c>StreamIdentityTests</c>.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/ReceivedInboxMessageBuilder.cs</code-under-test>
 [Category("Workers")]
 public class ReceivedInboxMessageBuilderBranchCoverageTests {
-
-  [Test]
-  public async Task ExtractStreamId_EnvelopeWithNullHops_FallsBackToTheMessageIdAsync() {
-    var messageId = MessageId.New();
-    // The same constructor JSON deserialization uses; it stores the hop list it is handed.
-    var envelope = new MessageEnvelope<JsonElement>(messageId, JsonElement.Parse("{}"), hops: null!);
-
-    var streamId = ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
-
-    await Assert.That(streamId).IsEqualTo(messageId.Value)
-      .Because("every received message needs a stream, so a missing hop list means the message is its own stream");
-  }
 
   private sealed class ByMessageIdHook(MessageId expected) : Whizbang.Core.Priority.IPriorityReceiveHook {
     public int Order => 0;
