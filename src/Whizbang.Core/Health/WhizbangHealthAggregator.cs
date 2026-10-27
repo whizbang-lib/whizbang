@@ -36,8 +36,9 @@ public sealed class WhizbangHealthAggregator {
   private readonly IReadOnlyList<IWhizbangHealthSource> _sources;
   private readonly WhizbangHealthOptions _options;
   private readonly Startup.IStartupStageReporter _stages;
+  private readonly TimeProvider _timeProvider;
 
-  /// <summary>Creates an aggregator over the given health sources and policy options.</summary>
+  /// <summary>Creates an aggregator over the given health sources and policy options, timed by the system clock.</summary>
   /// <param name="sources">The health sources.</param>
   /// <param name="options">The per-component policies.</param>
   /// <param name="stages">
@@ -46,15 +47,39 @@ public sealed class WhizbangHealthAggregator {
   /// </param>
   public WhizbangHealthAggregator(
       IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
-      Startup.IStartupStageReporter stages) {
+      Startup.IStartupStageReporter stages)
+    : this(sources, options, stages, TimeProvider.System) {
+  }
+
+  /// <summary>
+  /// Creates an aggregator over the given health sources and policy options, timing each source's
+  /// <see cref="WhizbangHealthOptions.SourceTimeout"/> on <paramref name="timeProvider"/>.
+  /// </summary>
+  /// <param name="sources">The health sources.</param>
+  /// <param name="options">The per-component policies.</param>
+  /// <param name="stages">
+  /// The startup stage reporter, whose current stage every evaluation carries. A host with no stages passes
+  /// <see cref="Startup.NullStartupStageReporter.Instance"/>.
+  /// </param>
+  /// <param name="timeProvider">
+  /// The clock the per-source deadline runs on. The container passes its registered <see cref="TimeProvider"/>, or
+  /// <see cref="TimeProvider.System"/> when there is none; a test passes a fake clock to decide when a deadline elapses.
+  /// </param>
+  /// <docs>resilience/managed-resource-health</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Health/HealthProbeMustAlwaysAnswerTests.cs:SeveralHangingSourcesDoNotAddUpAsync</tests>
+  public WhizbangHealthAggregator(
+      IEnumerable<IWhizbangHealthSource> sources, WhizbangHealthOptions options,
+      Startup.IStartupStageReporter stages, TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(sources);
     ArgumentNullException.ThrowIfNull(options);
     // Materialised once: the sources are asked concurrently and then indexed to pair each
     // result with its component, which a lazily-enumerated sequence cannot support.
     _sources = sources as IReadOnlyList<IWhizbangHealthSource> ?? [.. sources];
     ArgumentNullException.ThrowIfNull(stages);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _options = options;
     _stages = stages;
+    _timeProvider = timeProvider;
   }
 
   /// <summary>Evaluates every source for the given probe and returns the aggregated (worst-wins) result.</summary>
@@ -69,6 +94,8 @@ public sealed class WhizbangHealthAggregator {
     //
     // At once, because a per-source timeout that runs sequentially still accumulates: five
     // unresponsive sources at two seconds each is ten seconds, and the probe times out anyway.
+    // Each source is asked off this stack for the same reason (#1811): one that blocks before it
+    // returns a task would otherwise hold the loop before any later source is asked.
     var sources = _sources;
     var tasks = new Task<ComponentHealth>[sources.Count];
     for (var i = 0; i < sources.Count; i++) {
@@ -97,13 +124,17 @@ public sealed class WhizbangHealthAggregator {
   /// A source that does not answer is reported as faulted rather than healthy: reporting healthy
   /// would hide the one component that needs looking at. It is never rethrown, because a probe that
   /// throws is a probe that does not answer, which is the failure being fixed.
+  /// The source is asked on a thread-pool thread, not the caller's: a source can block before it
+  /// returns a task (a synchronous library call, or a wait on an asynchronous one), and there is no
+  /// task to bound until it returns. Asked on the caller's stack it held the whole probe there.
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Health/HealthProbeMustAlwaysAnswerTests.cs:NoSourceRunsOnTheProbesOwnStackAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Health/HealthProbeMustAlwaysAnswerTests.cs:ASourceThatBlocksBeforeItReturnsIsTimedOutAsync</tests>
   private async Task<ComponentHealth> _reportBoundedAsync(
       IWhizbangHealthSource source, CancellationToken cancellationToken) {
     try {
-      return await source.ReportAsync(cancellationToken)
-        .AsTask()
-        .WaitAsync(_options.SourceTimeout, cancellationToken)
+      return await Task.Run(() => source.ReportAsync(cancellationToken).AsTask(), cancellationToken)
+        .WaitAsync(_options.SourceTimeout, _timeProvider, cancellationToken)
         .ConfigureAwait(false);
     } catch (TimeoutException) {
       return new ComponentHealth(
