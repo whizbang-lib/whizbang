@@ -137,6 +137,51 @@ Describe 'Get-ReviewChecks.ps1' {
   }
 }
 
+Describe 'Get-ReviewChecks.ps1 reads every file the diff shows (#1799)' {
+  BeforeAll {
+    $script:Repo2 = Join-Path $TestDrive 'repo2'
+    New-Item -ItemType Directory -Path (Join-Path $Repo2 'src' 'Lib') -Force | Out-Null
+    Invoke-Git $Repo2 @('init', '-q', '-b', 'develop')
+    $carried = "// surviving carry-forward $([char]0x2014) a small, bounded distortion"
+    Set-Content (Join-Path $Repo2 'src' 'Lib' 'Closer.cs') @($carried, 'int a;', 'int b;', 'int c;', 'int d;', 'int e;')
+    Invoke-Git $Repo2 @('add', '-A')
+    Invoke-Git $Repo2 @('commit', '-q', '-s', '-m', 'base')
+    $script:Base2 = (Invoke-Git $Repo2 @('rev-parse', 'HEAD')).Trim()
+
+    # Moved and mostly rewritten: under git's 50% rename threshold, so the diff shows a deleted file and a
+    # new one. The carried line is not the pull request's; the new dash is.
+    Remove-Item (Join-Path $Repo2 'src' 'Lib' 'Closer.cs')
+    Set-Content (Join-Path $Repo2 'src' 'Lib' 'Truncator.cs') @($carried, 'long v;', 'long w;', 'long x;', 'long y;',
+      "// a new line $([char]0x2014) with a new dash")
+    # A path git quotes by default (core.quotePath): its added lines are checked like any other.
+    Set-Content -LiteralPath (Join-Path $Repo2 'src' 'Lib' "Caf$([char]0x00E9).cs") '// colour'
+    Invoke-Git $Repo2 @('add', '-A')
+    Invoke-Git $Repo2 @('commit', '-q', '-s', '-m', 'feat: move the closer')
+    $script:Head2 = (Invoke-Git $Repo2 @('rev-parse', 'HEAD')).Trim()
+
+    Set-Content (Join-Path $TestDrive 'body2.md') 'Fixes #12'
+    $script:Out2 = Join-Path $TestDrive 'comment2.md'
+    Push-Location $Repo2
+    try {
+      & pwsh -NoProfile -File $Script -Base $Base2 -Head $Head2 -BaseRef develop -HeadRef feat/x -PullRequest 8 `
+        -BodyFile (Join-Path $TestDrive 'body2.md') -ClosingIssueCount 1 -RunUrl 'https://example/run' `
+        -IgnoreFile (Join-Path $TestDrive 'no-ignore.txt') -OutFile $Out2
+      $script:Exit2 = $LASTEXITCODE
+    } finally { Pop-Location }
+    $script:Ids2 = @(@(ConvertFrom-ReviewBlock -Text (Get-Content $Out2 -Raw))[0].Findings | ForEach-Object Id)
+  }
+
+  It 'checks the added lines of a file whose path git would quote' {
+    $Exit2 | Should -Be 0
+    $Ids2 | Should -Contain "style.en-us:src/Lib/Caf$([char]0x00E9).cs:1"
+  }
+
+  It 'flags the line a moved file adds, and not the line it carried over' {
+    $Ids2 | Should -Contain 'style.em-dash:src/Lib/Truncator.cs:6'
+    $Ids2 | Should -Not -Contain 'style.em-dash:src/Lib/Truncator.cs:1'
+  }
+}
+
 Describe 'the Gate · Review checks job in ci.yml' {
   BeforeAll {
     $ci = Get-Content -Raw (Join-Path $Root '.github' 'workflows' 'ci.yml')
