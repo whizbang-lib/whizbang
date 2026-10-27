@@ -201,7 +201,7 @@ public class RecentlyProcessedEventCacheTests {
     var observed = new List<int>();
     cache.OnCapacityExceeded += observed.Add;
 
-    cache.MarkProcessed(Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()).ToArray());
+    cache.MarkProcessed(Enumerable.Range(0, 5).Select(_ => (Guid)TrackedGuid.New()));
 
     await Assert.That(observed).IsEquivalentTo([5]);
     await Assert.That(cache.Count).IsEqualTo(3)
