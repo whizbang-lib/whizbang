@@ -95,8 +95,9 @@ public sealed class SearchService : IDisposable {
     var parser = new MultiFieldQueryParser(
       APP_LUCENE_VERSION,
       ["title", "category", "content"],
-      analyzer);
-    parser.DefaultOperator = Operator.OR;
+      analyzer) {
+      DefaultOperator = Operator.OR
+    };
 
     Query parsedQuery;
     try {
@@ -127,8 +128,9 @@ public sealed class SearchService : IDisposable {
 
       // Prefix match
       foreach (var field in new[] { "title", "category", "content" }) {
-        var prefixQuery = new PrefixQuery(new Term(field, lowerTerm));
-        prefixQuery.Boost = 0.5f;
+        var prefixQuery = new PrefixQuery(new Term(field, lowerTerm)) {
+          Boost = 0.5f
+        };
         booleanQuery.Add(prefixQuery, Occur.SHOULD);
       }
     }
