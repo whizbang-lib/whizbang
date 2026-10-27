@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Threading.Channels;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
@@ -86,6 +87,9 @@ public class HealthProbeMustAlwaysAnswerTests {
       clock, new HangingSource("transport"), new FastSource("schema", ComponentState.Operational));
 
     var evaluation = aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None).AsTask();
+    // The healthy source answers on a thread of its own. Advancing the clock before its answer is taken would time it
+    // out too, which is a test that raced, not a source that hung; so wait until only the hanging source is waiting.
+    await clock.AnswersTakenAsync(stillWaiting: 1);
     clock.Advance(_sourceTimeout);
     var result = await evaluation;
 
@@ -145,8 +149,10 @@ public class HealthProbeMustAlwaysAnswerTests {
 
     try {
       var evaluation = aggregator.EvaluateAsync(HealthProbe.Readiness, CancellationToken.None).AsTask();
-      // The source is now blocked inside ReportAsync, with no task returned for the deadline to bound.
+      // The source is now blocked inside ReportAsync, with no task returned for the deadline to bound, and the healthy
+      // source's answer is taken before the clock moves.
       await blocking.Entered;
+      await clock.AnswersTakenAsync(stillWaiting: 1);
       clock.Advance(_sourceTimeout);
       var result = await evaluation;
 
@@ -165,15 +171,58 @@ public class HealthProbeMustAlwaysAnswerTests {
       sources, new WhizbangHealthOptions { SourceTimeout = _sourceTimeout },
       Whizbang.Core.Startup.NullStartupStageReporter.Instance, clock);
 
-  /// <summary>A fake clock that counts the deadlines armed on it.</summary>
+  /// <summary>
+  /// A fake clock that counts the deadlines armed on it and the deadlines disarmed. The aggregator's wait disarms a
+  /// source's deadline as soon as that source's answer is taken, and a source that had already answered when its wait
+  /// began never arms one; so once every deadline but those of the sources still waiting is disarmed, every answer
+  /// there is has been taken.
+  /// </summary>
   private sealed class DeadlineClock() : FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)) {
+    private readonly Channel<bool> _disarmedSignal = Channel.CreateUnbounded<bool>();
     private int _armed;
+    private int _disarmed;
 
     public int ArmedDeadlines => Volatile.Read(ref _armed);
 
+    /// <summary>
+    /// Completes once every deadline armed so far is disarmed except <paramref name="stillWaiting"/>. Call it after the
+    /// evaluation has started, when every deadline it arms is armed.
+    /// </summary>
+    public async Task AnswersTakenAsync(int stillWaiting) {
+      var answered = ArmedDeadlines - stillWaiting;
+      while (Volatile.Read(ref _disarmed) < answered) {
+        _ = await _disarmedSignal.Reader.ReadAsync();
+      }
+    }
+
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
       Interlocked.Increment(ref _armed);
-      return base.CreateTimer(callback, state, dueTime, period);
+      return new Deadline(base.CreateTimer(callback, state, dueTime, period), this);
+    }
+
+    private void _onDisarmed() {
+      Interlocked.Increment(ref _disarmed);
+      _disarmedSignal.Writer.TryWrite(true);
+    }
+
+    private sealed class Deadline(ITimer timer, DeadlineClock clock) : ITimer {
+      private int _disposed;
+
+      public bool Change(TimeSpan dueTime, TimeSpan period) => timer.Change(dueTime, period);
+
+      // The wait may dispose a deadline twice (once when the answer arrives, once more if it arrived while the wait
+      // was still being set up); it is disarmed once.
+      public void Dispose() {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0) {
+          timer.Dispose();
+          clock._onDisarmed();
+        }
+      }
+
+      public ValueTask DisposeAsync() {
+        Dispose();
+        return ValueTask.CompletedTask;
+      }
     }
   }
 
