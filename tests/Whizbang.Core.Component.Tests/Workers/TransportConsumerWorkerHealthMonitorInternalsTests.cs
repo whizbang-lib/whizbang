@@ -129,8 +129,10 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
   private sealed class MonitorSubscription : ISubscription {
     public bool IsActive => true;
 
-    // This double never disconnects, so a handler the retry helper attaches has nothing to observe.
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected { add { } remove { } }
+    // This double never disconnects, so the event is never raised.
+#pragma warning disable CS0067 // Event is never used
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
 
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;

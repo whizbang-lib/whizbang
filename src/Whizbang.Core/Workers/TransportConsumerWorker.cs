@@ -213,7 +213,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Initialize state for each destination
     foreach (var destination in _options.Destinations) {
-      _states[destination] = new SubscriptionState(destination);
+      _states[destination] = new SubscriptionState(destination) { StatusChanged = _raiseSubscriptionStatusChanged };
     }
 
     // Register recovery handler if transport supports it
@@ -226,6 +226,61 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Gets the current subscription states for health monitoring.
   /// </summary>
   public IReadOnlyDictionary<TransportDestination, SubscriptionState> SubscriptionStates => _states;
+
+  /// <summary>
+  /// Raised each time a destination's subscription status changes value: <see cref="SubscriptionStatus.Pending"/>
+  /// to <see cref="SubscriptionStatus.Healthy"/> on a successful subscribe, to <see cref="SubscriptionStatus.Recovering"/>
+  /// on a failed attempt or a disconnect, to <see cref="SubscriptionStatus.Failed"/> when retries are exhausted, and
+  /// back to <see cref="SubscriptionStatus.Pending"/> when the health monitor or a connection recovery retries it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use it to monitor subscriptions as they change (alerting, metrics, a readiness gate per destination), or to wait
+  /// on the exact transition a test asserts. <see cref="SubscriptionsReady"/> says the initial subscription pass is
+  /// over; this says what each destination's status became, including every later change.
+  /// </para>
+  /// <para>
+  /// The event is raised synchronously on the thread that changed the status, after the status and the fields that
+  /// accompany it (<see cref="SubscriptionState.LastError"/>, <see cref="SubscriptionState.AttemptCount"/>,
+  /// <see cref="SubscriptionState.Subscription"/>) are recorded, so a handler that reads
+  /// <see cref="SubscriptionStatusChangedEventArgs.State"/> sees them. Writing a status a state already has raises
+  /// nothing. Keep handlers short and hand longer work off: the subscribe and retry path waits for them.
+  /// </para>
+  /// <para>
+  /// A handler that throws is logged as a warning naming the destination and the status, and neither the
+  /// subscription nor the other handlers are affected. With no handler attached the cost is one null check per
+  /// status change.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/transport-consumer#subscription-status-changes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_EveryDestinationSubscribes_RaisedPendingToHealthyAfterTheStateIsRecordedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_SubscribeKeepsFailing_RaisedRecoveringThenFailedWithTheErrorRecordedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerThrows_IsLoggedAndLaterHandlersAndTheSubscriptionAreUnaffectedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_NoHandlerAttached_StatusStillChangesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerDetached_NoLongerRaisedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_SubscriptionDisconnects_RaisedRecoveringWithTheDisconnectErrorThenHealthyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_ConnectionRecovered_RaisedPendingWithAResetStateThenHealthyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HealthMonitorRetriesAFailedSubscription_RaisedPendingWithAResetCounterThenHealthyAsync</tests>
+  public event EventHandler<SubscriptionStatusChangedEventArgs>? SubscriptionStatusChanged;
+
+  /// <summary>
+  /// Turns one state's status change into <see cref="SubscriptionStatusChanged"/>, each handler isolated so a throwing
+  /// one is logged and cannot reach the subscribe and retry path that changed the status.
+  /// </summary>
+  private void _raiseSubscriptionStatusChanged(SubscriptionState state, SubscriptionStatus previousStatus, SubscriptionStatus status) {
+    var handlers = SubscriptionStatusChanged;
+    if (handlers is null) {
+      return;
+    }
+    var args = new SubscriptionStatusChangedEventArgs(state, previousStatus, status);
+    foreach (var handler in Delegate.EnumerateInvocationList(handlers)) {
+      try {
+        handler(this, args);
+      } catch (Exception ex) {
+        LogSubscriptionStatusHandlerFailed(_logger, ex, state.Destination.Address, args.Status);
+      }
+    }
+  }
 
   /// <summary>
   /// Executes the worker, creating subscriptions for all configured destinations.
@@ -432,11 +487,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _logger.LogInformation("Connection recovered, re-establishing subscriptions...");
 
     // Reset all states to Pending
+    // The status is written last, so an observer of the change to Pending reads the reset state.
     foreach (var state in _states.Values) {
       state.Subscription?.Dispose();
       state.Subscription = null;
-      state.Status = SubscriptionStatus.Pending;
       state.ResetAttempts();
+      state.Status = SubscriptionStatus.Pending;
     }
 
     // Re-subscribe to all destinations
@@ -467,9 +523,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
           }
 
           foreach (var state in failedStates) {
-            // Reset and retry in background
-            state.Status = SubscriptionStatus.Pending;
+            // Reset and retry in background. The status is written last, so an observer of the
+            // change to Pending reads the reset counter.
             state.ResetAttempts();
+            state.Status = SubscriptionStatus.Pending;
             _ = _subscribeWithRetryAsync(state, cancellationToken);
           }
         }
@@ -1323,6 +1380,15 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         TimestampKind.DeliveredAt,
         DateTimeOffset.UtcNow);
   }
+
+  /// <summary>Logs that a <see cref="SubscriptionStatusChanged"/> handler threw; the subscription is unaffected.</summary>
+  /// <docs>messaging/transports/transport-consumer#subscription-status-changes</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionStatusChanged_HandlerThrows_IsLoggedAndLaterHandlersAndTheSubscriptionAreUnaffectedAsync</tests>
+  [LoggerMessage(
+    Level = LogLevel.Warning,
+    Message = "A SubscriptionStatusChanged handler threw for destination {Address} changing to {Status}; the subscription is unaffected"
+  )]
+  private static partial void LogSubscriptionStatusHandlerFailed(ILogger logger, Exception exception, string address, SubscriptionStatus status);
 
   /// <summary>Logs that an owned event was discarded (owned events arriving from transport are always echo).</summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>

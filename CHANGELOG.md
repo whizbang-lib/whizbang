@@ -336,6 +336,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The perspective worker's cooldown cache reports when it goes over its cap (#1828).** `RecentlyProcessedEventCache.OnCapacityExceeded` (`Action<int>`, the resident count) is raised when an insert takes
   the cache past `MaxEntries`, before it evicts. Each raise is followed by evicting entries still inside their TTL, so
   a steady stream of raises means `MaxEntries` is too small for the drain. It costs nothing below the cap.
+- **Subscription status changes are an event (#1830).** `TransportConsumerWorker.SubscriptionStatusChanged` is
+  raised each time a destination's subscription status changes value (to Healthy, Recovering, Failed, or back to
+  Pending on a retry), with the previous and new status and the destination's live state, after the fields that
+  accompany the status (last error, attempt count, subscription) are recorded. Use it for alerting, metrics or a
+  per-destination readiness gate, or to wait in a test on the exact transition asserted. A throwing handler is logged
+  as a warning and affects neither the subscription nor the other handlers; with no handler attached a change costs
+  one null check. The worker tests that read a subscription state after waiting on a subscribe call now wait on this
+  event, which removes a race that failed a CI run.
 - **Every runtime parse of a message can be counted (#1691, part of #1526).** `MessageParseDiagnostics` is a
   public, AOT-safe seam through which each parse of a stored or received message on the outbox, inbox, transport
   receive, offload, event store, lifecycle, multi-stream and redelivery paths reports its message id, source, kind
