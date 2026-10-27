@@ -180,7 +180,7 @@ public class SeedMutationsTests {
 
     foreach (var command in dispatcher.SentCommands.Cast<CreateProductCommand>()) {
       // Verify all required fields are populated
-      await Assert.That(command.ProductId).IsNotEqualTo(default(ProductId));
+      await Assert.That(command.ProductId).IsNotEqualTo(default);
       await Assert.That(command.Name).IsNotNull();
       await Assert.That(command.Name).IsNotEmpty();
       await Assert.That(command.Description).IsNotNull();
