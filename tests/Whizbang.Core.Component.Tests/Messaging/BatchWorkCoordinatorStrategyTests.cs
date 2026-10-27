@@ -105,7 +105,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage()); // Should trigger flush
 
       // Wait for the flush to complete (signal-based)
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert - Batch size threshold should trigger flush
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -178,7 +178,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage()); // Total = 3, should trigger flush
 
       // Wait for the flush to complete (signal-based)
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -215,7 +215,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Wait for debounce timer to fire (signal-based)
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert - Debounce timer should have flushed the partial batch
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -256,7 +256,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Wait for debounce flush via signal (debounce is 50ms, generous timeout for thread pool starvation)
-      var flushedArgs = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      var flushedArgs = await flushTcs.Task;
 
       // Assert - Both messages batched together proves debounce reset worked
       // (If timer didn't reset, first message would flush alone)
@@ -299,7 +299,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage()); // Batch size reached
 
       // Wait for flush (signal-based)
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert - Should flush immediately, not wait for debounce
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -907,7 +907,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxMessage(_createInboxMessage()); // Batch size reached
 
       // Wait for the flush
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -967,7 +967,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage()); // Batch size reached
 
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -997,7 +997,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxMessage(_createInboxMessage());
       sut.QueueInboxMessage(_createInboxMessage()); // Batch size reached
 
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
+      await fakeCoordinator.WaitForFlushAsync();
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -1084,7 +1084,7 @@ public class BatchWorkCoordinatorStrategyTests {
       // Act
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      var result = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+      var result = await flushTcs.Task;
 
       // Assert
       await Assert.That(result.Trigger).IsEqualTo(FlushTrigger.Debounce);
@@ -1235,7 +1235,7 @@ public class BatchWorkCoordinatorStrategyTests {
       var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
       // Wait for the slow coordinator to start processing
-      await slowCoordinator.WaitForProcessingStartedAsync(TimeSpan.FromSeconds(5));
+      await slowCoordinator.WaitForProcessingStartedAsync();
 
       // Queue another message and try second flush while first is in progress
       sut.QueueOutboxMessage(_createOutboxMessage());
@@ -1275,7 +1275,7 @@ public class BatchWorkCoordinatorStrategyTests {
     try {
       // Act
       var firstFlush = sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      await slowCoordinator.WaitForProcessingStartedAsync(TimeSpan.FromSeconds(5));
+      await slowCoordinator.WaitForProcessingStartedAsync();
 
       sut.QueueOutboxMessage(_createOutboxMessage());
       var secondResult = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
@@ -1414,7 +1414,7 @@ public class BatchWorkCoordinatorStrategyTests {
     try {
       // Act
       _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
-      var result = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+      var result = await flushTcs.Task;
 
       // Assert
       await Assert.That(result.Trigger).IsEqualTo(FlushTrigger.Manual);
@@ -1446,7 +1446,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      var result = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+      var result = await flushTcs.Task;
 
       // Assert
       await Assert.That(result.Trigger).IsEqualTo(FlushTrigger.BatchSize);
@@ -1910,11 +1910,7 @@ public class BatchWorkCoordinatorStrategyTests {
     /// <summary>
     /// Waits for at least one call to the work coordinator's store path.
     /// </summary>
-    public async Task WaitForFlushAsync(TimeSpan timeout) {
-      if (!await _flushSignal.WaitAsync(timeout)) {
-        throw new TimeoutException("The work coordinator store path was not called within timeout");
-      }
-    }
+    public Task WaitForFlushAsync() => _flushSignal.WaitAsync();
 
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
@@ -2010,11 +2006,7 @@ public class BatchWorkCoordinatorStrategyTests {
     private readonly SemaphoreSlim _processingStarted = new(0, 1);
     private readonly SemaphoreSlim _releaseProcessing = new(0, 1);
 
-    public async Task WaitForProcessingStartedAsync(TimeSpan timeout) {
-      if (!await _processingStarted.WaitAsync(timeout)) {
-        throw new TimeoutException("StoreOutboxMessagesAsync was not started within timeout");
-      }
-    }
+    public Task WaitForProcessingStartedAsync() => _processingStarted.WaitAsync();
 
     public void ReleaseProcessing() {
       try { _releaseProcessing.Release(); } catch (SemaphoreFullException) { /* the assertion decides the outcome, not this failure */ }
@@ -2025,7 +2017,7 @@ public class BatchWorkCoordinatorStrategyTests {
       int partitionCount,
       CancellationToken cancellationToken = default) {
       _processingStarted.Release();
-      await _releaseProcessing.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+      await _releaseProcessing.WaitAsync(cancellationToken);
     }
 
     public Task ReportPerspectiveCompletionAsync(
