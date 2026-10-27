@@ -231,4 +231,81 @@ public class PostgresCapabilityProbeTests {
 
     await Assert.That(state).IsEqualTo(PostgresExtensionState.Available);
   }
+
+  // ---- logical WAL (pg_squeeze, #1751) ----
+
+  private static readonly PostgresExtensionInfo _squeeze = new(
+    "pg_squeeze", "online table rewrite", ["Online table rewrite"], LibraryMayCreate: true,
+    PostgresExtensionPrerequisites.Allowlist | PostgresExtensionPrerequisites.SharedPreloadLibraries
+      | PostgresExtensionPrerequisites.LogicalWalLevel);
+
+  /// <summary>pg_squeeze preloaded on a Postgres 17 server whose WAL level is <paramref name="walLevel"/>.</summary>
+  private static PostgresExtensionProbeRow _squeezeRow(string? walLevel, string? installed = null) =>
+    _row("pg_squeeze") with {
+      InstalledVersion = installed,
+      SharedPreloadLibraries = "pg_squeeze",
+      WalLevel = walLevel,
+      ServerVersionNum = 170_004,
+    };
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("1.9")]
+  public async Task NeedsLogicalWalLevel_WhenPreloadedButTheWalLevelIsReplicaAsync(string? installed) {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze, _squeezeRow("replica", installed));
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.NeedsLogicalWalLevel)
+      .Because("pg_squeeze decodes the table's changes from the WAL, which a replica WAL level does not carry");
+  }
+
+  [Test]
+  public async Task LogicalWalLevel_Installed_IsInstalledAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze, _squeezeRow("logical", installed: "1.9"));
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.Installed);
+  }
+
+  [Test]
+  public async Task LogicalWalLevel_NotInstalled_IsAvailableAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze, _squeezeRow("logical"));
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.Available);
+  }
+
+  [Test]
+  public async Task ReplicaWalLevel_OnPostgres19_IsEnoughAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze,
+      _squeezeRow("replica", installed: "1.9") with { ServerVersionNum = 190_000 });
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.Installed)
+      .Because("from Postgres 19 logical decoding is enabled on demand, and pg_squeeze asks for wal_level = logical only below 19");
+  }
+
+  [Test]
+  public async Task UnreadWalLevel_IsUnknown_ForAnExtensionThatNeedsItAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze, _squeezeRow(walLevel: null, installed: "1.9"));
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.Unknown);
+  }
+
+  [Test]
+  public async Task WalLevel_IsNotConsulted_ForAnExtensionThatDoesNotNeedItAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_plain, _row("pg_trgm") with { InstalledVersion = "1.6", WalLevel = "minimal" });
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.Installed);
+  }
+
+  [Test]
+  public async Task MissingPreload_IsReportedBeforeTheWalLevelAsync() {
+    var state = PostgresCapabilityProbe.DeriveState(_squeeze, _squeezeRow("replica", installed: "1.9") with { SharedPreloadLibraries = "" });
+
+    await Assert.That(state).IsEqualTo(PostgresExtensionState.NeedsPreload)
+      .Because("the preload fix names the restart that a WAL level change also needs, so it comes first");
+  }
+
+  [Test]
+  public async Task NeedsLogicalWalLevel_IsAServerChangeAsync() {
+    await Assert.That(PostgresCapabilityProbe.ToCapabilityState(PostgresExtensionState.NeedsLogicalWalLevel))
+      .IsEqualTo(Whizbang.Core.Capabilities.CapabilityState.NeedsServerChange);
+  }
 }

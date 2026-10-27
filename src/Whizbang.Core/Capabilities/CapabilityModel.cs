@@ -69,6 +69,12 @@ public sealed record CapabilityDescriptor(
   bool Provisionable,
   IReadOnlyList<string> Prerequisites,
   IReadOnlyDictionary<CapabilityState, string> Remedies) {
+  /// <summary>Fixes keyed by a provider detail.</summary>
+  public IReadOnlyDictionary<string, string> DetailRemedies { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+  /// <summary>Stub.</summary>
+  public string Remedy(CapabilityState state, string? detail) => Remedy(state);
+
   /// <summary>What an operator does about this capability in <paramref name="state"/>.</summary>
   /// <param name="state">Its state in some scope.</param>
   /// <returns><c>none</c> for a usable state; otherwise the provider's fix, or a generic one.</returns>

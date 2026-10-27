@@ -1216,6 +1216,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return scalar is decimal d ? (double)d : null;
   }
 
+  /// <summary>Stub.</summary>
+  internal Func<Whizbang.Data.Postgres.PgSqueezePrerequisiteFacts, string, string?> SqueezePrerequisitesUnmet { get; set; } =
+    Whizbang.Data.Postgres.PgSqueezePrerequisites.Unmet;
+
+  /// <inheritdoc />
+  public Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
   /// <summary>How long one work-table <c>VACUUM ANALYZE</c> may run before the vacuum gives up on it.</summary>
   private const int WORK_TABLE_VACUUM_TIMEOUT_SECONDS = 120;
 

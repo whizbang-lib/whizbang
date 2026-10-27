@@ -1595,6 +1595,10 @@ public interface IWorkCoordinator {
       string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
+  /// <summary>Stub.</summary>
+  Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -4054,7 +4058,10 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="TableName">Unqualified table name.</param>
 /// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
-public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);
+public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
+  /// <summary>Stub.</summary>
+  public long SizeBytes { get; init; }
+}
 
 /// <summary>What vacuuming one work table did (#1351).</summary>
 /// <param name="TableName">Unqualified table name.</param>

@@ -40,6 +40,37 @@ public class CapabilityDescriptorTests {
     await Assert.That(descriptor.Remedy(CapabilityState.NotPermitted)).IsEqualTo("enable the plugin in the broker's allowlist");
   }
 
+  private static CapabilityDescriptor _withDetailRemedy() =>
+    _withRemedy(CapabilityState.NeedsServerChange, "enable the plugin, then restart the broker") with {
+      DetailRemedies = new Dictionary<string, string>(StringComparer.Ordinal) {
+        ["NeedsFeatureFlag"] = "turn the feature flag on; no restart is needed",
+      },
+    };
+
+  [Test]
+  public async Task Remedy_WithADetailThatHasItsOwnFix_UsesThatFixAsync() {
+    await Assert.That(_withDetailRemedy().Remedy(CapabilityState.NeedsServerChange, "NeedsFeatureFlag"))
+      .IsEqualTo("turn the feature flag on; no restart is needed");
+  }
+
+  [Test]
+  [Arguments("NeedsPluginEnabled")]
+  [Arguments(null)]
+  public async Task Remedy_WithADetailWithoutAFixOfItsOwn_UsesTheStatesFixAsync(string? detail) {
+    await Assert.That(_withDetailRemedy().Remedy(CapabilityState.NeedsServerChange, detail))
+      .IsEqualTo("enable the plugin, then restart the broker");
+  }
+
+  [Test]
+  public async Task Remedy_AUsableState_NeedsNothing_WhateverTheDetailAsync() {
+    await Assert.That(_withDetailRemedy().Remedy(CapabilityState.Ready, "NeedsFeatureFlag")).IsEqualTo("none");
+  }
+
+  [Test]
+  public async Task DetailRemedies_DefaultToNoneAsync() {
+    await Assert.That(FakeCapabilityProvider.Describe("broker", "delayed_exchange").DetailRemedies.Count).IsEqualTo(0);
+  }
+
   [Test]
   [Arguments(CapabilityState.NotPermitted, "permit")]
   [Arguments(CapabilityState.NeedsServerChange, "server")]

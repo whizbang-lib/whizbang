@@ -134,15 +134,22 @@ public class TableRewriteStrategyTests {
 
   private static async Task<CapabilityVerdict> _verdictAsync(
       PostgresExtensionState squeeze, IReadOnlyDictionary<string, string?> settings) {
+    var registry = await _registryAsync(squeeze, settings);
+    return registry.Verdict;
+  }
+
+  private static async Task<CapabilityRegistry> _registryAsync(
+      PostgresExtensionState squeeze, IReadOnlyDictionary<string, string?> settings) {
     var descriptor = PostgresExtensionCatalog.Describe(PostgresExtensionCatalog.BuiltIn.Single(e => e.Name == "pg_squeeze"));
     var provider = new FakeCapabilityProvider("postgres", ["orders"], descriptor);
     provider.States["pg_squeeze"] = PostgresCapabilityProbe.ToCapabilityState(squeeze);
+    provider.Details["pg_squeeze"] = squeeze.ToString();
     var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
     var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
     var step = new CapabilitiesStartupStep(registry, Options.Create(new CapabilityOptions()),
       [new LibraryRequirements()], [], configuration, NullLogger<CapabilitiesStartupStep>.Instance);
     await step.ExecuteAsync(CancellationToken.None);
-    return registry.Verdict;
+    return registry;
   }
 
   private static readonly Dictionary<string, string?> _pgSqueeze = new() {
@@ -177,5 +184,24 @@ public class TableRewriteStrategyTests {
 
     await Assert.That(verdict.Entries).IsEmpty();
     await Assert.That(autoSet.Entries).IsEmpty();
+  }
+
+  [Test]
+  public async Task ExplicitPgSqueeze_OnAServerWithoutLogicalWal_FailsStartWithTheWalLevelFixAsync() {
+    var verdict = await _verdictAsync(PostgresExtensionState.NeedsLogicalWalLevel, _pgSqueeze);
+
+    await Assert.That(verdict.Failures.Single().Line).IsEqualTo(
+      "capability postgres/pg_squeeze on 'orders': NeedsServerChange, 1.0; NeedsLogicalWalLevel. Fix: set wal_level = logical "
+      + "(and max_replication_slots to at least one more than the slots in use), then restart the server. "
+      + "Required by: Online table rewrite (Whizbang:Workers:Maintenance:TableRewriteStrategy = PgSqueeze, explicit)");
+  }
+
+  [Test]
+  public async Task TheStartupReport_GivesTheWalLevelFix_ForAnUnusablePgSqueezeAsync() {
+    var registry = await _registryAsync(PostgresExtensionState.NeedsLogicalWalLevel, new Dictionary<string, string?>());
+
+    var report = CapabilityReport.FormatUnusable(registry.Statuses);
+
+    await Assert.That(report).Contains("Fix: set wal_level = logical");
   }
 }

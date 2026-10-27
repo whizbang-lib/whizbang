@@ -140,4 +140,29 @@ public class PostgresExtensionCatalogTests {
 
     await Assert.That(remedy).Contains("probe");
   }
+
+  [Test]
+  public async Task Remedy_NeedsLogicalWalLevel_NamesTheSettingAndTheRestartAsync() {
+    var remedy = PostgresExtensionCatalog.Remedy(_entry("pg_squeeze"), PostgresExtensionState.NeedsLogicalWalLevel);
+
+    await Assert.That(remedy).IsEqualTo("set wal_level = logical (and max_replication_slots to at least one more than the slots in use), then restart the server");
+  }
+
+  [Test]
+  public async Task Describe_AnExtensionThatNeedsLogicalWal_CarriesTheWalLevelFixForThatDetailAsync() {
+    var descriptor = PostgresExtensionCatalog.Describe(_entry("pg_squeeze"));
+
+    await Assert.That(descriptor.Remedy(Whizbang.Core.Capabilities.CapabilityState.NeedsServerChange, nameof(PostgresExtensionState.NeedsLogicalWalLevel)))
+      .StartsWith("set wal_level = logical");
+    await Assert.That(descriptor.Remedy(Whizbang.Core.Capabilities.CapabilityState.NeedsServerChange, nameof(PostgresExtensionState.NeedsPreload)))
+      .IsEqualTo("add pg_squeeze to shared_preload_libraries, then restart the server")
+      .Because("the same generic state keeps the preload fix when the preload is what is missing");
+  }
+
+  [Test]
+  public async Task Describe_AnExtensionThatDoesNotNeedLogicalWal_HasNoDetailFixesAsync() {
+    var descriptor = PostgresExtensionCatalog.Describe(_entry("pg_trgm"));
+
+    await Assert.That(descriptor.DetailRemedies.Count).IsEqualTo(0);
+  }
 }

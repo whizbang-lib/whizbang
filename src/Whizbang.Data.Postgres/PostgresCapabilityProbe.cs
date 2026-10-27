@@ -38,6 +38,12 @@ public readonly record struct PostgresExtensionProbeRow(
   /// (<c>pg_available_extensions.default_version</c>), or null when the server has no files for it.
   /// </summary>
   public string? DefaultVersion { get; init; }
+
+  /// <summary>The server's <c>wal_level</c> (<c>minimal</c>, <c>replica</c> or <c>logical</c>), or null when not read.</summary>
+  public string? WalLevel { get; init; }
+
+  /// <summary>The server's <c>server_version_num</c>, for example <c>170004</c>, or 0 when not read.</summary>
+  public int ServerVersionNum { get; init; }
 }
 
 /// <summary>

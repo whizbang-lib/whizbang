@@ -1142,6 +1142,9 @@ public sealed class MaintenanceWorkerOptions {
   /// <docs>operations/infrastructure/storage-maintenance#table-rewrite-strategy</docs>
   public TableRewriteStrategy TableRewriteStrategy { get; set; } = TableRewriteStrategy.Auto;
 
+  /// <summary>Stub.</summary>
+  public long OnlineRewriteMaxBytesPerCycle { get; set; }
+
   /// <summary>
   /// Settings of the individual rewrite strategies (<c>Whizbang:Workers:Maintenance:TableRewrite</c>): today, how
   /// <see cref="Workers.TableRewriteStrategy.PgRepack"/> runs.
