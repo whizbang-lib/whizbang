@@ -489,8 +489,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Reset all states to Pending
     // The status is written last, so an observer of the change to Pending reads the reset state.
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
-      state.Subscription = null;
+      // Taken atomically, so a reconnect racing this recovery for the same subscription cannot dispose it again (#1839).
+      state.ReleaseSubscription()?.Dispose();
       state.ResetAttempts();
       state.Status = SubscriptionStatus.Pending;
     }
@@ -1350,7 +1350,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
-      state.Subscription?.Dispose();
+      state.ReleaseSubscription()?.Dispose();
     }
 
     _states.Clear();

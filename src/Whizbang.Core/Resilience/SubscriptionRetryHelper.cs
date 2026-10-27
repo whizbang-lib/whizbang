@@ -21,6 +21,7 @@ namespace Whizbang.Core.Resilience;
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionDisconnects_ReconnectDisposesTheReplacedSubscriptionAndShutdownDoesNotDisposeItAgainAsync</tests>
 public static partial class SubscriptionRetryHelper {
   /// <summary>
   /// Groups subscription retry parameters that travel together through retry and reconnection logic.
@@ -174,8 +175,12 @@ public static partial class SubscriptionRetryHelper {
       ctx.State.LastErrorTime = DateTimeOffset.UtcNow;
       ctx.State.Status = SubscriptionStatus.Recovering;
 
+      // The reconnect, not this handler, disposes the subscription it replaces: a transport raises the disconnect from
+      // its own callback (an Azure Service Bus processor's error handler, a RabbitMQ channel's shutdown), and disposing
+      // there would wait on the very callback it runs in.
       _ = Task.Run(async () => {
         try {
+          _disposeReplaced();
           await Task.Delay(ctx.Options.InitialRetryDelay, cancellationToken);
           await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
         } catch (OperationCanceledException) {
@@ -184,6 +189,27 @@ public static partial class SubscriptionRetryHelper {
           LogReconnectionFailed(ctx.Logger, ctx.Destination.Address, ex);
         }
       }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Disposes the disconnected subscription the reconnect is about to replace, exactly once (#1839).
+    /// </summary>
+    /// <remarks>
+    /// It is disposed only when it is taken from the state here: connection recovery and shutdown take it the same
+    /// atomic way, so whichever path takes it disposes it and the others leave it alone. A disposal that throws is
+    /// logged and the reconnect goes on: the old subscription is already lost, and the destination still needs one.
+    /// </remarks>
+    private void _disposeReplaced() {
+      subscription.OnDisconnected -= OnDisconnected;
+      if (!ctx.State.TryReleaseSubscription(subscription)) {
+        return;
+      }
+
+      try {
+        subscription.Dispose();
+      } catch (Exception ex) {
+        LogReplacedSubscriptionDisposeFailed(ctx.Logger, ctx.Destination.Address, ex);
+      }
     }
   }
 
@@ -285,4 +311,11 @@ public static partial class SubscriptionRetryHelper {
     Message = "Subscription to {Destination} reported a disconnect ({Reason}) after a newer subscription replaced it; nothing to recover"
   )]
   private static partial void LogReplacedSubscriptionDisconnected(ILogger logger, string destination, string reason);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Warning,
+    Message = "Disposing the replaced subscription to {Destination} failed; reconnecting anyway"
+  )]
+  private static partial void LogReplacedSubscriptionDisposeFailed(ILogger logger, string destination, Exception ex);
 }

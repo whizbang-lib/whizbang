@@ -729,6 +729,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IPerspectiveRunner.RunRekeyedRowAsync` is a new default member; routing lives in `RebuildRowRouting`. A rebuild of
   selected streams that names a target but not its sources cannot see the events re-keyed onto it; rebuild the sources
   with it.
+- **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
+  subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
+  state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure
+  Service Bus processor or a composite's child subscriptions behind, with the helper's disconnect handler still
+  attached. The reconnect now detaches the handler and disposes the old subscription, off the transport's callback,
+  before it subscribes again. A disposal that throws is logged as a warning naming the destination, and the reconnect
+  goes on. Connection recovery, shutdown and the reconnect take the subscription out of the state atomically, so
+  whichever path takes it disposes it and it is never disposed twice.
 - **A transport disconnect while a subscription is being established is no longer missed (Fixes #1831).** The
   subscription retry helper recorded a destination as Healthy and only then attached its disconnect handler, so a
   disconnect in between had no listener: the status stayed Healthy and no reconnect was attempted, and the consumer
