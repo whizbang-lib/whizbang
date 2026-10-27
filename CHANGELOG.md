@@ -634,6 +634,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **`flush_completions` no longer deadlocks against another instance completing the same outbox rows (#1785).** The
+  composite flusher behind `IWorkCoordinator.FlushCompletionsAsync` completed outbox rows and later reported outbox
+  failures in the same transaction: two passes over `wh_outbox`, each in the canonical (stream_id, created_at,
+  message_id) order, which together are not one order. A flush that completed a later row and failed an earlier one
+  held the later row while it waited on the earlier, and a transaction completing both in order waited on it in turn.
+  Migration 245 redefines `flush_completions` to lock every outbox row it will write first, in one ordered pass: the
+  completed rows, the failed rows, and the rest of each failed row's run that the failure releases. It also runs its
+  steps in the canonical table order (outbox, inbox, perspective work). The signature is unchanged, so both drivers
+  call it as before. The flush workers, which send completions and failures in transactions of their own, were not
+  affected.
 - **A heartbeat no longer rolls an instance's recorded lifecycle phase back behind its startup stage (#1781).** A beat
   reads the phase when it is built and writes it when it lands, so a beat built before a startup stage or transition
   was recorded wrote the earlier phase back over it: an instance that had entered Accept commands read Migrating again
