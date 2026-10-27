@@ -94,7 +94,7 @@ Each slice is one red-then-green increment and its own commit.
    usable or not by `AllowTableRewrite`), one test per cell, including "explicit PgSqueeze plus
    NotAllowlisted fails startup" (WS-8 slice 3). Docs:
    `operations/configuration/configuration-reference.md` (Maintenance section).
-   **Status (2026-10-25):** done on branch `feat/1742-1750-rewrite-provisioning` (#1742). `TableRewriteStrategy`
+   **Status (2026-10-25):** shipped in PR #1772 (#1742). `TableRewriteStrategy`
    (`Auto`, `PgSqueeze`, `VacuumFull`, `None`; default `Auto`) on `MaintenanceWorkerOptions`, resolved each run by
    `TableRewriteStrategyResolver` against `AllowTableRewrite` and whether pg_squeeze is usable (Ready or Provisionable
    on every probed database), one test per cell. Per decision 1, `Auto` resolves to `VacuumFull` when permitted and
@@ -116,7 +116,7 @@ Each slice is one red-then-green increment and its own commit.
    (`ai-docs/ci-image-mirror.md`). Docs: new `operations/infrastructure/storage-maintenance.md`.
    Once this lands, revisit forcing one rewrite for a fillfactor change: today the request waits for
    bloat, by decision in #1594 (option 1), because the only strategy is a blocking VACUUM FULL.
-   **Status (2026-10-26):** done on branch `feat/1743-1751-online-rewrite` (#1743), except the real-server test.
+   **Status (2026-10-27):** shipped in PR #1809 (#1743), except the real-server test.
    `OnlineTableRewriteStep` (a framework `IMaintenanceStep`, so idle-gated and maintainer-only like the rest of the
    cycle) runs only with `PgSqueeze` and pg_squeeze Ready on every probed database; it takes `Requested` candidates
    largest ratio first (ties by name) within `OnlineRewriteMaxBytesPerCycle` (default 1 GiB; a table that does not fit
@@ -143,7 +143,7 @@ Each slice is one red-then-green increment and its own commit.
    probed by WS-8 slice 9, which also owns its two run modes (in process from the maintainer duty, or
    an external job reading the same queue). RED: the resolution matrix gains the PgRepack column.
    Docs: the storage-maintenance page (when to prefer it over pg_squeeze).
-   **Status (2026-10-26):** done on branch `feat/1753-1755-repack-removed-keys` with WS-8 slice 9 (#1753):
+   **Status (2026-10-27):** shipped in PR #1809 (#1744) with WS-8 slice 9 (#1753):
    `TableRewriteStrategy.PgRepack` carries `[RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite
    (pg_repack)")]` and resolves to `TableRewriteStrategies.PG_REPACK` in every cell of the matrix;
    `PgRepackTableRewriter` runs it in process, or the step reports the queue left to an external job.
