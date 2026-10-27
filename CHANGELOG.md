@@ -701,6 +701,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **A transport disconnect while a subscription is being established is no longer missed (Fixes #1831).** The
+  subscription retry helper recorded a destination as Healthy and only then attached its disconnect handler, so a
+  disconnect in between had no listener: the status stayed Healthy and no reconnect was attempted, and the consumer
+  stopped receiving from that destination until a restart. The handler is now attached before Healthy is recorded, a
+  disconnect it hears before then is acted on right after the change to Healthy (so Healthy cannot overwrite the
+  Recovering it causes), and a disconnect raised before the handler was attached is found through the new
+  `ISubscription.Disconnection` property, which the RabbitMQ, Azure Service Bus and namespace-mirroring subscriptions
+  set before they raise `OnDisconnected` (the interface's default is `null`, so other implementations still compile).
+  Only the first disconnect of a subscription starts a reconnect, and a disconnect from a subscription that a later
+  subscribe has replaced no longer knocks the current one into Recovering or starts a second consumer.
 - **A rebuild of a versioned perspective no longer refuses a stream whose events were appended out of event-id
   order (Fixes #1819).** A selected-streams rebuild folds a model marked `IVersionedApplyTarget` from an empty model
   in stream-version order, so its write carries the event id of the last event by version. When that event was minted

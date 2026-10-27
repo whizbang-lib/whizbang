@@ -28,6 +28,7 @@ public sealed class RabbitMQSubscription : ISubscription {
   private readonly TaskCompletionSource _disposalCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
   private bool _isActive = true;
   private bool _disposed;
+  private SubscriptionDisconnectedEventArgs? _disconnection;
 
   /// <inheritdoc />
   public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
@@ -81,12 +82,15 @@ public sealed class RabbitMQSubscription : ISubscription {
 
     // Fire disconnection event for non-application-initiated shutdowns
     // This allows immediate reconnection attempts
+    // Recorded before it is raised, so a handler attached after the shutdown still finds it (#1831).
     if (!isApplicationInitiated) {
-      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+      var disconnection = new SubscriptionDisconnectedEventArgs {
         Reason = reason,
         IsApplicationInitiated = false,
         Exception = args.Exception
-      });
+      };
+      Interlocked.CompareExchange(ref _disconnection, disconnection, null);
+      OnDisconnected?.Invoke(this, disconnection);
     }
 
     return Task.CompletedTask;
@@ -94,6 +98,11 @@ public sealed class RabbitMQSubscription : ISubscription {
 
   /// <inheritdoc />
   public bool IsActive => _isActive && !_disposed;
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:Disconnection_AfterAnUnexpectedChannelShutdown_HoldsTheRaisedDisconnectAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:Disconnection_AfterAnApplicationInitiatedShutdown_IsNullAsync</tests>
+  public SubscriptionDisconnectedEventArgs? Disconnection => Volatile.Read(ref _disconnection);
 
   /// <inheritdoc />
   public Task PauseAsync() {
