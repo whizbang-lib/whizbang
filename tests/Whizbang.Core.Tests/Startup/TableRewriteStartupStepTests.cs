@@ -251,6 +251,27 @@ public class TableRewriteStartupStepTests {
   }
 
   [Test]
+  public async Task PgRepackInProcess_IsLeftToTheMaintenanceCycle_NotRunAtBootAsync() {
+    var coordinator = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
+    };
+    var repack = new RecordingRewriter(TableRewriteStrategies.PG_REPACK);
+    var vacuum = new RecordingRewriter(TableRewriteStrategies.VACUUM_FULL);
+
+    var report = await _stepWith(coordinator, TableRewriteStrategy.PgRepack, repack, vacuum).ExecuteAsync(CancellationToken.None);
+
+    await Assert.That(report.Outcome).IsEqualTo(StartupStepOutcome.Skipped);
+    await Assert.That(report.Reason).IsEqualTo(
+      "PgRepack: online rewrite through pg_repack; the maintenance cycle performs it, largest bloat first, up to "
+      + "Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle bytes per cycle");
+    await Assert.That(repack.Rewritten).IsEmpty()
+      .Because("pg_repack in process is budgeted per maintenance cycle like pg_squeeze, so the boot step never runs it unbounded");
+    await Assert.That(vacuum.Rewritten).IsEmpty()
+      .Because("an explicit online choice is never replaced by a blocking rewrite, though AllowTableRewrite is true");
+    await Assert.That(coordinator.Cleared).IsEmpty();
+  }
+
+  [Test]
   public async Task AStrategyWithNoRegisteredRewriter_SaysSo_AndLeavesTheQueueAsync() {
     var coordinator = new RewriteCoordinator {
       Candidates = { new TableRewriteCandidate("wh_outbox", 3.5, Requested: true) },
