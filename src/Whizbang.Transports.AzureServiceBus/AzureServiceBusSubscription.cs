@@ -25,6 +25,7 @@ public sealed class AzureServiceBusSubscription : ISubscription {
   private readonly ServiceBusSessionProcessor? _sessionProcessor;
   private readonly ILogger _logger;
   private bool _isDisposed;
+  private SubscriptionDisconnectedEventArgs? _disconnection;
 
   /// <summary>
   /// Creates a subscription wrapping a standard (non-session) processor.
@@ -71,12 +72,19 @@ public sealed class AzureServiceBusSubscription : ISubscription {
       reason
     );
 
-    OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+    // Recorded before it is raised, so a handler attached after the disconnect still finds it (#1831).
+    var disconnection = new SubscriptionDisconnectedEventArgs {
       Reason = reason,
       Exception = exception,
       IsApplicationInitiated = false
-    });
+    };
+    Interlocked.CompareExchange(ref _disconnection, disconnection, null);
+    OnDisconnected?.Invoke(this, disconnection);
   }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusSubscriptionTests.cs:Disconnection_AfterRaiseDisconnected_HoldsTheFirstRaisedDisconnectAsync</tests>
+  public SubscriptionDisconnectedEventArgs? Disconnection => Volatile.Read(ref _disconnection);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_InitialState_IsActiveAsync</tests>

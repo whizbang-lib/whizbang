@@ -20,6 +20,7 @@ namespace Whizbang.Core.Resilience;
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs</tests>
 public static partial class SubscriptionRetryHelper {
   /// <summary>
   /// Groups subscription retry parameters that travel together through retry and reconnection logic.
@@ -53,7 +54,7 @@ public static partial class SubscriptionRetryHelper {
   /// <param name="options">Resilience options.</param>
   /// <param name="logger">Logger for retry attempts.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface — changing the signature is a binary/source break for NuGet consumers; each parameter is a distinct subscription concern (transport, destination, handler, batch options, state, resilience options, logger, cancellation).")]
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface: changing the signature is a binary/source break for NuGet consumers; each parameter is a distinct subscription concern (transport, destination, handler, batch options, state, resilience options, logger, cancellation).")]
   public static async Task SubscribeWithRetryAsync(
     ITransport transport,
     TransportDestination destination,
@@ -84,12 +85,22 @@ public static partial class SubscriptionRetryHelper {
           batchOptions,
           cancellationToken
         );
+        // The handler is attached before the status is recorded, and the subscription's own record of a disconnect
+        // is read once it is attached, so a disconnect at any point after the transport created the subscription
+        // is acted on. One raised before the change to Healthy is held until that change is recorded, so Healthy
+        // can never overwrite the Recovering it causes (#1831).
         state.Subscription = subscription;
+        var watch = new DisconnectWatch(
+          subscription,
+          new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger),
+          cancellationToken);
+        subscription.OnDisconnected += watch.OnDisconnected;
+        if (subscription.Disconnection is { } missed) {
+          watch.OnDisconnected(subscription, missed);
+        }
         state.Status = SubscriptionStatus.Healthy;
-
-        var subscriptionCtx = new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger);
-        _hookDisconnectionReconnect(subscription, subscriptionCtx, cancellationToken);
         _logSubscriptionSuccess(logger, destination, attempt);
+        watch.Arm();
 
         return; // Success!
       } catch (OperationCanceledException) {
@@ -105,14 +116,54 @@ public static partial class SubscriptionRetryHelper {
   }
 
   /// <summary>
-  /// Hooks into subscription disconnection event for immediate reconnection.
+  /// Watches one subscription for its unexpected disconnect and turns the first one into Recovering and a reconnect.
   /// </summary>
-  private static void _hookDisconnectionReconnect(
-      ISubscription subscription,
-      SubscriptionContext ctx,
-      CancellationToken cancellationToken) {
-    subscription.OnDisconnected += (sender, args) => {
+  /// <remarks>
+  /// A disconnect heard before <see cref="Arm"/> is held and acted on by <see cref="Arm"/>, which the helper calls
+  /// after it records Healthy; one heard later is acted on at once. Only the first disconnect counts, and only while
+  /// the state still holds this subscription: a second report, or a report from a subscription a later subscribe has
+  /// replaced, must not start another reconnect or knock the current subscription into Recovering.
+  /// </remarks>
+  private sealed class DisconnectWatch(ISubscription subscription, SubscriptionContext ctx, CancellationToken cancellationToken) {
+    private readonly Lock _gate = new();
+    private bool _armed;
+    private bool _seen;
+    private SubscriptionDisconnectedEventArgs? _held;
+
+    public void OnDisconnected(object? sender, SubscriptionDisconnectedEventArgs args) {
       if (args.IsApplicationInitiated) {
+        return;
+      }
+
+      lock (_gate) {
+        if (_seen) {
+          return;
+        }
+        _seen = true;
+        if (!_armed) {
+          _held = args;
+          return;
+        }
+      }
+
+      _recover(args);
+    }
+
+    public void Arm() {
+      SubscriptionDisconnectedEventArgs? held;
+      lock (_gate) {
+        _armed = true;
+        held = _held;
+      }
+
+      if (held is not null) {
+        _recover(held);
+      }
+    }
+
+    private void _recover(SubscriptionDisconnectedEventArgs args) {
+      if (!ReferenceEquals(ctx.State.Subscription, subscription)) {
+        LogReplacedSubscriptionDisconnected(ctx.Logger, ctx.Destination.Address, args.Reason);
         return;
       }
 
@@ -133,7 +184,7 @@ public static partial class SubscriptionRetryHelper {
           LogReconnectionFailed(ctx.Logger, ctx.Destination.Address, ex);
         }
       }, cancellationToken);
-    };
+    }
   }
 
   /// <summary>
@@ -227,4 +278,11 @@ public static partial class SubscriptionRetryHelper {
     Message = "Failed to reconnect subscription to {Destination} after disconnection"
   )]
   private static partial void LogReconnectionFailed(ILogger logger, string destination, Exception ex);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Debug,
+    Message = "Subscription to {Destination} reported a disconnect ({Reason}) after a newer subscription replaced it; nothing to recover"
+  )]
+  private static partial void LogReplacedSubscriptionDisconnected(ILogger logger, string destination, string reason);
 }
