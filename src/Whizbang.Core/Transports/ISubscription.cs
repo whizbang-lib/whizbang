@@ -44,6 +44,29 @@ public interface ISubscription : IDisposable {
   /// Subscribers can use this to trigger immediate reconnection attempts.
   /// </summary>
   event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+
+  /// <summary>
+  /// Gets the unexpected disconnect this subscription has reported, or <see langword="null"/> while it has reported
+  /// none. Once set it stays set: a disconnected subscription is replaced, never reused.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A handler attached to <see cref="OnDisconnected"/> hears only the disconnects raised after it is attached, and a
+  /// transport can lose its connection between creating the subscription and the caller attaching its handler. A
+  /// caller that attaches a handler and then reads this property misses no disconnect: either the handler hears it or
+  /// this property already holds it, and the caller must treat the two as one disconnect.
+  /// </para>
+  /// <para>
+  /// An implementation that raises <see cref="OnDisconnected"/> records the event arguments here before it raises the
+  /// event, and only for a disconnect that is not <see cref="SubscriptionDisconnectedEventArgs.IsApplicationInitiated"/>.
+  /// The default returns <see langword="null"/>, which is right for a subscription that never disconnects.
+  /// </para>
+  /// </remarks>
+  /// <docs>messaging/transports/transports#subscription-disconnects</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_DisconnectBeforeTheHandlerIsAttached_EndsRecoveringAndReconnectsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Component.Tests/RabbitMQSubscriptionTests.cs:Disconnection_AfterAnUnexpectedChannelShutdown_HoldsTheRaisedDisconnectAsync</tests>
+  SubscriptionDisconnectedEventArgs? Disconnection => null;
+
   /// <summary>
   /// Gets whether the subscription is currently active.
   /// When paused, the subscription will not receive new messages.

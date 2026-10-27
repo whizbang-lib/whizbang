@@ -176,8 +176,8 @@ public class TransportConsumerWorkerSubscriptionStatusChangedTests {
     await worker.StartAsync(cts.Token);
     await recorder.WhenChangedToAsync(SubscriptionStatus.Healthy).WaitAsync(_guard);
 
-    // The retry helper attaches its disconnect handler after it records Healthy, so wait for the handler
-    // too: a disconnect raised before it is attached has nobody to hear it.
+    // Wait for the disconnect handler too, so this disconnect is the one the handler hears after the subscription
+    // is established (one raised before the handler is attached is covered by the next test).
     var subscription = transport.Subscriptions.Single();
     await subscription.DisconnectHandled.Task.WaitAsync(_guard);
     var disconnect = new InvalidOperationException("link dropped");
