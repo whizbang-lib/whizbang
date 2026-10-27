@@ -21,20 +21,25 @@ namespace Whizbang.Data.Dapper.Postgres;
 internal static class PostgresColumnType {
   private const string WITH_TIME_ZONE = " with time zone";
   private const string WITHOUT_TIME_ZONE = " without time zone";
+  private const string INTEGER = "integer";
+  private const string BIGINT = "bigint";
+  private const string SMALLINT = "smallint";
+  private const string TIMESTAMP = "timestamp";
+  private const string TIME = "time";
 
   // Each alias maps to the head of its canonical spelling and the words after a modifier. A modifier sits
   // between the two, which only matters for the time types: TIMESTAMPTZ(3) is "timestamp(3) with time zone".
   private static readonly Dictionary<string, (string Head, string Tail)> _aliases = new(StringComparer.Ordinal) {
-    ["int"] = ("integer", ""),
-    ["int4"] = ("integer", ""),
-    ["serial"] = ("integer", ""),
-    ["serial4"] = ("integer", ""),
-    ["int8"] = ("bigint", ""),
-    ["bigserial"] = ("bigint", ""),
-    ["serial8"] = ("bigint", ""),
-    ["int2"] = ("smallint", ""),
-    ["smallserial"] = ("smallint", ""),
-    ["serial2"] = ("smallint", ""),
+    ["int"] = (INTEGER, ""),
+    ["int4"] = (INTEGER, ""),
+    ["serial"] = (INTEGER, ""),
+    ["serial4"] = (INTEGER, ""),
+    ["int8"] = (BIGINT, ""),
+    ["bigserial"] = (BIGINT, ""),
+    ["serial8"] = (BIGINT, ""),
+    ["int2"] = (SMALLINT, ""),
+    ["smallserial"] = (SMALLINT, ""),
+    ["serial2"] = (SMALLINT, ""),
     ["decimal"] = ("numeric", ""),
     ["float"] = ("double precision", ""),
     ["float8"] = ("double precision", ""),
@@ -43,14 +48,14 @@ internal static class PostgresColumnType {
     ["varchar"] = ("character varying", ""),
     ["char"] = ("character", ""),
     ["bpchar"] = ("character", ""),
-    ["timestamptz"] = ("timestamp", WITH_TIME_ZONE),
-    ["timestamp with time zone"] = ("timestamp", WITH_TIME_ZONE),
-    ["timestamp"] = ("timestamp", WITHOUT_TIME_ZONE),
-    ["timestamp without time zone"] = ("timestamp", WITHOUT_TIME_ZONE),
-    ["timetz"] = ("time", WITH_TIME_ZONE),
-    ["time with time zone"] = ("time", WITH_TIME_ZONE),
-    ["time"] = ("time", WITHOUT_TIME_ZONE),
-    ["time without time zone"] = ("time", WITHOUT_TIME_ZONE),
+    ["timestamptz"] = (TIMESTAMP, WITH_TIME_ZONE),
+    ["timestamp with time zone"] = (TIMESTAMP, WITH_TIME_ZONE),
+    ["timestamp"] = (TIMESTAMP, WITHOUT_TIME_ZONE),
+    ["timestamp without time zone"] = (TIMESTAMP, WITHOUT_TIME_ZONE),
+    ["timetz"] = (TIME, WITH_TIME_ZONE),
+    ["time with time zone"] = (TIME, WITH_TIME_ZONE),
+    ["time"] = (TIME, WITHOUT_TIME_ZONE),
+    ["time without time zone"] = (TIME, WITHOUT_TIME_ZONE),
   };
 
   /// <summary>
