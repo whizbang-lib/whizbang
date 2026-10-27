@@ -132,9 +132,7 @@ public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
     try {
       // Send warmup messages to generic topics used by GenericTopicRoutingStrategy
       // These match the topics that InventoryWorker publishes to and BFF subscribes from
-      var warmupTasks = _warmupTopics.Select(async topicName => {
-        await _sendWarmupMessageAsync(clientToUse, topicName, cancellationToken);
-      });
+      var warmupTasks = _warmupTopics.Select(async topicName => await _sendWarmupMessageAsync(clientToUse, topicName, cancellationToken));
 
       await Task.WhenAll(warmupTasks);
 

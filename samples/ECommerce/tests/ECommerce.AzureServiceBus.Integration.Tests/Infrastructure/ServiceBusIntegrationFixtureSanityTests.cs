@@ -219,7 +219,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
-    var expectedStock = 42;  // Use distinctive value to find in logs
+    const int expectedStock = 42;  // Use distinctive value to find in logs
 
     var command = new CreateProductCommand {
       ProductId = testProductId,
@@ -292,8 +292,8 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     var testProductId = ProductId.From(Whizbang.Core.ValueObjects.TrackedGuid.New().Value);
-    var expectedStock = 88;  // Distinctive value
-    var expectedPrice = 123.45m;
+    const int expectedStock = 88;  // Distinctive value
+    const decimal expectedPrice = 123.45m;
 
     var command = new CreateProductCommand {
       ProductId = testProductId,

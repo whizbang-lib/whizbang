@@ -60,7 +60,7 @@ public class SendNotificationReceptorTests {
     await receptor.HandleAsync(command, CancellationToken.None);
 
     // Assert
-    var publishedEvent = dispatcher.PublishedEvents.First() as NotificationSentEvent;
+    var publishedEvent = dispatcher.PublishedEvents[0] as NotificationSentEvent;
     await Assert.That(publishedEvent).IsNotNull();
     await Assert.That(publishedEvent!.CustomerId).IsEqualTo("customer-456");
   }

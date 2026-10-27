@@ -91,8 +91,8 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
       await _runDockerComposeAsync($"-p {_projectName} up -d --force-recreate", cancellationToken);
 
       Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling up to 180 seconds)...");
-      var maxWaitSeconds = 180;
-      var pollIntervalSeconds = 5;
+      const int maxWaitSeconds = 180;
+      const int pollIntervalSeconds = 5;
       var elapsed = 0;
 
       while (elapsed < maxWaitSeconds) {
@@ -141,47 +141,53 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
   private string _generateDockerComposeContent() {
     var serviceBusSection = _customConfigFile != null
-      ? $@"  servicebus-emulator:
-    container_name: whizbang-test-servicebus-{_port}
-    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
-    ports:
-      - ""{_port}:5672""
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=ServiceBus!Pass
-      - SQL_SERVER=mssql
-      - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
-    volumes:
-      - ""{_customConfigFile}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro""
-    depends_on:
-      - mssql
-    mem_limit: 4g"
-      : $@"  servicebus-emulator:
-    container_name: whizbang-test-servicebus-{_port}
-    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
-    ports:
-      - ""{_port}:5672""
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=ServiceBus!Pass
-      - SQL_SERVER=mssql
-    depends_on:
-      - mssql
-    mem_limit: 4g";
+      ? $"""
+          servicebus-emulator:
+            container_name: whizbang-test-servicebus-{_port}
+            image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+            ports:
+              - "{_port}:5672"
+            environment:
+              - ACCEPT_EULA=Y
+              - MSSQL_SA_PASSWORD=ServiceBus!Pass
+              - SQL_SERVER=mssql
+              - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
+            volumes:
+              - "{_customConfigFile}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro"
+            depends_on:
+              - mssql
+            mem_limit: 4g
+        """
+      : $"""
+          servicebus-emulator:
+            container_name: whizbang-test-servicebus-{_port}
+            image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+            ports:
+              - "{_port}:5672"
+            environment:
+              - ACCEPT_EULA=Y
+              - MSSQL_SA_PASSWORD=ServiceBus!Pass
+              - SQL_SERVER=mssql
+            depends_on:
+              - mssql
+            mem_limit: 4g
+        """;
 
-    return $@"services:
-{serviceBusSection}
+    return $"""
+      services:
+      {serviceBusSection}
 
-  mssql:
-    container_name: whizbang-test-mssql-{_port}
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    ports:
-      - ""{_port + 10000}:1433""
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=ServiceBus!Pass
-    mem_limit: 4g
-";
+        mssql:
+          container_name: whizbang-test-mssql-{_port}
+          image: mcr.microsoft.com/mssql/server:2022-latest
+          ports:
+            - "{_port + 10000}:1433"
+          environment:
+            - ACCEPT_EULA=Y
+            - MSSQL_SA_PASSWORD=ServiceBus!Pass
+          mem_limit: 4g
+
+      """;
   }
 
   private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default) {

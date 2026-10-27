@@ -291,7 +291,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
   private static async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
-    var maxAttempts = 30;
+    const int maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1237,7 +1237,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // and stay on wh_inbox, while status is work state and moved to wh_inbox_state. A diagnostic
     // that reads both therefore joins both. LEFT JOIN rather than JOIN on purpose: a message row
     // with no state row would be a defect worth seeing here, not a row worth hiding.
-    var inboxQuery = @"
+    const string inboxQuery = @"
       SELECT
         i.message_id AS MessageId,
         i.message_type AS MessageType,
@@ -1264,7 +1264,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     // Query 2: Check event store for event
-    var eventStoreQuery = @"
+    const string eventStoreQuery = @"
       SELECT
         event_id AS EventId,
         stream_id AS StreamId,
@@ -1363,7 +1363,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     }
 
     // Query 4: Check BFF schema as well
-    var bffEventStoreQuery = @"
+    const string bffEventStoreQuery = @"
       SELECT
         event_id AS EventId,
         stream_id AS StreamId,

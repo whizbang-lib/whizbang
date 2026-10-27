@@ -51,7 +51,7 @@ public class SignalRHubTests {
     await Assert.That(update.OrderId).IsEqualTo("ORD-002");
     await Assert.That(update.Status).IsEqualTo("Shipped");
     await Assert.That(update.Message).IsNull();
-    await Assert.That(update.Details!).IsNull();
+    await Assert.That(update.Details).IsNull();
   }
 
   [Test]
@@ -108,7 +108,7 @@ public class SignalRHubTests {
     };
 
     // Assert
-    await Assert.That(notification.Data!).IsNull();
+    await Assert.That(notification.Data).IsNull();
   }
 
   [Test]

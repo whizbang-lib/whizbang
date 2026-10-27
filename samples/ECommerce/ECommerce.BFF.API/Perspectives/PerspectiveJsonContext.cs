@@ -19,5 +19,4 @@ namespace ECommerce.BFF.API.Perspectives;
 [JsonSerializable(typeof(PaymentProcessedDetails))]
 [JsonSerializable(typeof(PaymentFailedDetails))]
 [JsonSerializable(typeof(OrderShippedDetails))]
-public partial class PerspectiveJsonContext : JsonSerializerContext {
-}
+public partial class PerspectiveJsonContext : JsonSerializerContext;

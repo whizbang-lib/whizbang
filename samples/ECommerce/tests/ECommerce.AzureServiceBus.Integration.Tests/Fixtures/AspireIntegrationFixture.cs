@@ -266,9 +266,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     var appHost = await DistributedApplicationTestingBuilder
       .CreateAsync<Projects.ECommerce_AzureServiceBus_Integration_Tests_AppHost>(cancellationToken: cancellationToken);
 
-    appHost.Services.ConfigureHttpClientDefaults(http => {
-      http.AddStandardResilienceHandler();
-    });
+    appHost.Services.ConfigureHttpClientDefaults(http => http.AddStandardResilienceHandler());
 
     return await appHost.BuildAsync(cancellationToken);
   }
@@ -295,7 +293,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
   private static async Task _waitForPostgresAsync(string connectionString, CancellationToken cancellationToken = default) {
-    var maxAttempts = 30;
+    const int maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -436,14 +434,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        options: consumerOptions,
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
         runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
         eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
-        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>(),
+        options: consumerOptions
       )
     );
 
@@ -581,14 +579,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         // Pass JSON options for event deserialization
         logger: sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
         orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
-        options: consumerOptions,
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         envelopeSerializer: sp.GetRequiredService<IEnvelopeSerializer>(),
         receptorRegistry: sp.GetRequiredService<IReceptorRegistryQuery>(),
         runtimeReceptorRegistry: sp.GetRequiredService<IReceptorRegistry>(),
         eventMarkerResolver: sp.GetRequiredService<IEventMarkerResolver>(),
-        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>()
+        ephemeralModeResolver: sp.GetRequiredService<IEphemeralModeResolver>(),
+        options: consumerOptions
       )
     );
 

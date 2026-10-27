@@ -56,7 +56,7 @@ public class CreateShipmentReceptorTests {
 
     // Assert
     await Assert.That(dispatcher.PublishedEvents).Count().IsEqualTo(1);
-    var publishedEvent = dispatcher.PublishedEvents.First() as ShipmentCreatedEvent;
+    var publishedEvent = dispatcher.PublishedEvents[0] as ShipmentCreatedEvent;
     await Assert.That(publishedEvent).IsNotNull();
     await Assert.That(publishedEvent!.OrderId).IsEqualTo("order-456");
   }

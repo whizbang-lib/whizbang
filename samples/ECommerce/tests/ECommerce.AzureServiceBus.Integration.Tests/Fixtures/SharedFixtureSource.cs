@@ -50,7 +50,7 @@ public static class SharedFixtureSource {
     // If previous initialization failed, throw the error immediately (don't retry)
     if (_initializationFailed) {
       throw new InvalidOperationException(
-        $"Shared ServiceBus emulator initialization previously failed and cannot be retried. " +
+        "Shared ServiceBus emulator initialization previously failed and cannot be retried. " +
         $"Original error: {_lastInitializationError?.Message}",
         _lastInitializationError
       );
@@ -115,9 +115,9 @@ public static class SharedFixtureSource {
         await _cleanupAfterFailureAsync();
 
         throw new InvalidOperationException(
-          $"Failed to initialize shared ServiceBus emulator. " +
+          "Failed to initialize shared ServiceBus emulator. " +
           $"Error: {ex.Message}. " +
-          $"This is a fatal error - remaining tests will be skipped.",
+          "This is a fatal error - remaining tests will be skipped.",
           ex
         );
       }
