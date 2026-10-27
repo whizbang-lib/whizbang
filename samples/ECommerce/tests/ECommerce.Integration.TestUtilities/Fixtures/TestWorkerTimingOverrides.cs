@@ -50,9 +50,7 @@ public static class TestWorkerTimingOverrides {
 
     // ClaimWorker — tighten NOTIFY-healthy poll cadence so a missed NOTIFY only
     // costs 500 ms (not the 30 s production default).
-    services.Configure<ClaimWorkerOptions>(options => {
-      options.NotifyHealthyPollingIntervalMilliseconds = 500;
-    });
+    services.Configure<ClaimWorkerOptions>(options => options.NotifyHealthyPollingIntervalMilliseconds = 500);
 
     // BackupTickCoordinator — tighten idle-wake cadence. IdleThreshold short so
     // workers exit ASLEEP quickly when test traffic arrives; PollingInterval

@@ -1807,19 +1807,45 @@ jobs:
     secrets: inherit
 
   # An older-line patch never reaches main, but develop must still get the fix or the next cut from
-  # develop ships without it. Same mechanism release.yml uses after a main merge.
+  # develop ships without it. Same steps release.yml uses after a main merge (.github/actions/sync-develop).
   release-sync-develop:
     name: Merge back · Hotfix to develop
+    # The release app's secrets live in this environment (develop, main and release/v* only, #1466). The job
+    # mints the token itself: a reusable workflow's job reads an environment secret only when its caller
+    # passes it, which is how the merge-back read an empty client id on every stable release until #1796.
+    environment: release-app
     needs: [version, release-guard, release-publish]
     if: needs.release-publish.result == 'success' && needs.release-guard.outputs.line == 'older'
+    runs-on: ubuntu-latest
     permissions:
-      contents: write        # push the throwaway sync branch (sync/*, not protected)
-      pull-requests: write    # open the review PR into protected develop
-    uses: ./.github/workflows/reusable-sync-develop.yml
-    with:
-      source-ref: ${{ github.sha }}
-      source-label: hotfix
-      version: ${{ needs.version.outputs.semver }}
+      contents: read          # everything that writes goes through the release app's token
+    steps:
+      # The release app (not GITHUB_TOKEN) pushes and opens the sync PR, so the PR triggers CI: a
+      # GITHUB_TOKEN-created PR is left in action_required and its required checks never run. Workflows:
+      # a release that changed .github/workflows carries those files onto the sync branch.
+      - name: Mint the release app token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the develop sync PR
+        uses: ./.github/actions/sync-develop
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          source-ref: ${{ github.sha }}
+          source-label: hotfix
+          version: ${{ needs.version.outputs.semver }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion

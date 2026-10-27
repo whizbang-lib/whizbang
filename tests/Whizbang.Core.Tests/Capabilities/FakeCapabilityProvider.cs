@@ -18,6 +18,9 @@ internal sealed class FakeCapabilityProvider(string name, IReadOnlyList<string> 
   /// <summary>The state each capability reads, by name; anything absent reads Ready.</summary>
   public Dictionary<string, CapabilityState> States { get; } = new(StringComparer.Ordinal);
 
+  /// <summary>The provider detail each capability reads, by name; anything absent has none.</summary>
+  public Dictionary<string, string> Details { get; } = new(StringComparer.Ordinal);
+
   /// <summary>The version each capability could be upgraded to, by name; anything absent has none.</summary>
   public Dictionary<string, string> AvailableVersions { get; } = new(StringComparer.Ordinal);
 
@@ -32,7 +35,8 @@ internal sealed class FakeCapabilityProvider(string name, IReadOnlyList<string> 
       throw Failure;
     }
     IReadOnlyList<CapabilityStatus> statuses = [.. Descriptors.Select(d => new CapabilityStatus(
-      d, scope, States.GetValueOrDefault(d.Id.Name, CapabilityState.Ready), Version: "1.0", Detail: null, Reason: null) {
+      d, scope, States.GetValueOrDefault(d.Id.Name, CapabilityState.Ready), Version: "1.0",
+      Detail: Details.GetValueOrDefault(d.Id.Name), Reason: null) {
       AvailableVersion = AvailableVersions.GetValueOrDefault(d.Id.Name),
     })];
     return Task.FromResult(statuses);

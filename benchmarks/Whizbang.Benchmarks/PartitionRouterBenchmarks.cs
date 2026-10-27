@@ -91,9 +91,7 @@ public class PartitionRouterBenchmarks {
 
   [Benchmark]
   public void ParallelAssignment_10000Keys() {
-    Parallel.For(0, 10000, i => {
-      _router.SelectPartition($"order-{i}", PARTITION_COUNT, _context);
-    });
+    Parallel.For(0, 10000, i => _router.SelectPartition($"order-{i}", PARTITION_COUNT, _context));
   }
 
   [Benchmark]

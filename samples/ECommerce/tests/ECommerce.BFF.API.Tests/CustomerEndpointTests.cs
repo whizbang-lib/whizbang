@@ -11,58 +11,6 @@ namespace ECommerce.BFF.API.Tests;
 /// Unit tests for customer-facing endpoints
 /// </summary>
 public class CustomerEndpointTests {
-  private static List<OrderReadModel> _createTestOrders() {
-    return [
-      new OrderReadModel {
-        OrderId = OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"),
-        CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
-        TenantId = "TENANT-001",
-        Status = "Pending",
-        TotalAmount = 100.00m,
-        CreatedAt = DateTime.UtcNow.AddHours(-2),
-        UpdatedAt = DateTime.UtcNow.AddHours(-1),
-        ItemCount = 2,
-        LineItems = [
-          new LineItemReadModel {
-            ProductId = "PROD-001",
-            ProductName = "Product 1",
-            Quantity = 2,
-            Price = 50.00m
-          }
-        ]
-      },
-      new OrderReadModel {
-        OrderId = OrderId.Parse("11111111-2222-7333-4444-555555555555"),
-        CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
-        TenantId = "TENANT-001",
-        Status = "Completed",
-        TotalAmount = 200.00m,
-        CreatedAt = DateTime.UtcNow.AddHours(-5),
-        UpdatedAt = DateTime.UtcNow.AddHours(-3),
-        ItemCount = 1,
-        LineItems = [
-          new LineItemReadModel {
-            ProductId = "PROD-002",
-            ProductName = "Product 2",
-            Quantity = 1,
-            Price = 200.00m
-          }
-        ]
-      },
-      new OrderReadModel {
-        OrderId = OrderId.Parse("aaaaaaaa-bbbb-7ccc-dddd-eeeeeeeeeeee"),
-        CustomerId = CustomerId.Parse("99999999-8888-7777-6666-555555555555"),
-        TenantId = "TENANT-001",
-        Status = "Pending",
-        TotalAmount = 150.00m,
-        CreatedAt = DateTime.UtcNow.AddHours(-1),
-        UpdatedAt = DateTime.UtcNow,
-        ItemCount = 3,
-        LineItems = []
-      }
-    ];
-  }
-
   [Test]
   public async Task GetMyOrdersEndpoint_CanBeConstructedAsync() {
     // Arrange & Act
@@ -104,7 +52,6 @@ public class CustomerEndpointTests {
   }
 
   [Test]
-  [Obsolete]
   public async Task CreateOrderRequest_WithValidData_CreatesValidRequestAsync() {
     // Arrange & Act
     var request = new CreateOrderRequest {
@@ -121,7 +68,7 @@ public class CustomerEndpointTests {
 
     // Assert
     await Assert.That(request.CustomerId).IsEqualTo("CUST-001");
-    await Assert.That(request.LineItems).HasCount().EqualTo(1);
+    await Assert.That(request.LineItems).Count().IsEqualTo(1);
     await Assert.That(request.LineItems[0].ProductId).IsEqualTo("PROD-001");
     await Assert.That(request.LineItems[0].Quantity).IsEqualTo(2);
     await Assert.That(request.LineItems[0].Price).IsEqualTo(50.00m);

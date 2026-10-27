@@ -123,9 +123,7 @@ if (app.Environment.IsDevelopment()) {
 app.UseHttpsRedirection();
 
 // FastEndpoints (REST API at /api/*)
-app.UseFastEndpoints(config => {
-  config.Endpoints.RoutePrefix = "api";
-});
+app.UseFastEndpoints(config => config.Endpoints.RoutePrefix = "api");
 
 // HotChocolate GraphQL (at /graphql)
 app.MapGraphQL("/graphql");

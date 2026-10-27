@@ -316,11 +316,14 @@ runs, so an org or repository secret is readable by anyone who can push a branch
 | `release-cut` | `develop`, `main` | a `build-admins` member | `start-release.yml` (cutting a release) |
 
 A job reads them only by declaring one of those environments (`Test · Pipeline scripts` fails any job
-that reads them without one, `.github/scripts/tests/ReleaseSecrets.Tests.ps1`). A reusable workflow's
-job declares the environment itself: a caller cannot pass an environment secret, so none does. The
-reusable workflow also declares both names as optional `workflow_call` secrets: its job sees only the
-secrets its trigger declares, so without them the environment's values never reach it (#1477, guarded by
-the same test file).
+that reads them without one, `.github/scripts/tests/ReleaseSecrets.Tests.ps1`). Prefer minting the token
+in a job of the workflow the event started, as every publish job does. A job inside a reusable workflow
+declares the environment itself, **and** every caller passes `secrets: inherit`: GitHub hands a reusable
+workflow's job an environment secret only when the caller passes it, even though the value comes from
+the called job's environment, and a caller that passes nothing leaves it an empty string with no error
+until the step that reads it fails. Declaring the names under `workflow_call.secrets` does not deliver
+them (#1477 tried; #1796 fixed it). `nuget-publish.yml` is the one reusable workflow that still mints the
+token, and both its callers pass `secrets: inherit` (guarded by the same test file).
 `nuget-publish.yml` mints the token in `release-app-ready` before anything is pushed, so a run that
 could not tag fails before the packages are public. Branch creation under `release/` is limited to
 build admins and the release app, so nobody else can make a branch the environment accepts.
@@ -329,10 +332,11 @@ build admins and the release app, so nobody else can make a branch the environme
 |---|---|---|
 | Release branch push and release PR | `start-release.yml` | contents, pull requests, workflows |
 | Release PR for a current-line hotfix | `ci.yml` → Plan · Route the hotfix by line | pull requests |
-| Merge-back branch and PR into `develop` | `reusable-sync-develop.yml` | contents, pull requests, workflows |
+| Merge-back branch and PR into `develop` | `release.yml` → Merge back · Main to develop, `ci.yml` → Merge back · Hotfix to develop (steps in `.github/actions/sync-develop`) | contents, pull requests, workflows |
 | `v*` tag | `release.yml`, `nuget-publish.yml` | contents, workflows |
 | README numbers PR | `readme-refresh.yml` | contents, pull requests |
 | Docs site test status and security advisories, and its release | `ci.yml` → Report · Test status to docs, `security-advisories-docs.yml` | contents, pull requests, actions (docs repository only) |
+| `docs-pr-changed` dispatch to this repository, so a docs pull request re-runs the library review check it satisfies (#1806) | the docs repository's `library-review-recheck.yml`, in its own `release-app` environment | contents (this repository only: a repository dispatch is a contents write) |
 
 **Commits are created through the API, not pushed.** The develop, main and release rulesets require
 signed commits, and a `git push` of a workflow's own commit is unsigned. So the release branch (its
@@ -559,9 +563,11 @@ Unset them afterwards.
 ## Sync Main → Develop
 
 After a release publishes, the `sync-develop` job reconciles main into develop **via a PR, never a
-direct push** (develop is protected). The mechanism lives in `reusable-sync-develop.yml` and has two
-callers: `release.yml` after a merge to main (source: `main`), and `ci.yml` after an older-line
-hotfix publishes (source: the hotfix commit, which never reaches main; see [Hotfixes](#hotfixes)).
+direct push** (develop is protected). The steps live in the `.github/actions/sync-develop` composite
+action and have two callers: `release.yml` after a merge to main (source: `main`), and `ci.yml` after an
+older-line hotfix publishes (source: the hotfix commit, which never reaches main; see
+[Hotfixes](#hotfixes)). Each caller is an ordinary job that declares `environment: release-app`, mints
+the release app token and checks out with it, then runs the action (#1796).
 
 - It compares main and develop with a **three-dot diff** (`origin/develop...origin/main`) so it only
   considers what the *release* added, not develop's own post-cut progress.
@@ -697,7 +703,7 @@ PR may conflict when the lines have diverged; resolve it like any PR.
 | Develop alpha blocked at `Build · Verify rebuild matches the tested build` | SDK drift between the queue run and the push run, or no live manifest | Set `PUSH_RUN_FULL_MATRIX=true` and re-run all jobs on the push run; unset afterwards |
 | Release cut red at `Build · Verify rebuild matches the tested build` | SDK drift since the develop commit was tested, or its manifest expired | Set `RELEASE_CUT_FULL_MATRIX=true` and re-run all jobs on the release-branch run; unset afterwards |
 | `Gate · Alpha is not below NuGet` is red on a develop push, or a published prerelease out-sorts develop's current builds ("latest" resolves to old code) | a release cut was abandoned after develop had published in the cut's next band (#872): the open branch raised develop's number, deleting it lowered it again | Find the commit that first published the stale version (its develop run's push log), **tag it with that version** (`git tag -a vX.Y.Z-alpha.N <sha>`; it records a version that really shipped, and develop then computes above it), and **unlist** that version on nuget.org for every package. Never set a version floor in `GitVersion.yml`: versions come from tags only |
-| `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the reusable sync workflow does not declare `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` under `workflow_call.secrets`, so the environment's values never reach its job (#1477) | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'`. Empty means nothing was lost. Otherwise fix the declaration by PR, then re-run the failed job |
+| `Merge back · Main to develop` (or `Merge back · Hotfix to develop`) fails at `Mint the release app token`: "The 'client-id' ... input must be set to a non-empty string" | the job cannot read the `release-app` environment's secrets. Until #1796 the merge-back ran inside a reusable workflow whose callers passed no secrets, and GitHub delivers an environment secret to a reusable workflow's job only when the caller passes it, so it read an empty string on every stable release from 2026-10-19 (the `workflow_call.secrets` declaration of #1477 did not change that). Since #1796 the job mints the token itself, so this now means the environment secrets are missing or the job lost its `environment: release-app` | The packages are already published. Check whether anything needed syncing: `git diff --name-only origin/develop...origin/main -- . ':(exclude)Directory.Build.props'` (for an older-line hotfix, `origin/develop...<the hotfix commit>`). Empty means nothing was lost. Otherwise fix the cause by PR. Re-running the failed job re-runs the workflow file of the original commit, so a run from before the fix fails again, as does an older-line hotfix branch cut before it (it runs its own copy of `ci.yml`): open the sync PR by hand instead, from a branch of the source with develop's `Directory.Build.props` restored, published through `Publish-SignedCommit.ps1` (see [Sync Main → Develop](#sync-main--develop)) |
 | `Mint the release app token` failed, or a push, PR or tag step after it is refused | the app's private key was rotated or revoked, the `release-app` (or `release-cut`) environment's `RELEASE_APP_ID`/`RELEASE_APP_PRIVATE_KEY` are missing, the run is on a branch the environment does not allow, a cut is waiting for a build admin's approval, the app was uninstalled from the repository, or it lacks a permission that step needs | Fix the app (Settings → Developer settings → GitHub Apps → `whizbang-release-bot`) or the environment secret (repository Settings → Environments), then re-run the failed jobs. Every tag step checks for the tag first, so a re-run after the packages reached NuGet only adds the missing tag. If the app cannot be fixed quickly, a repository admin may push the tag by hand: `git tag -a vX.Y.Z <sha> -m "Release vX.Y.Z" && git push origin vX.Y.Z`. That tag is not signed by the workflow, so it fails SECURITY.md's verification: say so in the release notes |
 | `Create and push the signed tag` failed at `gitsign verify-tag` or before it, with nothing pushed | Sigstore (Fulcio or Rekor) was unavailable, or the job lacks `id-token: write` | Check [status.sigstore.dev](https://status.sigstore.dev); re-run the failed jobs once it is up. The tag is created only after the signature verifies, and the tag step checks for it first, so a re-run after the packages reached NuGet only adds the tag. A missing permission is a workflow bug: fix it by PR |
 | `Verify the package set` failed: "has no SBOM" | the packages artifact was packed by workflows from before #1440 (a release branch cut earlier, or a build re-used across the change), or `Generate the software bill of materials` did not run | Re-run **all** jobs of the run that packed them, so the pack writes the SBOMs; a release branch cut before the change needs `develop`'s `.github` merged into it by PR first. `Generate the software bill of materials` failing on "No project found" means a package in `.github/nuget-packages.txt` has no `src/<name>` or `tools/<name>` project |

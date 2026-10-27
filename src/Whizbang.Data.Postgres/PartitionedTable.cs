@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
@@ -152,9 +153,12 @@ internal static class PartitionedTables {
   /// <returns>The service collection.</returns>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PartitionedTableTests.cs:TheFrameworkTables_TakeTheirWindowsFromTheConfiguredOptionsAsync</tests>
   /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PartitionedTableTests.cs:TheFrameworkTables_WithNothingConfigured_UseTheOptionDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PgPartmanPartitionMaintenanceTests.cs:TheFrameworkTables_RegisterOneAnnouncerAsync</tests>
   public static IServiceCollection AddFrameworkPartitionedTables(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     services.AddOptions();
+    // #1752: one per process, so the cycle says its partition-management choice once and again only when it changes.
+    services.TryAddSingleton<PartitionStrategyAnnouncer>();
     return services
       .AddPartitionedTable(Log)
       .AddPartitionedTable(sp => Signals(sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>().Value.SignalRetention))

@@ -524,8 +524,10 @@ Whizbang:Workers:Maintenance:LifecycleCompletionRetentionDays
 Whizbang:Workers:Maintenance:MaintainOnReassignment
 Whizbang:Workers:Maintenance:MaxDestructionRetries
 Whizbang:Workers:Maintenance:OnDestroyFailure
+Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle
 Whizbang:Workers:Maintenance:Partitioning:CreateAhead
 Whizbang:Workers:Maintenance:Partitioning:Enabled
+Whizbang:Workers:Maintenance:Partitioning:Strategy
 Whizbang:Workers:Maintenance:Retention:AbandonedStreamHours
 Whizbang:Workers:Maintenance:Retention:CollectiveOrderingHeadDays
 Whizbang:Workers:Maintenance:Retention:DeduplicationDays
@@ -547,6 +549,8 @@ Whizbang:Workers:Maintenance:SettledFoldIdleDays
 Whizbang:Workers:Maintenance:StuckRowSentinelEnabled
 Whizbang:Workers:Maintenance:StuckRowSentinelLimit
 Whizbang:Workers:Maintenance:StuckRowSentinelMaxAttempts
+Whizbang:Workers:Maintenance:TableRewrite:PgRepack:ClientPath
+Whizbang:Workers:Maintenance:TableRewrite:PgRepack:Mode
 Whizbang:Workers:Maintenance:TableRewriteStrategy
 Whizbang:Workers:OutboxBatch:IdleEvictionWindow
 Whizbang:Workers:OutboxBatch:IdleSweepInterval

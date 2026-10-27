@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using Npgsql;
+using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -26,6 +27,7 @@ namespace Whizbang.Data.Postgres.Observability;
 /// <docs>operations/observability/metrics#table-statistics</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresTableStatisticsProviderTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperTableStatisticsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/StatementStatisticsCapabilityTests.cs</tests>
 public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsProvider {
   /// <summary>
   /// The size, split, rows and bloat of every <c>wh_</c> table in the schema, with the tables past the
@@ -179,9 +181,14 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   /// </summary>
   private const int BLOAT_FLOOR_ROWS = 1000;
 
+  /// <summary>The extension statement statistics are read from, as the capability registry identifies it.</summary>
+  private static readonly CapabilityId _statementStatistics = new(PostgresExtensionCatalog.PROVIDER, "pg_stat_statements");
+
   private readonly Func<CancellationToken, ValueTask<NpgsqlConnection>> _openConnectionAsync;
   private readonly string? _schema;
   private readonly int _maxTrackedTables;
+  private readonly ICapabilityRegistry? _capabilities;
+  private readonly string _capabilityScope = string.Empty;
 
   /// <summary>Reads the statistics of the schema's tables through connections the caller opens.</summary>
   /// <param name="openConnectionAsync">Opens a connection the provider disposes.</param>
@@ -192,16 +199,33 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   /// <param name="maxTrackedTables">
   /// The most tables reported by name, at least 1; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.
   /// </param>
+  /// <param name="capabilities">
+  /// The capability registry the readings that need an extension consult (#1754): statement statistics are read only
+  /// while <c>pg_stat_statements</c> is Ready in <paramref name="capabilityScope"/>. Null reads none of them.
+  /// </param>
+  /// <param name="capabilityScope">
+  /// The scope the database is probed under (the driver's name for it); required with <paramref name="capabilities"/>.
+  /// </param>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxTrackedTables"/> is less than 1.</exception>
+  /// <exception cref="ArgumentException">
+  /// <paramref name="capabilities"/> is given without a <paramref name="capabilityScope"/>.
+  /// </exception>
   public PostgresTableStatisticsProvider(
       Func<CancellationToken, ValueTask<NpgsqlConnection>> openConnectionAsync,
       string? schema = "public",
-      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES) {
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES,
+      ICapabilityRegistry? capabilities = null,
+      string? capabilityScope = null) {
     ArgumentNullException.ThrowIfNull(openConnectionAsync);
     ArgumentOutOfRangeException.ThrowIfLessThan(maxTrackedTables, 1);
     _openConnectionAsync = openConnectionAsync;
     _schema = schema;
     _maxTrackedTables = maxTrackedTables;
+    if (capabilities is not null) {
+      ArgumentException.ThrowIfNullOrWhiteSpace(capabilityScope);
+      _capabilities = capabilities;
+      _capabilityScope = capabilityScope;
+    }
   }
 
   /// <summary>Reads the statistics of the schema's tables through a data source.</summary>
@@ -210,12 +234,19 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
   /// <param name="maxTrackedTables">
   /// The most tables reported by name, at least 1; see <see cref="TableStatisticsOptions.MaxTrackedTables"/>.
   /// </param>
+  /// <param name="capabilities">The capability registry the readings that need an extension consult; null reads none of them.</param>
+  /// <param name="capabilityScope">The scope the database is probed under; required with <paramref name="capabilities"/>.</param>
   /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxTrackedTables"/> is less than 1.</exception>
+  /// <exception cref="ArgumentException">
+  /// <paramref name="capabilities"/> is given without a <paramref name="capabilityScope"/>.
+  /// </exception>
   public PostgresTableStatisticsProvider(
       NpgsqlDataSource dataSource,
       string? schema = "public",
-      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES)
-    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables) {
+      int maxTrackedTables = TableStatisticsOptions.DEFAULT_MAX_TRACKED_TABLES,
+      ICapabilityRegistry? capabilities = null,
+      string? capabilityScope = null)
+    : this(dataSource.OpenConnectionAsync, schema, maxTrackedTables, capabilities, capabilityScope) {
   }
 
   /// <inheritdoc />
@@ -500,43 +531,50 @@ public sealed partial class PostgresTableStatisticsProvider : ITableStatisticsPr
 
   /// <inheritdoc/>
   /// <remarks>
-  /// Answers empty rather than throwing when the statistics are not collected. The extension has to
-  /// be installed AND loaded at startup, and a deployment may have done neither; naming the filter
-  /// is an improvement on the advice rather than a condition of it, so its absence is not a fault.
+  /// <para>
+  /// Read only while the capability registry has <c>pg_stat_statements</c> Ready in this database's scope (#1754):
+  /// installed and loaded at startup. Any other state, or no registry, answers empty without opening a connection,
+  /// because a deployment may have done neither, and naming the filter is an improvement on the advice rather than a
+  /// condition of it, so its absence is not a fault.
+  /// </para>
+  /// <para>
+  /// The state is the one the probe recorded at startup (or at the registry's last refresh). A read that fails while
+  /// the capability reads Ready, because the extension was dropped since, is a fault and is not swallowed.
+  /// </para>
   /// </remarks>
+  /// <docs>operations/infrastructure/capabilities#readers</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/StatementStatisticsCapabilityTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/TableStatisticsProviderTests.cs:ATaggedStatementIsReadBackFromTheStatisticsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/TableStatisticsProviderTests.cs:StatementStatisticsAreEmptyRatherThanFatalWhenNotCollectedAsync</tests>
   public async Task<IReadOnlyDictionary<string, IReadOnlyList<ExpensivePredicate>>> GetExpensivePredicatesAsync(
       CancellationToken ct = default) {
     var byTable = new Dictionary<string, IReadOnlyList<ExpensivePredicate>>(StringComparer.Ordinal);
+    if (_capabilities?.GetState(_statementStatistics, _capabilityScope) != CapabilityState.Ready) {
+      return byTable;
+    }
 
     await using var connection = await _openConnectionAsync(ct);
+    await using var cmd = new NpgsqlCommand("""
+      SELECT query, calls, mean_exec_time
+      FROM pg_stat_statements
+      WHERE query ILIKE '%wh\_per\_%' AND query LIKE '%->%'
+      ORDER BY mean_exec_time DESC
+      LIMIT 200
+      """, connection);
 
-    try {
-      await using var cmd = new NpgsqlCommand("""
-        SELECT query, calls, mean_exec_time
-        FROM pg_stat_statements
-        WHERE query ILIKE '%wh\_per\_%' AND query LIKE '%->%'
-        ORDER BY mean_exec_time DESC
-        LIMIT 200
-        """, connection);
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
 
-      await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-      var collected = new Dictionary<string, List<ExpensivePredicate>>(StringComparer.Ordinal);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      var statement = reader.GetString(0);
+      var calls = reader.GetInt64(1);
+      var mean = reader.GetDouble(2);
 
-      while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
-        var statement = reader.GetString(0);
-        var calls = reader.GetInt64(1);
-        var mean = reader.GetDouble(2);
+      Collect(collected, statement, calls, mean);
+    }
 
-        Collect(collected, statement, calls, mean);
-      }
-
-      foreach (var (table, predicates) in collected) {
-        byTable[table] = predicates;
-      }
-    } catch (PostgresException) {
-      // Not installed, not loaded, or not readable by this role. The table-level advice stands on
-      // its own and this only ever made it sharper.
-      return byTable;
+    foreach (var (table, predicates) in collected) {
+      byTable[table] = predicates;
     }
 
     return byTable;

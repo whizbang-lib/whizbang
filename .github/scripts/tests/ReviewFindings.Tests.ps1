@@ -150,6 +150,20 @@ Describe 'reading a diff' {
     ($files | Where-Object Path -EQ 'src/Whizbang.Data.Postgres/Migrations/150_Old.sql').IsNew | Should -BeFalse
     ($files | Where-Object Path -EQ 'tests/Whizbang.Core.Tests/ThingTests.cs').IsNew | Should -BeTrue
   }
+
+  It 'refuses a file header it cannot read, rather than skipping the file (#1799)' {
+    # git quotes a path it cannot print as is. An unread header once left the path empty, and every
+    # check skipped the file's added lines while the gate reported no findings.
+    $quoted = @'
+diff --git "a/src/caf\303\251.cs" "b/src/caf\303\251.cs"
+new file mode 100644
+--- /dev/null
++++ "b/src/caf\303\251.cs"
+@@ -0,0 +1,1 @@
++// the behaviour — unread
+'@
+    { Read-UnifiedDiff -DiffText $quoted } | Should -Throw '*cannot read*caf*'
+  }
 }
 
 Describe 'Find-DiffFindings' {
@@ -280,6 +294,51 @@ rename to src/Whizbang.Data.Postgres/Migrations/150_New.sql
     $read = { param($OldPath, $NewPath) $script:seen = @($OldPath, $NewPath); [pscustomobject]@{ Old = 'SELECT 1;'; New = "-- a note`nSELECT 1;" } }
     @(Find-DiffFindings -DiffText $renamed -ReadMigrationVersions $read | Where-Object Rule -EQ 'migrations.edited').Count | Should -Be 0
     $script:seen | Should -Be @('src/Whizbang.Data.Postgres/Migrations/150_Old.sql', 'src/Whizbang.Data.Postgres/Migrations/150_New.sql')
+  }
+
+  Context 'a rename git did not pair (#1799)' {
+    # git pairs a rename only above 50% similarity. Below it, the same move reads as a deleted file and
+    # a new one, and every line the file carried over would read as added: a release pull request
+    # against main flagged a line a feature pull request had only moved, which git had paired there.
+    BeforeAll {
+      $script:Unpaired = @'
+diff --git a/src/Lib/Closer.cs b/src/Lib/Closer.cs
+deleted file mode 100644
+index 1111111..0000000
+--- a/src/Lib/Closer.cs
++++ /dev/null
+@@ -1,3 +0,0 @@
+-// surviving carry-forward — a small, bounded distortion
+-// the old behaviour stays
+-int closed;
+diff --git a/src/Lib/Truncator.cs b/src/Lib/Truncator.cs
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/src/Lib/Truncator.cs
+@@ -0,0 +1,4 @@
++// surviving carry-forward — a small, bounded distortion
++// the old behaviour stays
++int truncated;
++// a new line — with a new dash
+'@
+      $script:UnpairedFound = @(Find-DiffFindings -DiffText $Unpaired)
+    }
+
+    It 'does not flag a line the new file carried over from the deleted one' {
+      @($UnpairedFound | Where-Object Line -In @(1, 2)).Count | Should -Be 0
+    }
+
+    It 'still flags a line the new file adds' {
+      @($UnpairedFound | ForEach-Object Id) | Should -Be @('style.em-dash:src/Lib/Truncator.cs:4')
+    }
+
+    It 'still flags a line moved out of a file that stays' {
+      # Only a whole file's move is a rename; a line taken out of a file the diff keeps is new where it lands.
+      $kept = $Unpaired -replace 'deleted file mode 100644', '' -replace '\+\+\+ /dev/null', '+++ b/src/Lib/Closer.cs' `
+        -replace '@@ -1,3 \+0,0 @@', '@@ -1,3 +1,0 @@'
+      @(Find-DiffFindings -DiffText $kept | Where-Object Path -EQ 'src/Lib/Truncator.cs' | ForEach-Object Line) | Should -Be @(1, 2, 4)
+    }
   }
 }
 

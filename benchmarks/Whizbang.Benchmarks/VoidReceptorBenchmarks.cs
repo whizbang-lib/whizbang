@@ -11,14 +11,18 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Benchmarks;
 
 /// <summary>
+/// <para>
 /// Benchmarks comparing void receptors (IReceptor&lt;TMessage&gt;) vs regular receptors (IReceptor&lt;TMessage, TResponse&gt;).
-///
+/// </para>
+/// <para>
 /// MEASUREMENT SCOPE: Framework overhead ONLY
 /// - Commands/events pre-allocated in GlobalSetup (excluded from measurement)
 /// - Measures ONLY dispatcher and receptor invocation overhead
 /// - Application allocation cost (command creation) not included
-///
+/// </para>
+/// <para>
 /// TARGET: Minimize framework-only allocation for void receptor pattern.
+/// </para>
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]

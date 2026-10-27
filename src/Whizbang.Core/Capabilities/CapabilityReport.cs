@@ -33,7 +33,7 @@ public static partial class CapabilityReport {
   public static string FormatUnusable(IEnumerable<CapabilityStatus> statuses) {
     ArgumentNullException.ThrowIfNull(statuses);
     return string.Join('\n', statuses.Where(s => !s.IsUsable).Select(s =>
-      $"  {_head(s)}: {s.Descriptor.Purpose}. Fix: {s.Descriptor.Remedy(s.State)}"));
+      $"  {_head(s)}: {s.Descriptor.Purpose}. Fix: {s.Descriptor.Remedy(s.State, s.Detail)}"));
   }
 
   /// <summary>Writes the verdict: one block pair per provider and scope, in the order given.</summary>

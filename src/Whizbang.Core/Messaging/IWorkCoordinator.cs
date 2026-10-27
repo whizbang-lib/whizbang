@@ -1573,6 +1573,47 @@ public interface IWorkCoordinator {
   Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
+  /// <summary>
+  /// Rewrites a table with a program outside the process (the pg_repack client), returning the ratio afterwards so the
+  /// caller can confirm it worked. The coordinator checks the table name, chooses the connection (the
+  /// schema-initialization one, which owns the table, when configured; otherwise the application's, and only for a
+  /// table its role owns), hands <paramref name="rewrite"/> the qualified table and that connection as libpq
+  /// environment variables, then analyzes and re-measures the table.
+  /// </summary>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="rewrite">Runs the program; true when it rewrote the table.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The re-measured bloat ratio, or null when nothing was rewritten: the program reported failure, the role does not
+  /// own the table, or the coordinator cannot hand out a connection (the default).
+  /// </returns>
+  /// <remarks>The <see cref="Whizbang.Core.Workers.PgRepackTableRewriter"/> strategy's rewrite.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#pg-repack</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ExternalTableRewriteTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PgRepackTests.cs</tests>
+  Task<double?> RewriteTableWithAsync(
+      string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
+  /// <summary>
+  /// Rewrites a table online through pg_squeeze (<c>squeeze.squeeze_table</c>), which copies it while it stays readable
+  /// and writable and takes an exclusive lock only for the final swap, then returns the ratio afterwards so the caller
+  /// can confirm it worked.
+  /// </summary>
+  /// <remarks>
+  /// The <see cref="Whizbang.Core.Workers.PgSqueezeTableRewriter"/> strategy's rewrite. The prerequisites pg_squeeze has
+  /// (the extension, logical WAL, a free replication slot, an identity index, a role allowed to create a replication
+  /// slot and owning the table) are checked first, and an unmet one is logged and returns null rather than calling it.
+  /// Default: nothing is rewritten (null).
+  /// </remarks>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The re-measured bloat ratio, or null when nothing was rewritten.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OnlineTableRewriteSqlTests.cs</tests>
+  Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -4032,7 +4073,13 @@ public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
 /// <param name="TableName">Unqualified table name.</param>
 /// <param name="BloatRatio">Heap bytes per live row over the expected row width; ~1.0 is lean.</param>
 /// <param name="Requested">True when a migration explicitly recorded that this table owes a rewrite.</param>
-public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested);
+public readonly record struct TableRewriteCandidate(string TableName, double BloatRatio, bool Requested) {
+  /// <summary>
+  /// The table's heap size in bytes (<c>pg_relation_size</c>), what an online rewrite copies; 0 when the backend does not
+  /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
+  /// </summary>
+  public long SizeBytes { get; init; }
+}
 
 /// <summary>What vacuuming one work table did (#1351).</summary>
 /// <param name="TableName">Unqualified table name.</param>

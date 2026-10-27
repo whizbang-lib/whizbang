@@ -463,7 +463,8 @@ public partial class PerspectiveWorker(
   /// <summary>
   /// Event fired after a complete batch cycle finishes, including all phases:
   /// drain mode processing, lifecycle stages (PostAllPerspectives, PostLifecycle),
-  /// and metrics recording. Fires once per worker tick regardless of whether work was found.
+  /// and metrics recording. Fires once per batch the worker processes, after every stream in it has been decided (run,
+  /// rewound, bootstrapped, skipped or deferred); a tick that finds no work does not raise it.
   /// </summary>
   /// <remarks>
   /// Use for deterministic test synchronization when verifying lifecycle stages that fire

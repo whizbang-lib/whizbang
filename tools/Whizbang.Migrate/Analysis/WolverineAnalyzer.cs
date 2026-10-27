@@ -171,8 +171,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
         // Check handle method parameters for all convention-based handlers
         var handleMethods = classDecl.Members
             .OfType<MethodDeclarationSyntax>()
-            .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
-            .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword));
+            .Where(m => (m.Identifier.Text is "Handle" or "HandleAsync") && m.Modifiers.Any(SyntaxKind.PublicKeyword));
 
         foreach (var method in handleMethods) {
           warnings.AddRange(_checkForUnknownParameters(method, filePath, className));
@@ -330,8 +329,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
   private static (string MessageType, string? ReturnType)? _findHandleMethod(ClassDeclarationSyntax classDecl) {
     var handleMethods = classDecl.Members
         .OfType<MethodDeclarationSyntax>()
-        .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
-        .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword))
+        .Where(m => (m.Identifier.Text is "Handle" or "HandleAsync") && m.Modifiers.Any(SyntaxKind.PublicKeyword))
         .ToList();
 
     if (handleMethods.Count == 0) {
@@ -341,7 +339,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     var method = handleMethods[0];
     var parameters = method.ParameterList.Parameters;
 
-    if (parameters.Count == 0) {
+    if (!parameters.Any()) {
       return null;
     }
 
@@ -574,14 +572,14 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
 
     var handleMethods = classDecl.Members
         .OfType<MethodDeclarationSyntax>()
-        .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
-        .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword))
-        .Where(m => !m.Modifiers.Any(SyntaxKind.PrivateKeyword))
+        .Where(m => (m.Identifier.Text is "Handle" or "HandleAsync")
+            && m.Modifiers.Any(SyntaxKind.PublicKeyword)
+            && !m.Modifiers.Any(SyntaxKind.PrivateKeyword))
         .ToList();
 
     foreach (var method in handleMethods) {
       var parameters = method.ParameterList.Parameters;
-      if (parameters.Count == 0) {
+      if (!parameters.Any()) {
         continue;
       }
 

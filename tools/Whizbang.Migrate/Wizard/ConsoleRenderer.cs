@@ -151,7 +151,7 @@ public static class ConsoleRenderer {
   private static void _renderHeader(string title, TextWriter writer) {
     const int width = 65;
     writer.WriteLine($"{BOX_TOP_LEFT}{new string(BOX_HORIZONTAL[0], width)}{BOX_TOP_RIGHT}");
-    writer.WriteLine($"{BOX_VERTICAL}  {title.PadRight(width - 2)}{BOX_VERTICAL}");
+    writer.WriteLine($"{BOX_VERTICAL}  {title,-(width - 2)}{BOX_VERTICAL}");
     writer.WriteLine($"{BOX_TOP_LEFT}{new string(BOX_HORIZONTAL[0], width)}{BOX_TOP_RIGHT}");
     writer.WriteLine();
   }

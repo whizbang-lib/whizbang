@@ -82,7 +82,7 @@ public sealed record CapabilityVerdictEntry(
   private static string _fix(CapabilityStatus status) =>
     status.State == CapabilityState.Provisionable
       ? $"{status.Descriptor.Id} is available but not installed or enabled; install or enable it"
-      : status.Descriptor.Remedy(status.State);
+      : status.Descriptor.Remedy(status.State, status.Detail);
 }
 
 /// <summary>

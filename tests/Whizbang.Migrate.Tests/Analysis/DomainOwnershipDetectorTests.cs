@@ -21,7 +21,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events/OrderEvents.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains).Count().IsEqualTo(1);
@@ -39,7 +39,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Commands/OrderCommands.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains).Count().IsEqualTo(1);
@@ -58,7 +58,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains).Count().IsEqualTo(3);
@@ -83,7 +83,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.MostCommon?.DomainName).IsEqualTo("order");
@@ -100,7 +100,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("orders");
@@ -118,7 +118,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("payment");
@@ -135,7 +135,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("orders");
@@ -147,7 +147,7 @@ public class DomainOwnershipDetectorTests {
     const string sourceCode = "";
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Empty.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains).IsEmpty();
@@ -192,7 +192,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Commands.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     // Should extract "payment" from type name, not "contracts" or "commands"
@@ -210,7 +210,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Commands.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("order");
@@ -228,7 +228,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("order");
@@ -247,7 +247,7 @@ public class DomainOwnershipDetectorTests {
       """;
 
     // Act
-    var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Events.cs");
+    var result = await DomainOwnershipDetector.DetectAsync(sourceCode);
 
     // Assert
     await Assert.That(result.DetectedDomains[0].DomainName).IsEqualTo("order");

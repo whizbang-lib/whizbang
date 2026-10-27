@@ -44,6 +44,18 @@
                    gate runs from the pull request's own ci.yml, so a pull request could remove it; this
                    workflow runs from the base branch, so it cannot. A check that cannot read the pull
                    request fails, and the pull request leaves the queue (fail closed).
+      DocsChanged  a docs-site pull request naming pull request Payload was opened, edited or reopened (a
+                   repository_dispatch from the docs repository): re-run the "Gate - Review checks" job of
+                   that pull request's latest CI run when it failed before a docs pull request that
+                   satisfies its docs link last changed (#1806). Payload must be a pull request number and
+                   the pull request open; anything else is ignored. The dispatch only says where to look;
+                   whether anything is re-run is decided from what this repository reads.
+      CiCompleted  a CI run for HeadSha ended in failure (workflow_run): the same re-check for the open
+                   pull request with that head commit. A docs pull request opened while the run was going
+                   could not re-run it then (a running run cannot be re-run), so the run's end does.
+                   Re-running the job re-runs "Gate - CI result" after it. Only a review check that started
+                   before the docs pull request last changed is re-run, so a re-run that fails again on
+                   another finding ends the run without starting another.
 
     The gate stays the authority; the labels describe the linked issue so a maintainer can filter. A
     committer's (write or above) pull request is never explained to or closed; it still needs an
@@ -53,7 +65,7 @@
     owner/name.
 
 .PARAMETER Mode
-    PullRequest, Issue, IssueOpened, Command, Sweep, Review or Enqueued.
+    PullRequest, Issue, IssueOpened, Command, Sweep, Review, Enqueued, DocsChanged or CiCompleted.
 
 .PARAMETER Number
     The pull request (PullRequest) or issue (Issue, Command) number.
@@ -69,17 +81,25 @@
 
 .PARAMETER ReviewState
     The submitted or dismissed review's state (Review): approved, changes_requested, commented or dismissed.
+
+.PARAMETER Payload
+    The pull request number a docs-site dispatch names (DocsChanged), as sent: it is validated here.
+
+.PARAMETER HeadSha
+    The head commit of the CI run that ended (CiCompleted).
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$Repository,
-  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'IssueOpened', 'Command', 'Sweep', 'Review', 'Enqueued')][string]$Mode,
+  [Parameter(Mandatory)][ValidateSet('PullRequest', 'Issue', 'IssueOpened', 'Command', 'Sweep', 'Review', 'Enqueued', 'DocsChanged', 'CiCompleted')][string]$Mode,
   [int]$Number = 0,
   [long]$CommentId = 0,
   [string]$Actor = '',
   [switch]$IsPullRequest,
   [int]$Days = 14,
-  [string]$ReviewState = ''
+  [string]$ReviewState = '',
+  [string]$Payload = '',
+  [string]$HeadSha = ''
 )
 
 Set-StrictMode -Version Latest
@@ -98,6 +118,7 @@ $script:ClosedMarker = '<!-- pr-intake-closed -->'
 $script:IntakeDays = $Days
 # The pipeline-owner gate's job name in ci.yml, with the middle dot kept ASCII-only in source.
 $script:PipelineOwnerJob = "Gate $([char]0x00B7) Pipeline owner"
+$script:ReviewChecksJob = "Gate $([char]0x00B7) Review checks"
 # Commands, where they apply, and who may give them.
 $script:Commands = @{
   'accept'          = @{ OnPullRequest = $false; Who = 'maintainer' }
@@ -405,6 +426,98 @@ function Invoke-IntakeSweep {
   }
 }
 
+function ConvertTo-PullRequestNumber {
+  <# .SYNOPSIS The pull request number in Text when it is a positive whole number of at most nine digits, or nothing. #>
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+  if ($Text -match '^\s*([1-9]\d{0,8})\s*$') { return [int]$Matches[1] }
+}
+
+function ConvertFrom-DocsPullRequestsJson {
+  <# .SYNOPSIS The docs pull requests Get-DocsPullRequests.ps1 writes: Number, State, ReferencesThis, UpdatedAt. #>
+  param([Parameter(Mandatory)][string]$Json)
+  ($Json | ConvertFrom-Json) | Where-Object { $_ } | ForEach-Object {
+    [pscustomobject]@{ Number = [int]$_.number; State = [string]$_.state; ReferencesThis = [bool]$_.referencesThis
+      UpdatedAt = $(if ($_.updatedAt) { [datetimeoffset]$_.updatedAt } else { $null }) }
+  }
+}
+
+function Select-StaleReviewChecksJob {
+  <#
+  .SYNOPSIS
+      The id of the failed "Gate - Review checks" job when a docs-site pull request that satisfies its docs
+      link (open or merged, and naming this pull request) changed after the job started. Nothing else: a
+      review check that already read the docs pull request as it is now would fail the same way again.
+  #>
+  param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Jobs, [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$DocsPullRequests)
+  $job = $Jobs | Where-Object { $_.name -eq $script:ReviewChecksJob -and $_.status -eq 'completed' } | Select-Object -First 1
+  if (-not $job -or $job.conclusion -ne 'failure') { return }
+  $started = [datetimeoffset]$job.startedAt
+  $changed = @($DocsPullRequests | Where-Object { $_.State -in @('OPEN', 'MERGED') -and $_.ReferencesThis -and $_.UpdatedAt -and [datetimeoffset]$_.UpdatedAt -gt $started })
+  if ($changed.Count -gt 0) { return $job.databaseId }
+}
+
+function Get-LinkedDocsPullRequests {
+  <#
+  .SYNOPSIS
+      The docs-site pull requests found for a pull request, read as the review check reads them: by running
+      Get-DocsPullRequests.ps1 from this checkout, in its own process.
+  #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number,
+    [string]$Script = (Join-Path $PSScriptRoot 'Get-DocsPullRequests.ps1'))
+  $json = & pwsh -NoProfile -File $Script -Repository $Repository -PullRequest $Number
+  if ($LASTEXITCODE -ne 0) { throw "Reading the docs pull requests of #$Number failed (exit $LASTEXITCODE)." }
+  ConvertFrom-DocsPullRequestsJson -Json ($json -join "`n")
+}
+
+function Get-OpenPullRequests {
+  <# .SYNOPSIS The open pull requests: number and head commit. #>
+  param([Parameter(Mandatory)][string]$Repository)
+  (Invoke-Gh -Arguments @('pr', 'list', '-R', $Repository, '--state', 'open', '--limit', '500', '--json', 'number,headRefOid')) -join "`n" | ConvertFrom-Json
+}
+
+function Update-DocsLinkedReviewChecks {
+  <#
+  .SYNOPSIS
+      Re-runs the review check of the pull request's latest CI run for its head commit, and the CI result
+      after it, when the run has ended and the check failed before a docs pull request that satisfies its
+      docs link last changed.
+  #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][int]$Number, [Parameter(Mandatory)][string]$Head)
+  $runs = (Invoke-Gh -Arguments @('run', 'list', '-R', $Repository, '--workflow', 'ci.yml', '--commit', $Head,
+      '--json', 'databaseId,status,conclusion,event,createdAt')) -join "`n" | ConvertFrom-Json
+  $latest = @($runs) | Where-Object { $_.event -eq 'pull_request' } | Sort-Object { [datetimeoffset]$_.createdAt } | Select-Object -Last 1
+  if (-not $latest) { Write-Host "Pull request #${Number}: no CI run for $Head yet."; return }
+  if ($latest.status -ne 'completed') {
+    Write-Host "Pull request #${Number}: CI run $($latest.databaseId) is still going; its review check is re-checked when it ends."
+    return
+  }
+  $jobs = (Invoke-Gh -Arguments @('run', 'view', "$($latest.databaseId)", '-R', $Repository, '--json', 'jobs', '--jq', '.jobs')) -join "`n" | ConvertFrom-Json
+  $docs = @(Get-LinkedDocsPullRequests -Repository $Repository -Number $Number)
+  $job = Select-StaleReviewChecksJob -Jobs @($jobs) -DocsPullRequests $docs
+  if (-not $job) { Write-Host "Pull request #${Number}: the review check of CI run $($latest.databaseId) is not failed and stale; nothing to re-run."; return }
+  [void](Invoke-Gh -Arguments @('run', 'rerun', '--job', "$job", '-R', $Repository))
+  Write-Host "Re-ran the review check (job $job) of CI run $($latest.databaseId) for pull request #$Number, and the CI result after it."
+}
+
+function Invoke-DocsChanged {
+  <# .SYNOPSIS A docs-site pull request naming pull request Payload changed: re-check it when it is an open pull request. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][AllowEmptyString()][string]$Payload)
+  $number = ConvertTo-PullRequestNumber -Text $Payload
+  if (-not $number) { Write-Host 'Ignored a docs dispatch whose pull request is not a number.'; return }
+  $pr = @(Get-OpenPullRequests -Repository $Repository) | Where-Object { [int]$_.number -eq $number } | Select-Object -First 1
+  if (-not $pr) { Write-Host "Ignored a docs dispatch for #${number}: not an open pull request here."; return }
+  Update-DocsLinkedReviewChecks -Repository $Repository -Number $number -Head ([string]$pr.headRefOid)
+}
+
+function Invoke-CiCompleted {
+  <# .SYNOPSIS A CI run for HeadSha ended in failure: re-check the open pull request with that head commit. #>
+  param([Parameter(Mandatory)][string]$Repository, [Parameter(Mandatory)][AllowEmptyString()][string]$HeadSha)
+  if ($HeadSha -notmatch '^[0-9a-f]{40}$') { Write-Host 'Ignored a CI completion whose head is not a commit id.'; return }
+  $prs = @(Get-OpenPullRequests -Repository $Repository) | Where-Object { [string]$_.headRefOid -eq $HeadSha }
+  if (-not $prs) { Write-Host "No open pull request has head $HeadSha."; return }
+  foreach ($pr in $prs) { Update-DocsLinkedReviewChecks -Repository $Repository -Number ([int]$pr.number) -Head $HeadSha }
+}
+
 # Dot-sourcing for tests loads the functions without running anything.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
@@ -419,5 +532,7 @@ switch ($Mode) {
   'Sweep' { Invoke-IntakeSweep -Repository $Repository -Days $Days }
   'Review' { Update-PipelineOwnerGate -Repository $Repository -Number $Number -ReviewState $ReviewState }
   'Enqueued' { Invoke-QueueGuard -Repository $Repository -Number $Number }
+  'DocsChanged' { Invoke-DocsChanged -Repository $Repository -Payload $Payload }
+  'CiCompleted' { Invoke-CiCompleted -Repository $Repository -HeadSha $HeadSha }
 }
 exit 0

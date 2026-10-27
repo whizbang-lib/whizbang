@@ -195,7 +195,7 @@ public sealed class ApplyCommand {
         (decisionFile?.Decisions.Packages.AutoManage ?? true);
 
     if (shouldManagePackages && !dryRun && fileChanges.Count > 0) {
-      var transformedFilePaths = fileChanges.Select(fc => fc.FilePath).ToList();
+      var transformedFilePaths = fileChanges.ConvertAll(fc => fc.FilePath);
 
       // Build package settings from decision file or defaults
       var packageSettings = new PackageSettings {

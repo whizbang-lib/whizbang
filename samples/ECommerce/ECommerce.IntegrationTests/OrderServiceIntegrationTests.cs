@@ -14,7 +14,6 @@ namespace ECommerce.IntegrationTests;
 /// </summary>
 public class OrderServiceIntegrationTests {
   [Test]
-  [Obsolete]
   public async Task CreateOrderCommand_HasRequiredPropertiesAsync() {
     // Arrange & Act
     var orderId = OrderId.New();
@@ -37,7 +36,7 @@ public class OrderServiceIntegrationTests {
     // Assert - Verify command structure
     await Assert.That(command.OrderId).IsEqualTo(orderId);
     await Assert.That(command.CustomerId).IsEqualTo(customerId);
-    await Assert.That(command.LineItems).HasCount().EqualTo(1);
+    await Assert.That(command.LineItems).Count().IsEqualTo(1);
     await Assert.That(command.TotalAmount).IsEqualTo(39.98m);
   }
 

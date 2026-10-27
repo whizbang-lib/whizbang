@@ -322,8 +322,15 @@ public static class PostgresDriverExtensions {
         // TURNKEY: table statistics for OTel metrics, the same provider and collector the Dapper driver
         // registers. The provider schema-qualifies its queries: pass the model's default schema so
         // multi-schema services report THEIR tables instead of probing a bare public schema.
+        // The name the context's connection string is found under (the name passed to WithEFCore<T>(...), else "db"),
+        // which also names this database's capability scope, its PostgresOptions section and its notification key.
+        var connectionStringName = selector.ConnectionStringName
+          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+        // Statement statistics are read only while the probe found pg_stat_statements Ready on this database, the
+        // scope registered below under the connection string's name (#1754).
         selector.Services.AddWhizbangTableStatistics((sp, options) => new PostgresTableStatisticsProvider(
-          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables));
+          sp.GetRequiredService<NpgsqlDataSource>(), defaultSchema(sp), options.MaxTrackedTables,
+          sp.GetRequiredService<Whizbang.Core.Capabilities.ICapabilityRegistry>(), connectionStringName));
 
         // Durable suppression for the findings that cycle raises. Without it the advisory remembers
         // in process memory, so every replica reports the same table independently and every
@@ -423,9 +430,8 @@ public static class PostgresDriverExtensions {
         // config when they want a different key per-environment.
         //
         // Late-binding via PostConfigure so an explicit
-        // Whizbang:Database:ConnectionStringKey in appsettings still wins.
-        var connectionStringName = selector.ConnectionStringName
-          ?? Whizbang.Core.Naming.WhizbangNamingConvention.DEFAULT_CONNECTION_STRING_NAME;
+        // Whizbang:Database:ConnectionStringKey in appsettings still wins. The name itself is connectionStringName,
+        // declared with the table statistics above.
         // An unnamed context still configured under the name earlier releases derived from its class
         // keeps working until its keys are renamed (see ResolveConnectionStringName).
         var legacyConnectionStringName = selector.ConnectionStringName is null

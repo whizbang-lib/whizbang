@@ -36,12 +36,12 @@ public class CreateOrderEndpoint(IDispatcher dispatcher) : Endpoint<CreateOrderR
 
   public override async Task HandleAsync(CreateOrderRequest req, CancellationToken ct) {
     var orderId = OrderId.New();
-    var items = req.LineItems.Select(li => new OrderLineItem {
+    var items = req.LineItems.ConvertAll(li => new OrderLineItem {
       ProductId = ProductId.From(Guid.Parse(li.ProductId)),
       ProductName = li.ProductName,
       Quantity = li.Quantity,
       UnitPrice = li.UnitPrice
-    }).ToList();
+    });
 
     var totalAmount = items.Sum(i => i.Quantity * i.UnitPrice);
 

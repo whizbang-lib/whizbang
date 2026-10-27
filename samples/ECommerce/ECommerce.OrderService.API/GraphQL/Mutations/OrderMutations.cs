@@ -24,12 +24,12 @@ public class OrderMutations {
     [Service] IDispatcher dispatcher) {
 
     var orderId = OrderId.New();
-    var items = lineItems.Select(li => new OrderLineItem {
+    var items = lineItems.ConvertAll(li => new OrderLineItem {
       ProductId = ProductId.From(Guid.Parse(li.ProductId)),
       ProductName = li.ProductName,
       Quantity = li.Quantity,
       UnitPrice = li.UnitPrice
-    }).ToList();
+    });
 
     var totalAmount = items.Sum(i => i.Quantity * i.UnitPrice);
 
