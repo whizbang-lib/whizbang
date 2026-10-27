@@ -366,5 +366,6 @@ public class RabbitMQSubscriptionTests {
   }
 
   // Reads the disconnect through the interface, as the retry helper reads it (#1831).
-  private static SubscriptionDisconnectedEventArgs? _disconnectionOf(ISubscription subscription) => subscription.Disconnection;
+  private static SubscriptionDisconnectedEventArgs? _disconnectionOf<TSubscription>(TSubscription subscription)
+    where TSubscription : ISubscription => subscription.Disconnection;
 }
