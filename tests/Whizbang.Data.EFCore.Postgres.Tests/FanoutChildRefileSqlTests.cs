@@ -25,10 +25,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// The operator repair for composite children a receiver filed under the composite's stream (#1798), against a real
 /// database: <see cref="PostgresFanoutChildRefiler"/> finds each stored fan-out child whose payload names another
-/// stream, <c>wh_refile_events</c> (migration 245) moves it there with its bookkeeping, and the composite streams it
+/// stream, <c>wh_refile_events</c> (migration 247) moves it there with its bookkeeping, and the composite streams it
 /// empties are purged with their ghost rows.
 /// </summary>
-/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/245_FanoutChildrenAreFiledUnderTheirOwnStreams.sql</code-under-test>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/247_FanoutChildrenAreFiledUnderTheirOwnStreams.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/PostgresFanoutChildRefiler.cs</code-under-test>
 /// <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
 [Category("Integration")]

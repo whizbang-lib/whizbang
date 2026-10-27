@@ -14,7 +14,7 @@ namespace Whizbang.Data.Postgres;
 /// <summary>
 /// The Postgres <see cref="IFanoutChildRefiler"/>: reads every stored fan-out child (flag
 /// <see cref="EventFlags.NoRebroadcast"/>), names the stream its payload's <c>[StreamId]</c> names through the generated
-/// extractor, and hands those filed elsewhere to <c>wh_refile_events</c> (migration 245), then purges the composite
+/// extractor, and hands those filed elsewhere to <c>wh_refile_events</c> (migration 247), then purges the composite
 /// streams they leave empty with <c>wh_purge_streams</c> (180), in the same transaction (#1798).
 /// </summary>
 /// <remarks>

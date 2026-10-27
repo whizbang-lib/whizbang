@@ -1,7 +1,7 @@
 -- Copyright (c) whizbang-lib contributors.
 -- SPDX-License-Identifier: MIT
 
--- Migration: 245_FanoutChildrenAreFiledUnderTheirOwnStreams.sql
+-- Migration: 247_FanoutChildrenAreFiledUnderTheirOwnStreams.sql
 -- Date: 2026-10-27
 -- Description: Moves stored events to the stream their payload names, for the repair of composite children a
 --              receiver filed under the composite's stream (#1798).
@@ -194,7 +194,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_refile_events(UUID[], UUID[]) IS
-  '245 (#1798): moves each stored event to the stream named beside it, numbered after that stream''s tail in producer '
+  '247 (#1798): moves each stored event to the stream named beside it, numbered after that stream''s tail in producer '
   'order; renumbers the streams left behind; moves the integrity digest, inbox and applied-ledger rows with it; drops '
   'the pending perspective work, both streams'' snapshots and a cursor naming a moved event. An event already on its '
   'target is skipped. A caller previews it by rolling its transaction back.';
