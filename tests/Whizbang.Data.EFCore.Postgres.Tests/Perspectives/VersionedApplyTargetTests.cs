@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
@@ -156,5 +157,84 @@ public class VersionedApplyTargetTests : EFCoreTestBase {
              + "rewind of a row that had applied its newest event first, and the late event it carried was lost. A "
              + "redelivery of the row's own event never reaches the store: the runner's idempotency filter drops it.");
     await Assert.That(row.Version).IsEqualTo(2);
+  }
+
+  // ── A rebuild's write is not ordered on the event id (#1819) ─────────────────────────
+
+  private const string VERSIONED_TABLE = "wh_per_versioned_item";
+
+  private async Task<bool> _writeAsync(Guid id, string state, Guid eventId, PerspectiveRowVersion expected) {
+    await using var ctx = CreateDbContext();
+    return await new EFCorePostgresPerspectiveStore<VersionedItem>(ctx, VERSIONED_TABLE).TryUpsertAsync(
+      id, new VersionedItem { Id = id, State = state, Value = 1 }, new PerspectiveScope(), false,
+      Meta("SagaItemEvent", eventId), expected);
+  }
+
+  private async Task<PerspectiveRowVersion> _versionAsync(Guid id) {
+    await using var ctx = CreateDbContext();
+    return (await new EFCorePostgresPerspectiveStore<VersionedItem>(ctx, VERSIONED_TABLE).ReadForApplyAsync(id)).Version;
+  }
+
+  private async Task<string> _stateAsync(Guid id) {
+    await using var read = CreateDbContext();
+    return (await read.Set<PerspectiveRow<VersionedItem>>().AsNoTracking().FirstAsync(r => r.Id == id)).Data.State;
+  }
+
+  private static async Task<T> _rebuildingAsync<T>(Func<Task<T>> write) {
+    var previous = ProcessingModeAccessor.Current;
+    ProcessingModeAccessor.Current = ProcessingMode.Rebuild;
+    try {
+      return await write();
+    } finally {
+      ProcessingModeAccessor.Current = previous;
+    }
+  }
+
+  /// <summary>The live apply keeps its event-id ordering, on a checked write and an unchecked one alike.</summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task LiveWriteWithAnEarlierEventId_OnVersionedTarget_IsRefusedAsync(bool checkedWrite) {
+    var id = TrackedGuid.New().Value;
+    await _writeAsync(id, "Later", _newerEventId, PerspectiveRowVersion.Unchecked);
+    var version = checkedWrite ? await _versionAsync(id) : PerspectiveRowVersion.Unchecked;
+
+    var written = await _writeAsync(id, "Earlier", _olderEventId, version);
+
+    await Assert.That(written).IsFalse();
+    await Assert.That(await _stateAsync(id)).IsEqualTo("Later")
+      .Because("a live event the row has already moved past is skipped, not applied backwards");
+  }
+
+  /// <summary>
+  /// A rebuild's write lands though its event id sorts below the stored one: the rebuild re-derived the row from
+  /// every event, so the event id of the last one it folded by stream version is not a position the row can be past.
+  /// </summary>
+  [Test]
+  [Arguments(true)]
+  [Arguments(false)]
+  public async Task RebuildWriteWithAnEarlierEventId_OnVersionedTarget_LandsAsync(bool checkedWrite) {
+    var id = TrackedGuid.New().Value;
+    await _writeAsync(id, "Later", _newerEventId, PerspectiveRowVersion.Unchecked);
+    var version = checkedWrite ? await _versionAsync(id) : PerspectiveRowVersion.Unchecked;
+
+    var written = await _rebuildingAsync(() => _writeAsync(id, "Rebuilt", _olderEventId, version));
+
+    await Assert.That(written).IsTrue();
+    await Assert.That(await _stateAsync(id)).IsEqualTo("Rebuilt");
+  }
+
+  /// <summary>A rebuild's write on a version something else has moved past is still refused on the row version.</summary>
+  [Test]
+  public async Task RebuildWriteOnAStaleVersion_OnVersionedTarget_IsStillRefusedAsync() {
+    var id = TrackedGuid.New().Value;
+    await _writeAsync(id, "First", _olderEventId, PerspectiveRowVersion.Unchecked);
+    var stale = await _versionAsync(id);
+    await _writeAsync(id, "Collective", _newerEventId, PerspectiveRowVersion.Unchecked);
+
+    await Assert.That(async () => await _rebuildingAsync(() => _writeAsync(id, "Stale", _newerEventId, stale)))
+      .Throws<PerspectiveRowConflictException>()
+      .Because("the rebuild folded onto a row that has since moved, which the row version refuses whatever the mode");
+    await Assert.That(await _stateAsync(id)).IsEqualTo("Collective");
   }
 }

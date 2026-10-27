@@ -469,6 +469,50 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       .Because("the rebuild re-derives the row from its events, so it neither skips them nor folds them onto what was there");
   }
 
+  /// <summary>
+  /// A row stamped at its stream's last event can still be missing an earlier event's effect, for example
+  /// when that event was skipped while the row moved on. A rebuild of the selected stream must restore it:
+  /// it folds every event from an empty model, so the row's stamp cannot hide the event it never applied.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_WhenTheRowSkippedAnEarlierEvent_AppliesItAsync() {
+    var streamId = Guid.NewGuid();
+    await using var sp = _buildRebuildServices();
+
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 100m });
+      await _appendEventAsync(eventStore, streamId, new RebuildCreditedEvent { StreamId = streamId, Amount = 50m });
+    }
+
+    var rebuilder = new PerspectiveRebuilder(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<ILogger<PerspectiveRebuilder>>());
+
+    // The row this library writes: stamped at the second event.
+    var seeded = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+    await Assert.That(seeded.Success).IsTrue();
+
+    // Remove the first credit's effect and leave the stamp alone, so the row reads as at the stream head
+    // with only the second event applied.
+    await using (var skipContext = CreateDbContext()) {
+      await skipContext.Database.ExecuteSqlRawAsync(
+        // Braces doubled: ExecuteSqlRawAsync reads its SQL as a composite format string.
+        "UPDATE wh_per_rebuild_balance SET data = jsonb_set(data, '{{Balance}}', '50') WHERE id = {0}", streamId);
+    }
+
+    var result = await rebuilder.RebuildStreamsAsync(RebuildBalancePerspectiveName, [streamId], CancellationToken.None);
+    await Assert.That(result.Success).IsTrue();
+
+    await using var verifyContext = CreateDbContext();
+    var rebuilt = await verifyContext.Set<PerspectiveRow<RebuildBalanceModel>>()
+        .AsNoTracking()
+        .FirstAsync(r => r.Id == streamId);
+
+    await Assert.That(rebuilt.Data.Balance).IsEqualTo(150m)
+      .Because("the skipped first credit is applied by the rebuild even though the row is stamped at the second event");
+  }
+
   [Test]
   public async Task RebuildStreamsAsync_WhenTheFirstEventCreatesNoRow_StillFoldsTheRestOfTheStreamAsync() {
     // The stream opens with an event the perspective folds but which declines to create a row, and a
@@ -2507,13 +2551,11 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
         .AsNoTracking().FirstOrDefaultAsync(r => r.Id == streamId);
 
     await Assert.That(row).IsNotNull();
-    // NOT a balance assertion. Replay loads existing projection state and folds on top of it, so an
-    // additive event applied over a seeded row double-counts -- a seeded 100 plus two 100 credits comes
-    // out at 300, which is this file's documented replay-on-top behavior and not the defect under test.
-    // What "came to the stream head" means here, immune to that, is that the row moved off the position
-    // the older library left and now records a readable one.
+    // A rebuild folds from an empty model, never onto the seeded row, so the two 100 credits give exactly
+    // 200 whatever the seeded row held. The row also moves off the position the older library left.
     await Assert.That(row!.Version).IsGreaterThan(1);
-    await Assert.That(row.Data.Balance).IsNotEqualTo(100m);
+    await Assert.That(row.Data.Balance).IsEqualTo(200m)
+      .Because("the rebuild re-derives the row from its two credits instead of folding them onto the seeded 100");
   }
 
   /// <summary>

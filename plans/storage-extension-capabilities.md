@@ -190,7 +190,7 @@ Each slice is one red-then-green increment and its own commit.
    features the plan names (slices 7 to 9) do not exist. Original scope: Explicit vs implicit from configuration; the verdict line per
    required capability naming each feature and its key; the `required` gauge tag; the health entry.
    RED: one test per row of the validation table, including the exact line text.
-4. **Provisioning runner and `AutoProvision`.** DONE on branch `feat/1742-1750-rewrite-provisioning` (issue #1750):
+4. **Provisioning runner and `AutoProvision`.** DONE, shipped in PR #1772 (issue #1750):
    `CapabilityProvisioningRunner` runs in the `Capabilities` step between the probe and the verdict, for every
    capability a requirement in force names (nothing else is provisioned): Provisionable is created, Ready with a newer
    `AvailableVersion` (`CapabilityVersion.IsNewer`) is upgraded, Ready otherwise reads already present; the outcome is
@@ -228,7 +228,7 @@ Each slice is one red-then-green increment and its own commit.
 7. **pg_squeeze managed.** Requirement on `TableRewriteStrategy.PgSqueeze`; provisioning; the
    rewriter strategy itself is `storage-bloat.md` slice 3. RED: explicit PgSqueeze on a server
    without preload fails start with the preload fix text.
-   **Status (2026-10-26):** done on branch `feat/1743-1751-online-rewrite` (#1751). Already in place from #1742/#1750
+   **Status (2026-10-27):** shipped in PR #1809 (#1751). Already in place from #1742/#1750
    (PR #1772): the requirement on `TableRewriteStrategy.PgSqueeze`, generic provisioning (`CREATE EXTENSION` when
    Provisionable, `ALTER EXTENSION UPDATE` when older) and the RED test "explicit PgSqueeze without preload fails start
    with the preload fix" (`TableRewriteStrategyTests`). Added here: the catalog declared `wal_level = logical` but the
@@ -239,7 +239,7 @@ Each slice is one red-then-green increment and its own commit.
    on conversion and `run_maintenance` each maintenance cycle (the strategy itself is
    `storage-ledger-retention.md`). RED: `Auto` with pg_partman Ready uses it; NotPermitted falls back
    to the built-in manager and says so in the verdict.
-   **Status (2026-10-26):** done on branch `feat/1752-pg-partman` (issue #1752, migration 246). `Auto` uses pg_partman
+   **Status (2026-10-27):** shipped in PR #1809 (issue #1752, migration 246). `Auto` uses pg_partman
    only when Ready (never provisions it) and logs its choice from the partition step, not the verdict: `Auto` puts no
    requirement in force, so the verdict line in the format example above ("= Auto, default; using the built-in
    manager") is not produced. pg_partman creates partitions; the built-in manager still drops (signal carry-forward).
@@ -249,7 +249,7 @@ Each slice is one red-then-green increment and its own commit.
    duty inside the idle window; `External` leaves the queue to a job helper. RED: in-process mode with
    no client fails an explicit requirement and degrades an implicit one; external mode never starts a
    process; credentials never appear in the process arguments. Docs: the storage-maintenance page.
-   **Status (2026-10-26):** done on branch `feat/1753-1755-repack-removed-keys` (#1753), with `storage-bloat.md`
+   **Status (2026-10-27):** shipped in PR #1809 (#1753), with `storage-bloat.md`
    slice 5. `TableRewriteStrategy.PgRepack` requires `postgres/pg_repack`; `PgRepackOptions.Mode` (`InProcess` default,
    `External`) and `ClientPath` under `Whizbang:Workers:Maintenance:TableRewrite:PgRepack`. The client is the capability
    `program/pg_repack` (`PgRepackClientCapabilityProvider`, probed with `--version` only when the strategy is PgRepack and
@@ -263,13 +263,13 @@ Each slice is one red-then-green increment and its own commit.
 10. **Existing readers.** `GetExpensivePredicatesAsync` and the bloat estimate check the capability
     instead of catching every `PostgresException`. RED: Ready reads; NeedsServerChange returns empty
     without a query.
-    **Status (2026-10-26):** half done in #1754. `GetExpensivePredicatesAsync` reads `pg_stat_statements` only while
+    **Status (2026-10-27):** half shipped in PR #1809 (#1754). `GetExpensivePredicatesAsync` reads `pg_stat_statements` only while
     the registry has it Ready in the provider's database scope (both drivers pass the registry and their probe
     name); any other state, or no registry, answers empty without opening a connection, and the
     `catch (PostgresException)` is gone. The bloat estimate is unchanged: it never read pgstattuple or caught a
     `PostgresException` (it estimates from `pg_stats`), so there was no catch to replace. Reading pgstattuple when
     Ready, as the capability table above says, is a new measurement that scans tables on the statistics cadence and
-    is left for the owner to decide (cost, cadence, `pgstattuple_approx` or exact).
+    is the open question #1807 (cost, cadence, `pgstattuple_approx` or exact).
 11. **Unknown keys (defect 8).** Shipped: the recorded
     manifest is embedded in Whizbang.Core and a hosted service registered by `AddWhizbang` checks it at
     start; removed keys are a table (`RemovedConfigurationKeys`) until slice 2's generator can carry
@@ -279,7 +279,7 @@ Each slice is one red-then-green increment and its own commit.
     typo under a known section warns; a dictionary entry does not; `Throw` fails start. Docs:
     configuration reference.
     **Status (2026-10-26):** done. #1490, closed by PR #1541. The removed-key table moved to
-    `[RemovedConfigurationKey]` through slice 2's generator on branch `feat/1753-1755-repack-removed-keys` (#1755): the
+    `[RemovedConfigurationKey]` through slice 2's generator, shipped in PR #1809 (#1755): the
     manifest carries `RemovedKeys`, `ConfigurationManifestRegistry.FindRemovedKey` answers the check, all eight entries
     migrated (declared on `MaintenanceWorkerOptions`, `CapabilityOptions` and `SlidingWindowInboxOptions`).
 

@@ -38,6 +38,12 @@ namespace Whizbang.Core.Perspectives;
 /// live fold of a late event that the guard refuses is re-folded by a rewind instead of being reported applied.
 /// </para>
 /// <para>
+/// A rebuild's write is not ordered on the <c>EventId</c> (#1819). A rebuild re-derives the row from every event,
+/// folded in stream-version order, so its write carries the id of the stream's last event by version, which sorts
+/// below the stored one whenever events were appended out of event-id order. It takes the commit-sequence guard
+/// instead, as every other model's rebuild does, and a stale read is still refused on the row version.
+/// </para>
+/// <para>
 /// This is opt-in because the strict comparison is more restrictive than the legacy contract.
 /// Models that have already adopted the framework's stamper-lag forwarding pattern keep working
 /// unchanged; only models that explicitly want strand prevention beyond the stream-affinity
@@ -49,4 +55,5 @@ namespace Whizbang.Core.Perspectives;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:NewerEventWrite_OnVersionedTarget_AdvancesRowAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedApplyTargetTests.cs:WriteAtTheStoredEventId_OnVersionedTarget_LandsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/PerspectiveLateEventApplyTests.cs:TheLaterEventCommitsFirst_EveryRowStillHoldsBothEventsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/VersionedRebuildOrderingTests.cs:RebuildStreamsAsync_VersionedModelWithEventsAppendedOutOfIdOrder_WritesTheFoldedRowAsync</tests>
 public interface IVersionedApplyTarget;

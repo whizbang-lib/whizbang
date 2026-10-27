@@ -34,7 +34,7 @@ namespace Whizbang.Core.Workers;
 /// <c>Task.Delay</c> per <c>feedback_no_timing_tests</c>.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+/// <docs>operations/workers/perspective-worker#cooled-rows-are-not-parsed</docs>
 public sealed class RecentlyProcessedEventCache {
   private const int DEFAULT_MAX_ENTRIES = 100_000;
   private static readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(5);
@@ -67,6 +67,31 @@ public sealed class RecentlyProcessedEventCache {
     _ttl = ttlValue;
     _maxEntries = maxEntries;
   }
+
+  /// <summary>
+  /// Raised when an insert leaves the cache holding more than its configured maximum, just before
+  /// the cap eviction runs. The argument is the resident count the insert observed.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every raise is followed by an eviction of entries that are still inside their TTL, so a steady
+  /// stream of raises means <see cref="RecentlyProcessedEventCacheOptions.MaxEntries"/> is too small
+  /// for the drain's throughput and duplicates the cache should have caught are being fetched again.
+  /// </para>
+  /// <para>
+  /// Raised synchronously on the inserting thread, after the unlocked over-cap check and before the
+  /// eviction lock is taken, so several concurrent inserts can each report the same overflow. Only
+  /// the first to take the lock evicts; the others re-check under the lock, find the overflow gone
+  /// and evict nothing. Subscribers must be cheap and must not throw: an exception propagates out of
+  /// <see cref="MarkProcessed(Guid)"/> and skips that insert's eviction. Costs nothing while the
+  /// cache is under its cap.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/workers/perspective-worker#cooldown-cache-capacity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_OverCap_RaisesOnCapacityExceededWithResidentCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/RecentlyProcessedEventCacheTests.cs:MarkProcessed_BulkOverCap_RaisesOnCapacityExceededOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/ProcessedEventCacheCoverageTests.cs:MarkProcessed_OverflowEvictedWhileInsertWaitsForLock_EvictsNothingAsync</tests>
+  public event Action<int>? OnCapacityExceeded;
 
   /// <summary>Number of resident entries (may include some expired-but-not-swept).</summary>
   public int Count => _entries.Count;
@@ -123,9 +148,11 @@ public sealed class RecentlyProcessedEventCache {
   }
 
   private void _enforceCapIfNeeded() {
-    if (_entries.Count <= _maxEntries) {
+    var residentCount = _entries.Count;
+    if (residentCount <= _maxEntries) {
       return;
     }
+    OnCapacityExceeded?.Invoke(residentCount);
     lock (_evictionLock) {
       // Re-check inside the lock — another thread may have evicted in the meantime.
       var overflow = _entries.Count - _maxEntries;
