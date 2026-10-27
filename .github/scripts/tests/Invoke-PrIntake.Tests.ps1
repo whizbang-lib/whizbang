@@ -402,3 +402,176 @@ Describe 'ConvertFrom-PipelineOwnerOutput' {
     $result.Problems[0] | Should -BeLike '*exit 3*'
   }
 }
+
+Describe 'ConvertTo-PullRequestNumber' {
+  It 'reads a pull request number' -TestCases @(
+    @{ Text = '1805'; Expected = 1805 }
+    @{ Text = ' 7 '; Expected = 7 }
+  ) {
+    ConvertTo-PullRequestNumber -Text $Text | Should -Be $Expected
+  }
+
+  It 'reads nothing that is not a positive whole number' -TestCases @(
+    @{ Text = '' }, @{ Text = '0' }, @{ Text = '-3' }, @{ Text = '12a' }, @{ Text = '1.5' }, @{ Text = '1805; rm -rf /' }
+    @{ Text = '1234567890' }, @{ Text = '$(id)' }
+  ) {
+    ConvertTo-PullRequestNumber -Text $Text | Should -BeNullOrEmpty
+  }
+}
+
+Describe 'ConvertFrom-DocsPullRequestsJson' {
+  It 'reads the docs pull requests Get-DocsPullRequests.ps1 writes, with when each last changed' {
+    $docs = @(ConvertFrom-DocsPullRequestsJson -Json '[{"number":21,"state":"OPEN","referencesThis":true,"updatedAt":"2026-10-27T03:40:17.0000000+00:00"},{"number":22,"state":"CLOSED","referencesThis":false,"updatedAt":null}]')
+    $docs.Number | Should -Be @(21, 22)
+    $docs.State | Should -Be @('OPEN', 'CLOSED')
+    $docs.ReferencesThis | Should -Be @($true, $false)
+    $docs[0].UpdatedAt | Should -Be ([datetimeoffset]'2026-10-27T03:40:17Z')
+    $docs[1].UpdatedAt | Should -BeNullOrEmpty
+  }
+
+  It 'reads nothing from an empty list' {
+    @(ConvertFrom-DocsPullRequestsJson -Json '[]').Count | Should -Be 0
+  }
+}
+
+Describe 'Select-StaleReviewChecksJob' {
+  BeforeAll {
+    $script:Review = "Gate $([char]0x00B7) Review checks"
+    function New-ReviewJob { param([string]$Conclusion = 'failure', [string]$Status = 'completed', [string]$Name = $script:Review, [string]$StartedAt = '2026-10-27T03:40:10Z')
+      [pscustomobject]@{ name = $Name; databaseId = 51; status = $Status; conclusion = $Conclusion; startedAt = [datetime]::Parse($StartedAt).ToUniversalTime() } }
+    function New-Docs { param([string]$State = 'OPEN', [bool]$ReferencesThis = $true, [object]$UpdatedAt = '2026-10-27T03:40:17Z')
+      [pscustomobject]@{ Number = 1579; State = $State; ReferencesThis = $ReferencesThis; UpdatedAt = $(if ($UpdatedAt) { [datetimeoffset]$UpdatedAt } else { $null }) } }
+  }
+
+  It 'picks the failed review check when a docs pull request naming this one changed after it started (#1805)' {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob)) -DocsPullRequests @((New-Docs)) | Should -Be 51
+  }
+
+  It 'counts a merged docs pull request, which satisfies the docs link as an open one does' {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob)) -DocsPullRequests @((New-Docs -State 'MERGED')) | Should -Be 51
+  }
+
+  It 'picks nothing when the review check already saw the docs pull request as it is now, so a re-run cannot loop' {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob -StartedAt '2026-10-27T03:41:00Z')) -DocsPullRequests @((New-Docs)) | Should -BeNullOrEmpty
+  }
+
+  It 'picks nothing when the review check passed, is still going, or is not in the run' -TestCases @(
+    @{ Job = @{ Conclusion = 'success' } }
+    @{ Job = @{ Conclusion = 'cancelled' } }
+    @{ Job = @{ Conclusion = ''; Status = 'in_progress' } }
+    @{ Job = @{ Name = 'Build' } }
+  ) {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob @Job)) -DocsPullRequests @((New-Docs)) | Should -BeNullOrEmpty
+  }
+
+  It 'picks nothing for a docs pull request that cannot satisfy the docs link' -TestCases @(
+    @{ Docs = @{ State = 'CLOSED' } }
+    @{ Docs = @{ ReferencesThis = $false } }
+    @{ Docs = @{ UpdatedAt = $null } }
+  ) {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob)) -DocsPullRequests @((New-Docs @Docs)) | Should -BeNullOrEmpty
+  }
+
+  It 'picks nothing when no docs pull request is found' {
+    Select-StaleReviewChecksJob -Jobs @((New-ReviewJob)) -DocsPullRequests @() | Should -BeNullOrEmpty
+  }
+}
+
+Describe 'Update-DocsLinkedReviewChecks' {
+  BeforeEach {
+    $script:calls = [System.Collections.Generic.List[string]]::new()
+    $script:runs = @(
+      @{ databaseId = 5; status = 'completed'; conclusion = 'failure'; event = 'pull_request'; createdAt = '2026-10-27T03:30:00Z' },
+      @{ databaseId = 3; status = 'completed'; conclusion = 'failure'; event = 'pull_request'; createdAt = '2026-10-27T02:00:00Z' })
+    $script:review = "Gate $([char]0x00B7) Review checks"
+    Mock Invoke-Gh {
+      $line = $Arguments -join ' '
+      $script:calls.Add($line)
+      if ($line -like 'run list *') { return (ConvertTo-Json -Compress -InputObject @($script:runs)) }
+      if ($line -like 'run view 5 *') {
+        return (ConvertTo-Json -Compress -InputObject @(
+            @{ name = $script:review; databaseId = 51; status = 'completed'; conclusion = 'failure'; startedAt = '2026-10-27T03:40:10Z' }))
+      }
+    }
+    Mock Get-LinkedDocsPullRequests { [pscustomobject]@{ Number = 1579; State = 'OPEN'; ReferencesThis = $true; UpdatedAt = [datetimeoffset]'2026-10-27T03:40:17Z' } }
+  }
+
+  It 're-runs the stale review check of the latest pull request run for the head commit (and with it the CI result)' {
+    Update-DocsLinkedReviewChecks -Repository 'o/r' -Number 7 -Head 'abc123'
+    $script:calls | Should -Contain 'run rerun --job 51 -R o/r'
+    @($script:calls | Where-Object { $_ -like 'run list * --commit abc123 *' }).Count | Should -Be 1
+    Should -Invoke Get-LinkedDocsPullRequests -Times 1 -ParameterFilter { $Repository -eq 'o/r' -and $Number -eq 7 }
+  }
+
+  It 'leaves a run that is still going: it cannot be re-run, and its own completion re-checks it' {
+    $script:runs[0].status = 'in_progress'
+    Update-DocsLinkedReviewChecks -Repository 'o/r' -Number 7 -Head 'abc123'
+    @($script:calls | Where-Object { $_ -like 'run rerun*' -or $_ -like 'run view*' }).Count | Should -Be 0
+  }
+
+  It 'does nothing when the head commit has no pull request run of CI yet' {
+    $script:runs = @(@{ databaseId = 9; status = 'completed'; conclusion = 'failure'; event = 'merge_group'; createdAt = '2026-10-27T03:30:00Z' })
+    Update-DocsLinkedReviewChecks -Repository 'o/r' -Number 7 -Head 'abc123'
+    @($script:calls | Where-Object { $_ -like 'run rerun*' -or $_ -like 'run view*' }).Count | Should -Be 0
+  }
+
+  It 'does nothing when the review check is not stale' {
+    Mock Get-LinkedDocsPullRequests { }
+    Update-DocsLinkedReviewChecks -Repository 'o/r' -Number 7 -Head 'abc123'
+    @($script:calls | Where-Object { $_ -like 'run rerun*' }).Count | Should -Be 0
+  }
+}
+
+Describe 'Invoke-DocsChanged' {
+  BeforeEach {
+    Mock Invoke-Gh {
+      if (($Arguments -join ' ') -like 'pr list -R o/r --state open *') {
+        return '[{"number":7,"headRefOid":"abc123"},{"number":8,"headRefOid":"def456"}]'
+      }
+    }
+    Mock Update-DocsLinkedReviewChecks { }
+  }
+
+  It 're-checks the open pull request the docs pull request names, at its head commit' {
+    Invoke-DocsChanged -Repository 'o/r' -Payload '8'
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 1 -Exactly -ParameterFilter { $Number -eq 8 -and $Head -eq 'def456' }
+  }
+
+  It 'ignores a pull request that is not open, does not exist, or is an issue' {
+    Invoke-DocsChanged -Repository 'o/r' -Payload '9'
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 0 -Exactly
+  }
+
+  It 'ignores a payload that is not a pull request number, without reading anything' {
+    Invoke-DocsChanged -Repository 'o/r' -Payload '7 --repo x/y'
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 0 -Exactly
+    Should -Invoke Invoke-Gh -Times 0 -Exactly
+  }
+}
+
+Describe 'Invoke-CiCompleted' {
+  BeforeEach {
+    Mock Invoke-Gh {
+      if (($Arguments -join ' ') -like 'pr list -R o/r --state open *') {
+        return '[{"number":7,"headRefOid":"0123456789abcdef0123456789abcdef01234567"},{"number":8,"headRefOid":"fedcba9876543210fedcba9876543210fedcba98"}]'
+      }
+    }
+    Mock Update-DocsLinkedReviewChecks { }
+  }
+
+  It 're-checks the open pull request whose head commit the finished run tested' {
+    Invoke-CiCompleted -Repository 'o/r' -HeadSha 'fedcba9876543210fedcba9876543210fedcba98'
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 1 -Exactly -ParameterFilter { $Number -eq 8 -and $Head -eq 'fedcba9876543210fedcba9876543210fedcba98' }
+  }
+
+  It 'does nothing when no open pull request has that head commit any more' {
+    Invoke-CiCompleted -Repository 'o/r' -HeadSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 0 -Exactly
+  }
+
+  It 'ignores a head that is not a commit id, without reading anything' {
+    Invoke-CiCompleted -Repository 'o/r' -HeadSha 'main'
+    Should -Invoke Invoke-Gh -Times 0 -Exactly
+    Should -Invoke Update-DocsLinkedReviewChecks -Times 0 -Exactly
+  }
+}
