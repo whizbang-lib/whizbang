@@ -640,7 +640,7 @@ public static class ServiceCollectionExtensions {
         // upcasters are registered, so non-upcasting consumers pay nothing.
         var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
         var innerStore = upcasterPipeline is { HasAny: true }
-            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
             : (Messaging.IEventStore)holder.Instance;
 
         // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees
@@ -692,7 +692,7 @@ public static class ServiceCollectionExtensions {
         // upcasters are registered, so non-upcasting consumers pay nothing.
         var upcasterPipeline = sp.GetService<Messaging.EventUpcasterPipeline>();
         var innerStore = upcasterPipeline is { HasAny: true }
-            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline)
+            ? new Messaging.UpcastingEventStoreDecorator((Messaging.IEventStore)holder.Instance, upcasterPipeline, sp.GetService<IStreamIdExtractor>())
             : (Messaging.IEventStore)holder.Instance;
 
         // Layer 1: SyncTracking (tracks events for perspective sync). Inside SecurityContext, so it sees

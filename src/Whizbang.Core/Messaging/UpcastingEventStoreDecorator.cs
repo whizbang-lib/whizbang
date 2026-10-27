@@ -45,10 +45,12 @@ namespace Whizbang.Core.Messaging;
 /// <remarks>Initializes the decorator.</remarks>
 /// <param name="inner">The underlying event store.</param>
 /// <param name="pipeline">The upcaster pipeline applied to polymorphic reads.</param>
-public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline) : ForwardingEventStoreDecorator(inner) {
+public sealed class UpcastingEventStoreDecorator(IEventStore inner, EventUpcasterPipeline pipeline, IStreamIdExtractor? streamIds = null) : ForwardingEventStoreDecorator(inner) {
+  private readonly IStreamIdExtractor? _streamIds = streamIds;
   private readonly EventUpcasterPipeline _pipeline = ArgumentGuard.NotNull(pipeline);
 
   private MessageEnvelope<IEvent> _upcast(MessageEnvelope<IEvent> envelope) {
+    _ = _streamIds;
     var upcasted = _pipeline.Apply(envelope.Payload);
     if (!ReferenceEquals(upcasted, envelope.Payload)) {
       envelope.Payload = upcasted;

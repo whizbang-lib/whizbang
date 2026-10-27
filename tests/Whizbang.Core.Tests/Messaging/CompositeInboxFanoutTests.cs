@@ -73,6 +73,56 @@ public class CompositeInboxFanoutTests {
       .Because("Inner events inherit the composite's stream — the first hop's AggregateId is the composite StreamId.");
   }
 
+  /// <summary>
+  /// A typed child whose payload names its own stream is filed under that stream, the one its producer stored it on
+  /// (#1798). Filed under the composite's stream, live apply folded it onto a row keyed by the composite (a row no
+  /// reader asks for) and the row its payload names never received it.
+  /// </summary>
+  [Test]
+  public async Task TryExpand_TypedChildNamingItsOwnStream_IsFiledUnderThatStreamAsync() {
+    var compositeStream = Guid.NewGuid();
+    var first = Guid.NewGuid();
+    var second = Guid.NewGuid();
+    var composite = new TestComposite(new StreamedInnerEvent(first), new StreamedInnerEvent(second));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(compositeStream), _providerWithExtractor());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children[0].StreamId).IsEqualTo(first)
+      .Because("the child's payload names the stream its producer stored it on, and the receiver stores it there too");
+    await Assert.That(result.Children[1].StreamId).IsEqualTo(second);
+  }
+
+  /// <summary>A pre-fanout directive's replacement children are filed under the streams their payloads name (#1798).</summary>
+  [Test]
+  public async Task TryExpand_ReplacementChildNamingItsOwnStream_IsFiledUnderThatStreamAsync() {
+    var compositeStream = Guid.NewGuid();
+    var own = Guid.NewGuid();
+    var composite = new TestComposite(new InnerEvent("ignored"));
+
+    var result = CompositeInboxFanout.TryExpand(
+      composite, _sourceEnvelope(compositeStream), _providerWithExtractor(), replacementInner: [new StreamedInnerEvent(own)]);
+
+    await Assert.That(result.Children.Single().StreamId).IsEqualTo(own);
+  }
+
+  /// <summary>
+  /// A typed child whose payload names no stream (no <c>[StreamId]</c>, or an empty one) keeps the composite's stream,
+  /// as before: there is no other stream it could belong to.
+  /// </summary>
+  [Test]
+  public async Task TryExpand_TypedChildNamingNoStream_KeepsTheCompositesStreamAsync() {
+    var compositeStream = Guid.NewGuid();
+    var composite = new TestComposite(new InnerEvent("unkeyed"), new StreamedInnerEvent(Guid.Empty));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(compositeStream), _providerWithExtractor());
+
+    await Assert.That(result.Children[0].StreamId).IsEqualTo(compositeStream)
+      .Because("the extractor finds no [StreamId] on this payload");
+    await Assert.That(result.Children[1].StreamId).IsEqualTo(compositeStream)
+      .Because("an empty stream id names no stream");
+  }
+
   [Test]
   public async Task TryExpand_AssignsFreshDistinctMessageIdsPerChildAsync() {
     var composite = new TestComposite(new InnerEvent("A"), new InnerEvent("B"));
@@ -578,6 +628,20 @@ public class CompositeInboxFanoutTests {
     new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
       .BuildServiceProvider();
+
+  private static ServiceProvider _providerWithExtractor() =>
+    new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeSerializer())
+      .AddSingleton<IStreamIdExtractor>(new StreamedInnerEventExtractor())
+      .BuildServiceProvider();
+
+  /// <summary>Reads the stream a <see cref="StreamedInnerEvent"/> names, as the generated extractor reads a <c>[StreamId]</c>.</summary>
+  private sealed class StreamedInnerEventExtractor : IStreamIdExtractor {
+    public Guid? ExtractStreamId(object message, Type messageType) =>
+      message is StreamedInnerEvent streamed ? streamed.Target : null;
+  }
+
+  private sealed record StreamedInnerEvent(Guid Target) : IEvent;
 
   private static ServiceProvider _providerWithLogger(CapturingLogger captured) =>
     new ServiceCollection()

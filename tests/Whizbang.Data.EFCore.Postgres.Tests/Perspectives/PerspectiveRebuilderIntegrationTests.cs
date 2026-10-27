@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,9 +15,11 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Events.System;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.MultiStream;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
@@ -890,32 +893,37 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// A row whose recorded position came from an event on ANOTHER stream is still rebuilt from its own stream (#1798).
+  /// A row whose recorded position came from an event filed under ANOTHER stream is rewritten by the rebuild once that
+  /// event is filed under the row's own stream (#1798).
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Measured in a deployed environment: a row's metadata named an event stored on a different stream, committed after
-  /// every event on the row's own stream. A rebuild of the row's stream folds its own events and writes them at its own
-  /// stream head, which is below the foreign position, so the store's ordering guard refuses the write as stale and the
-  /// run reports the stream folded but unchanged. No rebuild can repair such a row.
+  /// Measured in a deployed environment: a receiver filed a composite's typed children under the composite's stream, and
+  /// a rebuild of that stream then routed each child by its payload's <c>[StreamId]</c> onto the row it names, folding it
+  /// from an empty model and recording the composite stream's position there. A rebuild of the row's own stream folds
+  /// only that stream, writes at its head, which is below the recorded position, and the store's ordering guard refuses
+  /// the write as stale. No rebuild could repair such a row.
   /// </para>
   /// <para>
-  /// The foreign position is produced here by real code, not seeded: a rebuild of stream A routes an event stored on A
-  /// whose <c>[StreamId]</c> names B onto B's row (the re-key routing in the generated runner's RunRebuildAsync), and
-  /// writes it with A's commit sequence. The row's balance is then corrupted out of band, so a rebuild of B that wrote
-  /// nothing cannot pass by leaving a coincidentally right value in place.
+  /// The code that produced this state no longer does (a child is filed under its own stream, and a rebuild routes only
+  /// genuine re-keys), so the state is seeded as it is found in the field: the child stored under the other stream, and
+  /// the row naming it at that stream's commit sequence with its balance wrong.
   /// </para>
   /// </remarks>
   [Test]
   public async Task RebuildStreamsAsync_WhenTheRowRecordsAPositionFromAnotherStream_StillRewritesTheRowAsync() {
     await using var sp = _buildRebuildServices();
     var (ownStream, _) = await _arrangeRowPositionedOnAForeignStreamAsync(sp);
+    var repair = await _refileFanoutChildrenAsync();
+    await Assert.That(repair.StreamsToRebuild).IsEquivalentTo([ownStream]).Because("the repair names the stream to rebuild");
 
     var result = await _rebuildAsync(sp, ownStream);
 
     var row = await _rowAsync(ownStream);
     await Assert.That(row.Data.Balance).IsEqualTo(5m)
       .Because("the rebuild re-derives the row from its own stream's events; a position recorded from another stream must not make that write look stale");
+    await Assert.That(row.Data.Label).IsEqualTo("foreign")
+      .Because("the child the repair filed under its own stream is folded into the row it is about");
     await Assert.That(result.StreamsProcessed).IsEqualTo(1)
       .Because($"the row was rewritten, so the stream is not one that folded but left the row unchanged ({result.Error})");
     await Assert.That(result.Success).IsTrue().Because($"the rebuild must report success ({result.Error})");
@@ -929,6 +937,7 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
   public async Task RebuildPerspectiveCommand_SelectingAStreamWhoseRowRecordsAPositionFromAnotherStream_RewritesTheRowAsync() {
     await using var sp = _buildRebuildServices();
     var (ownStream, _) = await _arrangeRowPositionedOnAForeignStreamAsync(sp);
+    await _refileFanoutChildrenAsync();
 
     var receptor = new Whizbang.Data.EFCore.Postgres.RebuildPerspectiveCommandReceptor(
         sp.GetRequiredService<IServiceScopeFactory>(),
@@ -941,11 +950,136 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
     var row = await _rowAsync(ownStream);
     await Assert.That(row.Data.Balance).IsEqualTo(5m)
       .Because("a selected-streams in-place rebuild re-derives the row from its own stream, whatever stream its recorded position came from");
+    await Assert.That(row.Data.Label).IsEqualTo("foreign");
+  }
+
+  /// <summary>The operator repair a deployment runs before the rebuild (#1798).</summary>
+  private Task<FanoutChildRefileReport> _refileFanoutChildrenAsync() =>
+    new Whizbang.Data.Postgres.PostgresFanoutChildRefiler(
+        Npgsql.NpgsqlDataSource.Create(ConnectionString).OpenConnectionAsync,
+        Whizbang.Core.Registry.StreamIdExtractorRegistry.GetComposite())
+      .RefileAsync(new FanoutChildRefileRequest { RequestedBy = "operator-1", Reason = "composite children filed under the composite" });
+
+  /// <summary>
+  /// A rebuild of a stream holding an event whose payload names another row leaves that row alone (#1798): the event is
+  /// folded on the stream it is stored on, as live apply and the rewind fold it. Rebuilding the stream used to replace
+  /// the other row with that one event's fold and stamp it with this stream's position.
+  /// </summary>
+  [Test]
+  public async Task RebuildStreamsAsync_OfAStreamHoldingAnEventKeyedToAnotherRow_LeavesThatRowAloneAsync() {
+    await using var sp = _buildRebuildServices();
+    var ownStream = Guid.NewGuid();
+    var foreignStream = Guid.NewGuid();
+    var ownEvent = MessageId.New();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendCommittedAsync(eventStore, ownStream, new RebuildBalanceSetEvent { StreamId = ownStream, Balance = 5m }, ownEvent);
+      await _appendCommittedAsync(eventStore, foreignStream, new RebuildLabelSetEvent { StreamId = ownStream, Label = "foreign" }, MessageId.New());
+    }
+    await Assert.That((await _rebuildAsync(sp, ownStream)).StreamsProcessed).IsEqualTo(1).Because("setup: the own row exists");
+
+    await _rebuildAsync(sp, foreignStream);
+
+    var row = await _rowAsync(ownStream);
+    await Assert.That(row.Data.Balance).IsEqualTo(5m)
+      .Because("a rebuild of another stream must not replace this row with the fold of that stream's events");
+    await Assert.That(row.Data.Label).IsNull();
+    await Assert.That(row.Metadata.EventId).IsEqualTo(ownEvent.Value.ToString())
+      .Because("the row's recorded position stays on its own stream, where a rebuild of that stream can still write past it");
   }
 
   /// <summary>
-  /// Leaves stream B's row recording the position of an event stored on stream A, committed after B's head, with its
-  /// balance corrupted, and returns (B, A). Asserts each precondition, so a failure later is the rebuild's and not the setup's.
+  /// A typed composite child is stored under the stream its payload names, and live apply folds it onto that row and
+  /// creates no row keyed by the composite (#1798). Filed under the composite's stream, the child went to a row nobody
+  /// reads and never reached the row it is about.
+  /// </summary>
+  [Test]
+  public async Task CompositeChild_IsStoredUnderItsOwnStream_AndLiveApplyFoldsItThereAsync() {
+    await using var sp = _buildRebuildServices();
+    var ownStream = Guid.NewGuid();
+    var compositeStream = Guid.NewGuid();
+    await using (var appendScope = sp.CreateAsyncScope()) {
+      var eventStore = appendScope.ServiceProvider.GetRequiredService<IEventStore>();
+      await _appendCommittedAsync(eventStore, ownStream, new RebuildBalanceSetEvent { StreamId = ownStream, Balance = 5m }, MessageId.New());
+    }
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var child = await _receiveCompositeChildAsync(
+      options, compositeStream, new RebuildLabelSetEvent { StreamId = ownStream, Label = "from-composite" });
+
+    await using (var read = CreateDbContext()) {
+      var storedOn = (await read.Database.SqlQueryRaw<Guid>(
+        "SELECT stream_id AS \"Value\" FROM wh_event_store WHERE event_id = {0}", child).ToListAsync()).Single();
+      await Assert.That(storedOn).IsEqualTo(ownStream)
+        .Because("the receiver stores a composite's child under the stream its payload names, as its producer did");
+    }
+
+    // Live apply: the worker runs each claimed stream through the runner, keyed by the stream the event is stored on.
+    await using (var scope = sp.CreateAsyncScope()) {
+      var runner = scope.ServiceProvider.GetRequiredService<IPerspectiveRunnerRegistry>()
+        .GetRunner(RebuildBalancePerspectiveName, scope.ServiceProvider)!;
+      await runner.RunAsync(ownStream, RebuildBalancePerspectiveName, null);
+      await runner.RunAsync(compositeStream, RebuildBalancePerspectiveName, null);
+    }
+
+    var row = await _rowAsync(ownStream);
+    await Assert.That(row.Data.Label).IsEqualTo("from-composite").Because("the child reached the row it is about");
+    await Assert.That(row.Data.Balance).IsEqualTo(5m);
+    await using var verify = CreateDbContext();
+    var ghost = await verify.Set<PerspectiveRow<RebuildBalanceModel>>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == compositeStream);
+    await Assert.That(ghost).IsNull().Because("no row is keyed by the composite's stream");
+  }
+
+  /// <summary>
+  /// A receiver's handling of a typed composite as production runs it: the composite expands at the dispatch seam
+  /// (<see cref="CompositeInboxFanout"/>, with the real envelope serializer and the generated stream-id extractor), the
+  /// children are stored through <c>store_inbox_messages</c> and the inbox emit chain. Returns the child's event id.
+  /// </summary>
+  private async Task<Guid> _receiveCompositeChildAsync(JsonSerializerOptions options, Guid compositeStream, IEvent inner) {
+    var scope = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(options))
+      .AddSingleton(Whizbang.Core.Registry.StreamIdExtractorRegistry.GetComposite())
+      .BuildServiceProvider();
+    var source = new MessageEnvelope<JsonElement> {
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
+      MessageId = MessageId.New(),
+      Payload = JsonSerializer.SerializeToElement(new { }),
+      Hops = [new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+        Metadata = new Dictionary<string, JsonElement> { ["AggregateId"] = JsonSerializer.SerializeToElement(compositeStream.ToString()) },
+      }],
+    };
+    var expansion = CompositeInboxFanout.TryExpand(new SingleChildComposite(inner), source, scope);
+    await Assert.That(expansion.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded).Because($"setup: {expansion.Detail}");
+    var child = expansion.Children.Single();
+
+    await using var dbContext = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, options);
+    await coordinator.StoreInboxMessagesAsync([child], partitionCount: 100);
+    var instanceId = Guid.NewGuid();
+    await dbContext.Database.ExecuteSqlRawAsync(
+      "UPDATE wh_inbox_state SET instance_id = {0}, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = {1}",
+      instanceId, child.MessageId);
+    await dbContext.Database.ExecuteSqlRawAsync(
+      "SELECT _emit_event_store_chain_for_inbox({0}, NOW() + INTERVAL '5 minutes', NOW(), 4)", instanceId);
+    await dbContext.Database.ExecuteSqlRawAsync(
+      "UPDATE wh_event_store SET commit_sequence = (SELECT COALESCE(MAX(commit_sequence), 0) + 1 FROM wh_event_store) WHERE event_id = {0}",
+      child.MessageId);
+    return child.MessageId;
+  }
+
+  /// <summary>A typed composite carrying one inner event, as a producer's composite type does.</summary>
+  private sealed class SingleChildComposite(IEvent inner) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 10;
+    public IEnumerable<IMessage> InnerEvents => [inner];
+  }
+
+  /// <summary>
+  /// Leaves stream B's row as the field shows it: an event keyed to B but stored under stream A, committed after B's head,
+  /// and B's row recording that event's position with its balance wrong. Returns (B, A). Asserts each precondition, so a
+  /// failure later is the repair's and not the setup's.
   /// </summary>
   private async Task<(Guid OwnStream, Guid ForeignStream)> _arrangeRowPositionedOnAForeignStreamAsync(ServiceProvider sp) {
     var ownStream = Guid.NewGuid();
@@ -958,11 +1092,13 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       // Stored on the foreign stream, keyed by the own stream, committed later.
       await _appendCommittedAsync(eventStore, foreignStream, new RebuildLabelSetEvent { StreamId = ownStream, Label = "foreign" }, foreignEvent);
     }
+    // Flagged as the receiver flags a composite's child (EventFlags.NoRebroadcast), as found in the field.
+    await using (var flag = CreateDbContext()) {
+      await flag.Database.ExecuteSqlRawAsync("UPDATE wh_event_store SET flags = flags | 4 WHERE event_id = {0}", foreignEvent.Value);
+    }
 
     var ownRebuild = await _rebuildAsync(sp, ownStream);
     await Assert.That(ownRebuild.StreamsProcessed).IsEqualTo(1).Because("setup: the own stream's row is created first");
-    var foreignRebuild = await _rebuildAsync(sp, foreignStream);
-    await Assert.That(foreignRebuild.Success).IsTrue().Because($"setup: the foreign stream's rebuild runs ({foreignRebuild.Error})");
 
     long ownHead;
     long foreignPosition;
@@ -972,18 +1108,21 @@ public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
       foreignPosition = (await read.Database.SqlQueryRaw<long>(
         "SELECT commit_sequence AS \"Value\" FROM wh_event_store WHERE event_id = {0}", foreignEvent.Value).ToListAsync()).Single();
     }
+    await Assert.That(foreignPosition).IsGreaterThan(ownHead)
+      .Because("setup: the recorded position sits above every event on the row's own stream");
+
+    await using (var seed = CreateDbContext()) {
+      await seed.Database.ExecuteSqlRawAsync(
+        "UPDATE wh_per_rebuild_balance SET data = jsonb_set(data, '{{Balance}}', '999'), "
+        + "metadata = jsonb_set(jsonb_set(metadata, '{{EventId}}', to_jsonb({0}::text)), '{{CommitSequence}}', to_jsonb({1}::bigint)) "
+        + "WHERE id = {2}",
+        foreignEvent.Value.ToString(), foreignPosition, ownStream);
+    }
     var positioned = await _rowAsync(ownStream);
     await Assert.That(positioned.Metadata.EventId).IsEqualTo(foreignEvent.Value.ToString())
       .Because("setup: the own stream's row records the event stored on the foreign stream");
     await Assert.That(positioned.Metadata.CommitSequence).IsEqualTo(foreignPosition);
-    await Assert.That(foreignPosition).IsGreaterThan(ownHead)
-      .Because("setup: the recorded position sits above every event on the row's own stream");
-
-    await using (var corrupt = CreateDbContext()) {
-      await corrupt.Database.ExecuteSqlRawAsync(
-        "UPDATE wh_per_rebuild_balance SET data = jsonb_set(data, '{{Balance}}', '999') WHERE id = {0}", ownStream);
-    }
-    await Assert.That((await _rowAsync(ownStream)).Data.Balance).IsEqualTo(999m).Because("setup: the row needs repair");
+    await Assert.That(positioned.Data.Balance).IsEqualTo(999m).Because("setup: the row needs repair");
     return (ownStream, foreignStream);
   }
 
