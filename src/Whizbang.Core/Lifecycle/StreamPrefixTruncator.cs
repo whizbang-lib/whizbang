@@ -101,7 +101,7 @@ public sealed partial class StreamPrefixTruncator(IWorkCoordinator coordinator, 
     // Fold-before-discard (apply-stack lineage): the truncate is about to remove this stream's
     // pointers, so its collapsed path folds into the persisted signature counts first. The stream
     // dies; its shape survives. Known v1 caveat: re-truncating an already-truncated stream re-folds the
-    // surviving carry-forward — a small, bounded distortion accepted until per-stream fold
+    // surviving carry-forward: a small, bounded distortion accepted until per-stream fold
     // watermarks exist.
     _ = await _coordinator.FoldStreamApplyPathsAsync([streamId], cancellationToken).ConfigureAwait(false);
 
