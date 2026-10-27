@@ -223,6 +223,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute. A key removed with nothing in its place logs event 3, naming no replacement.
 
 #### Messaging & delivery
+- **A derived type can override an inherited `[StreamId]` on purpose (#1833).** `[StreamId(Override = true)]` on a
+  property or a record primary-constructor parameter makes it the stream ID ahead of any inherited `[StreamId]`,
+  including where an inherited property used to beat a derived record's `[StreamId]` parameter, and an override on an
+  intermediate base type is inherited below it. The extractor, the perspective runner and the analyzer make the same
+  choice: hiding an inherited stream ID with an override is not reported as WHIZ006, and a perspective event whose
+  stream ID is an override is not WHIZ031. WHIZ006 is still reported for two `[StreamId]` declared on one type,
+  override or not, and for a hide without the option. A new warning, **WHIZ016**, reports an override where no base
+  type declares a `[StreamId]`. A plain `[StreamId]` is unchanged (`Override` defaults to `false`).
 - **`[ReceptorPriority]` orders the receptors a service runs for one message (#1412).** Lower runs first;
   `ReceptorPriority.FIRST`, `EARLY`, `DEFAULT`, `LATE` and `LAST` name the usual points, and a receptor that
   declares nothing runs at `DEFAULT`, the middle of the range.
@@ -733,6 +741,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twice its size, the batch stops shrinking there, and any call well inside the budget grows the batch again, past
   any size a slow call or a timeout backed off to, instead of the cap holding until the backlog drained.
 
+- **A transport disconnect while a subscription is being established is no longer missed (Fixes #1831).** The
+  subscription retry helper recorded a destination as Healthy and only then attached its disconnect handler, so a
+  disconnect in between had no listener: the status stayed Healthy and no reconnect was attempted, and the consumer
+  stopped receiving from that destination until a restart. The handler is now attached before Healthy is recorded, a
+  disconnect it hears before then is acted on right after the change to Healthy (so Healthy cannot overwrite the
+  Recovering it causes), and a disconnect raised before the handler was attached is found through the new
+  `ISubscription.Disconnection` property, which the RabbitMQ, Azure Service Bus and namespace-mirroring subscriptions
+  set before they raise `OnDisconnected` (the interface's default is `null`, so other implementations still compile).
+  Only the first disconnect of a subscription starts a reconnect, and a disconnect from a subscription that a later
+  subscribe has replaced no longer knocks the current one into Recovering or starts a second consumer.
 - **A rebuild of a versioned perspective no longer refuses a stream whose events were appended out of event-id
   order (Fixes #1819).** A selected-streams rebuild folds a model marked `IVersionedApplyTarget` from an empty model
   in stream-version order, so its write carries the event id of the last event by version. When that event was minted
