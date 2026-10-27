@@ -280,6 +280,31 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await Assert.That(report.Moves).IsEmpty();
   }
 
+  /// <summary>An event type with no <c>[StreamId]</c> at all: the extractor finds nothing to read, not an empty id.</summary>
+#pragma warning disable WHIZ009 // deliberately names no stream: the shape under test
+  public sealed record UnkeyedRefileProbeEvent(string Label) : IEvent;
+#pragma warning restore WHIZ009
+
+  /// <summary>
+  /// A child whose type has no <c>[StreamId]</c> was read; it names no stream, so it belongs where it is. Counting it
+  /// unreadable would tell an operator a readable child could not be decided.
+  /// </summary>
+  [Test]
+  public async Task Refile_LeavesAChildWhoseTypeHasNoStreamId_WithoutCountingItUnreadableAsync() {
+    var composite = Guid.NewGuid();
+    var child = await _appendChildAsync(composite, new UnkeyedRefileProbeEvent("x"));
+    await Assert.That(StreamIdExtractorRegistry.GetComposite().ExtractStreamId(new UnkeyedRefileProbeEvent("x"), typeof(UnkeyedRefileProbeEvent)))
+      .IsNull().Because("setup: the type has no [StreamId], so the extractor reads nothing rather than an empty id");
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Scanned).IsEqualTo(1);
+    await Assert.That(report.Undecidable).IsEqualTo(0).Because("the payload was read; its type names no stream, so it stays");
+    await Assert.That(report.Moves).IsEmpty();
+    await using var conn = await _openAsync();
+    await Assert.That(await _scalarAsync<Guid>(conn, "SELECT stream_id FROM wh_event_store WHERE event_id = $1", child)).IsEqualTo(composite);
+  }
+
   [Test]
   public async Task Refile_LeavesAChildWhosePayloadNamesNoStream_WithoutCountingItUnreadableAsync() {
     var composite = Guid.NewGuid();
