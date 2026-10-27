@@ -333,6 +333,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored-`EventType` → `Type` resolver shared by every event-store read path.
 
 #### Observability & tooling
+- **The perspective worker's cooldown cache reports when it goes over its cap (#1828).** `RecentlyProcessedEventCache.OnCapacityExceeded` (`Action<int>`, the resident count) is raised when an insert takes
+  the cache past `MaxEntries`, before it evicts. Each raise is followed by evicting entries still inside their TTL, so
+  a steady stream of raises means `MaxEntries` is too small for the drain. It costs nothing below the cap.
 - **Every runtime parse of a message can be counted (#1691, part of #1526).** `MessageParseDiagnostics` is a
   public, AOT-safe seam through which each parse of a stored or received message on the outbox, inbox, transport
   receive, offload, event store, lifecycle, multi-stream and redelivery paths reports its message id, source, kind
