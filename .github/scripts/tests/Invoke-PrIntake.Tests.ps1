@@ -575,3 +575,28 @@ Describe 'Invoke-CiCompleted' {
     Should -Invoke Update-DocsLinkedReviewChecks -Times 0 -Exactly
   }
 }
+
+Describe 'Get-LinkedDocsPullRequests' {
+  BeforeAll {
+    $script:FakeDir = Join-Path ([System.IO.Path]::GetTempPath()) "docs-prs-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $script:FakeDir | Out-Null
+    # Stands in for Get-DocsPullRequests.ps1: echoes its arguments into the JSON it writes.
+    Set-Content -LiteralPath (Join-Path $script:FakeDir 'ok.ps1') -Value @'
+param([string]$Repository, [int]$PullRequest)
+'[{"number":' + $PullRequest + ',"state":"OPEN","referencesThis":true,"updatedAt":"2026-10-27T03:40:17.0000000+00:00"}]'
+exit 0
+'@
+    Set-Content -LiteralPath (Join-Path $script:FakeDir 'fails.ps1') -Value 'param([string]$Repository, [int]$PullRequest) exit 3'
+  }
+  AfterAll { Remove-Item -LiteralPath $script:FakeDir -Recurse -Force }
+
+  It 'runs the docs pull request reader in its own process and reads what it writes' {
+    $docs = @(Get-LinkedDocsPullRequests -Repository 'o/r' -Number 7 -Script (Join-Path $script:FakeDir 'ok.ps1'))
+    $docs.Number | Should -Be @(7)
+    $docs[0].UpdatedAt | Should -Be ([datetimeoffset]'2026-10-27T03:40:17Z')
+  }
+
+  It 'fails when the reader fails, rather than deciding nothing is stale' {
+    { Get-LinkedDocsPullRequests -Repository 'o/r' -Number 7 -Script (Join-Path $script:FakeDir 'fails.ps1') } | Should -Throw '*exit 3*'
+  }
+}
