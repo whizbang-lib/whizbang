@@ -290,6 +290,56 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
     await Assert.That(report.Moves).IsEmpty();
   }
 
+  /// <summary>
+  /// An event the integrity re-delivery repaired before #1798 was filed under the bundle envelope's own id, a random
+  /// stream, because the bundle named no stream. Its payload names the stream its origin stored it on, so the repair
+  /// moves it there like any misfiled composite child.
+  /// </summary>
+  [Test]
+  public async Task Refile_ARedeliveredEventFiledUnderItsBundlesId_MovesToTheStreamItsPayloadNamesAsync() {
+    var own = Guid.NewGuid();
+    var bundle = Guid.NewGuid();
+    await _appendAsync(own, new RebuildBalanceSetEvent { StreamId = own, Balance = 1m });
+    var repaired = await _appendChildAsync(bundle, new RebuildLabelSetEvent { StreamId = own, Label = "repaired" }, causedBy: bundle);
+    var tail = await _tailAsync(own);
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Moves.Single()).IsEqualTo(new RefiledEvent(repaired, bundle, own, tail + 1));
+    await Assert.That(report.EmptiedStreams).IsEquivalentTo([bundle]);
+  }
+
+  /// <summary>
+  /// A re-delivered event whose payload names no stream was stored by its origin on its own id, as every message whose
+  /// hop names no stream is, and live delivery stores it there too. Filed under the bundle's id instead (its lineage
+  /// hop's causation), it is moved onto its own id.
+  /// </summary>
+  [Test]
+  public async Task Refile_ARedeliveredEventNamingNoStream_MovesOntoItsOwnIdAsync() {
+    var bundle = Guid.NewGuid();
+    var repaired = await _appendChildAsync(bundle, new RebuildLabelSetEvent { StreamId = Guid.Empty, Label = "repaired" }, causedBy: bundle);
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Moves.Single()).IsEqualTo(new RefiledEvent(repaired, bundle, repaired, 1));
+    await using var conn = await _openAsync();
+    await Assert.That(await _scalarAsync<Guid>(conn, "SELECT stream_id FROM wh_event_store WHERE event_id = $1", repaired)).IsEqualTo(repaired);
+  }
+
+  /// <summary>
+  /// A fan-out child naming no stream that sits on its composite's stream, not on its composite's envelope id, was filed
+  /// where its composite named, and stays.
+  /// </summary>
+  [Test]
+  public async Task Refile_AChildNamingNoStreamOnItsCompositesStream_StaysAsync() {
+    var compositeStream = Guid.NewGuid();
+    await _appendChildAsync(compositeStream, new RebuildLabelSetEvent { StreamId = Guid.Empty, Label = "x" }, causedBy: Guid.NewGuid());
+
+    var report = await _refiler().RefileAsync(_request());
+
+    await Assert.That(report.Moves).IsEmpty();
+  }
+
   [Test]
   public async Task Refile_WithASchemaOfItsOwn_QualifiesEveryTableAsync() {
     var own = Guid.NewGuid();
@@ -379,9 +429,13 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
   /// Stores an event as a receiver stored a composite's child before the fix: an inbox row under
   /// <paramref name="storedOn"/> flagged as a fan-out child, copied into the event store by the inbox emit chain.
   /// </summary>
-  private async Task<Guid> _appendChildAsync<TEvent>(Guid storedOn, TEvent payload) where TEvent : IEvent {
+  private async Task<Guid> _appendChildAsync<TEvent>(Guid storedOn, TEvent payload, Guid? causedBy = null) where TEvent : IEvent {
     var options = JsonContextRegistry.CreateCombinedOptions();
     var id = MessageId.New();
+    // The lineage hop a fan-out gives every child: its causation is the composite envelope's id.
+    List<MessageHop> hops = causedBy is { } composite
+      ? [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = ServiceInstanceInfo.Unknown, CausationId = new MessageId(composite) }]
+      : [];
     var serialized = new EnvelopeSerializer(options).SerializeEnvelope(new MessageEnvelope<TEvent> {
       MessageId = id,
       Payload = payload,
@@ -398,7 +452,7 @@ public class FanoutChildRefileSqlTests : EFCoreTestBase {
         StreamId = storedOn,
         IsEvent = true,
         Flags = EventFlags.NoRebroadcast,
-        Metadata = new EnvelopeMetadata { MessageId = id, Hops = [] },
+        Metadata = new EnvelopeMetadata { MessageId = id, Hops = hops },
       }], partitionCount: 100);
     }
     await using var conn = await _openAsync();
