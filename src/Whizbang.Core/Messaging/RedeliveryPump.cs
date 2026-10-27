@@ -179,6 +179,8 @@ public sealed class RedeliveryPump(
       InnerPayloads = innerPayloads,
       InnerTypeNames = [.. chunk.Select(c => c.EventType)],
       InnerEventIds = [.. chunk.Select(c => c.EventId)],
+      // The stream the origin stored each event on, which the receiver files it under (#1798).
+      InnerStreamIds = [.. chunk.Select(c => c.StreamId)],
       // Phase B: the ORIGINAL origin identity rides the bundle — fanned-out children recount
       // inside their original commit-sequence window at the consumer.
       OriginServiceId = originServiceId,
@@ -203,6 +205,9 @@ public sealed class RedeliveryPump(
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = _instanceProvider.ToInfoOrUnknown(),
+          // Names the bundle's stream as every dispatched message names its own, so a receiver that predates the
+          // per-child streams still files the repaired events under it rather than under this envelope's id (#1798).
+          Metadata = StreamIdentity.HopMetadata(composite.StreamId),
           // The original events' scope, carried forward. Fan-out at the consumer derives every
           // child's scope from this hop, and the children are then WRITTEN to the event store with
           // whatever it holds. Publishing unscoped therefore does not merely inconvenience the

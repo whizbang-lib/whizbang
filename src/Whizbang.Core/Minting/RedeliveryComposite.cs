@@ -115,6 +115,13 @@ public sealed class RedeliveryComposite
   public List<long?>? InnerCommitSequences { get; init; }
 
   /// <summary>
+  /// The stream the origin stored each child on, parallel to <see cref="InnerPayloads"/> (#1798). Null on a bundle
+  /// minted before the field: its children are then filed under the bundle's own <see cref="CompositeEventBase.StreamId"/>,
+  /// which the pump sets to the one stream every child of a bundle shares.
+  /// </summary>
+  public List<Guid>? InnerStreamIds { get; init; }
+
+  /// <summary>
   /// True when an operator asked for this redelivery (<see cref="RequestRedeliveryCommand.OperatorRequested"/>): the
   /// receiving service applies it even when it is report-only, which opts out of automatic repair only.
   /// </summary>
@@ -129,4 +136,6 @@ public sealed class RedeliveryComposite
   IReadOnlyList<JsonElement> IRawInnerComposite.InnerPayloads => InnerPayloads;
 
   IReadOnlyList<string> IRawInnerComposite.InnerTypeNames => InnerTypeNames;
+
+  IReadOnlyList<Guid>? IRawInnerComposite.InnerStreamIds => InnerStreamIds is { Count: > 0 } ? InnerStreamIds : null;
 }

@@ -79,6 +79,59 @@ public class StreamIdentityTests {
       .IsEqualTo(messageId.Value);
   }
 
+  /// <summary>
+  /// A composite's own stream is the one its hop names, else its own <c>[StreamId]</c>, else its envelope's id; an empty
+  /// <c>[StreamId]</c> names nothing.
+  /// </summary>
+  [Test]
+  public async Task OfComposite_PrefersTheHopThenItsOwnStreamThenTheEnvelopeIdAsync() {
+    var onHop = Guid.CreateVersion7();
+    var own = Guid.CreateVersion7();
+    var hopless = _envelope(MessageId.New(), _hop(null));
+    var extractor = new FixedExtractor(own);
+
+    await Assert.That(StreamIdentity.OfComposite(new ProbeComposite { StreamId = own }, _envelope(MessageId.New(), _hop(StreamIdentity.HopMetadata(onHop))), null))
+      .IsEqualTo(onHop).Because("a dispatched composite names its stream on its hop, as every message does");
+    await Assert.That(StreamIdentity.OfComposite(new ProbeComposite { StreamId = own }, hopless, null))
+      .IsEqualTo(own).Because("a bundle built by hand names no hop stream, but its own [StreamId] still names one");
+    await Assert.That(StreamIdentity.OfComposite(new UnbasedComposite(), hopless, extractor))
+      .IsEqualTo(own).Because("a composite not built on the base names its stream through the generated extractor");
+    await Assert.That(StreamIdentity.OfComposite(new ProbeComposite(), hopless, null))
+      .IsEqualTo(hopless.MessageId.Value).Because("with no stream anywhere, the envelope's id is the last resort");
+    await Assert.That(StreamIdentity.OfComposite(new UnbasedComposite(), hopless, new FixedExtractor(Guid.Empty)))
+      .IsEqualTo(hopless.MessageId.Value).Because("an empty stream id names no stream");
+  }
+
+  /// <summary>A child's stream is the one its bundle recorded, else the one its payload names, else its composite's.</summary>
+  [Test]
+  public async Task OfFanoutChild_PrefersRecordedThenPayloadThenCompositeAsync() {
+    var recorded = Guid.CreateVersion7();
+    var named = Guid.CreateVersion7();
+    var composite = Guid.CreateVersion7();
+    var source = _envelope(MessageId.New(), _hop(StreamIdentity.HopMetadata(composite)));
+    var bundle = new ProbeComposite();
+    var payload = new object();
+    var extractor = new FixedExtractor(named);
+
+    await Assert.That(StreamIdentity.OfFanoutChild(recorded, payload, bundle, source, extractor)).IsEqualTo(recorded);
+    await Assert.That(StreamIdentity.OfFanoutChild(Guid.Empty, payload, bundle, source, extractor)).IsEqualTo(named)
+      .Because("an empty recorded stream is a slot the producer could not fill, not a stream");
+    await Assert.That(StreamIdentity.OfFanoutChild(null, payload, bundle, source, extractor)).IsEqualTo(named);
+    await Assert.That(StreamIdentity.OfFanoutChild(null, payload: null, bundle, source, extractor)).IsEqualTo(composite)
+      .Because("a raw child has no typed payload to read; it takes its composite's stream");
+    await Assert.That(StreamIdentity.OfFanoutChild(null, payload, bundle, source, streamIds: null)).IsEqualTo(composite);
+  }
+
+  private sealed class ProbeComposite : Whizbang.Core.Minting.CompositeEventBase;
+
+  private sealed class UnbasedComposite : Whizbang.Core.Minting.ICompositeEvent {
+    public IEnumerable<IMessage> InnerEvents => [];
+  }
+
+  private sealed class FixedExtractor(Guid streamId) : IStreamIdExtractor {
+    public Guid? ExtractStreamId(object message, Type messageType) => message is ProbeComposite ? null : streamId;
+  }
+
   private static MessageHop _hop(IReadOnlyDictionary<string, JsonElement>? metadata) => new() {
     Type = HopType.Current,
     Timestamp = DateTimeOffset.UnixEpoch,

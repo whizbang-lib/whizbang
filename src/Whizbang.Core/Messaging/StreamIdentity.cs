@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Text.Json;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -19,7 +20,10 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// <para>
 /// A composite is transport packaging: its children are stored on the streams their producers stored them on, never
-/// on the composite's (<see cref="CompositeInboxFanout"/>).
+/// on the composite's. A child's stream is, in order, the one the bundle recorded for it, the one its payload's
+/// <c>[StreamId]</c> names, and the composite's own stream (<see cref="OfComposite"/>). A composite whose hop named no
+/// stream once filed its children under its envelope's id, a random stream no row is keyed by: the integrity
+/// re-delivery bundle was built that way, so every event it repaired missed the row it is about.
 /// </para>
 /// <para>
 /// There were three byte-for-byte copies of the hop read (the outbox, the receive builder and the fan-out) and a
@@ -59,6 +63,41 @@ internal static class StreamIdentity {
   /// <returns>The stream.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:Of_WithoutAHopStream_IsTheMessageIdAsync</tests>
   internal static Guid Of(IMessageEnvelope envelope) => FromHops(envelope) ?? envelope.MessageId.Value;
+
+  /// <summary>
+  /// A composite's own stream: the one its hop names, else the one its own <c>[StreamId]</c> names, else its
+  /// envelope's id. A bundle built by hand (not dispatched) carries no hop stream, and its envelope id names nothing.
+  /// </summary>
+  /// <param name="composite">The composite.</param>
+  /// <param name="source">The composite's envelope.</param>
+  /// <param name="streamIds">Reads a <c>[StreamId]</c>; when null, only <see cref="CompositeEventBase.StreamId"/> is read.</param>
+  /// <returns>The stream.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:OfComposite_PrefersTheHopThenItsOwnStreamThenTheEnvelopeIdAsync</tests>
+  internal static Guid OfComposite(ICompositeEvent composite, IMessageEnvelope source, IStreamIdExtractor? streamIds) =>
+    FromHops(source)
+    ?? _named(composite, streamIds)
+    ?? _nonEmpty((composite as CompositeEventBase)?.StreamId)
+    ?? source.MessageId.Value;
+
+  /// <summary>
+  /// The stream a composite's child is stored on: the one the bundle recorded for it, else the one its payload names,
+  /// else the composite's own (<see cref="OfComposite"/>).
+  /// </summary>
+  /// <param name="recorded">The stream the bundle recorded for this child, if any.</param>
+  /// <param name="payload">The child's typed payload, when there is one.</param>
+  /// <param name="composite">The composite.</param>
+  /// <param name="source">The composite's envelope.</param>
+  /// <param name="streamIds">Reads a <c>[StreamId]</c>.</param>
+  /// <returns>The stream.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIdentityTests.cs:OfFanoutChild_PrefersRecordedThenPayloadThenCompositeAsync</tests>
+  internal static Guid OfFanoutChild(
+      Guid? recorded, object? payload, ICompositeEvent composite, IMessageEnvelope source, IStreamIdExtractor? streamIds) =>
+    _nonEmpty(recorded) ?? (payload is null ? null : _named(payload, streamIds)) ?? OfComposite(composite, source, streamIds);
+
+  private static Guid? _named(object message, IStreamIdExtractor? streamIds) =>
+    _nonEmpty(streamIds?.ExtractStreamId(message, message.GetType()));
+
+  private static Guid? _nonEmpty(Guid? streamId) => streamId is { } id && id != Guid.Empty ? id : null;
 
   /// <summary>Hop metadata naming <paramref name="streamId"/>, read back by <see cref="FromHopMetadata"/>.</summary>
   /// <param name="streamId">The stream.</param>
