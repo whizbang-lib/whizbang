@@ -119,7 +119,11 @@ internal sealed class InboxDispatchUnitHarness {
   public sealed class CapturingCommitChannel : IInboxHandlerCommitChannel {
     public ConcurrentQueue<HandlerCommitRequest> All { get; } = new();
     public Action<HandlerCommitRequest>? OnEnqueue { get; set; }
+    public Exception? Throw { get; set; }
     public ValueTask EnqueueAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+      if (Throw is not null) {
+        return ValueTask.FromException(Throw);
+      }
       OnEnqueue?.Invoke(request);
       All.Enqueue(request);
       return ValueTask.CompletedTask;

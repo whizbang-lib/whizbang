@@ -82,7 +82,9 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
     var registry = new LeaseRegistry();
     var (h, writer, _) = _harness(registry);
     var work = InboxDispatchUnitHarness.Work();
+    var queued = InboxDispatchUnitHarness.Work();
     await writer.WriteAsync(work);
+    await writer.WriteAsync(queued);
     _ = writer.TryBeginDispatch(work.MessageId);
     using var handle = new LeaseHandle(work.MessageId, WorkCategory.Inbox, h.Time.GetUtcNow() + TimeSpan.FromSeconds(270),
       maxRenewals: 6, timeProvider: h.Time, linkedTokens: []);
@@ -215,6 +217,49 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
     await h.Worker.DispatchQueuedAsync(work, CancellationToken.None);
 
     await Assert.That(writer.IsInFlight(work.MessageId)).IsFalse();
+  }
+
+  [Test]
+  public async Task Dispatch_ThatThrows_IsRoutedToTheFailureChannel_AndReleasesTheRowAsync() {
+    var (h, writer, _) = _harness();
+    h.Commits.Throw = new InvalidOperationException("commit channel closed");
+    var work = InboxDispatchUnitHarness.Work(attempts: 11, messageType: TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));
+    await writer.WriteAsync(work);
+
+    await h.Worker.DispatchQueuedAsync(work, CancellationToken.None);
+
+    var failure = h.Failures.All.Single();
+    await Assert.That(failure.MessageId).IsEqualTo(work.MessageId);
+    await Assert.That(failure.Error).IsEqualTo("commit channel closed");
+    await Assert.That(writer.IsInFlight(work.MessageId)).IsFalse()
+      .Because("a failed dispatch must be offered again by the next claim, not stay held");
+  }
+
+  [Test]
+  public async Task Dispatch_InterruptedByShutdown_PropagatesWithoutRecordingAFailureAsync() {
+    var (h, writer, _) = _harness();
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+    h.Commits.Throw = new OperationCanceledException(stopping.Token);
+    var work = InboxDispatchUnitHarness.Work(attempts: 11, messageType: TypeNameFormatter.Format(typeof(IntegrityCheckpoint)));
+    await writer.WriteAsync(work);
+
+    await Assert.That(async () => await h.Worker.DispatchQueuedAsync(work, stopping.Token)).Throws<OperationCanceledException>();
+    await Assert.That(h.Failures.All).IsEmpty()
+      .Because("a dispatch cut short by shutdown never finished being tried; it is not a failure");
+  }
+
+  [Test]
+  public async Task Meter_WithNoAttemptBound_CountsEveryDispatchAsync() {
+    var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(InboxDispatchUnitHarness.Start);
+    var writer = new InboxChannelWriter(time);
+    var h = new InboxDispatchUnitHarness(inbox: writer, options: new InboxDispatchWorkerOptions { MaxInboxAttempts = null }, time: time);
+    var work = InboxDispatchUnitHarness.Work(attempts: 50);
+    await writer.WriteAsync(work);
+
+    await h.Worker.DispatchQueuedAsync(work, CancellationToken.None);
+
+    await Assert.That(h.Meter.ReadAndReset()).IsEqualTo(1);
   }
 
   [Test]

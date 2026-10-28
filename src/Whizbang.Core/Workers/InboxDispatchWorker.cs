@@ -330,9 +330,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var deadline = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(leaseSeconds);
     foreach (var id in ids) {
-      if (_leaseRegistry.TryGet(WorkCategory.Inbox, id, out var handle) && handle is not null) {
-        _ = handle.TryExtendDeadline(deadline);
-      }
+      // Only a row being dispatched has a handle; a queued or committing row has none to extend.
+      _ = _leaseRegistry.TryGet(WorkCategory.Inbox, id, out var handle);
+      _ = handle?.TryExtendDeadline(deadline);
     }
   }
 

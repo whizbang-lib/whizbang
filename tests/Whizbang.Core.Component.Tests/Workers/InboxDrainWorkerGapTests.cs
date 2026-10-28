@@ -802,14 +802,29 @@ public class InboxDrainWorkerGapTests {
 
   [Test]
   public async Task WorkingSetFull_InTheInnerLoop_TheRestOfTheStreamIsHandedBackAsync() {
-    // Two-row pages: the batched fetch queues rows 1 and 2, the inner loop fetches 3 and 4, and the budget fits three.
+    // Two-row pages: the batched fetch queues rows 1 and 2, the inner loop fetches 3 and 4, and the budget fits two.
     var streamId = (Guid)TrackedGuid.New();
     var ids = Enumerable.Range(0, 4).Select(_ => (Guid)TrackedGuid.New()).ToArray();
     var (writer, coord, _) = await _drainOnceAsync(
-      new() { [streamId] = [.. ids.Select(id => _row(id, streamId))] }, budget: 6, alreadyHeld: 0, maxPerStream: 2);
+      new() { [streamId] = [.. ids.Select(id => _row(id, streamId))] }, budget: 4, alreadyHeld: 0, maxPerStream: 2);
 
-    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo(ids[..3]);
-    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo([ids[3]]);
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo(ids[..2]);
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids[2..])
+      .Because("once a row of the stream does not fit, the rows after it wait too, so the stream's order holds");
+  }
+
+  [Test]
+  public async Task WorkingSetFull_OnAFullPage_TheStreamIsNotFetchedFurtherAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var ids = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [.. ids.Select(id => _row(id, streamId)), _row((Guid)TrackedGuid.New(), streamId)] },
+      budget: 10, alreadyHeld: 10, maxPerStream: 2);
+
+    await Assert.That(writer.Written).IsEmpty();
+    await Assert.That(coord.FetchCalls.Count).IsEqualTo(1)
+      .Because("a stream the working set cannot take any of is not paged further this cycle");
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids);
   }
 
   [Test]

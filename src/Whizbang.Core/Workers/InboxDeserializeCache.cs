@@ -154,8 +154,8 @@ public sealed class InboxDeserializeCache {
     var now = _timeProvider.GetUtcNow();
     lock (_evictionLock) {
       foreach (var pair in _entries) {
-        if (pair.Value.ExpiresAt <= now && _entries.TryRemove(pair)) {
-          _bytes -= pair.Value.Size;
+        if (pair.Value.ExpiresAt <= now) {
+          _removeLocked(pair.Key);
         }
       }
     }
