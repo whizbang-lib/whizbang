@@ -622,6 +622,16 @@ public sealed partial class PgSharedNotifyConnection(
   }
 
   /// <summary>
+  /// Raised each time this connection claims the instance's alive-lock: when it opens, or on a later keepalive when it
+  /// opened before the function that claims it existed. Must not block.
+  /// </summary>
+  /// <docs>fundamentals/workers/instance-liveness</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/AliveLockSourcePostgresTests.cs:OnADatabaseWithoutTheFunctionYet_TheClaimWaitsQuietly_AndAKeepaliveMakesItOnceItExistsAsync</tests>
+#pragma warning disable CS0067, S3264 // scaffold: declared for the tests that follow, raised by the change that makes them pass
+  public event Action? OnAliveLockClaimed;
+#pragma warning restore CS0067, S3264
+
+  /// <summary>
   /// Persistent <see cref="NpgsqlConnection.Notification"/> handler. Looks up the subscribers
   /// registered for the incoming channel and invokes their callbacks synchronously. Per-
   /// subscriber exceptions are caught and logged so one bad subscriber can't poison the
