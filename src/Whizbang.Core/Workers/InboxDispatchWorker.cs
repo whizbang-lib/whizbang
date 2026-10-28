@@ -283,6 +283,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     return consumers;
   }
 
+  /// <summary>Lapsed held rows one keeper sweep logs individually before the rest are summarized (#1788).</summary>
+  internal const int MAX_LEASE_LAPSES_LOGGED_PER_SWEEP = 5;
+
+  /// <summary>One keeper pass over the rows this process holds (#1788). Scaffold: does nothing yet.</summary>
+  internal Task RenewHeldLeasesOnceAsync(CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    _ = _inboxChannelWriter.SweepLeases(TimeSpan.MaxValue, int.MaxValue);
+    return Task.CompletedTask;
+  }
+
+  /// <summary>Dispatches one row read from a partition queue (#1788). Scaffold: dispatches as before.</summary>
+  internal Task DispatchQueuedAsync(InboxWork work, CancellationToken stoppingToken) => _processOneAsync(work, stoppingToken);
+
   private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
     // Slice 31 PERF: per-message dispatch wall time. Surfaces whether inbox throughput is
     // bounded by the lifecycle invocation (security context + ReceptorInvoker + receptor body)
