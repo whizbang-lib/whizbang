@@ -17,6 +17,13 @@ namespace Whizbang.Core.Resilience;
 /// This helper implements the same retry pattern as <c>RabbitMQConnectionRetry</c>:
 /// exponential backoff with a maximum delay cap, and optional infinite retry.
 /// </para>
+/// <para>
+/// A subscription that disconnects is reconnected after a delay that backs off across disconnect cycles: a
+/// subscription that drops again before staying healthy for
+/// <see cref="SubscriptionResilienceOptions.ReconnectBackoffResetAfter"/> makes the next reconnect wait longer, up to
+/// <see cref="SubscriptionResilienceOptions.MaxRetryDelay"/>, so a destination that fails right after every successful
+/// subscribe does not reconnect every <see cref="SubscriptionResilienceOptions.InitialRetryDelay"/> forever (#1840).
+/// </para>
 /// </remarks>
 /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
@@ -129,6 +136,9 @@ public static partial class SubscriptionRetryHelper {
         if (subscription.Disconnection is { } missed) {
           watch.OnDisconnected(subscription, missed);
         }
+        // Recorded before the change to Healthy and before a held disconnect is acted on, so the reconnect that
+        // disconnect starts measures this subscription's healthy stretch, not the previous one's (#1840).
+        state.MarkHealthy(timeProvider.GetUtcNow());
         state.Status = SubscriptionStatus.Healthy;
         _logSubscriptionSuccess(logger, destination, attempt);
         watch.Arm();
@@ -198,11 +208,15 @@ public static partial class SubscriptionRetryHelper {
         return;
       }
 
-      LogSubscriptionDisconnected(ctx.Logger, ctx.Destination.Address, args.Reason);
+      // A subscription that dropped soon after it was established backs the next reconnect off further than the last
+      // one; one that stayed healthy long enough starts again from the initial delay (#1840).
+      var now = ctx.TimeProvider.GetUtcNow();
+      var delay = ctx.State.NextReconnectDelay(now, ctx.Options);
+      LogSubscriptionDisconnected(ctx.Logger, ctx.Destination.Address, args.Reason, delay.TotalMilliseconds);
 
       // The error is recorded before the status, so an observer of the change to Recovering reads it.
       ctx.State.LastError = args.Exception;
-      ctx.State.LastErrorTime = ctx.TimeProvider.GetUtcNow();
+      ctx.State.LastErrorTime = now;
       ctx.State.Status = SubscriptionStatus.Recovering;
 
       // The reconnect, not this handler, disposes the subscription it replaces: a transport raises the disconnect from
@@ -211,7 +225,7 @@ public static partial class SubscriptionRetryHelper {
       _ = Task.Run(async () => {
         try {
           _disposeReplaced();
-          await Task.Delay(ctx.Options.InitialRetryDelay, ctx.TimeProvider, cancellationToken);
+          await Task.Delay(delay, ctx.TimeProvider, cancellationToken);
           await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, ctx.TimeProvider, cancellationToken);
         } catch (OperationCanceledException) {
           // Shutdown - ignore
@@ -324,9 +338,9 @@ public static partial class SubscriptionRetryHelper {
   [LoggerMessage(
     EventId = 6,
     Level = LogLevel.Warning,
-    Message = "Subscription to {Destination} disconnected: {Reason}. Attempting immediate reconnection..."
+    Message = "Subscription to {Destination} disconnected: {Reason}. Reconnecting in {DelayMs}ms..."
   )]
-  private static partial void LogSubscriptionDisconnected(ILogger logger, string destination, string reason);
+  private static partial void LogSubscriptionDisconnected(ILogger logger, string destination, string reason, double delayMs);
 
   [LoggerMessage(
     EventId = 7,
