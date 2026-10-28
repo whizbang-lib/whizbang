@@ -16,8 +16,8 @@ namespace Whizbang.Core.Tests.Security;
 /// first hop, so this reads the source tree and fails on a new one:
 /// <list type="bullet">
 /// <item><description>only <c>HopScope</c> serializes a scope for a hop, with its extensions and propagated claims;</description></item>
-/// <item><description>a hop scope rebuilt from a tenant and user id alone is allowed only where a stored row is read
-/// back and nothing more was kept, and each such site is listed here with why.</description></item>
+/// <item><description>no site rebuilds a hop scope from a tenant and user id alone: a stored row is read back with its
+/// whole scope (#1855), so the allow-list of such sites is empty.</description></item>
 /// </list>
 /// Each scan is checked against a fact it must find, so a scan that looks in the wrong place fails instead of
 /// passing on nothing.
@@ -30,19 +30,23 @@ public partial class HopScopeSourceGuardTests {
 
   private const string HELPER = "src/Whizbang.Core/Security/HopScope.cs";
 
-  /// <summary>Sites that rebuild a hop scope from a stored tenant and user id, and why that is all they have.</summary>
-  private static readonly Dictionary<string, string> _idOnlyReadBacks = new(StringComparer.Ordinal) {
-    ["src/Whizbang.Data.Dapper.Postgres/EventEnvelopeJsonbAdapter.cs"] =
-      "restores a stored event's scope column onto a synthesized hop when the row kept no envelope hops",
-    ["src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs"] =
-      "re-reads a stored row's tenant and user to re-run lifecycle stages during reconciliation",
-  };
+  /// <summary>
+  /// Sites allowed to rebuild a hop scope from a tenant and user id, and why that is all they have. None: the two
+  /// stored-row read-backs that once did (the Dapper envelope adapter and reconciliation) restore the whole stored
+  /// scope since #1855.
+  /// </summary>
+  private static readonly Dictionary<string, string> _idOnlyReadBacks = new(StringComparer.Ordinal);
+
+  private const string ID_ONLY_FACTORY = "src/Whizbang.Core/Security/ScopeDelta.cs";
 
   [GeneratedRegex(@"ScopeDelta\.ForHop\(")]
   private static partial Regex _hopSerialization();
 
   [GeneratedRegex(@"ScopeDelta\.FromSecurityContext\(")]
   private static partial Regex _idOnlyHopScope();
+
+  [GeneratedRegex(@"\bFromSecurityContext\(")]
+  private static partial Regex _idOnlyFactoryName();
 
   /// <summary>Only the helper serializes a hop scope; a second builder is how the extensions were dropped.</summary>
   [Test]
@@ -57,10 +61,11 @@ public partial class HopScopeSourceGuardTests {
   /// <summary>A hop scope of the tenant and user alone drops the extensions; only stored-row read-backs may build one.</summary>
   [Test]
   public async Task IdOnlyHopScopes_AreOnlyTheListedReadBacksAsync() {
+    var factory = await _filesMatchingAsync(_idOnlyFactoryName());
     var sites = await _filesMatchingAsync(_idOnlyHopScope());
 
-    await Assert.That(sites).Contains("src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs")
-      .Because("the scan must find a known read-back, or it is not reading the source tree");
+    await Assert.That(factory).Contains(ID_ONLY_FACTORY)
+      .Because("the scan must find the id-only factory's own declaration, or it is not reading the source tree");
     await Assert.That(sites).IsEquivalentTo(_idOnlyReadBacks.Keys)
       .Because("a hop scope built from a tenant and user id drops the scope's extensions and claims; dispatch it "
              + "through HopScope, or list a read-back here with why the ids are all it has");
