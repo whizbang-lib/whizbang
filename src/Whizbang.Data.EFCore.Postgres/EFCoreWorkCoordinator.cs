@@ -963,6 +963,80 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>Null on any failure: a mark that cannot reach the ledger leaves repair on its terminal cadence, the
+  /// harmless direction. The returned keys speak the caller's form, an absent tenant as null.</remarks>
+  public async Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+      CancellationToken cancellationToken = default) {
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = _resolveSchema(typeof(OutboxRecord));
+      var qualified = BuildSchemaQualifiedName(schema, "wh_integrity_mark_unhealable_batch");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+      _bindDivergenceKeyArrays(cmd, originServiceId, keys);
+      cmd.Parameters.AddWithValue(P_NOW, now);
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT tenant_scope, event_type, stream_id FROM {qualified}(@p_origin_service_id,@p_tenant_scopes,@p_event_types,@p_stream_ids,@p_now)";
+#pragma warning restore S2077
+      var marked = new List<IntegrityRepairLedger.DivergenceKey>();
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        var tenant = reader.GetString(0);
+        marked.Add(new IntegrityRepairLedger.DivergenceKey(
+          originServiceId, tenant.Length == 0 ? null : tenant, reader.GetString(1), reader.GetGuid(2)));
+      }
+      return marked;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; repair keeps its terminal cadence for these buckets.
+      _log.LogWarning(ex,
+        "Integrity ledger wh_integrity_mark_unhealable_batch failed for origin {OriginServiceId}; repair keeps asking on its terminal cadence.",
+        originServiceId);
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+      Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventIds);
+    ArgumentNullException.ThrowIfNull(commitSequences);
+    if (eventIds.Count != commitSequences.Count) {
+      throw new ArgumentException(
+        $"{eventIds.Count} event ids but {commitSequences.Count} commit sequences; they pair by position.", nameof(commitSequences));
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+    var schema = _resolveSchema(typeof(OutboxRecord));
+    var qualified = BuildSchemaQualifiedName(schema, "wh_adopt_redelivered_origin");
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = eventIds.ToArray()
+    });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_commit_sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Bigint) {
+      Value = commitSequences.ToArray()
+    });
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences)";
+#pragma warning restore S2077
+    var buckets = new List<RedeliveredBucketPresence>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+      var tenant = reader.GetString(1);
+      buckets.Add(new RedeliveredBucketPresence(
+        reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4)));
+    }
+    return buckets;
+  }
+
+  /// <inheritdoc />
   /// <remarks>
   /// Degrades to the empty reading rather than throwing: a metrics refresh that cannot reach the
   /// ledger must never take down the caller. It is logged, because a gauge silently pinned at zero

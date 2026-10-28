@@ -129,4 +129,23 @@ public interface IIntegrityRepairLedger {
     await MarkHealedBatchAsync(keys, cancellationToken).ConfigureAwait(false);
     return [];
   }
+
+  /// <summary>
+  /// Records that repair cannot change these buckets: a redelivery answered for them and every event it carried
+  /// was already stored under its origin, so asking again would ship the same events again. A bucket marked here
+  /// is no longer granted repair (neither the burst grant nor the paced drain) and no longer re-reported on the
+  /// cooldown, until its signature changes or it heals. Only buckets the ledger already tracks are marked.
+  /// Returns the keys this call marked, so each is reported once; a key already marked is not returned again.
+  /// The default remembers nothing and returns none, which leaves repair on its terminal cadence.
+  /// </summary>
+  /// <param name="keys">The buckets the redelivery covered.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>The keys newly marked by this call.</returns>
+  /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntegrityRepairLedgerUnhealableTests.cs</tests>
+  ValueTask<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>> MarkUnhealableBatchAsync(
+    IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    ValueTask.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>>([]);
 }

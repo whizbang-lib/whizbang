@@ -1792,6 +1792,42 @@ public interface IWorkCoordinator {
     Task.FromResult<IReadOnlyList<double>?>(null);
 
   /// <summary>
+  /// Durable <see cref="IIntegrityRepairLedger.MarkUnhealableBatchAsync"/>: marks the tracked ledger rows of
+  /// <paramref name="keys"/> as buckets repair cannot change, and returns the keys this call marked (a row already
+  /// marked, or a key with no row, is not returned). Null = unsupported.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#unhealable-buckets</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityLedgerUnhealableSqlTests.cs</tests>
+  Task<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?> IntegrityMarkUnhealableBatchAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, DateTimeOffset now,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<IntegrityRepairLedger.DivergenceKey>?>(null);
+
+  /// <summary>
+  /// Reconciles the events of one redelivery bundle that this store already holds. An event stored before the
+  /// store recorded origins (or stored without its origin commit sequence) has those columns empty, so
+  /// origin-keyed verification counts it as missing however many times it is redelivered. Each such event adopts
+  /// the origin identity the bundle carries: <paramref name="originServiceId"/> fills an empty origin, the event's
+  /// sequence in <paramref name="commitSequences"/> fills an empty origin commit sequence, its integrity digest
+  /// moves from the local lane to the origin's lane, and the sealed epochs it touched are refolded. An event that
+  /// already carries a different origin is never changed. Events the store does not hold are not reported; the
+  /// bundle stores them as usual.
+  /// </summary>
+  /// <param name="originServiceId">The origin the bundle names.</param>
+  /// <param name="eventIds">The bundle's event ids.</param>
+  /// <param name="commitSequences">Each event's origin commit sequence, parallel to <paramref name="eventIds"/>;
+  /// null when the origin had not stamped it.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>Per (stream, tenant, type) bucket, how many of the bundle's events the store held and how many of
+  /// those adopted the origin identity; null = unsupported.</returns>
+  /// <docs>resilience/stream-integrity#pre-stamp-history</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RedeliveredOriginAdoptionSqlTests.cs</tests>
+  Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+    Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>(null);
+
+  /// <summary>
   /// Reads the ledger as a gauge: unhealed buckets, how many have spent their repair budget, and
   /// the age of the oldest. Defaults to "nothing to report" for engines with no ledger.
   /// </summary>
