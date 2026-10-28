@@ -34,10 +34,12 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
   // Task.WhenAll(workers) inside FlushAndStopAsync would surface an unrelated fault instead of
   // the clean shutdown callers rely on.
   [Test]
-  [Timeout(15000)]
+  [Timeout(30000)]
   public async Task FlushObservingStopToken_DuringForcedShutdown_ReturnsWithoutFaultingAsync(
       CancellationToken cancellationToken) {
     var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var window = TimeSpan.FromMilliseconds(20);
+    var clock = new BatchWindowClock(window);
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: async (_, ct) => {
@@ -48,12 +50,15 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(window);
     await flushEntered.Task.WaitAsync(cancellationToken);
 
     using var stopCts = new CancellationTokenSource();
@@ -64,7 +69,7 @@ public class SlidingWindowOutboxBatchStrategyCoverageTests {
     // pending flush above is blocked on. Must return promptly, not hang or throw.
     await sut.FlushAndStopAsync(stopCts.Token).WaitAsync(cancellationToken);
 
-    await Assert.That(async () => await sut.AppendAsync(_make(_idProvider.NewGuid())))
+    await Assert.That(async () => await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken))
       .ThrowsExactly<ObjectDisposedException>()
       .Because("the strategy must have fully stopped, not merely returned from a faulted drain task");
   }

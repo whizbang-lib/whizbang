@@ -31,21 +31,25 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowApplyBatchStrategy.cs</code-under-test>
 public class SlidingWindowApplyFailurePathTests {
 
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(20);
+
   private static SlidingWindowApplyOptions _fastWindow(TimeSpan? idleWindow = null) => new() {
-    SlidingWindow = TimeSpan.FromMilliseconds(20),
+    SlidingWindow = _window,
     MaxWait = TimeSpan.FromMilliseconds(200),
     IdleEvictionWindow = idleWindow ?? TimeSpan.FromSeconds(30),
     IdleSweepInterval = TimeSpan.FromSeconds(10),
   };
 
   [Test]
-  public async Task AFailedFlush_IsLoggedAndDroppedRatherThanBlockingTheStreamAsync() {
+  [Timeout(30000)]
+  public async Task AFailedFlush_IsLoggedAndDroppedRatherThanBlockingTheStreamAsync(CancellationToken cancellationToken) {
     var attempts = new ConcurrentQueue<Guid>();
     // Signalling on the first attempt would prove nothing: `attempts` is appended to before the
     // signal, so the count assertion below is already satisfied by that first flush and would
     // hold even if the strategy died on the throw. Wait for a SECOND attempt instead -- only a
     // loop that survived the first failure can produce one.
     var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, _, _) => {
         attempts.Enqueue(sid);
@@ -55,14 +59,16 @@ public class SlidingWindowApplyFailurePathTests {
         throw new InvalidOperationException("perspective store unavailable");
       },
       logger: NullLogger<SlidingWindowApplyBatchStrategy>.Instance,
-      options: _fastWindow());
+      options: _fastWindow(),
+      timeProvider: clock);
 
-    await sut.AppendAsync(Guid.CreateVersion7());
-    await sut.AppendAsync(Guid.CreateVersion7());
+    await sut.AppendAsync(Guid.CreateVersion7(), cancellationToken);
+    await sut.AppendAsync(Guid.CreateVersion7(), cancellationToken);
 
     // Waits on the strategy having flushed a second time after a throw, which is the property
-    // under test -- not on the first flush having been reached.
-    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // under test -- not on the first flush having been reached. The clock closes each window as
+    // it is armed, so the flushes happen when the test lets them, not when the runner can.
+    await clock.CloseWindowsUntilAsync(secondAttempt.Task, cancellationToken);
 
     await Assert.That(attempts.Count).IsGreaterThanOrEqualTo(2)
       .Because("a flush that throws must not take the batching loop down with it; the reclaim path "
@@ -70,7 +76,8 @@ public class SlidingWindowApplyFailurePathTests {
   }
 
   [Test]
-  public async Task StopWhileFlushing_EndsWithoutSurfacingCancellationAsync() {
+  [Timeout(30000)]
+  public async Task StopWhileFlushing_EndsWithoutSurfacingCancellationAsync(CancellationToken cancellationToken) {
     // Shutdown arriving mid-flush is not a flush failure, and must not be logged as one — every
     // deploy would otherwise file an error per in-flight stream.
     var flushed = new ConcurrentQueue<Guid>();
@@ -78,11 +85,13 @@ public class SlidingWindowApplyFailurePathTests {
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
       logger: logger,
-      options: _fastWindow());
+      options: _fastWindow(),
+      // A clock nobody advances: no window can close, so the flush is the one the stop forces.
+      timeProvider: new FakeTimeProvider());
 
     var streamId = Guid.CreateVersion7();
-    await sut.AppendAsync(streamId);
-    await sut.FlushAndStopAsync();
+    await sut.AppendAsync(streamId, cancellationToken);
+    await sut.FlushAndStopAsync(cancellationToken);
 
     // FlushAndStop completes the writers and awaits the workers, so the buffered signal has to have
     // been flushed by the time it returns — a stop that abandoned it would lose the apply until the
