@@ -216,6 +216,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var partitions = new Channel<InboxWork>[partitionCount];
     var consumers = _startPartitionConsumers(partitions, stoppingToken);
+    // #1788: the rows this process holds keep their leases while they wait. Disposing the timer ends the keeper.
+    using var keeperTimer = _leaseRenewalOptions.Enabled
+      ? new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds / 6.0)), _timeProvider)
+      : null;
+    var keeper = keeperTimer is null ? Task.CompletedTask : _keepHeldLeasesAsync(keeperTimer, stoppingToken);
 
     try {
       await foreach (var work in _inboxChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
@@ -233,9 +238,24 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       } catch (OperationCanceledException) {
         // shutdown
       }
+      keeperTimer?.Dispose();
+      await keeper.ConfigureAwait(false);
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// Renews the held rows' leases now and on every tick until the worker stops or the timer is disposed (#1788).
+  /// </summary>
+  private async Task _keepHeldLeasesAsync(PeriodicTimer timer, CancellationToken stoppingToken) {
+    try {
+      do {
+        await RenewHeldLeasesOnceAsync(stoppingToken).ConfigureAwait(false);
+      } while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      // Stopping ends the keeper; the leases it no longer renews lapse, and the next owner's claim takes the rows.
+    }
   }
 
   /// <summary>
@@ -260,20 +280,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       consumers[i] = Task.Run(async () => {
         try {
           await foreach (var work in partitionReader.ReadAllAsync(stoppingToken)) {
-            try {
-              await _processOneAsync(work, stoppingToken);
-            } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
-              throw;
-            } catch (Exception ex) {
-              LogDispatchError(_logger, work.MessageId, ex);
-              _inboxChannelWriter.RemoveInFlight(work.MessageId);
-              await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
-                MessageId = work.MessageId,
-                CompletedStatus = work.Status,
-                Error = ex.Message,
-                Reason = ClassifyHandlerFailure(ex)
-              }, stoppingToken);
-            }
+            await DispatchQueuedAsync(work, stoppingToken);
           }
         } catch (OperationCanceledException) {
           // shutdown
@@ -286,15 +293,116 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// <summary>Lapsed held rows one keeper sweep logs individually before the rest are summarized (#1788).</summary>
   internal const int MAX_LEASE_LAPSES_LOGGED_PER_SWEEP = 5;
 
-  /// <summary>One keeper pass over the rows this process holds (#1788). Scaffold: does nothing yet.</summary>
-  internal Task RenewHeldLeasesOnceAsync(CancellationToken cancellationToken) {
-    cancellationToken.ThrowIfCancellationRequested();
-    _ = _inboxChannelWriter.SweepLeases(TimeSpan.MaxValue, int.MaxValue);
-    return Task.CompletedTask;
+  /// <summary>
+  /// One keeper pass over the rows this process holds (#1788). Rows whose lease is half spent are renewed in the store,
+  /// and a running row's in-process dispatch deadline is extended with it. Rows that have used every renewal they are
+  /// allowed in their state (<see cref="LeaseHandleOptions.MaxRenewalsPerWork"/>) stop being held and are logged; a
+  /// row that was never dispatched is handed back without charging the attempt its claim took.
+  /// </summary>
+  /// <remarks>
+  /// Failures are logged with their cost and never thrown: a renewal that does not happen lets the leases lapse,
+  /// which is what happened before the keeper existed, and the next pass tries again.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  internal async Task RenewHeldLeasesOnceAsync(CancellationToken cancellationToken) {
+    var leaseSeconds = _leaseRenewalOptions.LeaseSeconds;
+    var sweep = _inboxChannelWriter.SweepLeases(TimeSpan.FromSeconds(leaseSeconds / 2.0), _leaseHandleOptions.MaxRenewalsPerWork);
+    if (sweep.Renew.Count > 0) {
+      await _renewHeldAsync(sweep.Renew, leaseSeconds, cancellationToken).ConfigureAwait(false);
+    }
+    if (sweep.Lapsed.Count > 0) {
+      await _releaseLapsedAsync(sweep.Lapsed, cancellationToken).ConfigureAwait(false);
+    }
   }
 
-  /// <summary>Dispatches one row read from a partition queue (#1788). Scaffold: dispatches as before.</summary>
-  internal Task DispatchQueuedAsync(InboxWork work, CancellationToken stoppingToken) => _processOneAsync(work, stoppingToken);
+  private async Task _renewHeldAsync(IReadOnlyList<Guid> ids, int leaseSeconds, CancellationToken ct) {
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await coordinator.RenewLeasesAsync(WorkCategory.Inbox, ids, leaseSeconds, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogHeldRenewalFailed(_logger, ids.Count, ex);
+      return;
+    }
+    if (_leaseRegistry is null) {
+      return;
+    }
+    var deadline = _timeProvider.GetUtcNow() + TimeSpan.FromSeconds(leaseSeconds);
+    foreach (var id in ids) {
+      if (_leaseRegistry.TryGet(WorkCategory.Inbox, id, out var handle) && handle is not null) {
+        _ = handle.TryExtendDeadline(deadline);
+      }
+    }
+  }
+
+  private async Task _releaseLapsedAsync(IReadOnlyList<LapsedInboxLease> lapsed, CancellationToken ct) {
+    for (var i = 0; i < Math.Min(lapsed.Count, MAX_LEASE_LAPSES_LOGGED_PER_SWEEP); i++) {
+      var lapse = lapsed[i];
+      LogHeldLeaseLapsed(_logger, lapse.MessageId, lapse.MessageType, lapse.Renewals, DescribeLapse(lapse.State));
+    }
+    if (lapsed.Count > MAX_LEASE_LAPSES_LOGGED_PER_SWEEP) {
+      LogHeldLeaseLapsesSummarized(_logger, lapsed.Count - MAX_LEASE_LAPSES_LOGGED_PER_SWEEP);
+    }
+    List<Guid> neverDispatched = [.. lapsed.Where(l => l.State == InboxHoldState.Queued).Select(l => l.MessageId)];
+    if (neverDispatched.Count == 0) {
+      return;
+    }
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, neverDispatched, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogLapsedReleaseFailed(_logger, neverDispatched.Count, ex);
+    }
+  }
+
+  /// <summary>What a held row's lapse means, by where it was when its renewals ran out (#1788).</summary>
+  internal static string DescribeLapse(InboxHoldState state) => state switch {
+    InboxHoldState.Queued => "it was never dispatched and is handed back without charging an attempt",
+    InboxHoldState.Dispatching => "its handler is still running and its lease will lapse",
+    _ => "its commit has not landed and its lease will lapse",
+  };
+
+  /// <summary>
+  /// Dispatches one row read from a partition queue (#1788). Only the copy that takes the row's dispatch ticket runs:
+  /// a duplicate copy, or a copy of a row no longer held, is skipped. However the dispatch ends, the row stops being
+  /// held unless its completion is waiting in the commit channel. A dispatch that throws is routed to the failure
+  /// channel; a shutdown is not a failure and propagates.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerHeldLeaseTests.cs</tests>
+  internal async Task DispatchQueuedAsync(InboxWork work, CancellationToken stoppingToken) {
+    if (!_inboxChannelWriter.TryBeginDispatch(work.MessageId)) {
+      LogCopyNotHeldSkipped(_logger, work.MessageId);
+      return;
+    }
+    try {
+      await _processOneAsync(work, stoppingToken);
+    } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      LogDispatchError(_logger, work.MessageId, ex);
+      _inboxChannelWriter.RemoveInFlight(work.MessageId);
+      await _failureChannel.EnqueueAsync(WorkCategory.Inbox, new MessageFailure {
+        MessageId = work.MessageId,
+        CompletedStatus = work.Status,
+        Error = ex.Message,
+        Reason = ClassifyHandlerFailure(ex)
+      }, stoppingToken);
+    } finally {
+      _inboxChannelWriter.EndDispatch(work.MessageId);
+    }
+  }
+
+  /// <summary>Hands a completion to the batched commit channel, keeping the row held until the commit lands (#1788).</summary>
+  private ValueTask _enqueueCommitAsync(HandlerCommitRequest request, CancellationToken ct) {
+    _inboxChannelWriter.MarkCommitPending(request.HandlerId);
+    return _handlerCommitChannel.EnqueueAsync(request, ct);
+  }
+
+  /// <summary>Whether the row ends at the attempt bound without being tried, which is not drain (#1788).</summary>
+  private bool _isPastAttemptBound(InboxWork work) =>
+    _options.MaxInboxAttempts is { } max && work.Attempts > max;
 
   private async Task _processOneAsync(InboxWork work, CancellationToken stoppingToken) {
     // Slice 31 PERF: per-message dispatch wall time. Surfaces whether inbox throughput is
@@ -314,7 +422,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // point guaranteed to run exactly once per row: hooking the success path alone would
       // under-report drain on a service working hard on failing messages, and under-reporting is
       // not benign here — it reads as a service that cannot keep up and throttles one that can.
-      _completionMeter?.Record();
+      // A row retired at the attempt bound is dropped or dead-lettered in microseconds without being tried. Counting
+      // it read a flood of exhausted rows as throughput and raised the outstanding budget past what dispatch could
+      // finish inside one lease (#1788).
+      if (!_isPastAttemptBound(work)) {
+        _completionMeter?.Record();
+      }
 
       var totalMs = _timeProvider.GetElapsedTime(dispatchStartTicks).TotalMilliseconds;
       // v0.660 slice 8: always record into the per-message-type histogram so
@@ -385,8 +498,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (DisabledSubsystemDiscardPolicy.ShouldDiscard(work.MessageType, _integrityOptions)) {
       LogDisabledSubsystemDiscarded(_logger, work.MessageId, work.MessageType);
       var discardRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-      await _handlerCommitChannel.EnqueueAsync(discardRequest, stoppingToken);
-      _inboxChannelWriter.RemoveInFlight(work.MessageId);
+      await _enqueueCommitAsync(discardRequest, stoppingToken);
       return;
     }
 
@@ -419,7 +531,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
           (int)Whizbang.Core.Messaging.MessageFailureReason.PoisonRedeliveryLoop, null);
         var droppedRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-        await _handlerCommitChannel.EnqueueAsync(droppedRequest, stoppingToken);
+        await _enqueueCommitAsync(droppedRequest, stoppingToken);
         return;
       }
 
@@ -461,7 +573,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         }
       }
       var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-      await _handlerCommitChannel.EnqueueAsync(terminalRequest, stoppingToken);
+      await _enqueueCommitAsync(terminalRequest, stoppingToken);
       return;
     }
 
@@ -473,7 +585,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (ShouldSkipInbox(_discardPolicy, work.MessageType, work.MessageId)) {
       LogDiagSkipBranch(_logger, work.MessageId, work.MessageType);
       var skipRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-      await _handlerCommitChannel.EnqueueAsync(skipRequest, stoppingToken);
+      await _enqueueCommitAsync(skipRequest, stoppingToken);
       return;
     }
 
@@ -557,7 +669,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Mark inbox completion via handler-commit channel — InboxHandlerWorker batches these and
       // calls commit_handler_batch.
       var commitRequest = _buildCommitRequest(work, status: (int)MessageProcessingStatus.EventStored);
-      await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+      await _enqueueCommitAsync(commitRequest, ct);
       LogDiagCommitEnqueued(_logger, work.MessageId, commitRequest.InboxCompletion.Status);
 
       // PostInbox lands AFTER event storage.
@@ -698,7 +810,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
     var commitRequest = _buildCommitRequest(
       work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: []);
-    await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+    await _enqueueCommitAsync(commitRequest, ct);
   }
 
   /// <summary>
@@ -847,7 +959,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       }
     }
     var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-    await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+    await _enqueueCommitAsync(terminalRequest, ct);
   }
 
 
@@ -864,7 +976,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
       LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, childCount);
-      await _handlerCommitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
+      await _enqueueCommitAsync(request, ct).ConfigureAwait(false);
       return;
     }
     try {
@@ -937,7 +1049,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       }
     }
     var terminal = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
-    await _handlerCommitChannel.EnqueueAsync(terminal, ct);
+    await _enqueueCommitAsync(terminal, ct);
   }
 
   /// <summary>
@@ -1249,6 +1361,28 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning, Message = "InboxDispatchWorker dispatch failed for message {MessageId}; routing to failure channel")]
   static partial void LogDispatchError(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(EventId = 78, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker could not renew the leases of {Count} held inbox row(s); they lapse at their current expiry "
+            + "unless the next pass renews them, and a lapsed row is re-claimed with another attempt charged")]
+  static partial void LogHeldRenewalFailed(ILogger logger, int count, Exception ex);
+
+  [LoggerMessage(EventId = 79, Level = LogLevel.Warning,
+    Message = "Inbox message {MessageId} ({MessageType}) used all {Renewals} lease renewal(s) it is allowed here; {Consequence}")]
+  static partial void LogHeldLeaseLapsed(ILogger logger, Guid messageId, string messageType, int renewals, string consequence);
+
+  [LoggerMessage(EventId = 80, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker: {Count} more held inbox row(s) used all their lease renewals in this pass and are not logged individually")]
+  static partial void LogHeldLeaseLapsesSummarized(ILogger logger, int count);
+
+  [LoggerMessage(EventId = 81, Level = LogLevel.Warning,
+    Message = "InboxDispatchWorker could not release {Count} never-dispatched inbox row(s) whose renewals ran out; their leases lapse "
+            + "and the next claim charges each an attempt it did not use")]
+  static partial void LogLapsedReleaseFailed(ILogger logger, int count, Exception ex);
+
+  [LoggerMessage(EventId = 82, Level = LogLevel.Debug,
+    Message = "InboxDispatchWorker skipped a copy of inbox message {MessageId}: the row is already dispatching, committing, or no longer held here")]
+  static partial void LogCopyNotHeldSkipped(ILogger logger, Guid messageId);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
   static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
