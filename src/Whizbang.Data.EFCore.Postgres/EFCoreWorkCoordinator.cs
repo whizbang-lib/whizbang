@@ -3648,23 +3648,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _withCoordinatorCommandAsync<IReadOnlyList<PerspectiveCoverageGap>>(async (cmd, schema) => {
       // A gap = settled non-ephemeral events + a registered perspective association + NO cursor for
       // that (stream, perspective) + no pending work item — the pipeline is not on it, and never was.
-      cmd.CommandText = $"""
-        SELECT es.stream_id, ma.target_name, COUNT(*)::int
-        FROM {schema}.wh_event_store es
-        JOIN {schema}.wh_message_associations ma
-          ON ma.normalized_message_type = es.event_type AND ma.association_type = 'perspective'
-        WHERE es.created_at < NOW() - @p_settle::interval
-          AND COALESCE(es.flags, 0) & 8 = 0
-          AND NOT EXISTS (
-            SELECT 1 FROM {schema}.wh_perspective_cursors c
-            WHERE c.stream_id = es.stream_id AND c.perspective_name = ma.target_name)
-          AND NOT EXISTS (
-            SELECT 1 FROM {schema}.wh_perspective_events pe
-            WHERE pe.event_id = es.event_id AND pe.processed_at IS NULL)
-        GROUP BY 1, 2
-        ORDER BY 1, 2
-        LIMIT @p_max
-        """;
+      cmd.CommandText = PerspectiveCoverageGapSql.Build(schema);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_SETTLE, $"{(int)settleWindow.TotalSeconds} seconds"));
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter(P_MAX, Math.Max(1, maxGaps)));
 
