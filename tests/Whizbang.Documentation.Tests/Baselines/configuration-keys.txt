@@ -494,6 +494,7 @@ Whizbang:Workers:InboxDrain:Batcher:SlidingWindow
 Whizbang:Workers:InboxDrain:DepthHeadroomFactor
 Whizbang:Workers:InboxDrain:Enabled
 Whizbang:Workers:InboxDrain:MaxBytesPerStream
+Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes
 Whizbang:Workers:InboxDrain:MaxPerStream
 Whizbang:Workers:InboxDrain:MaxPerStreamCeiling
 Whizbang:Workers:InboxDrain:MaxRowsPerCycle

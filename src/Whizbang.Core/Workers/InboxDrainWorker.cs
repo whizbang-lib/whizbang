@@ -826,6 +826,27 @@ public sealed class InboxDrainWorkerOptions {
   public long? MaxBytesPerStream { get; set; } = 4L * 1024 * 1024;
 
   /// <summary>
+  /// Byte budget for the inbox rows this process holds in memory: queued for dispatch, dispatching, or waiting for
+  /// their commit, measured as each payload's UTF-8 JSON. Default 128 MiB; zero or negative disables it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The dispatch queues are bounded only by what the drain writes into them, and the claim and fetch bounds count
+  /// rows. One storm of large rows (re-delivery bundles carry up to 192 KB each) could therefore fill a pod with
+  /// payloads waiting for a dispatch consumer (#1793).
+  /// </para>
+  /// <para>
+  /// A row that would take the held total past the budget is not queued. It and the rest of its stream in that fetch
+  /// are handed back with the attempt their claim took refunded, and offered again once the working set has drained;
+  /// the stream stays owned by this instance, so its order holds. When nothing is held, one row is always admitted,
+  /// however large, so an oversized message cannot stall its stream.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.cs</tests>
+  public long MaxHeldPayloadBytes { get; set; } = 128L * 1024 * 1024;
+
+  /// <summary>
   /// Sliding-window batching policy for stream_id signals from <see cref="IInboxDrainChannel"/>.
   /// When the channel emits a stream_id, the drainer waits up to <see cref="SlidingWindowBatcherOptions.SlidingWindow"/>
   /// for additional signals before processing — letting more inbox messages accumulate before

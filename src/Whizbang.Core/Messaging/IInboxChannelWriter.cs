@@ -58,6 +58,14 @@ public interface IInboxChannelWriter {
   /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
   InboxLeaseSweep SweepLeases(TimeSpan renewAfter, int maxRenewals) => InboxLeaseSweep.Empty;
 
+  /// <summary>
+  /// Payload bytes of the rows this process holds (#1793): queued, dispatching or waiting for their commit, measured as
+  /// each payload's UTF-8 JSON. The drain admits no row that would take it past its working-set budget. Zero for a
+  /// writer that does not track rows.
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/inbox-dispatch#held-rows</docs>
+  long HeldPayloadBytes => 0;
+
 
   /// <summary>Signals that no more work will be written.</summary>
   void Complete();

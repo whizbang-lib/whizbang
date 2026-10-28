@@ -110,6 +110,9 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
+  public long HeldPayloadBytes { get; }
+
+  /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public bool TryBeginDispatch(Guid messageId) {
     if (!_inFlight.TryGetValue(messageId, out var held)) {
