@@ -343,6 +343,130 @@ public sealed class InboxHandlerWorkerTests {
     await Assert.That(routed.Failure.Error).IsEqualTo("unknown");
   }
 
+  // ==========================================================================
+  // #1789: a per-row commit failure is visible at Warning, with the row it names
+  // ==========================================================================
+
+  private sealed class LevelLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Entries) {
+        Entries.Add((logLevel, formatter(state, exception)));
+      }
+    }
+
+    public List<string> At(Microsoft.Extensions.Logging.LogLevel level) {
+      lock (Entries) {
+        return [.. Entries.Where(e => e.Level == level).Select(e => e.Message)];
+      }
+    }
+  }
+
+  [Test]
+  public async Task CommitFailure_IsLoggedAtWarning_WithTheMessageIdTypeAndErrorAsync() {
+    var messageId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var coordinator = new StubCoordinator(reqs =>
+      [new HandlerBatchResult(reqs[0].HandlerId, Success: false, ErrorMessage: "duplicate key value violates unique constraint")]);
+    var failures = new CapturingFailureChannel();
+    var log = new LevelLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.EnqueueAsync(_request(messageId, messageId) with { MessageType = "Contracts.Orders.OrderPlaced, Contracts" }, cts.Token);
+    // The failure is routed after it is logged, so the routed failure is the signal that the line exists.
+    _ = await failures.WaitForOneAsync(TimeSpan.FromSeconds(10));
+    await worker.StopAsync(cts.Token);
+
+    var warning = log.At(Microsoft.Extensions.Logging.LogLevel.Warning)
+      .SingleOrDefault(m => m.Contains(messageId.ToString(), StringComparison.Ordinal));
+    await Assert.That(warning).IsNotNull()
+      .Because("a commit that failed for one row was counted only in a Debug line, so no operator ever saw it");
+    await Assert.That(warning).Contains("Contracts.Orders.OrderPlaced, Contracts")
+      .And.Contains("duplicate key value violates unique constraint");
+  }
+
+  [Test]
+  public async Task CommitFailure_ForAResultNamingNoRequest_IsStillLoggedAsync() {
+    // A result whose handler id matches no request cannot be routed to the failure channel, and was
+    // skipped without a word. It is logged so the failure is not lost along with its routing.
+    var stray = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    var routed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var coordinator = new StubCoordinator(reqs => {
+      routed.TrySetResult();
+      return [new HandlerBatchResult(stray, Success: false, ErrorMessage: "orphan result")];
+    });
+    var log = new LevelLogger();
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: new CapturingFailureChannel(),
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(_enabledOptions()),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    await worker.EnqueueAsync(_request(id, id), cts.Token);
+    await routed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // StopAsync drains the flusher, so the flush that returned the stray result has finished logging.
+    await worker.StopAsync(cts.Token);
+
+    await Assert.That(log.At(Microsoft.Extensions.Logging.LogLevel.Warning)
+        .Any(m => m.Contains(stray.ToString(), StringComparison.Ordinal) && m.Contains("orphan result", StringComparison.Ordinal)))
+      .IsTrue();
+  }
+
+  [Test]
+  public async Task ManyCommitFailuresInOneFlush_LogTheFirstIndividually_ThenOneSummaryOfTheRestAsync() {
+    const int rows = 12;
+    var coordinator = new StubCoordinator(reqs =>
+      [.. reqs.Select(r => new HandlerBatchResult(r.HandlerId, Success: false, ErrorMessage: "commit refused"))]);
+    var failures = new CapturingFailureChannel();
+    var log = new LevelLogger();
+    // One flush of exactly twelve: the batch forms when the twelfth request arrives.
+    var options = new InboxHandlerWorkerOptions {
+      Enabled = true,
+      Flusher = new BatchFlusherOptions { MaxBatchSize = rows, ImmediateFlushThreshold = rows, CoalesceWindowMs = 600_000, ChannelCapacity = 100 }
+    };
+    var worker = new InboxHandlerWorker(
+      scopeFactory: new StubScopeFactory(coordinator),
+      failureChannel: failures,
+      schemaReadyGate: _markedReadyGate(),
+      options: Options.Create(options),
+      logger: log,
+      pinnedPool: NoOpPinnedConnectionPool.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    for (var i = 0; i < rows; i++) {
+      var id = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+      await worker.EnqueueAsync(_request(id, id), cts.Token);
+    }
+    await worker.StopAsync(cts.Token);
+
+    var warnings = log.At(Microsoft.Extensions.Logging.LogLevel.Warning);
+    var individual = warnings.Count(m => m.Contains("commit refused", StringComparison.Ordinal));
+    await Assert.That(individual).IsEqualTo(InboxHandlerWorker.MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH)
+      .Because("a flush where every row fails must not turn into a line per row; the first few carry the detail");
+    await Assert.That(warnings.Any(m => m.Contains($"{rows - InboxHandlerWorker.MAX_COMMIT_FAILURES_LOGGED_PER_FLUSH} more", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the rows past the cap are still counted, in one summary line");
+    await Assert.That(failures.Enqueued.Count).IsEqualTo(rows)
+      .Because("logging is capped, routing is not: every failed row still reaches the failure channel");
+  }
+
   [Test]
   public async Task EnqueueAsync_ThrowsOnNullRequestAsync() {
     var worker = new InboxHandlerWorker(
