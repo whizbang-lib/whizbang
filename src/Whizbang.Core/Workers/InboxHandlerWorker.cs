@@ -25,6 +25,8 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly ILogger<InboxHandlerWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
+  // #1788: rows wait here for their commit while held by the inbox channel writer; each flush releases them.
+  private readonly IInboxChannelWriter? _inboxChannelWriter;
 
   /// <summary>
   /// How many failed rows one flush logs individually before the rest are summarized in one line (#1789).
@@ -41,7 +43,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     IPinnedConnectionPool pinnedPool,
     Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null,
     IInboxChannelWriter? inboxChannelWriter = null) {
-    _ = inboxChannelWriter;
+    _inboxChannelWriter = inboxChannelWriter;
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _scopeFactory = scopeFactory;
     ArgumentNullException.ThrowIfNull(failureChannel);
@@ -69,6 +71,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     // convert a config choice into a crash loop.
     if (!_options.Enabled) {
       LogCommitsDisabledOnEnqueue(_logger, request.InboxCompletion.MessageId);
+      _inboxChannelWriter?.RemoveInFlight(request.HandlerId);
       return ValueTask.CompletedTask;
     }
 
@@ -85,7 +88,23 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     return _flusher.StoppedSignal;
   }
 
+  /// <summary>
+  /// Flushes one batch, then releases its rows from the held set however the flush ended (#1788): a committed row is
+  /// gone from the store, and a row whose commit failed or never ran must be offered again by the next claim.
+  /// </summary>
   private async Task _flushBatchAsync(IReadOnlyList<HandlerCommitRequest> batch, CancellationToken ct) {
+    try {
+      await _flushCoreAsync(batch, ct);
+    } finally {
+      if (_inboxChannelWriter is { } held) {
+        foreach (var request in batch) {
+          held.RemoveInFlight(request.HandlerId);
+        }
+      }
+    }
+  }
+
+  private async Task _flushCoreAsync(IReadOnlyList<HandlerCommitRequest> batch, CancellationToken ct) {
     if (!_options.Enabled) {
       // Anything already in flight when the killswitch flipped. A bare return here dropped the batch
       // with no log at all — the rows stay unprocessed and are re-claimed until their retry budget
