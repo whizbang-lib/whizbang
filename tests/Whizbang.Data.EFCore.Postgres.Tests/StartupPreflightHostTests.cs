@@ -81,9 +81,10 @@ public sealed partial class StartupPreflightHostTests {
       }
 
       var lines = instances.SelectMany(i => i.Log.Lines).ToList();
-      await Assert.That(lines).DoesNotContain(l => l.Contains("40P01", StringComparison.Ordinal)
-          || l.Contains("deadlock", StringComparison.OrdinalIgnoreCase))
-        .Because("instances starting together must not deadlock their own migration");
+      var deadlocks = lines.Where(l => !l.StartsWith("Information", StringComparison.Ordinal)
+        && (l.Contains("40P01", StringComparison.Ordinal) || l.Contains("deadlock", StringComparison.OrdinalIgnoreCase))).ToList();
+      await Assert.That(deadlocks).IsEmpty()
+        .Because("instances starting together must not deadlock their own migration; logged: " + string.Join(" | ", deadlocks));
       var files = MigrationStepTransactionTests.MigrationFiles();
       foreach (var file in files) {
         await Assert.That(lines.Count(l => _succeeded(file).IsMatch(l))).IsEqualTo(1)
@@ -131,22 +132,25 @@ public sealed partial class StartupPreflightHostTests {
   }
 
   /// <summary>
-  /// A second initialization, called while the host's own is still migrating, returns only once that one has
+  /// A second initialization, called while the host's own is still migrating, joins it and returns only once it has
   /// finished: the schema it hands back is the whole schema. The host's initialization is held open after its first
-  /// committed step, so "still migrating" is a fact when the second call is made.
+  /// committed step, so "still migrating" is a fact when the second call is made. The host is not awaited first,
+  /// because its start does not return before the schema is ready.
   /// </summary>
   [Test]
   [Timeout(300000)]
   public async Task ASecondInitialization_ReturnsOnlyOnceTheFirstHasFinishedAsync(CancellationToken cancellationToken) {
     var hold = new HoldFirstStep();
     var instance = new Instance(_database.ConnectionString, services => services.AddSingleton<ISchemaInitializationObserver>(hold));
+    var starting = instance.Host.StartAsync(cancellationToken);
     try {
-      await instance.Host.StartAsync(cancellationToken);
       await hold.Holding.WaitAsync(_deadline, cancellationToken);
 
       var second = instance.Host.EnsureWhizbangInitializedAsync(cancellationToken);
 
       await Assert.That(second.IsCompleted).IsFalse().Because("the first initialization is held mid-pass");
+      await Assert.That(instance.Log.Lines).Contains("Information Whizbang database initialization is in progress; waiting for it to finish")
+        .Because("the second call joins the host's initialization rather than running one of its own");
       hold.Release();
       await second.WaitAsync(_deadline, cancellationToken);
       var files = MigrationStepTransactionTests.MigrationFiles();
@@ -154,6 +158,7 @@ public sealed partial class StartupPreflightHostTests {
           "SELECT count(*) FROM public.wh_schema_migrations WHERE owner = 'whizbang' AND status IN (1, 2) AND file_name = ANY($1)",
           (object)files))
         .IsEqualTo((long)files.Length).Because("when the second call returns, every file has been applied");
+      await starting.WaitAsync(_deadline, cancellationToken);
     } finally {
       hold.Release();
       await instance.Host.StopAsync(CancellationToken.None);
