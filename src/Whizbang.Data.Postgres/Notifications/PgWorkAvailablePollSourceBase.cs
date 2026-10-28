@@ -9,6 +9,7 @@ using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Data.Postgres.Notifications;
 
@@ -82,6 +83,14 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
   private void _onGateAvailabilityChanged(bool nowAvailable) {
     Reschedule(nowAvailable ? _relaxedInterval : _tightInterval);
   }
+
+  /// <summary>
+  /// The schema-ready gate. While it is closed a tick detects nothing and sends no query: the tables the detection
+  /// reads may not exist yet, and nothing claims work before the gate opens anyway (#1636). Null detects on every
+  /// tick.
+  /// </summary>
+  /// <docs>fundamentals/signal-bus/signal-bus</docs>
+  public ISchemaReadyGate? SchemaReadyGate { get; init; }
 
   /// <summary>
   /// SQL that returns a single boolean — <c>true</c> if any unclaimed work exists for this
