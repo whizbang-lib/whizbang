@@ -105,6 +105,18 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
+  public bool TryBeginDispatch(Guid messageId) => true;
+
+  /// <inheritdoc />
+  public void MarkCommitPending(Guid messageId) { }
+
+  /// <inheritdoc />
+  public void EndDispatch(Guid messageId) { }
+
+  /// <inheritdoc />
+  public InboxLeaseSweep SweepLeases(TimeSpan renewAfter, int maxRenewals) => InboxLeaseSweep.Empty;
+
+  /// <inheritdoc />
   public void Complete() {
     _channel.Writer.Complete();
   }
