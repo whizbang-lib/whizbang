@@ -235,30 +235,6 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
-    // #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
-    // perspective or tag-attribute) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
-    // skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped here, unstored,
-    // and the transport then completed it with the broker. Null registry: legacy behavior (always process) for test
-    // harnesses. EnvelopeTypeNameHelper.ExtractInnerTypeName returns null on unwrapped formats; the gate is skipped then
-    // rather than misclassifying.
-    // EXEMPTION, body-offload (claim-check): a claim's wire type is MessageEnvelope<BodyClaimEnvelopePayload>, which no
-    // service consumes; BodyClaimRehydrator restores the original type downstream.
-    // EXEMPTION, composites: a composite is wire-only, so nothing consumes the composite type itself; its consumers are
-    // registered for the INNER events, addressable after the dispatch seam fans it out. See
-    // CompositeInboxFanout.IsCompositeWireType.
-    string? discardedOnReceive = null;
-    if (!string.IsNullOrWhiteSpace(envelopeType)
-        && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(envelopeType)) {
-      var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeType);
-      if (innerMessageType is not null
-          && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-          && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
-          && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
-        LogDroppedUnsubscribedType(_logger, envelope.MessageId, innerMessageType);
-        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
-      }
-    }
-
     var inboxActivity = _startInboxActivity(envelope, envelopeType);
 
     // Global concurrency gate — limits total concurrent handlers across all subscriptions
@@ -272,6 +248,7 @@ public partial class ServiceBusConsumerWorker(
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       LogProcessingMessage(_logger, envelope.MessageId);
+      var discardedOnReceive = _discardedOnReceive(envelope, envelopeType, scopedProvider);
 
       // Serialize and deduplicate via per-message flush
       var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, discardedOnReceive, strategy, scopedProvider, ct);
@@ -302,6 +279,28 @@ public partial class ServiceBusConsumerWorker(
       _concurrencySemaphore?.Release();
       inboxActivity?.Dispose();
     }
+  }
+
+  /// <summary>
+  /// #1720: a message whose type has NO consumer anywhere on this service (no inbox handler, lifecycle receptor,
+  /// perspective or runtime receptor) is still stored, settled with the reason (InboxMessage.DiscardedOnReceive), so the
+  /// skip is durable and inspectable and the row is never claimed or dispatched. It used to be dropped, unstored, and the
+  /// transport then completed it with the broker. The decision is <see cref="ReceiveConsumerGate"/>, shared with
+  /// <see cref="TransportConsumerWorker"/>: it exempts body-offload claims, composites and unparseable envelope types,
+  /// and asks the shared discard policy, when the worker pipeline registered one, so an event in an absorbed namespace
+  /// is kept for the event store with no local consumer (#1776).
+  /// </summary>
+  /// <returns><see cref="InboxReceiveDiscard.NO_LOCAL_CONSUMER"/> when nothing here consumes the message; otherwise
+  /// <see langword="null"/>.</returns>
+  private string? _discardedOnReceive(IMessageEnvelope envelope, string? envelopeType, IServiceProvider scopedProvider) {
+    var unconsumedType = ReceiveConsumerGate.UnconsumedMessageType(
+      envelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver,
+      scopedProvider.GetService<Routing.IMessageDiscardPolicy>());
+    if (unconsumedType is null) {
+      return null;
+    }
+    LogDroppedUnsubscribedType(_logger, envelope.MessageId, unconsumedType);
+    return InboxReceiveDiscard.NO_LOCAL_CONSUMER;
   }
 
   /// <summary>

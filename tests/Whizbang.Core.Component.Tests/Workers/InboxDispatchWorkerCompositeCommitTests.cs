@@ -146,9 +146,9 @@ public class InboxDispatchWorkerCompositeCommitTests {
     public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => throw new NotSupportedException();
   }
 
-  /// <summary>Discards children of one type at the inbox gate (the consumer never subscribed to it); keeps the composite itself.</summary>
+  /// <summary>Discards one type at the receive and inbox gates (the consumer never subscribed to it); keeps the composite itself.</summary>
   private sealed class DiscardOneTypePolicy(string discardedTypeFragment) : IMessageDiscardPolicy {
-    public MessageDiscardDecision EvaluateReceive(string payloadClrType, string topic, string subscription) => new(false, MessageDiscardReason.None);
+    public MessageDiscardDecision EvaluateReceive(string payloadClrType, string topic, string subscription) => EvaluateInbox(payloadClrType);
     public MessageDiscardDecision EvaluateInbox(string payloadClrType) =>
       payloadClrType.Contains(discardedTypeFragment, StringComparison.Ordinal)
         ? new(true, MessageDiscardReason.RegistryChanged, "no consumer registered")
