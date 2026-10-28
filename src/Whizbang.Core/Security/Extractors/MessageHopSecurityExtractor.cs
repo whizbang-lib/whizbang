@@ -73,7 +73,9 @@ public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecuri
       ActualPrincipal = scopeContext.ActualPrincipal,
       EffectivePrincipal = scopeContext.EffectivePrincipal,
       ContextType = scopeContext.ContextType,
-      Source = "MessageHop"
+      Source = "MessageHop",
+      // Every claim on the hops was listed for propagation where the chain started, so it travels on.
+      PropagatedClaimTypes = HopScope.ClaimTypesOf(scopeContext.Claims)
     };
 
     return ValueTask.FromResult<SecurityExtraction?>(extraction);

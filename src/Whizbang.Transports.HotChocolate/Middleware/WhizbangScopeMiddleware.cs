@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Claims;
@@ -32,6 +33,8 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
   private readonly RequestDelegate _next = next;
   private readonly WhizbangScopeOptions _options = options ?? new WhizbangScopeOptions();
+  private readonly FrozenSet<string> _propagatedClaimTypes =
+    (options?.PropagatedClaimTypes ?? []).ToFrozenSet(StringComparer.Ordinal);
 
   public async Task InvokeAsync(HttpContext context, IScopeContextAccessor scopeContextAccessor) {
     // Build scope from claims and headers
@@ -51,7 +54,8 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
       Source = "HttpContext",
       ActualPrincipal = scope.UserId,
       EffectivePrincipal = scope.UserId,
-      ContextType = SecurityContextType.User
+      ContextType = SecurityContextType.User,
+      PropagatedClaimTypes = _propagatedClaimTypes
     };
 
     // Wrap in ImmutableScopeContext for Dispatcher compatibility

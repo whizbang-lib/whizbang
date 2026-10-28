@@ -62,7 +62,11 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
         ActualPrincipal = source.ActualPrincipal,
         EffectivePrincipal = source.EffectivePrincipal,
         ContextType = source.ContextType,
-        Source = sourceLabel
+        Source = sourceLabel,
+        // A scope restored from hops passes on every claim it was given; each was listed where the chain started.
+        PropagatedClaimTypes = source is ImmutableScopeContext immutable
+          ? immutable.PropagatedClaimTypes
+          : HopScope.ClaimTypesOf(source.Claims)
       },
       shouldPropagate: true);
   }

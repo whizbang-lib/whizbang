@@ -85,7 +85,7 @@ public class HopScopeDispatchParityTests {
 
     var seen = HopScopeParityLocalCommandReceptor.Seen[command.Id];
     await Assert.That(seen.Scope.Extensions.Select(e => e.Key)).IsEquivalentTo(["acting-admin"]);
-    var emitted = strategy.Rows.Single(r => r.MessageType!.Contains(nameof(HopScopeParityEmittedEvent), StringComparison.Ordinal));
+    var emitted = strategy.Rows.Single(r => r.MessageType.Contains(nameof(HopScopeParityEmittedEvent), StringComparison.Ordinal));
     await Assert.That(emitted.Envelope.GetCurrentScope()!.Scope.Extensions.Select(e => e.Key)).IsEquivalentTo(["acting-admin"]);
     await Assert.That(emitted.Scope!.Extensions.Select(e => e.Key)).IsEquivalentTo(["acting-admin"])
       .Because("the outbox row's scope column is read from the same hop");
@@ -133,7 +133,7 @@ public class HopScopeDispatchParityTests {
   }
 
   private static IMessageEnvelope _row(CapturingStrategy strategy, string typeName) =>
-    strategy.Rows.Single(r => r.MessageType!.Contains(typeName, StringComparison.Ordinal)).Envelope;
+    strategy.Rows.Single(r => r.MessageType.Contains(typeName, StringComparison.Ordinal)).Envelope;
 
   private static IDispatcher _createDispatcher(CapturingStrategy strategy) {
     var services = new ServiceCollection();

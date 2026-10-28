@@ -138,9 +138,10 @@ public sealed record CascadeContext {
     scope is null ? null : new SecurityContext { TenantId = scope.TenantId, UserId = scope.UserId };
 
   /// <summary>
-  /// The Tenant/User scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/>, or
-  /// <see langword="null"/> when the context carries no tenant/user. Shared by the hop builders that stamp scope
-  /// from an explicit message context (dispatcher initial hop + the transport envelope builders).
+  /// The scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/> (see
+  /// <see cref="HopScope.FromMessageContext"/>), or <see langword="null"/> when the context carries no tenant/user.
+  /// Shared by the hop builders that stamp scope from an explicit message context (dispatcher initial hop + the
+  /// transport envelope builders).
   /// </summary>
   public static ScopeDelta? ScopeDeltaFromMessageContext(IMessageContext context) =>
     HopScope.FromMessageContext(context);
@@ -247,7 +248,8 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
-  /// Resolves the security scope (Tenant/User) to stamp on a child event's hop, HOP-FIRST — the source hop
+  /// Resolves the security scope (the whole scope and its propagated claims, see <see cref="HopScope"/>) to stamp on
+  /// a child event's hop, HOP-FIRST: the source hop
   /// captured at the calling site is authoritative (survives detached/worker/collective boundaries), ambient is
   /// the fallback. The scope companion to <see cref="ResolveHopFirstIdentity"/>: together they are the ONE place
   /// the hop-first precedence lives, shared by every hop builder.
