@@ -105,10 +105,39 @@ public class SubscriptionState(TransportDestination destination) {
   /// </summary>
   public DateTimeOffset? LastErrorTime { get; set; }
 
+  private ISubscription? _subscription;
+
   /// <summary>
   /// Reference to the active subscription, if any.
   /// </summary>
-  public ISubscription? Subscription { get; set; }
+  public ISubscription? Subscription {
+    get => Volatile.Read(ref _subscription);
+    set => Volatile.Write(ref _subscription, value);
+  }
+
+  /// <summary>
+  /// Takes the subscription out of the state, leaving none, and returns it for the caller to dispose.
+  /// </summary>
+  /// <remarks>
+  /// Connection recovery, shutdown and the per-destination reconnect each dispose what they take. The take is atomic,
+  /// so of two paths that race for one subscription exactly one gets it and it is disposed exactly once (#1839).
+  /// </remarks>
+  /// <returns>The subscription the state held, or <see langword="null"/> when it held none.</returns>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionDisconnects_ReconnectDisposesTheReplacedSubscriptionAndShutdownDoesNotDisposeItAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/TransportConsumerWorkerSubscriptionStatusChangedTests.cs:SubscriptionDisconnects_ConnectionRecoveredAfterTheReconnect_DisposesOnlyTheLiveSubscriptionAsync</tests>
+  internal ISubscription? ReleaseSubscription() => Interlocked.Exchange(ref _subscription, null);
+
+  /// <summary>
+  /// Takes <paramref name="subscription"/> out of the state only while the state still holds it.
+  /// </summary>
+  /// <param name="subscription">The subscription the caller expects the state to hold.</param>
+  /// <returns><see langword="true"/> when the state held it and now holds none; the caller then disposes it.</returns>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_ReconnectAfterADisconnect_DisposesTheReplacedSubscriptionOnceAndDetachesItsHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperDisconnectWindowTests.cs:SubscribeWithRetryAsync_ReplacedSubscriptionTakenFromTheStateBeforeTheReconnectRuns_IsNotDisposedByTheReconnectAsync</tests>
+  internal bool TryReleaseSubscription(ISubscription subscription) =>
+    ReferenceEquals(Interlocked.CompareExchange(ref _subscription, null, subscription), subscription);
 
   /// <summary>
   /// Increments the attempt count by one.

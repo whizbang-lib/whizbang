@@ -21,7 +21,8 @@ namespace Whizbang.Core.Tests.Resilience;
 /// The test subscription raises its disconnect from inside the helper's own attach step (before or after the handler
 /// is added), so the disconnect lands at exactly that point by construction, on every run. A reconnect parks on a gate
 /// the test never opens, so the status the helper left cannot be overwritten before it is read; the test cancels the
-/// helper's token at the end, which unwinds the parked reconnect.
+/// helper's token at the end, which unwinds the parked reconnect. The subscription a reconnect replaces is disposed by
+/// that reconnect before it subscribes again, exactly once (#1839).
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Resilience/SubscriptionRetryHelper.cs</code-under-test>
 [Category("Resilience")]
@@ -151,6 +152,85 @@ public class SubscriptionRetryHelperDisconnectWindowTests {
   }
 
   // ============================================================
+  // The replaced subscription is disposed (#1839)
+  // ============================================================
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_ReconnectAfterADisconnect_DisposesTheReplacedSubscriptionOnceAndDetachesItsHandlerAsync() {
+    var transport = new WindowTransport();
+    var state = new SubscriptionState(transport.Destination);
+    var logger = new RecordingLogger();
+    using var cts = new CancellationTokenSource();
+    await transport.SubscribeAsync(state, logger, cts.Token);
+    var replaced = transport.Subscriptions.Single();
+    await Assert.That(replaced.HandlerCount).IsEqualTo(1)
+      .Because("the precondition: the helper is listening for this subscription's disconnect");
+
+    replaced.Disconnect(new InvalidOperationException("the link dropped"));
+    // The reconnect disposes the subscription it replaces before it subscribes again, so by the time the second
+    // subscribe is requested the disposal has happened.
+    await transport.ReconnectRequested.Task.WaitAsync(_guard);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1)
+      .Because("the subscription a reconnect replaces holds transport resources; leaving it undisposed leaks one per drop");
+    await Assert.That(replaced.HandlerCount).IsEqualTo(0)
+      .Because("the replaced subscription must not keep the helper's handler attached");
+    await Assert.That(state.Subscription).IsNull()
+      .Because("the state no longer holds the disposed subscription, so shutdown or recovery cannot dispose it again");
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_ReplacedSubscriptionDisposeThrows_IsLoggedWithTheDestinationAndTheReconnectStillRunsAsync() {
+    var disposeError = new InvalidOperationException("channel already closed");
+    var transport = new WindowTransport(first => first.DisposeError = disposeError);
+    var state = new SubscriptionState(transport.Destination);
+    var logger = new RecordingLogger();
+    using var cts = new CancellationTokenSource();
+    await transport.SubscribeAsync(state, logger, cts.Token);
+    var replaced = transport.Subscriptions.Single();
+
+    replaced.Disconnect(new InvalidOperationException("the link dropped"));
+    await transport.ReconnectRequested.Task.WaitAsync(_guard);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(1);
+    var entry = logger.Entries.Single(e => ReferenceEquals(e.Exception, disposeError));
+    await Assert.That(entry.Level).IsEqualTo(LogLevel.Warning);
+    await Assert.That(entry.Message).Contains(transport.Destination.Address)
+      .Because("the failure names the destination whose old subscription could not be released");
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
+      .Because("a failed disposal of the old subscription must not stop the destination from reconnecting");
+
+    await cts.CancelAsync();
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_ReplacedSubscriptionTakenFromTheStateBeforeTheReconnectRuns_IsNotDisposedByTheReconnectAsync() {
+    var transport = new WindowTransport();
+    var state = new SubscriptionState(transport.Destination);
+    var logger = new RecordingLogger();
+    using var cts = new CancellationTokenSource();
+    await transport.SubscribeAsync(state, logger, cts.Token);
+    var replaced = transport.Subscriptions.Single();
+    // Connection recovery or shutdown takes the subscription out of the state, and disposes it, the moment the
+    // destination turns Recovering: before the reconnect the disconnect starts has run.
+    state.StatusChanged = (s, _, status) => {
+      if (status == SubscriptionStatus.Recovering) {
+        s.Subscription = null;
+      }
+    };
+
+    replaced.Disconnect(new InvalidOperationException("the link dropped"));
+    await transport.ReconnectRequested.Task.WaitAsync(_guard);
+
+    await Assert.That(replaced.DisposeCount).IsEqualTo(0)
+      .Because("whoever took the subscription from the state disposes it; a second disposal here would be a double dispose");
+
+    await cts.CancelAsync();
+  }
+
+  // ============================================================
   // Test doubles
   // ============================================================
 
@@ -211,10 +291,15 @@ public class SubscriptionRetryHelperDisconnectWindowTests {
   private sealed class WindowSubscription : ISubscription {
     private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnected;
 
+    private int _disposeCount;
+
     public Action<WindowSubscription>? Attaching { get; set; }
     public Action<WindowSubscription>? Attached { get; set; }
     public SubscriptionDisconnectedEventArgs? Disconnection { get; private set; }
     public bool IsActive => true;
+    public Exception? DisposeError { get; set; }
+    public int DisposeCount => Volatile.Read(ref _disposeCount);
+    public int HandlerCount => _onDisconnected?.GetInvocationList().Length ?? 0;
 
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
       add {
@@ -239,11 +324,19 @@ public class SubscriptionRetryHelperDisconnectWindowTests {
 
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
-    public void Dispose() { }
+
+    public void Dispose() {
+      Interlocked.Increment(ref _disposeCount);
+      if (DisposeError is not null) {
+        throw DisposeError;
+      }
+    }
   }
 
   private sealed class RecordingLogger : ILogger {
-    private readonly ConcurrentQueue<(LogLevel Level, string Message)> _entries = new();
+    private readonly ConcurrentQueue<(LogLevel Level, string Message, Exception? Exception)> _entries = new();
+
+    public IReadOnlyList<(LogLevel Level, string Message, Exception? Exception)> Entries => [.. _entries];
 
     /// <summary>Warnings the helper logs when it accepts a disconnect and starts a reconnect.</summary>
     public int DisconnectWarnings => _entries.Count(e => e.Level == LogLevel.Warning && e.Message.Contains("disconnected", StringComparison.Ordinal));
@@ -253,6 +346,6 @@ public class SubscriptionRetryHelperDisconnectWindowTests {
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) =>
-      _entries.Enqueue((logLevel, formatter(state, exception)));
+      _entries.Enqueue((logLevel, formatter(state, exception), exception));
   }
 }

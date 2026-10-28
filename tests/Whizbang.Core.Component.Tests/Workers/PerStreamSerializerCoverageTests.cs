@@ -45,7 +45,7 @@ public class PerStreamSerializerCoverageTests {
     var item2 = new StreamItem(streamId, _idProvider.NewGuid());
 
     var window = TimeSpan.FromMilliseconds(500);
-    var clock = new DrainWindowClock(window);
+    using var clock = new DrainWindowClock(window);
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: x => x.StreamId,
@@ -75,15 +75,30 @@ public class PerStreamSerializerCoverageTests {
     // cover went unexecuted -- silently, because the items are coalesced either way and the
     // assertion below still passed. The gap showed up only as a coverage flip across CI runs.
     await clock.EnteredWindow.WaitAsync(cancellationToken);
+
+    // Move part of the way into the open window before the second item arrives, so going around
+    // the loop is told apart from opening a new window by its due time alone: the loop-back races
+    // what is left of THIS window, a new window would race a whole one.
+    var elapsed = TimeSpan.FromMilliseconds(100);
+    clock.Advance(elapsed);
     await sut.EnqueueAsync(item2, cancellationToken);
 
-    // The loop-back's own wait. Reaching it is the claim: a second window wait exists only if the
-    // mid-window arrival won its race and the loop went around to collect it. If that stops
-    // happening this now fails by timeout rather than passing with the path unexecuted.
-    await clock.LoopedBack.WaitAsync(cancellationToken);
+    try {
+      // The loop-back's own wait. Reaching it is the claim: a wait for the rest of the open window
+      // exists only if the mid-window arrival won its race and the loop went around to collect it.
+      // If the arrival instead closed the window, the second item would open a fresh one with a
+      // full-window wait, this signal would never fire, and the test fails by timeout rather than
+      // passing with the path unexecuted.
+      await clock.LoopedBack.WaitAsync(cancellationToken);
 
-    // Close the window on the fake clock so the batch flushes. Nothing here waits on wall time.
-    clock.Advance(window);
+      // Close the window on the fake clock so the batch flushes. Nothing here waits on wall time.
+      // The clock holds the worker inside the loop-back's timer creation until this has run, so
+      // the advance always lands at the tightest point: after the timer exists, before the delay
+      // that owns it has even returned to the worker.
+      clock.Advance(window - elapsed);
+    } finally {
+      clock.ReleaseLoopBack();
+    }
 
     await bothProcessed.Task.WaitAsync(cancellationToken);
 
@@ -94,28 +109,44 @@ public class PerStreamSerializerCoverageTests {
 
   /// <summary>
   /// A fake clock that reports when the drain window's race starts. A delay asks its time provider
-  /// for a timer, so a timer whose due time falls inside the window is the worker arriving at the
-  /// race: the first is the window opening, the second is the loop-back after a mid-window arrival.
+  /// for a timer, so the timer's due time says which wait the worker has reached: a full window is
+  /// a window opening, anything shorter is the loop-back racing the rest of a window already open.
   /// The idle sweep's timer is excluded by its far larger due time.
   /// </summary>
-  /// <param name="window">The drain window, the upper bound on a due time that counts as a wait.</param>
-  private sealed class DrainWindowClock(TimeSpan window) : FakeTimeProvider {
-    private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _waits;
+  /// <remarks>
+  /// Each signal fires only once its timer is registered. Signaling first was a race: the test
+  /// advances the clock as soon as it sees the loop-back, and when that advance ran before the
+  /// worker's thread registered the timer, the timer was scheduled past the advanced time, never
+  /// came due, and the batch never flushed. The loop-back's timer creation is also held until
+  /// <see cref="ReleaseLoopBack"/>, so every run forces the advance into that same gap.
+  /// </remarks>
+  /// <param name="window">The drain window, the due time of a window opening.</param>
+  private sealed class DrainWindowClock(TimeSpan window) : FakeTimeProvider, IDisposable {
+    private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _loopedBack = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ManualResetEventSlim _loopBackReleased = new(initialState: false);
 
-    /// <summary>Completes once the worker is inside the drain window's race.</summary>
-    public Task EnteredWindow => _first.Task;
+    /// <summary>Completes once the worker has registered the timer of a window it just opened.</summary>
+    public Task EnteredWindow => _opened.Task;
 
-    /// <summary>Completes once the worker has gone around and reopened the race.</summary>
-    public Task LoopedBack => _second.Task;
+    /// <summary>Completes once the worker has gone around and registered the timer for the rest of the open window.</summary>
+    public Task LoopedBack => _loopedBack.Task;
+
+    /// <summary>Lets the worker return from the loop-back's timer creation.</summary>
+    public void ReleaseLoopBack() => _loopBackReleased.Set();
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
-      if (dueTime > TimeSpan.Zero && dueTime <= window) {
-        if (Interlocked.Increment(ref _waits) == 1) { _first.TrySetResult(); } else { _second.TrySetResult(); }
+      var timer = base.CreateTimer(callback, state, dueTime, period);
+      if (dueTime == window) {
+        _opened.TrySetResult();
+      } else if (dueTime > TimeSpan.Zero && dueTime < window) {
+        _loopedBack.TrySetResult();
+        _loopBackReleased.Wait();
       }
-      return base.CreateTimer(callback, state, dueTime, period);
+      return timer;
     }
+
+    public void Dispose() => _loopBackReleased.Dispose();
   }
 
   // ============================================================
