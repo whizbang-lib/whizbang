@@ -473,8 +473,9 @@ public class SlidingWindowInboxBatchStrategyTests {
 
     await sut.AppendAsync(_makeMessage(), testToken);
     await failed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
-    // The log happens just after the flush task faults.
-    await Task.Delay(150, testToken);
+    // The log is written after the flush task faults, on the drain loop. Wait for the log itself, not for a duration:
+    // a 150ms sleep passed on a quiet machine and failed under CI load. A missing log now fails by the test's timeout.
+    await logger.ErrorLogged.WaitAsync(testToken);
 
     await Assert.That(logger.Errors.Any(e => e.Contains("bulk flush", StringComparison.Ordinal))).IsTrue()
       .Because("the batch is dropped and only transport redelivery recovers it — the log line is "
@@ -535,6 +536,10 @@ public class SlidingWindowInboxBatchStrategyTests {
   private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Workers.SlidingWindowInboxBatchStrategy> {
     private readonly Lock _lock = new();
     private readonly List<string> _errors = [];
+    private readonly TaskCompletionSource _errorLogged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Completes once the first error has been recorded, so a test waits on the log rather than on time.
+    public Task ErrorLogged => _errorLogged.Task;
 
     public List<string> Errors {
       get { lock (_lock) { return [.. _errors]; } }
@@ -549,6 +554,7 @@ public class SlidingWindowInboxBatchStrategyTests {
         TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Error) {
         lock (_lock) { _errors.Add(formatter(state, exception)); }
+        _errorLogged.TrySetResult();
       }
     }
   }
