@@ -216,8 +216,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var partitions = new Channel<InboxWork>[partitionCount];
     var consumers = _startPartitionConsumers(partitions, stoppingToken);
-    // #1788: the rows this process holds keep their leases while they wait. Disposing the timer ends the keeper.
-    using var keeperTimer = _leaseRenewalOptions.Enabled
+    // #1788: the rows this process holds keep their leases while they wait. The finally below disposes the timer,
+    // which ends the keeper, before awaiting it.
+    var keeperTimer = _leaseRenewalOptions.Enabled
       ? new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds / 6.0)), _timeProvider)
       : null;
     var keeper = keeperTimer is null ? Task.CompletedTask : _keepHeldLeasesAsync(keeperTimer, stoppingToken);
