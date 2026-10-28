@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -243,6 +244,35 @@ public class DbContextInitializationRegistryTests {
     await Assert.That(async () => await first).Throws<InvalidOperationException>();
     await second;
     await Assert.That(calls).IsEqualTo(2).Because("the failed attempt initialized nothing, so the waiting call runs one");
+  }
+
+  /// <summary>
+  /// The host's provider and the root scope its singletons are built from are two objects with one identity: a host
+  /// that initializes from <c>app.Services</c> while its hosted initializer, built from the root scope, is still
+  /// running waits for it rather than running a second initialization beside it (#1636).
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_TheHostsProviderAndItsRootScope_AreOneHostAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var calls = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      Interlocked.Increment(ref calls);
+      entered.TrySetResult();
+      await release.Task;
+    });
+    await using var host = new ServiceCollection().BuildServiceProvider();
+    var rootScope = host.GetRequiredService<IServiceProvider>();
+    await Assert.That(rootScope).IsNotSameReferenceAs(host).Because("precondition: the two are different objects");
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(rootScope);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host);
+
+    await Assert.That(second.IsCompleted).IsFalse();
+    release.TrySetResult();
+    await Task.WhenAll(first, second);
+    await Assert.That(calls).IsEqualTo(1).Because("one host, one initialization");
   }
 
   /// <summary>A call waiting for another's initialization stops waiting when its own token is canceled.</summary>
