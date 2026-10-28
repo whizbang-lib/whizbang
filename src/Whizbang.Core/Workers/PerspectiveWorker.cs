@@ -3598,7 +3598,7 @@ public partial class PerspectiveWorker(
 
     // Per-batch renewal enqueues are filtered by LeaseRenewalWorker against the LeaseRegistry —
     // an id with no registered LeaseHandle is silently skipped, so without this the renewals
-    // never reach renew_leases and the DB lease still expires under a long multi-batch apply.
+    // never reach wh_renew_held_leases and the DB lease still expires under a long multi-batch apply.
     using var sinkLeaseScope = _registerSinkLeases(sinkWorkIds, cancellationToken);
 
     var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(

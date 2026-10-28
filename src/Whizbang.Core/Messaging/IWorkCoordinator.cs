@@ -372,23 +372,29 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement CompletePerspectiveAsync.");
 
   /// <summary>
-  /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category.
-  /// Called by C# LeaseRenewalWorker when in-flight items approach expiry.
-  /// Phase B of work-pump decomposition.
+  /// Extends <c>lease_expiry</c> for the supplied ids in the chosen category that <paramref name="instanceId"/> still
+  /// holds, with the stream leases of their streams, and reports the ids it did not renew (#1852).
   /// </summary>
+  /// <remarks>
+  /// A row is renewed only while the renewing instance holds it. An instance whose lease lapsed, and whose row another
+  /// instance then claimed, gets the row back in the result instead of extending the new holder's lease; the caller
+  /// stops holding every id returned. A completed row and a row the store no longer has are returned too.
+  /// </remarks>
   /// <param name="category">Which category table to update.</param>
+  /// <param name="instanceId">The instance renewing, which must be the one holding each row.</param>
   /// <param name="ids">Message / work ids to renew.</param>
   /// <param name="leaseSeconds">New lease duration from now (default 300).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>Number of rows actually updated.</returns>
+  /// <returns>The ids whose leases were not renewed because <paramref name="instanceId"/> does not hold them.</returns>
   /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
-  Task<int> RenewLeasesAsync(
+  Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(
     WorkCategory category,
+    Guid instanceId,
     IReadOnlyList<Guid> ids,
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
-      $"{GetType().Name} does not implement RenewLeasesAsync.");
+      $"{GetType().Name} does not implement RenewHeldLeasesAsync.");
 
   /// <summary>
   /// Hands back inbox rows this instance claimed but never dispatched, refunding the attempt the

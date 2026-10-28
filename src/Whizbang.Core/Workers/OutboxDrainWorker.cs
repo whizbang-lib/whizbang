@@ -363,7 +363,11 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       streamIds, _instanceProvider.InstanceId, int.MaxValue, maxBytes: null, ct);
     Guid[] held = [.. rows.Select(r => r.MessageId)];
     if (held.Length > 0) {
-      await coordinator.RenewLeasesAsync(WorkCategory.Outbox, held, _holdLeaseSeconds, ct);
+      // #1852: renewed as this instance. A row another instance claimed between the fetch and the renewal is not
+      // renewed, and is not held here.
+      var notHeld = await coordinator.RenewHeldLeasesAsync(
+        WorkCategory.Outbox, _instanceProvider.InstanceId, held, _holdLeaseSeconds, ct);
+      held = [.. held.Except(notHeld)];
     }
     LogPublishHeldTransportNotReady(_logger, streamIds.Count, held.Length);
     OnOutboxPublishHeld?.Invoke(new OutboxPublishHeldEvent { StreamIds = streamIds, HeldMessageIds = held });

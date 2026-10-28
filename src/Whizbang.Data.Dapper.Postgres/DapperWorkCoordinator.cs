@@ -1015,24 +1015,27 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<int> RenewLeasesAsync(
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorBroadTests.cs:RenewHeldLeasesAsync_ARowAnotherInstanceHolds_IsReportedAndLeftAloneAsync</tests>
+  public async Task<IReadOnlyList<Guid>> RenewHeldLeasesAsync(
     WorkCategory category,
+    Guid instanceId,
     IReadOnlyList<Guid> ids,
     int leaseSeconds = 300,
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ids);
     if (ids.Count == 0) {
-      return 0;
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var idArray = ids is Guid[] arr ? arr : [.. ids];
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     var prefix = await _prefixAsync(connection, cancellationToken);
-    return await connection.ExecuteScalarAsync<int>(
-      $"SELECT {prefix}renew_leases(@Category, @Ids, @LeaseSeconds)",
-      new { Category = category.ToSqlCategory(), Ids = idArray, LeaseSeconds = leaseSeconds },
-      commandTimeout: CoordinatorCommandTimeout.SECONDS);
+    // The function returns an empty array, never NULL, so the result is always a uuid[].
+    return (await connection.ExecuteScalarAsync<Guid[]>(
+      $"SELECT {prefix}wh_renew_held_leases(@Category, @InstanceId, @Ids, @LeaseSeconds)",
+      new { Category = category.ToSqlCategory(), InstanceId = instanceId, Ids = idArray, LeaseSeconds = leaseSeconds },
+      commandTimeout: CoordinatorCommandTimeout.SECONDS))!;
   }
 
   /// <inheritdoc />
