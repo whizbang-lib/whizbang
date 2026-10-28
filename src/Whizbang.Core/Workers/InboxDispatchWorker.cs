@@ -335,6 +335,19 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       : $"InboxDispatchWorker dead-lettered: attempts={work.Attempts} > max={maxAttempts}";
 
   /// <summary>
+  /// Names the cause behind a row's last recorded error, for the control-plane drop log (#1789): a lease that lapsed
+  /// without a reported outcome (the acquisition's own stamp), a failure something reported, or nothing recorded.
+  /// </summary>
+  /// <param name="error">The row's last recorded error, or null.</param>
+  /// <returns>The cause, worded for a log line.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerControlPlaneDropLogTests.cs</tests>
+  internal static string DescribeLastFailure(string? error) => error switch {
+    null => "none recorded",
+    _ when PoisonAdmissionPolicy.IsLeaseExpiryCasualty(error) => "its lease lapsed without a reported outcome",
+    _ => "a recorded failure",
+  };
+
+  /// <summary>
   /// The failure reason recorded on the inbox row for an exception from dispatch: the oversized-message
   /// reason when a <see cref="MessagePayloadTooLargeException"/> is anywhere in the chain (a handler that
   /// produced a message over the limit), otherwise unknown.
@@ -385,7 +398,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // inert — the recovery worker re-emits it into the inbox on a later boot, so a burst of
       // failures becomes a backlog every restart replays.
       if (DeadLetterDropPolicy.ShouldDropInsteadOfStore(work.MessageType)) {
-        LogControlPlaneDropped(_logger, work.MessageId, work.MessageType, work.Attempts);
+        LogControlPlaneDropped(_logger, work.MessageId, work.MessageType, work.Attempts,
+          DescribeLastFailure(work.Error), work.Error ?? "none recorded");
         _dlqMetrics?.Added.Add(1,
           new KeyValuePair<string, object?>(DeadLetterMetrics.SOURCE_TABLE_TAG, DeadLetterSourceTable.INBOX),
           new KeyValuePair<string, object?>(DeadLetterMetrics.REASON_TAG, "ControlPlaneDropped"));
@@ -980,7 +994,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       InboxCompletion: new HandlerInboxCompletion(work.MessageId, status),
       NewOutboxMessages: newOutboxMessages,
       NewInboxMessages: newInboxMessages,
-      DebugMode: _coordinatorOptions.DebugMode);
+      DebugMode: _coordinatorOptions.DebugMode) {
+      MessageType = work.MessageType,
+    };
 
   // ============================================================
   // Lifecycle invocation (ported from legacy
@@ -1238,9 +1254,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   static partial void LogDeadLetterStoreFailed(ILogger logger, Guid messageId, Exception ex);
 
   [LoggerMessage(EventId = 11, Level = LogLevel.Warning,
-    Message = "InboxDispatchWorker DROPPED control-plane message {MessageId} ({MessageType}) after {Attempts} attempt(s) — " +
-              "control-plane traffic is re-emitted on its own cadence and is never durably dead-lettered")]
-  static partial void LogControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts);
+    Message = "InboxDispatchWorker DROPPED control-plane message {MessageId} ({MessageType}) after {Attempts} attempt(s); "
+              + "last cause: {LastCause}; last error: {LastError}. Control-plane traffic is re-emitted on its own cadence "
+              + "and is never durably dead-lettered, so this line is the only record of why it failed.")]
+  static partial void LogControlPlaneDropped(ILogger logger, Guid messageId, string messageType, int attempts, string lastCause, string lastError);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
