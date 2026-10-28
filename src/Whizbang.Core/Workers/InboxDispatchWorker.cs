@@ -398,8 +398,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// <remarks>The row's parsed payload is dropped from the cache once the completion is handed on (#1793).</remarks>
   private async ValueTask _enqueueCommitAsync(HandlerCommitRequest request, CancellationToken ct) {
     _inboxChannelWriter.MarkCommitPending(request.HandlerId);
-    await _handlerCommitChannel.EnqueueAsync(request, ct);
     _deserializeCache?.Remove(request.HandlerId);
+    await _handlerCommitChannel.EnqueueAsync(request, ct);
   }
 
   /// <summary>A terminal path that bypasses the commit channel (a dead-letter move): the row stops being held and its

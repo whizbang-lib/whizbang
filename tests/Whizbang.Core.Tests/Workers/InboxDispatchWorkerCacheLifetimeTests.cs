@@ -23,16 +23,20 @@ public sealed class InboxDispatchWorkerCacheLifetimeTests {
 
   [Test]
   public async Task Dispatch_CachesThePayloadWithItsSize_AndDropsItWhenTheRowCompletesAsync() {
-    var cache = _cache();
-    var h = new InboxDispatchUnitHarness(cache: cache, deserializer: new ObjectDeserializer());
     const string payload = """{"Name":"abcdefghij"}""";
+    // A budget of exactly this payload: caching it at its true size must evict the one-byte entry already there.
+    var clock = new FakeTimeProvider(InboxDispatchUnitHarness.Start);
+    var cache = new InboxDeserializeCache(new SystemTimeProvider(clock),
+      maxBytes: System.Text.Encoding.UTF8.GetByteCount(payload));
+    var other = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.New();
+    cache.Set(other, new object(), 1);
+    clock.Advance(TimeSpan.FromSeconds(1));
+    var h = new InboxDispatchUnitHarness(cache: cache, deserializer: new ObjectDeserializer());
     var work = InboxDispatchUnitHarness.Work(payload: payload);
-    long bytesAtCommit = -1;
-    h.Commits.OnEnqueue = _ => bytesAtCommit = cache.Bytes;
 
     await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
-    await Assert.That(bytesAtCommit).IsEqualTo(System.Text.Encoding.UTF8.GetByteCount(payload))
+    await Assert.That(cache.TryGet(other, out _)).IsFalse()
       .Because("an entry is sized by the payload it was parsed from, so the byte budget sees what it holds");
     await Assert.That(cache.TryGet(work.MessageId, out _)).IsFalse()
       .Because("a completed row is never parsed again, so its entry must not occupy the cache for its TTL");
