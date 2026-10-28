@@ -40,6 +40,20 @@ public class CoalesceShipWorkerCoverageTests {
     }
   }
 
+  /// <summary>A coordinator whose recovery succeeds and whose first tick is canceled mid-call.</summary>
+  private sealed class CanceledOnTickCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _statsCalls;
+    public int StatsCalls => Volatile.Read(ref _statsCalls);
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0);
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _statsCalls);
+      throw new OperationCanceledException("shutdown during a tick");
+    }
+  }
+
   /// <summary>A coordinator whose <c>ReleaseMaturedCoalesceAsync</c> throws instead of releasing.</summary>
   private sealed class CanceledOnReleaseCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public int ReleaseCalls { get; private set; }
@@ -174,6 +188,31 @@ public class CoalesceShipWorkerCoverageTests {
       .Because("a canceled recovery ending ExecuteAsync as a fault would read as a crash on an ordinary shutdown");
     await Assert.That(coordinator.ReleaseCalls).IsEqualTo(1)
       .Because("the cancellation must stop recovery immediately rather than retrying past it");
+  }
+
+  /// <summary>
+  /// If this regressed to treating a cancellation inside a tick like an ordinary tick failure (log and keep
+  /// looping), a shutdown that lands mid-tick would leave the shipper running another tick against a coordinator
+  /// that is being torn down. A stop usually lands in the wait between ticks instead, so only this test reaches the
+  /// loop's exit on a canceled tick deterministically.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_TickCanceled_ExitsTheLoopWithoutAnotherTickAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new CanceledOnTickCoordinator();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await executeTask!.WaitAsync(testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask.IsCompletedSuccessfully).IsTrue()
+      .Because("a canceled tick must end the loop quietly, never as a fault that reads as a crash on shutdown");
+    await Assert.That(coordinator.StatsCalls).IsEqualTo(1)
+      .Because("the loop must stop at the canceled tick rather than run another one");
   }
 
   // ── Release-backstop logging: both call sites ───────────────────────────
