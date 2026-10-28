@@ -31,7 +31,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     new(origin, "tenant-a", "Contracts.DrainProbe", stream);
 
   private static IntegrityReportObservation _obs(IntegrityRepairLedger.DivergenceKey key) =>
-    new(key, 11, 21, 0, 0);
+    new(key, 11, 21, 0, 0, IsDeficit: true);
 
   [Test]
   public async Task StampWindows_PersistsTheComparedRange_OnReportedRowsAsync() {

@@ -83,7 +83,7 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
 
     await Assert.That(async () => await coordinator.IntegrityTryBeginReportBatchAsync(
         origin,
-        [new IntegrityReportObservation(_key(origin), OriginLo: 10, OriginHi: 20, LocalLo: 10, LocalHi: 18)],
+        [new IntegrityReportObservation(_key(origin), OriginLo: 10, OriginHi: 20, LocalLo: 10, LocalHi: 18, IsDeficit: true)],
         DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5), stopping.Token))
       .Throws<OperationCanceledException>()
       .Because("null means 'batch unavailable, use the single-key path', so swallowing a shutdown "

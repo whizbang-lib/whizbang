@@ -475,10 +475,12 @@ public sealed partial class IntegrityManifestReceptor(
     }
     var observations = new IntegrityReportObservation[divergent.Count];
     for (var i = 0; i < divergent.Count; i++) {
-      var (origin, mine, _, _) = divergent[i];
+      // #1842: the kind rides the report, because the ledger row cannot derive it (its digest halves are
+      // hashes, not counts) and the paced drain claims only the rows a redelivery can repair.
+      var (origin, mine, isDeficit, _) = divergent[i];
       observations[i] = new IntegrityReportObservation(
         new IntegrityRepairLedger.DivergenceKey(message.OriginServiceId, origin.TenantScope, origin.EventType, origin.StreamId),
-        origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0);
+        origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, isDeficit);
     }
     var reportFlags = divergent.Count > 0
       ? await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false)
@@ -888,8 +890,9 @@ public sealed partial class IntegrityManifestReceptor(
       var observations = new IntegrityReportObservation[bulkCandidates.Count];
       for (var i = 0; i < bulkCandidates.Count; i++) {
         var (origin, mine, _) = bulkCandidates[i];
+        // Every bulk candidate is a deficit by construction (the origin holds more than this store).
         observations[i] = new IntegrityReportObservation(
-          keys[i], origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0);
+          keys[i], origin.DigestLo, origin.DigestHi, mine?.DigestLo ?? 0, mine?.DigestHi ?? 0, IsDeficit: true);
       }
       _ = await ledger.TryBeginReportBatchAsync(observations, now, cooldown, cancellationToken).ConfigureAwait(false);
       var grants = await ledger.TryBeginRepairBatchAsync(

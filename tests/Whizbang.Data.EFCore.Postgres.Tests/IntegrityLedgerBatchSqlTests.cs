@@ -32,7 +32,7 @@ public class IntegrityLedgerBatchSqlTests : EFCoreTestBase {
     new(origin, "tenant-a", "Contracts.LedgerBatchProbe", stream);
 
   private static IntegrityReportObservation _obs(IntegrityRepairLedger.DivergenceKey key, long lo = 11, long hi = 21) =>
-    new(key, lo, hi, 0, 0);
+    new(key, lo, hi, 0, 0, IsDeficit: true);
 
   [Test]
   public async Task ReportBatch_MatchesSingleSemantics_FirstSightingGrants_CooldownSuppressesAsync() {

@@ -39,7 +39,7 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
   private static IntegrityRepairLedger.DivergenceKey _key(Guid origin, Guid stream, string? tenant = "tenant-a") =>
     new(origin, tenant, "Contracts.BacklogProbe", stream);
 
-  private static IntegrityReportObservation _obs(IntegrityRepairLedger.DivergenceKey key) => new(key, 11, 21, 0, 0);
+  private static IntegrityReportObservation _obs(IntegrityRepairLedger.DivergenceKey key) => new(key, 11, 21, 0, 0, IsDeficit: true);
 
   [Test]
   public async Task Probe_CountsTheBacklogAcrossOrigins_AndFlagsTrackedKeysInOrderAsync() {

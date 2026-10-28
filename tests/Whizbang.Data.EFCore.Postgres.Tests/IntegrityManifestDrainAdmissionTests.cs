@@ -236,6 +236,29 @@ public class IntegrityManifestDrainAdmissionTests {
   }
 
   [Test]
+  public async Task DrainOn_EveryReportedDivergence_TellsTheLedgerWhetherItIsADeficitAsync() {
+    // #1842: the drain claims ledger rows, and the ledger cannot tell a deficit from a surplus by
+    // itself (its four digest halves are hashes, not counts), so the comparison must say which is which.
+    var deficit = Guid.NewGuid();
+    var mismatch = Guid.NewGuid();
+    var surplus = Guid.NewGuid();
+    var harness = new Harness(_drain(perComparison: 25, backlog: 100)) {
+      Probe = (_, keys, _) => new IntegrityRepairBacklogProbe(0, [.. keys.Select(_ => false)]),
+      Local = [_digest(mismatch, 77, 78, 2), _digest(surplus, 77, 78, 3)],
+    };
+
+    await harness.CompareAsync([deficit, mismatch, surplus]);
+
+    var kinds = harness.Ledger.Observations.ToDictionary(o => o.Key.StreamId, o => o.IsDeficit);
+    await Assert.That(kinds[deficit]).IsTrue()
+      .Because("the origin holds events this store lacks: a redelivery can repair it, so the drain may claim it");
+    await Assert.That(kinds[mismatch]).IsFalse()
+      .Because("equal counts with different folds: a redelivery re-ships what is already here and changes nothing");
+    await Assert.That(kinds[surplus]).IsFalse()
+      .Because("this store holds more than the origin: asking the origin for more cannot remove anything");
+  }
+
+  [Test]
   public async Task DrainOn_NoDeficits_DoesNotProbeAsync() {
     var mismatch = Guid.NewGuid();
     var harness = new Harness(_drain(perComparison: 25, backlog: 100)) {
@@ -338,6 +361,7 @@ public class IntegrityManifestDrainAdmissionTests {
   /// <summary>Records report keys and the burst path's grant cap; reports every observation.</summary>
   private sealed class RecordingLedger : IIntegrityRepairLedger {
     public List<Guid> ReportedStreams { get; } = [];
+    public List<IntegrityReportObservation> Observations { get; } = [];
     public int? RepairGrantCap { get; private set; }
 
     public ValueTask<bool> TryBeginReportAsync(IntegrityRepairLedger.DivergenceKey key, long originLo, long originHi, long localLo, long localHi,
@@ -349,6 +373,7 @@ public class IntegrityManifestDrainAdmissionTests {
     public ValueTask<IReadOnlyList<bool>> TryBeginReportBatchAsync(IReadOnlyList<IntegrityReportObservation> observations,
         DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) {
       ReportedStreams.AddRange(observations.Select(o => o.Key.StreamId));
+      Observations.AddRange(observations);
       return ValueTask.FromResult<IReadOnlyList<bool>>([.. observations.Select(_ => false)]);
     }
     public ValueTask<IReadOnlyList<bool>> TryBeginRepairBatchAsync(IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys,

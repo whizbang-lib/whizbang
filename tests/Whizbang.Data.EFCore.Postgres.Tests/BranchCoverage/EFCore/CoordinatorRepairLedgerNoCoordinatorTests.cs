@@ -26,7 +26,7 @@ public class CoordinatorRepairLedgerNoCoordinatorTests {
     var key = new IntegrityRepairLedger.DivergenceKey(Guid.NewGuid(), "tenant-a", "Contracts.TypeX", Guid.NewGuid());
 
     var reports = await ledger.TryBeginReportBatchAsync(
-      [new IntegrityReportObservation(key, 1, 2, 3, 4)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      [new IntegrityReportObservation(key, 1, 2, 3, 4, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
     var repairs = await ledger.TryBeginRepairBatchAsync(
       [key], DateTimeOffset.UtcNow, TimeSpan.FromSeconds(30), maxAttempts: 3, maxGrants: 1);
 

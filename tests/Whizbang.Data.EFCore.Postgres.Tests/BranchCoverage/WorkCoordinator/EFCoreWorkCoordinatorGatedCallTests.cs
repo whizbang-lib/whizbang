@@ -148,7 +148,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
-      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
+      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityStampRepairWindows", "IntegrityStampRepairWindowsAsync", (c, _) =>
       c.IntegrityStampRepairWindowsAsync(_origin(), [_key()], windowFrom: 1, windowUntil: 10));
     register("IntegrityClaimRepairDrain", "IntegrityClaimRepairDrainAsync", (c, _) =>

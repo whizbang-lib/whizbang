@@ -39,7 +39,7 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
     new(origin, TenantScope: "tenant-a", EventType: eventType, StreamId: (Guid)TrackedGuid.New());
 
   private static IntegrityReportObservation _observation(IntegrityRepairLedger.DivergenceKey key) =>
-    new(key, OriginLo: 10, OriginHi: 20, LocalLo: 10, LocalHi: 18);
+    new(key, OriginLo: 10, OriginHi: 20, LocalLo: 10, LocalHi: 18, IsDeficit: true);
 
   private static async Task<long> _ledgerRowCountAsync(WorkCoordinationDbContext ctx, Guid origin) {
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

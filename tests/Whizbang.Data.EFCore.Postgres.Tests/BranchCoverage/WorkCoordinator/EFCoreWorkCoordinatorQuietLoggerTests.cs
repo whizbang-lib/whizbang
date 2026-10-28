@@ -63,7 +63,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
     await _dropFunctionAsync("wh_integrity_try_begin_report_batch");
 
     var results = await _coordinator(dbContext, logger: null).IntegrityTryBeginReportBatchAsync(
-      _originId, [new IntegrityReportObservation(_key(), 1, 10, 1, 5)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      _originId, [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
 
     await Assert.That(results).IsNull()
       .Because("null is the fall-back-to-single-keys signal with or without a logger");

@@ -216,7 +216,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private static IntegrityReportObservation _observation() => new(_key(), 1, 2, 3, 4);
+  private static IntegrityReportObservation _observation() => new(_key(), 1, 2, 3, 4, IsDeficit: true);
 
   [Test]
   public async Task TryBeginReportAsync_WhenCanceled_PropagatesAsync() {
