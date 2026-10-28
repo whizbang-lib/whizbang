@@ -72,7 +72,13 @@ public interface IDebuggerAwareClock : IDisposable {
   /// <param name="handler">Action called when pause state changes. Parameter is <c>true</c> when paused.</param>
   /// <returns>A disposable subscription that can be used to unsubscribe.</returns>
   /// <remarks>
-  /// Useful for VS Code extension integration or test synchronization.
+  /// <para>Useful for VS Code extension integration or test synchronization.</para>
+  /// <para>
+  /// Once the subscription's <c>Dispose</c> returns, the handler is not called again, not even for
+  /// a change that was already queued. A call that was already running when <c>Dispose</c> was
+  /// called may still finish: <c>Dispose</c> does not wait for it, so it can be called from inside
+  /// the handler or from a thread the handler is waiting on without deadlocking.
+  /// </para>
   /// </remarks>
   IDisposable OnPauseStateChanged(Action<bool> handler);
 

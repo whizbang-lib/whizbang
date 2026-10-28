@@ -784,6 +784,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior. The disconnect warning now says how long the reconnect waits. `SubscriptionRetryHelper.SubscribeWithRetryAsync`
   has an overload that takes a `TimeProvider`, and `TransportConsumerWorker` takes an optional one (the system clock
   when omitted) for its retry, reconnect and health-monitor waits.
+- **A released debugger-aware clock pause subscription is not called again.** Disposing the subscription returned by
+  `IDebuggerAwareClock.OnPauseStateChanged` stopped the wait for new pause changes, but a change already queued when it
+  was disposed was still passed to the handler afterwards, so a handler could run after its owner had released it and
+  torn down what it uses. The subscription now checks for release before taking each queued change, and leaves the
+  changes it did not take in the queue. A call already running when `Dispose` is called may still finish; `Dispose`
+  does not wait for it, so it can be called from the handler itself.
 - **A reconnect after a disconnect now disposes the subscription it replaces (Fixes #1839).** When a destination's
   subscription reported an unexpected disconnect, the subscription retry helper subscribed again and overwrote the
   state's subscription without disposing the old one, so every drop left a RabbitMQ channel and consumer, an Azure

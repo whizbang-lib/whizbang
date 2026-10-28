@@ -18,6 +18,8 @@ namespace Whizbang.Core.Diagnostics;
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockCoverageTests.cs:RunPauseStateReadLoop_ReleasedWhileACallIsInFlight_DispatchesNothingAfterItAsync</tests>
+/// <tests>tests/Whizbang.Core.Component.Tests/Diagnostics/DebuggerAwareClockCoverageTests.cs:RunPauseStateReadLoop_ReleasedByItsOwnHandler_DispatchesNothingAfterItAsync</tests>
 public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private readonly DebuggerAwareClockOptions _options;
   private readonly Channel<bool> _pauseStateChannel;
@@ -325,6 +327,11 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _readTask = ReadLoopAsync(reader, handler, _cts.Token);
     }
 
+    /// <summary>
+    /// Releases the subscription. Once this returns no further state is dispatched to the
+    /// handler; a call already running is not waited for, so releasing from inside the handler,
+    /// or from a thread the handler is waiting on, cannot deadlock.
+    /// </summary>
     public void Dispose() {
       // Guarded because Dispose must be safe to call twice: Cancel() on an already-disposed
       // source throws, and a `using` around a subscription the caller also released explicitly
@@ -340,8 +347,13 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 
     internal static async Task ReadLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {
       try {
-        await foreach (var isPaused in reader.ReadAllAsync(ct)) {
-          handler(isPaused);
+        // Not ReadAllAsync: it checks the token only while waiting, so the states already buffered
+        // when the subscription is released would still be dispatched after Dispose returned. The
+        // token is checked before every read, which also leaves those states unconsumed.
+        while (await reader.WaitToReadAsync(ct)) {
+          while (!ct.IsCancellationRequested && reader.TryRead(out var isPaused)) {
+            handler(isPaused);
+          }
         }
       } catch (OperationCanceledException) {
         // Expected when disposed
