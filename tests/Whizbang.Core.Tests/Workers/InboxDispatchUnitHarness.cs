@@ -30,7 +30,9 @@ internal sealed class InboxDispatchUnitHarness {
   public CapturingFailureChannel Failures { get; } = new();
   public IInboxChannelWriter Inbox { get; }
   public CapturingDeadLetterStore DeadLetters { get; } = new();
-  public FakeTimeProvider Time { get; } = new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+  public static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+  public FakeTimeProvider Time { get; }
+  public Guid InstanceId { get; }
   public InboxDispatchWorker Worker { get; }
   public InboxDeserializeCache? Cache { get; }
   public WorkCompletionMeter Meter { get; } = new();
@@ -40,15 +42,21 @@ internal sealed class InboxDispatchUnitHarness {
       InboxDispatchWorkerOptions? options = null,
       IDeadLetterStore? deadLetters = null,
       InboxDeserializeCache? cache = null,
-      IServiceCollection? services = null) {
+      IServiceCollection? services = null,
+      LeaseRegistry? leaseRegistry = null,
+      LeaseHandleOptions? leaseHandleOptions = null,
+      FakeTimeProvider? time = null) {
+    Time = time ?? new FakeTimeProvider(Start);
     Inbox = inbox ?? new FakeInboxChannelWriter();
+    var instance = new FakeInstanceProvider();
+    InstanceId = instance.InstanceId;
     Cache = cache;
     var sp = (services ?? new ServiceCollection()).BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     Worker = new InboxDispatchWorker(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: new FakeInstanceProvider(),
+      instanceProvider: instance,
       inboxChannelWriter: Inbox,
       handlerCommitChannel: Commits,
       failureChannel: Failures,
@@ -58,7 +66,7 @@ internal sealed class InboxDispatchUnitHarness {
       logger: new RecordingLogger(Logs),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
-      leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
+      leaseHandleOptions: Options.Create(leaseHandleOptions ?? new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
       discardPolicy: new MessageDiscardPolicy(new PermissiveReceptorRegistryQuery(), NullLogger<MessageDiscardPolicy>.Instance,
@@ -66,6 +74,7 @@ internal sealed class InboxDispatchUnitHarness {
       runtimeReceptorRegistry: NullReceptorRegistry.Instance,
       deadLetterStore: deadLetters ?? DeadLetters,
       generationProvider: new DefaultGenerationProvider(),
+      leaseRegistry: leaseRegistry,
       timeProvider: Time,
       deserializeCache: cache,
       completionMeter: Meter);
