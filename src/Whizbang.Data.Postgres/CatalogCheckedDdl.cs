@@ -38,6 +38,9 @@ namespace Whizbang.Data.Postgres;
 public static class CatalogCheckedDdl {
   private const string TAG = "$whizbang_catalog_checked$";
 
+  /// <summary>The keyword that ends both forms of an <c>IF [NOT] EXISTS</c> clause.</summary>
+  private const string EXISTS = "EXISTS";
+
   /// <summary>Returns <paramref name="sql"/> with its idempotent DDL catalog-checked.</summary>
   /// <param name="sql">A script of one or more statements, as it is about to be executed.</param>
   /// <returns>The script to execute; the same instance when nothing in it is rewritten.</returns>
@@ -84,14 +87,14 @@ public static class CatalogCheckedDdl {
     if (!reader.TakeWords("ALTER", "TABLE")) {
       return null;
     }
-    _ = reader.TakeWords("IF", "EXISTS");
+    _ = reader.TakeWords("IF", EXISTS);
     _ = reader.TakeWords("ONLY");
     if (reader.TakeRelation() is not { } relation) {
       return null;
     }
     var columns = new List<string>();
     do {
-      if (!reader.TakeWords("ADD") || (!reader.TakeWords("COLUMN", "IF", "NOT", "EXISTS") && !reader.TakeWords("IF", "NOT", "EXISTS"))
+      if (!reader.TakeWords("ADD") || (!reader.TakeWords("COLUMN", "IF", "NOT", EXISTS) && !reader.TakeWords("IF", "NOT", EXISTS))
           || reader.TakeIdentifier() is not { } column || !reader.SkipToClauseEnd()) {
         return null;
       }
@@ -113,7 +116,7 @@ public static class CatalogCheckedDdl {
       return null;
     }
     _ = reader.TakeWords("UNIQUE");
-    if (!reader.TakeWords("INDEX", "IF", "NOT", "EXISTS") || reader.TakeIdentifier() is not { } index
+    if (!reader.TakeWords("INDEX", "IF", "NOT", EXISTS) || reader.TakeIdentifier() is not { } index
         || !reader.TakeWords("ON")) {
       return null;
     }
@@ -237,14 +240,10 @@ internal static class SqlStatementReader {
     var codeEnd = 0;
     var i = 0;
     while (i < sql.Length) {
-      var c = sql[i];
-      if (char.IsWhiteSpace(c)) {
-        i++;
-      } else if (c == '-' && _at(sql, i + 1) == '-') {
-        i = _lineEnd(sql, i);
-      } else if (c == '/' && _at(sql, i + 1) == '*') {
-        i = _blockCommentEnd(sql, i);
-      } else if (c == ';') {
+      var skipped = _triviaEnd(sql, i);
+      if (skipped >= 0) {
+        i = skipped;
+      } else if (sql[i] == ';') {
         if (start >= 0) {
           yield return new SqlStatement(start, codeEnd, i + 1, tokens);
         }
@@ -265,6 +264,21 @@ internal static class SqlStatementReader {
   }
 
   private static char _at(string sql, int i) => i < sql.Length ? sql[i] : '\0';
+
+  /// <summary>Where the whitespace or comment at <paramref name="i"/> ends; -1 when what is there is neither.</summary>
+  private static int _triviaEnd(string sql, int i) {
+    var c = sql[i];
+    if (char.IsWhiteSpace(c)) {
+      return i + 1;
+    }
+    if (c == '-' && _at(sql, i + 1) == '-') {
+      return _lineEnd(sql, i);
+    }
+    if (c == '/' && _at(sql, i + 1) == '*') {
+      return _blockCommentEnd(sql, i);
+    }
+    return -1;
+  }
 
   private static SqlToken _token(string sql, int i) {
     var c = sql[i];
