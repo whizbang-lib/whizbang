@@ -147,6 +147,13 @@ Each slice is one red-then-green increment and its own commit.
    `TableRewriteStrategy.PgRepack` carries `[RequiresPostgresExtension("pg_repack", Feature = "Online table rewrite
    (pg_repack)")]` and resolves to `TableRewriteStrategies.PG_REPACK` in every cell of the matrix;
    `PgRepackTableRewriter` runs it in process, or the step reports the queue left to an external job.
+   **Status (2026-10-27):** in process, now budgeted like pg_squeeze (#1808). The boot `Rewrite` step no longer runs
+   `PgRepack` in process; it skips and names the cycle. `OnlineTableRewriteStep` is generalized over the strategy (one
+   step, not a copy): with `PgRepack` and `Mode = InProcess` it takes queued tables largest ratio first within
+   `OnlineRewriteMaxBytesPerCycle` (key kept: both are online rewrites), gated on `postgres/pg_repack` Ready on every
+   probed database and `program/pg_repack` Ready on this host (Unknown or unprobed holds it back and says why), runs
+   `PgRepackTableRewriter` (credentials in the environment), and clears only when the re-measure improved. `External`
+   is unchanged: the boot step reports the external job and the cycle does nothing, not even a scan.
 
 ### C2: autovacuum
 

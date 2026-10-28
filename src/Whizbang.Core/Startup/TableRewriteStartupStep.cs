@@ -32,8 +32,10 @@ namespace Whizbang.Core.Startup;
 /// EXCLUSIVE lock mid-traffic; the pipeline gives it the window it should always have had.
 /// The maintenance cycle detects and records. A strategy that resolves to no rewrite, or to a strategy
 /// with no registered rewriter, skips with the resolution as its reason, and so does a rewriter that cannot run.
-/// <see cref="TableRewriteStrategy.PgSqueeze"/> is left to the maintenance cycle (<see cref="OnlineTableRewriteStep"/>),
-/// which rewrites online within a per-cycle byte budget. <c>VACUUM FULL</c> stays behind the operator permission
+/// <see cref="TableRewriteStrategy.PgSqueeze"/>, and <see cref="TableRewriteStrategy.PgRepack"/> with the client run in
+/// process, are left to the maintenance cycle (<see cref="OnlineTableRewriteStep"/>), which rewrites online within a
+/// per-cycle byte budget; pg_repack in <see cref="PgRepackMode.External"/> mode is skipped with the reason its rewriter
+/// gives, because an operator's job runs it. <c>VACUUM FULL</c> stays behind the operator permission
 /// (<see cref="MaintenanceWorkerOptions.AllowTableRewrite"/>), because the framework cannot know how
 /// large a consumer's table is, and taking that lock unattended must be opted into.
 /// A request is cleared only after the ratio is confirmed to have dropped; an interrupted or
@@ -96,8 +98,9 @@ public sealed partial class TableRewriteStartupStep : IStartupStep {
     if (plan.Strategy is null) {
       return new StartupStepReport(StartupStepOutcome.Skipped, plan.Reason);
     }
-    if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal)) {
-      // The online rewrite is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it would be unbounded.
+    if (string.Equals(plan.Strategy, TableRewriteStrategies.PG_SQUEEZE, StringComparison.Ordinal) || PgRepackClient.RunsInProcess(options)) {
+      // An online rewrite Whizbang runs itself is budgeted per maintenance cycle (OnlineTableRewriteStep); run here it
+      // would be unbounded. pg_repack in External mode falls through: its rewriter cannot run, and says why.
       return new StartupStepReport(StartupStepOutcome.Skipped,
         $"{plan.Reason}; the maintenance cycle performs it, largest bloat first, up to {ONLINE_BUDGET_KEY} bytes per cycle");
     }

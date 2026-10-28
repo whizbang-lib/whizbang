@@ -422,6 +422,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **pg_repack in process is budgeted per maintenance cycle, as pg_squeeze is (#1808).** With
+  `Whizbang:Workers:Maintenance:TableRewriteStrategy = PgRepack` and `TableRewrite:PgRepack:Mode = InProcess`, the
+  boot-time `Rewrite` step no longer runs pg_repack over every queued table at once; it skips and says the maintenance
+  cycle performs it. The `online-table-rewrite` maintenance step now serves both online strategies: it takes the queued
+  tables largest bloat ratio first within `Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle`, runs only when
+  the `pg_repack` extension is Ready on every probed database and the `program/pg_repack` client is Ready on the host
+  (otherwise it logs why and keeps the queue), passes the connection to the client only through its environment, and
+  clears a request only when the re-measure shows the rewrite improved the table. `External` mode is unchanged:
+  Whizbang never starts the client.
+
 - **Statement statistics are read only while `pg_stat_statements` is Ready (#1754).** `GetExpensivePredicatesAsync`
   on the Postgres table statistics consults the capability registry for its database before reading
   `pg_stat_statements`, instead of reading it and catching every `PostgresException`. Any other state, or no
@@ -709,6 +719,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
+  replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
+  read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and
+  `character varying` where the DDL said `TIMESTAMPTZ` and `VARCHAR(n)`, and the DDL parser kept `UUID PRIMARY KEY`
+  as the type of `id UUID PRIMARY KEY DEFAULT ...`, so every perspective table's change (adding one column included)
+  was classified as destructive and rebuilt by a background event replay. Both sides are now compared in the spelling
+  `format_type` reports (`PostgresColumnType.Canonicalize`): `TIMESTAMPTZ`, `VARCHAR(n)`, `INT`/`INT4`, `BOOL`,
+  `DECIMAL`, `FLOAT8` and the other aliases match their long forms, and an array or schema-qualified type such as
+  `vector(n)` matches too. A real type change (`TEXT` to `INTEGER`, or a different length or precision) is still
+  destructive. The existing columns are now read from `pg_attribute`. No migration. The EF Core driver does not choose
+  a migration strategy from column types, so it is unaffected.
+- **The commit-order stamper drains a whole-store backlog in time proportional to its size (Fixes #1786).** After an
+  upgrade that left every historical event unstamped, the stamper's batch fell to one row per call and stayed there.
+  Two causes, both fixed. The stamp (migration 248) is now four statements that can each be planned only one way: the
+  walk reads its batch through the insert-transaction index and stops, with sorting off for it; no step joins the
+  batch's own intermediate sets (205's one statement was planned as nested loops on the small estimates an unknown
+  backlog gives, so a 1,000-row call compared about a million pairs, twice); and the update reaches each row by key.
+  The order, the visibility fence and the signature are unchanged. The batch sizing (`CommitOrderStampSizer`) tells a
+  fixed per-call cost from one that follows the size: when a halved call cost at least three quarters of the call
+  twice its size, the batch stops shrinking there, and any call well inside the budget grows the batch again, past
+  any size a slow call or a timeout backed off to, instead of the cap holding until the backlog drained.
+
 - **A receiver stores every event under the stream its producer stored it on (Fixes #1798).** A typed composite's
   children were filed under the composite's stream, a re-delivery bundle's children under the bundle envelope's id
   (a random stream), and a lone audit record or an event sent through `TransportManager.PublishToTargetsAsync` or

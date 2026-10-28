@@ -91,8 +91,8 @@ public sealed class CommitOrderStamperOptions {
   /// </para>
   /// <para>
   /// The ceiling must be a size the database can stamp inside the command timeout. A call that times out stamps
-  /// nothing; the worker then halves the batch, and does not grow back past the size that completed until the backlog
-  /// drains (#1217). Lower this when a database cannot finish the default in time; setting it at or below
+  /// nothing; the worker then halves the batch (#1217), and grows it again only after a call well inside the call
+  /// budget (#1786). Lower this when a database cannot finish the default in time; setting it at or below
   /// <see cref="BatchSize"/> disables the growth.
   /// </para>
   /// </remarks>

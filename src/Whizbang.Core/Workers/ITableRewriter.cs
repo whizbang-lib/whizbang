@@ -9,9 +9,9 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// One way of rewriting a bloated framework table to give back the space it holds but cannot use.
-/// The <c>Rewrite</c> startup step offers each table the bloat detector recorded to the rewriter whose
-/// <see cref="Strategy"/> is selected, and clears the table's request only when the ratio the rewriter
-/// returns shows the rewrite worked.
+/// The <c>Rewrite</c> startup step (for a blocking rewrite) or the maintenance cycle's <see cref="OnlineTableRewriteStep"/>
+/// (for an online one) offers each table the bloat detector recorded to the rewriter whose <see cref="Strategy"/> is
+/// selected, and clears the table's request only when the ratio the rewriter returns shows the rewrite worked.
 /// </summary>
 /// <remarks>
 /// <para>

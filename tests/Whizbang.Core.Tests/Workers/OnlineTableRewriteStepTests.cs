@@ -12,6 +12,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Capabilities;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Processes;
 using Whizbang.Core.Tests.Capabilities;
 using Whizbang.Core.Workers;
 
@@ -20,14 +21,15 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// The online table rewrite the maintenance cycle drives through pg_squeeze (#1743): requested tables from the
-/// <c>pending_table_rewrites</c> queue, largest bloat ratio first, within <c>OnlineRewriteMaxBytesPerCycle</c>, only
-/// when <c>TableRewriteStrategy = PgSqueeze</c> and pg_squeeze is Ready, and a request cleared only when the
-/// re-measure shows the rewrite improved the table.
+/// The online table rewrite the maintenance cycle drives through pg_squeeze (#1743) or pg_repack in process (#1808):
+/// requested tables from the <c>pending_table_rewrites</c> queue, largest bloat ratio first, within
+/// <c>OnlineRewriteMaxBytesPerCycle</c>, only when the strategy's prerequisites are Ready (pg_squeeze; or the pg_repack
+/// extension and its client program), and a request cleared only when the re-measure shows the rewrite improved the table.
 /// </summary>
 /// <docs>operations/infrastructure/storage-maintenance#online-rewrite</docs>
 /// <code-under-test>src/Whizbang.Core/Workers/OnlineTableRewriteStep.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Workers/PgSqueezeTableRewriter.cs</code-under-test>
+/// <code-under-test>src/Whizbang.Core/Workers/PgRepackTableRewriter.cs</code-under-test>
 public class OnlineTableRewriteStepTests {
   private const long MIB = 1024 * 1024;
 
@@ -38,6 +40,7 @@ public class OnlineTableRewriteStepTests {
     public HashSet<string> Throws { get; init; } = new(StringComparer.Ordinal);
     public Exception? Failure { get; init; }
     public List<string> Squeezed { get; } = [];
+    public List<string> Repacked { get; } = [];
     public List<string> Cleared { get; } = [];
     public int Scans { get; private set; }
 
@@ -56,6 +59,17 @@ public class OnlineTableRewriteStepTests {
 
     public Task<double?> RewriteTableAsync(string tableName, CancellationToken cancellationToken = default) =>
       throw new NotSupportedException("the online rewrite never takes the blocking path");
+
+    /// <summary>Hands the pg_repack rewriter a target, as the real coordinator does, and re-measures when it ran.</summary>
+    public async Task<double?> RewriteTableWithAsync(
+        string tableName, Func<TableRewriteTarget, CancellationToken, Task<bool>> rewrite, CancellationToken cancellationToken = default) {
+      Repacked.Add(tableName);
+      if (Throws.Contains(tableName)) {
+        throw Failure ?? new InvalidOperationException($"pg_repack of {tableName} failed");
+      }
+      var target = new TableRewriteTarget($"\"public\".{tableName}", new Dictionary<string, string> { ["PGPASSWORD"] = "s3cret" });
+      return await rewrite(target, cancellationToken) ? RatioAfter.GetValueOrDefault(tableName, 1.0) : null;
+    }
 
     public Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) {
       Cleared.Add(tableName);
@@ -103,6 +117,54 @@ public class OnlineTableRewriteStepTests {
     var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
     await step.RunAsync(services, CancellationToken.None);
     return (coordinator, logger);
+  }
+
+  /// <summary>Starts nothing: answers every pg_repack run as a clean exit, and records it.</summary>
+  private sealed class CleanExitRunner : IExternalProcessRunner {
+    public List<ExternalProcessRequest> Requests { get; } = [];
+
+    public Task<ExternalProcessResult> RunAsync(ExternalProcessRequest request, CancellationToken cancellationToken) {
+      Requests.Add(request);
+      return Task.FromResult(new ExternalProcessResult(Started: true, ExitCode: 0, StandardOutput: "", StandardError: ""));
+    }
+  }
+
+  /// <summary>
+  /// A registry holding the pg_repack extension's state on one database and the client program's on this host; a null
+  /// client state means the client was never probed.
+  /// </summary>
+  private static async Task<CapabilityRegistry> _repackAsync(
+      CapabilityState extension = CapabilityState.Ready, CapabilityState? client = CapabilityState.Ready) {
+    var postgres = new FakeCapabilityProvider("postgres", ["db-0"], FakeCapabilityProvider.Describe("postgres", "pg_repack"));
+    postgres.States["pg_repack"] = extension;
+    var program = new FakeCapabilityProvider("program", client is null ? [] : ["pg_repack"],
+      FakeCapabilityProvider.Describe("program", "pg_repack", provisionable: false));
+    program.States["pg_repack"] = client ?? CapabilityState.Ready;
+    var registry = new CapabilityRegistry([postgres, program], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    return registry;
+  }
+
+  private static async Task<(SqueezeCoordinator Coordinator, FakeLogger<OnlineTableRewriteStep> Logger, CleanExitRunner Runner)> _repackRunAsync(
+      SqueezeCoordinator coordinator,
+      long budgetBytes = 10 * 1024 * MIB,
+      PgRepackMode mode = PgRepackMode.InProcess,
+      ICapabilityRegistry? registry = null,
+      bool noRegistry = false,
+      bool noRepackRewriter = false) {
+    var runner = new CleanExitRunner();
+    var settings = new MaintenanceWorkerOptions { TableRewriteStrategy = TableRewriteStrategy.PgRepack, OnlineRewriteMaxBytesPerCycle = budgetBytes };
+    settings.TableRewrite.PgRepack.Mode = mode;
+    var options = Options.Create(settings);
+    var capabilities = noRegistry ? null : registry ?? await _repackAsync();
+    ITableRewriter[] rewriters = noRepackRewriter
+      ? [new PgSqueezeTableRewriter()]
+      : [new PgSqueezeTableRewriter(), new PgRepackTableRewriter(options, runner, capabilities, NullLogger<PgRepackTableRewriter>.Instance)];
+    var logger = new FakeLogger<OnlineTableRewriteStep>();
+    var step = new OnlineTableRewriteStep(rewriters, options, capabilities, logger);
+    var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(coordinator).BuildServiceProvider();
+    await step.RunAsync(services, CancellationToken.None);
+    return (coordinator, logger, runner);
   }
 
   private static IReadOnlyList<string> _messages(FakeLogger<OnlineTableRewriteStep> logger) =>
@@ -354,6 +416,125 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(() => new OnlineTableRewriteStep([], options, null, null!)).Throws<ArgumentNullException>();
     await Assert.That(async () => await new OnlineTableRewriteStep([], options, null, logger).RunAsync(null!, CancellationToken.None))
       .Throws<ArgumentNullException>();
+  }
+
+  // ---- pg_repack in process (#1808): the same budgeted step ----
+
+  [Test]
+  public async Task PgRepack_RewritesTheLargestBloatRatioFirst_WithinTheBudgetAsync() {
+    var (coordinator, logger, runner) = await _repackRunAsync(new SqueezeCoordinator {
+      Candidates = {
+        _requested("wh_inbox", 4.0, 300 * MIB),
+        _requested("wh_outbox", 9.0, 600 * MIB),
+        _requested("wh_event_store", 7.0, 500 * MIB),
+      },
+    }, budgetBytes: 1000 * MIB);
+
+    await Assert.That(string.Join(",", coordinator.Repacked)).IsEqualTo("wh_outbox,wh_inbox")
+      .Because("largest ratio first, and 600 + 500 MiB overruns 1000 MiB where 600 + 300 MiB does not");
+    await Assert.That(coordinator.Squeezed).IsEmpty().Because("the pg_repack strategy never calls pg_squeeze");
+    await Assert.That(runner.Requests.Select(r => r.Arguments[^1])).IsEquivalentTo(
+      ["--table=\"public\".wh_outbox", "--table=\"public\".wh_inbox"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    foreach (var request in runner.Requests) {
+      await Assert.That(string.Join(" ", request.Arguments)).DoesNotContain("s3cret")
+        .Because("the connection reaches the client through its environment, never its arguments");
+    }
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_event_store (524288000 bytes) is deferred to a later cycle: it does not fit the 419430400 bytes left "
+      + "of Whizbang:Workers:Maintenance:OnlineRewriteMaxBytesPerCycle (1048576000)");
+  }
+
+  [Test]
+  public async Task PgRepack_ClearsOnlyWhatImprovedAsync() {
+    var (coordinator, logger, _) = await _repackRunAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0), _requested("wh_inbox", 4.0) },
+      RatioAfter = { ["wh_outbox"] = 1.5, ["wh_inbox"] = 4.0 },
+    });
+
+    await Assert.That(string.Join(",", coordinator.Repacked)).IsEqualTo("wh_outbox,wh_inbox");
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"])
+      .Because("a rewrite that did not bring the ratio down stays queued for the next cycle");
+    await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_repack, bloat 9x -> 1.5x");
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_inbox did not reduce bloat (4x -> 4x); the request stays queued");
+  }
+
+  [Test]
+  public async Task PgRepack_ExtensionNotReady_RewritesNothing_AndSaysWhyAsync() {
+    var (coordinator, logger, runner) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      registry: await _repackAsync(extension: CapabilityState.Provisionable));
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0);
+    await Assert.That(runner.Requests).IsEmpty();
+    await Assert.That(_messages(logger).Single()).IsEqualTo(
+      "Online rewrite skipped: pg_repack is Provisionable on 'db-0', not Ready; requested tables stay queued");
+  }
+
+  [Test]
+  [Arguments(CapabilityState.Missing)]
+  [Arguments(CapabilityState.Unknown)]
+  public async Task PgRepack_ClientNotReady_RewritesNothing_AndSaysWhyAsync(CapabilityState client) {
+    var (coordinator, logger, runner) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      registry: await _repackAsync(client: client));
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0);
+    await Assert.That(runner.Requests).IsEmpty().Because("the client is started only once its probe says Ready");
+    await Assert.That(_messages(logger).Single()).IsEqualTo(
+      $"Online rewrite skipped: the pg_repack client (program/pg_repack) is {client} on 'pg_repack', not Ready; requested tables stay queued");
+  }
+
+  [Test]
+  public async Task PgRepack_ClientNeverProbed_RewritesNothing_AndSaysWhyAsync() {
+    var (coordinator, logger, runner) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      registry: await _repackAsync(client: null));
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0);
+    await Assert.That(runner.Requests).IsEmpty();
+    await Assert.That(_messages(logger).Single()).IsEqualTo(
+      "Online rewrite skipped: the pg_repack client (program/pg_repack) has not been probed on this host; requested tables stay queued");
+  }
+
+  [Test]
+  public async Task PgRepack_NoCapabilityRegistry_RewritesNothing_AndSaysWhyAsync() {
+    var (coordinator, logger, _) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      noRegistry: true);
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0);
+    await Assert.That(_messages(logger).Single()).IsEqualTo(
+      "Online rewrite skipped: no capability registry is registered, so whether pg_repack is Ready is not known; requested tables stay queued");
+  }
+
+  [Test]
+  public async Task PgRepack_NoRewriterRegistered_RewritesNothingAsync() {
+    var (coordinator, logger, _) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      noRepackRewriter: true);
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0);
+    await Assert.That(_messages(logger).Single()).IsEqualTo(
+      "Online rewrite skipped: no table rewriter is registered for PgRepack; requested tables stay queued");
+  }
+
+  [Test]
+  public async Task PgRepack_External_DoesNothing_NotEvenScan_AndStartsNothingAsync() {
+    var (coordinator, logger, runner) = await _repackRunAsync(new SqueezeCoordinator { Candidates = { _requested("wh_outbox", 9.0) } },
+      mode: PgRepackMode.External);
+
+    await Assert.That(coordinator.Scans).IsEqualTo(0).Because("in External mode the operator's job drains the queue");
+    await Assert.That(coordinator.Repacked).IsEmpty();
+    await Assert.That(runner.Requests).IsEmpty();
+    await Assert.That(logger.Collector.Count).IsEqualTo(0).Because("the boot step reports External once; the cycle does not repeat it");
+  }
+
+  [Test]
+  public async Task PgRepack_AFailedRewrite_IsLoggedThroughPgRepack_AndLeftQueuedAsync() {
+    var (coordinator, logger, _) = await _repackRunAsync(new SqueezeCoordinator {
+      Candidates = { _requested("wh_outbox", 9.0) },
+      Throws = { "wh_outbox" },
+    });
+
+    await Assert.That(coordinator.Cleared).IsEmpty();
+    var failure = logger.Collector.GetSnapshot().Single(r => r.Level == LogLevel.Warning && r.Exception is not null);
+    await Assert.That(failure.Message).IsEqualTo("Online rewrite of wh_outbox through pg_repack failed; the request stays queued");
   }
 
   // ---- the rewriter, the option and the registration ----
