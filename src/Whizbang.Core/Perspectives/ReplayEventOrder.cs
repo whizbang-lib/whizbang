@@ -46,7 +46,9 @@ public static class ReplayEventOrder {
   /// <returns>The same events, ordered for folding.</returns>
   public static IReadOnlyList<MessageEnvelope<IEvent>> Order(IReadOnlyList<MessageEnvelope<IEvent>> events) {
     ArgumentNullException.ThrowIfNull(events);
-    if (events.Count < 2) {
+    // A row folded from several streams arrives merged across them (RebuildRowRouting.Merge); ordering it as one
+    // stream would sort it by versions of different streams (#1820).
+    if (events.Count < 2 || events is MergedReplayBatch) {
       return events;
     }
     var firstOrigin = events[0].SourceServiceId;

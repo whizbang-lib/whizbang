@@ -59,6 +59,7 @@ public static class SystemEventCoalesceDefaults {
   /// </summary>
   /// <param name="batch">The fold batch.</param>
   /// <returns>The built audit composite.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   public static CompositeEventBase BuildAuditComposite(CoalesceFoldBatch batch) {
     ArgumentNullException.ThrowIfNull(batch);
     // The ledger (#1485): records of one tenant share one stream, and a fold never mixes tenants, so a bundle of

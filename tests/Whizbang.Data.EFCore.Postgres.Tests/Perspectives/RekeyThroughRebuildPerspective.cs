@@ -21,9 +21,10 @@ public class RekeyThroughRebuildPerspective : IPerspectiveFor<RekeyTestModel, Re
   public RekeyThroughRebuildPerspective() { }
 
   public RekeyTestModel Apply(RekeyTestModel currentData, RekeyTestEvent @event) {
+    // Accumulates, so a fold that loses an event or applies two out of order shows in the row (#1820).
     return new RekeyTestModel {
       Id = @event.StreamId,
-      Marker = @event.Marker
+      Marker = string.IsNullOrEmpty(currentData?.Marker) ? @event.Marker : currentData.Marker + "|" + @event.Marker
     };
   }
 }
@@ -55,6 +56,9 @@ public record RekeyTestEvent : RekeyTestEventBase, IEvent {
   /// upcaster re-keys the event onto this stream. <see cref="Guid.Empty"/> means "stay on the
   /// physical stream".</summary>
   public Guid TargetStreamId { get; init; }
+
+  /// <summary>When true the upcaster returns a new instance instead of changing this one in place.</summary>
+  public bool ReplaceInstance { get; init; }
 }
 
 /// <summary>
@@ -69,6 +73,9 @@ public sealed class RekeyUpcaster : IEventUpcaster {
 
   public IEvent Upcast(IEvent storedEvent) {
     var e = (RekeyTestEvent)storedEvent;
+    if (e.ReplaceInstance) {
+      return e with { StreamId = e.TargetStreamId };
+    }
     e.StreamId = e.TargetStreamId;
     return e;
   }

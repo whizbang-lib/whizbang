@@ -28,6 +28,7 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="logger">Optional logger; a resolution failure is logged rather than silently defaulting.</param>
   /// <param name="auditDecisionHook">The registered decision hook; null behaves as no opinion.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
       return null;
@@ -106,6 +107,9 @@ public static partial class AuditOutboxMessageBuilder {
       Timestamp = DateTimeOffset.UtcNow,
       TraceParent = HopStamping.AmbientTraceParent,
       Scope = AuditRecordScope.For(eventMessage.Scope?.TenantId),
+      // The record's own stream, which the receiver stores it on, as it does a record shipped in a bundle. Unnamed,
+      // the receiver stored it on this envelope's id (#1798). The outbox row below rides the tenant's ledger lane.
+      Metadata = StreamIdentity.HopMetadata(auditEvent.Id),
     });
 
     var auditEnvelope = new MessageEnvelope<JsonElement> {

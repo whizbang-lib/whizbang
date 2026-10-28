@@ -297,6 +297,15 @@ public static class PostgresDriverExtensions {
             sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
             defaultSchema(sp),
             logger: sp.GetService<ILogger<PostgresStreamPurger>>()));
+        // The operator repair for composite children filed under the composite's stream (#1798), over the same data source.
+        // <docs>operations/infrastructure/purging-streams#refiling-composite-children</docs>
+        selector.Services.TryAddSingleton<IFanoutChildRefiler>(sp =>
+          new PostgresFanoutChildRefiler(
+            sp.GetRequiredService<NpgsqlDataSource>().OpenConnectionAsync,
+            sp.GetService<global::Whizbang.Core.IStreamIdExtractor>(),
+            jsonOptions: global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+            schema: defaultSchema(sp),
+            logger: sp.GetService<ILogger<PostgresFanoutChildRefiler>>()));
 
         // TURNKEY: managed-resource health for the event-store DB. AlwaysRequired — a DB fault is a
         // real fault even during a migration (the migration needs it), so this replaces a consumer's

@@ -3419,20 +3419,31 @@ public abstract partial class Dispatcher(
   /// Propagates StreamId from the source envelope when the event's StreamId is empty.
   /// Returns the (potentially updated) streamId.
   /// </summary>
-  private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) {
-    if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-      if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-        streamId = sourceStreamId.Value;
-        if (msg is IHasStreamId hasStreamIdForCascade) {
-          hasStreamIdForCascade.StreamId = streamId;
-        } else {
-          _streamIdExtractor.SetStreamId(msg, streamId);
-        }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
-      }
+  private Guid _cascadeStreamIdFromSourceIfNeeded(object msg, Type messageType, Guid streamId, IMessageEnvelope? sourceEnvelope) =>
+    streamId == Guid.Empty ? _inheritSourceStreamId(msg, messageType, sourceEnvelope) ?? streamId : streamId;
+
+  /// <summary>
+  /// The one rule by which a cascaded message that names no stream takes the stream of the message that caused it:
+  /// the source payload's <c>[StreamId]</c> is written onto the message (through <see cref="IHasStreamId"/> or the
+  /// generated setter) and returned; null when there is no source, no extractor, or the source names no stream. The
+  /// dispatcher's cascade, outbox and no-strategy paths each carried a copy of it.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs</tests>
+  private Guid? _inheritSourceStreamId(object message, Type messageType, IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope is null || _streamIdExtractor is null) {
+      return null;
     }
-    return streamId;
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
+    if (sourceStreamId is not { } inherited || inherited == Guid.Empty) {
+      return null;
+    }
+    if (message is IHasStreamId hasStreamId) {
+      hasStreamId.StreamId = inherited;
+    } else {
+      _streamIdExtractor.SetStreamId(message, inherited);
+    }
+    Log.StreamIdPropagatedFromSource(CascadeLogger, inherited, sourceEnvelope.Payload.GetType().Name, messageType.Name);
+    return inherited;
   }
 
   /// <summary>
@@ -4272,18 +4283,7 @@ public abstract partial class Dispatcher(
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
     // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
-    if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-      if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-        streamId = sourceStreamId.Value;
-        if (message is IHasStreamId hasStreamIdForCascade) {
-          hasStreamIdForCascade.StreamId = streamId;
-        } else {
-          _streamIdExtractor.SetStreamId(message, streamId);
-        }
-        Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload.GetType().Name, messageType.Name);
-      }
-    }
+    streamId = _cascadeStreamIdFromSourceIfNeeded(message, messageType, streamId, sourceEnvelope);
 
     // Auto-generate StreamId based on [GenerateStreamId] attribute policy, for a [StreamId] property as well
     // as IHasStreamId: the cascade used to leave a plain property empty (#1410 follow-up)
@@ -4508,22 +4508,8 @@ public abstract partial class Dispatcher(
   /// Cascades StreamId from source envelope to event when the event's StreamId is empty.
   /// This enables the pattern where [GenerateStreamId] is on the command and events inherit it.
   /// </summary>
-  private void _cascadeStreamIdToOutboxEvent<TEvent>(TEvent eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
-    if (sourceEnvelope is not null && _streamIdExtractor is not null) {
-      var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData!, eventType);
-      if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
-        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-        if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-          if (eventData is IHasStreamId hasStreamId) {
-            hasStreamId.StreamId = sourceStreamId.Value;
-          } else {
-            _streamIdExtractor.SetStreamId(eventData!, sourceStreamId.Value);
-          }
-          Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
-        }
-      }
-    }
-  }
+  private void _cascadeStreamIdToOutboxEvent<TEvent>(TEvent eventData, Type eventType, IMessageEnvelope? sourceEnvelope) =>
+    _propagateStreamIdFromSource(eventData!, eventType, sourceEnvelope);
 
   /// <summary>
   /// Producer-side composite fan-out (step 1.1 of the composite lifecycle). When a service publishes a
@@ -4794,9 +4780,9 @@ public abstract partial class Dispatcher(
       _addOutboxHop(jsonEnvelope, destination, hopMetadata, sourceEnvelope, eventType);
 
       // Build and queue the outbox message
-      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
-        ?? ExtractStreamIdFromMetadata(hopMetadata)
-        ?? messageId.Value;
+      // The stream its first hop names, or its message id: the rule the typed outbox path and every receiver use. The
+      // hop was just written from the payload's [StreamId], so this is that stream when it names one (#1798).
+      var streamId = StreamIdentity.Of(jsonEnvelope);
       _payloadLimits.Enforce(jsonEnvelope.Payload, eventType, messageId.Value, streamId);
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId, _ephemeralModeResolver);
@@ -4823,27 +4809,13 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Propagates StreamId from source envelope to event when the event has no StreamId set.
   /// </summary>
-  private void _propagateStreamIdFromSource(IMessage eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
-    if (sourceEnvelope is null || _streamIdExtractor is null) {
+  private void _propagateStreamIdFromSource(object eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
+    // Nothing is read without a source to inherit from: the payload's own stream is read only when it could be replaced.
+    if (sourceEnvelope is null || _streamIdExtractor is null
+        || (_streamIdExtractor.ExtractStreamId(eventData, eventType) is { } own && own != Guid.Empty)) {
       return;
     }
-
-    var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData, eventType);
-    if (eventStreamId.HasValue && eventStreamId.Value != Guid.Empty) {
-      return;
-    }
-
-    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload, sourceEnvelope.Payload.GetType());
-    if (!sourceStreamId.HasValue || sourceStreamId.Value == Guid.Empty) {
-      return;
-    }
-
-    if (eventData is IHasStreamId hasStreamId) {
-      hasStreamId.StreamId = sourceStreamId.Value;
-    } else {
-      _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
-    }
-    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload.GetType().Name, eventType.Name);
+    _inheritSourceStreamId(eventData, eventType, sourceEnvelope);
   }
 
   /// <summary>
@@ -4957,30 +4929,6 @@ public abstract partial class Dispatcher(
   private static PerspectiveScope? _extractScope(IMessageEnvelope envelope) {
     var scopeContext = envelope.GetCurrentScope();
     return scopeContext?.Scope;
-  }
-
-  /// <summary>
-  /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
-  /// </summary>
-  /// <remarks>
-  /// Internal rather than private so the "no usable aggregate id" answer can be asserted. The only
-  /// caller passes metadata this class built, which is either null or carries a parsable id, so the
-  /// final fallback cannot fire today — it is what keeps a hop carrying someone else's metadata
-  /// shape from producing a stream id out of an unparsable string.
-  /// </remarks>
-  internal static Guid? ExtractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
-    if (metadata == null) {
-      return null;
-    }
-
-    // Try both AggregateId (generated key) and aggregateId (legacy key)
-    if ((metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement))
-        && aggIdElement.ValueKind == JsonValueKind.String
-        && Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
-      return guidValue;
-    }
-
-    return null;
   }
 
   /// <summary>
@@ -6198,6 +6146,7 @@ public abstract partial class Dispatcher(
   /// Extracts stream_id from aggregate ID or falls back to message ID.
   /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
     MessageEnvelope<TMessage> envelope,
     TMessage payload,
@@ -6220,8 +6169,9 @@ public abstract partial class Dispatcher(
     // stores and sends, from the injected clock. A message with no QueuedAt property is returned as is.
     envelope.Payload = (TMessage)AutoPopulatePopulatorRegistry.PopulateQueued(envelope.Payload!, _timeProvider.GetUtcNow());
 
-    // Extract stream_id: try aggregate ID from first hop, fall back to message ID
-    var streamId = _extractStreamId(envelope);
+    // The stream its first hop names, or its message id: read the way every receiver reads it, so a consumer stores
+    // the message on the stream this producer stores it on (#1798).
+    var streamId = StreamIdentity.Of(envelope);
 
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
@@ -6299,27 +6249,6 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get stream ID from first hop metadata, falls back to message ID.
-  /// </summary>
-  private static Guid _extractStreamId<TMessage>(MessageEnvelope<TMessage> envelope) {
-    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility).
-    // Every outbox path builds its envelope with that hop before serializing (_createEnvelope,
-    // _createOutboxEnvelopeWithHop, the deferred-publish path), and Hops is required.
-    var firstHopMetadata = envelope.Hops[0].Metadata;
-    if (firstHopMetadata != null && firstHopMetadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    // Fall back to message ID (ensures all messages have a stream)
-    return envelope.MessageId.Value;
-  }
-
-  /// <summary>
   /// Creates hop metadata with StreamId extracted from the message using [StreamId] attribute.
   /// Returns null if no stream ID extractor is configured or no ID found.
   /// </summary>
@@ -6333,16 +6262,8 @@ public abstract partial class Dispatcher(
       return null;
     }
 
-    // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
-    // Wrap GUID string in quotes for valid JSON string value
-    // Note: Key is "AggregateId" for backward compatibility with existing envelopes
-    var jsonString = "\"" + streamId.Value + "\"";
-    using var doc = JsonDocument.Parse(jsonString);
-    var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
-
-    return new Dictionary<string, JsonElement> {
-      ["AggregateId"] = streamIdElement
-    };
+    // The one writer of the hop's stream key; StreamIdentity reads it back on every storing site (#1798).
+    return StreamIdentity.HopMetadata(streamId.Value);
   }
 
   /// <summary>

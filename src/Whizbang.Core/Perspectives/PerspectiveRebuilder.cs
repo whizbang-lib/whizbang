@@ -400,9 +400,17 @@ public sealed partial class PerspectiveRebuilder(
     var status = new RebuildStatus(run.PerspectiveName, run.Mode, streamIds.Count, 0, run.StartedAt) { Phase = phase };
     _activeRebuilds[run.PerspectiveName] = status;
     var processed = 0;
-    foreach (var streamId in streamIds) {
+    // The run collects the events re-keyed onto each row while it reads the streams, and folds each such row once,
+    // from its own stream and every source it found (#1820).
+    using (RebuildRekeyLedger.Begin(run.Rekeys)) {
+      foreach (var streamId in streamIds) {
+        ct.ThrowIfCancellationRequested();
+        processed = await _replayStreamAsync(run, streamId, status, processed, ct);
+      }
+    }
+    foreach (var (row, sources) in run.Rekeys.TakeTouched()) {
       ct.ThrowIfCancellationRequested();
-      processed = await _replayStreamAsync(run, streamId, status, processed, ct);
+      await _foldRekeyedRowAsync(run, row, sources, ct);
     }
     await _flushPendingCompletionsAsync(run, processed, streamIds.Count, ct);
   }
@@ -646,6 +654,25 @@ public sealed partial class PerspectiveRebuilder(
     return processed;
   }
 
+  /// <summary>
+  /// Folds one row that received re-keyed events: its own stream and every source the run found, counted and
+  /// checkpointed like a replayed stream. A failure is logged and swallowed, as a stream's is.
+  /// </summary>
+  private async Task _foldRekeyedRowAsync(
+      RebuildRun run, Guid row, IReadOnlyList<IReadOnlyList<Observability.MessageEnvelope<IEvent>>> sources, CancellationToken ct) {
+    var sw = Stopwatch.StartNew();
+    try {
+      var completion = await run.Runner.RunRekeyedRowAsync(row, run.PerspectiveName, sources, ct);
+      sw.Stop();
+      await _countStreamAsync(run, row, [completion], ct);
+      run.EventsReplayed += completion.EventsProcessed;
+      LogRekeyedRowFolded(logger, run.PerspectiveName, row, sources.Count, completion.LastEventId, sw.ElapsedMilliseconds);
+      run.PendingCompletions?.Add(completion);
+    } catch (Exception ex) {
+      LogRekeyedRowFailed(logger, ex, run.PerspectiveName, row, sources.Count);
+    }
+  }
+
   /// <summary>Flushes any queued cursor completions through the optional
   /// <see cref="IPerspectiveCheckpointCompleter"/> and logs the batch size + flush time.
   /// No-op when the completer or pending list is null/empty.</summary>
@@ -685,6 +712,8 @@ public sealed partial class PerspectiveRebuilder(
     public int StreamsUnchanged { get; set; }
     /// <summary>Where a stream the fold left untouched is checked for a purge; null when the host has no store.</summary>
     public IPerspectivePurgeMarkerStore? PurgeMarkers { get; init; }
+    /// <summary>The events re-keyed onto each row this run has read, across all of its phases (#1820).</summary>
+    public RebuildRekeyLedger Rekeys { get; } = new();
   }
 
   /// <summary>
@@ -784,6 +813,14 @@ public sealed partial class PerspectiveRebuilder(
   [LoggerMessage(Level = LogLevel.Error,
       Message = "Failed {Mode} rebuild of perspective {Perspective} after {Streams} streams in {ElapsedMs}ms")]
   private static partial void LogRebuildFailed(ILogger logger, Exception ex, RebuildMode mode, string perspective, int streams, long elapsedMs);
+
+  [LoggerMessage(Level = LogLevel.Debug,
+      Message = "Rebuild {Perspective}: row {StreamId} folded from its own stream and {Sources} re-keyed source(s) to event {LastEventId} in {ElapsedMs}ms")]
+  private static partial void LogRekeyedRowFolded(ILogger logger, string perspective, Guid streamId, int sources, Guid lastEventId, long elapsedMs);
+
+  [LoggerMessage(Level = LogLevel.Warning,
+      Message = "Rebuild {Perspective}: failed to fold row {StreamId} from its own stream and {Sources} re-keyed source(s)")]
+  private static partial void LogRekeyedRowFailed(ILogger logger, Exception ex, string perspective, Guid streamId, int sources);
 
   [LoggerMessage(Level = LogLevel.Warning,
       Message = "Rebuild {Perspective}: failed on stream {StreamId} ({Processed}/{Total})")]

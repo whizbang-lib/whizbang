@@ -66,6 +66,39 @@ public class RedeliveryCompositeWireSerializationTests {
       .Because("the repaired bodies must survive the wire byte-for-byte.");
   }
 
+  /// <summary>
+  /// The per-child streams cross the wire (#1798), and a bundle from an origin that predates them reads back with none,
+  /// so its children fall back to the bundle's own stream rather than to a misread empty list.
+  /// </summary>
+  [Test]
+  public async Task RedeliveryComposite_InnerStreamIds_RoundTripAndAreAbsentOnAnOlderBundleAsync() {
+    _ensureRegistered();
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var typeInfo = options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite));
+    var stream = TrackedGuid.New().Value;
+    var current = new Whizbang.Core.Minting.RedeliveryComposite {
+      StreamId = stream,
+      InnerPayloads = [JsonElement.Parse("{\"x\":1}")],
+      InnerTypeNames = ["Contracts.WireProbe, Contracts"],
+      InnerEventIds = [TrackedGuid.New().Value],
+      InnerStreamIds = [stream],
+    };
+    var older = new Whizbang.Core.Minting.RedeliveryComposite {
+      StreamId = stream,
+      InnerPayloads = [JsonElement.Parse("{\"x\":1}")],
+      InnerTypeNames = ["Contracts.WireProbe, Contracts"],
+      InnerEventIds = [TrackedGuid.New().Value],
+    };
+
+    Whizbang.Core.Minting.IRawInnerComposite back = (Whizbang.Core.Minting.RedeliveryComposite)JsonSerializer.Deserialize(JsonSerializer.Serialize(current, typeInfo), typeInfo)!;
+    Whizbang.Core.Minting.IRawInnerComposite olderBack = (Whizbang.Core.Minting.RedeliveryComposite)JsonSerializer.Deserialize(JsonSerializer.Serialize(older, typeInfo), typeInfo)!;
+
+    await Assert.That(back.InnerStreamIds).IsEquivalentTo([stream]);
+    await Assert.That(olderBack.InnerStreamIds).IsNull();
+    await Assert.That(((Whizbang.Core.Minting.IRawInnerComposite)new Whizbang.Core.Minting.RedeliveryComposite { InnerStreamIds = [] }).InnerStreamIds)
+      .IsNull().Because("an empty list records no stream, the same as none");
+  }
+
   [Test]
   public async Task RedeliveryComposite_ArbitraryPayloadShapes_NeedNoTypeMetadataAsync() {
     // The AOT cliff this design removes: a consumer payload whose shape (e.g. a set-typed

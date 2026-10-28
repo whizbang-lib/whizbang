@@ -60,6 +60,7 @@ public class DispatcherTransportBridge(
   /// <param name="destination">The remote destination</param>
   /// <param name="context">Optional message context (creates new if null)</param>
   /// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamResolutionParityTests.cs:StoredStream_IsTheStreamTheProducerStoredItOnAsync</tests>
   /// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_AutomaticallySerializesMessageAsync</tests>
   /// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_PreservesCorrelationIdAsync</tests>
   /// <tests>tests/Whizbang.Transports.Component.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_CreatesEnvelopeWithHopAsync</tests>
@@ -202,7 +203,9 @@ public class DispatcherTransportBridge(
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
       Scope = scopeDelta,
-      TraceParent = HopStamping.AmbientTraceParent
+      TraceParent = HopStamping.AmbientTraceParent,
+      // Names the stream the message's [StreamId] names, as the dispatcher's hop does (#1798).
+      Metadata = StreamIdentity.HopMetadataFor(message!, streamIds: null)
     };
 
     envelope.AddHop(hop);
