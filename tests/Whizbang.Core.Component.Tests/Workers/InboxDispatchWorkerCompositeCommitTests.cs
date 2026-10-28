@@ -103,6 +103,19 @@ public class InboxDispatchWorkerCompositeCommitTests {
     private TaskCompletionSource<HandlerCommitRequest> _signal(int ordinal) =>
       _commits.GetOrAdd(ordinal, static _ => new TaskCompletionSource<HandlerCommitRequest>(TaskCreationOptions.RunContinuationsAsynchronously));
 
+    /// <summary>Completes with the first redelivery reconciliation the worker asks for; a signal the body emits.</summary>
+    public TaskCompletionSource<(Guid Origin, IReadOnlyList<Guid> EventIds)> Reconciled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int ReconcileCalls => Volatile.Read(ref _reconciles);
+    private int _reconciles;
+
+    public Task<IReadOnlyList<RedeliveredBucketPresence>?> AdoptRedeliveredOriginAsync(
+        Guid originServiceId, IReadOnlyList<Guid> eventIds, IReadOnlyList<long?> commitSequences,
+        CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _reconciles);
+      Reconciled.TrySetResult((originServiceId, eventIds));
+      return Task.FromResult<IReadOnlyList<RedeliveredBucketPresence>?>([]);
+    }
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -175,7 +188,8 @@ public class InboxDispatchWorkerCompositeCommitTests {
     public void Dispose() => MeterFactory.Dispose();
   }
 
-  private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true) {
+  private static Harness _harness(ICompositeEvent composite, IMessageDiscardPolicy? discardPolicy = null, Exception? commitFailure = null, bool withCoordinator = true,
+      StreamIntegrityOptions? integrityOptions = null) {
     var coordinator = new RecordingCoordinator { FailWith = commitFailure };
     var services = new ServiceCollection().AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer());
     if (withCoordinator) {
@@ -199,7 +213,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
       options: Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: NullLogger<InboxDispatchWorker>.Instance,
-      integrityOptions: Options.Create(new StreamIntegrityOptions()),
+      integrityOptions: Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       leaseHandleOptions: Options.Create(new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
@@ -327,6 +341,81 @@ public class InboxDispatchWorkerCompositeCommitTests {
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.expansions")).IsEqualTo(1);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.children_created")).IsEqualTo(2);
     await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.children_unsubscribed")).IsEqualTo(1);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  private static readonly StreamIntegrityOptions _autoRepair = new() { RepairMode = IntegrityRepairMode.AutoRepairCapped };
+
+  private static RedeliveryComposite _redelivery(Guid origin, params Guid[] eventIds) {
+    var stream = (Guid)TrackedGuid.New();
+    return new RedeliveryComposite {
+      StreamId = stream,
+      OriginServiceId = origin,
+      InnerEventIds = [.. eventIds],
+      InnerTypeNames = [.. eventIds.Select(_ => "Contracts.OrderPlaced, Contracts")],
+      InnerPayloads = [.. eventIds.Select(_ => JsonElement.Parse("{}"))],
+      InnerStreamIds = [.. eventIds.Select(_ => stream)],
+      InnerCommitSequences = [.. eventIds.Select((_, i) => (long?)(i + 1))],
+    };
+  }
+
+  [Test]
+  public async Task Redelivery_OnceCommitted_IsReconciledWithTheEventsTheStoreAlreadyHoldsAsync() {
+    // #1790: a redelivered event the store already holds is skipped as a duplicate, so without this step history
+    // stored before origins were recorded never takes the origin identity the bundle carries.
+    var origin = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(origin, first, second), integrityOptions: _autoRepair);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    var (reconciledOrigin, reconciledIds) = await h.Coordinator.Reconciled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(reconciledOrigin).IsEqualTo(origin);
+    await Assert.That(reconciledIds).IsEquivalentTo([first, second]);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task Redelivery_WhoseCommitFails_IsNotReconciledAsync() {
+    // The bundle is re-offered and re-expanded; reconciling a bundle that never landed would report presence for a
+    // commit that did not happen.
+    var origin = (Guid)TrackedGuid.New();
+    using var h = _harness(_redelivery(origin, (Guid)TrackedGuid.New()), commitFailure: new InvalidOperationException("store unavailable"),
+      integrityOptions: _autoRepair);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var failing = _compositeWork();
+    await h.Inbox.WriteAsync(failing, cts.Token);
+    await h.Inbox.Released(failing.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(h.Coordinator.ReconcileCalls).IsEqualTo(0);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task OrdinaryComposite_IsNeverReconciledAsync() {
+    using var h = _harness(new Composite(new RowAdded("a")), integrityOptions: _autoRepair);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    var work = _compositeWork();
+    await h.Inbox.WriteAsync(work, cts.Token);
+    await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await h.Inbox.Released(work.MessageId).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(h.Coordinator.ReconcileCalls).IsEqualTo(0)
+      .Because("only a redelivery carries previously stored events and the origin they came from");
 
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);

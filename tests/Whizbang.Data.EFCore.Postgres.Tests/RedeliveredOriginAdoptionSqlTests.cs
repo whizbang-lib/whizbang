@@ -344,4 +344,21 @@ public class RedeliveredOriginAdoptionSqlTests : EFCoreTestBase {
     await Assert.That(async () => await _coordinator().AdoptRedeliveredOriginAsync(TrackedGuid.New().Value, [TrackedGuid.New().Value], []))
       .Throws<ArgumentException>().Because("the sequences pair with the ids by position");
   }
+
+  [Test]
+  public async Task Adopt_ThroughAThroughputGatedCoordinator_HoldsAGateSlotAndAdoptsAsync() {
+    await using var conn = await _openAsync();
+    var origin = TrackedGuid.New().Value;
+    var stream = TrackedGuid.New().Value;
+    var received = await _storeAsync(conn, stream, 1);
+    await using var ctx = CreateDbContext();
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
+
+    var buckets = await coordinator.AdoptRedeliveredOriginAsync(origin, [received], [7]);
+
+    await Assert.That(buckets!.Single().Adopted).IsEqualTo(1);
+  }
 }
+

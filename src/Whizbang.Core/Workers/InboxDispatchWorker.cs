@@ -781,7 +781,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       var commitRequest = _buildCommitRequest(
         work, status: (int)MessageProcessingStatus.EventStored,
         newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
-      await _commitCompositeAsync(commitRequest, result.Children.Count, scopeProvider, ct).ConfigureAwait(false);
+      var committed = await _commitCompositeAsync(commitRequest, result.Children.Count, scopeProvider, ct).ConfigureAwait(false);
+      // #1790: a redelivered event the store already holds is skipped as a duplicate, so the bundle is reconciled with
+      // those events once it has landed: history stored before origins were recorded adopts the bundle's origin, and
+      // a bundle that changed nothing marks its buckets as ones repair cannot change.
+      if (committed && composite is RedeliveryComposite redelivery) {
+        _ = await RedeliveryReconciler.ReconcileAsync(
+          redelivery, result.Children, scopeProvider, _logger, _timeProvider.GetUtcNow(), ct).ConfigureAwait(false);
+      }
       return;
     }
 
@@ -831,20 +838,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// in the batched commit channel (#740). A failed commit leaves the row leased and unprocessed for the
   /// claim loop to re-offer (the deterministic child ids make that re-expansion a repeat at the key), counts
   /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
-  /// the dispatch scope the batched channel is used as before, with a warning naming the cost.
+  /// the dispatch scope the batched channel is used as before, with a warning naming the cost. Returns true only
+  /// when the commit landed here, so work that must follow a landed expansion can tell it did.
   /// </summary>
-  private async Task _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
+  private async Task<bool> _commitCompositeAsync(HandlerCommitRequest request, int childCount, IServiceProvider scopeProvider, CancellationToken ct) {
     var coordinator = scopeProvider.GetService<IWorkCoordinator>();
     if (coordinator is null) {
       LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, childCount);
       await _handlerCommitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
-      return;
+      return false;
     }
     try {
       await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
+      return true;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _compositeMetrics?.CommitFailures.Add(1);
       LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
+      return false;
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
       _inboxChannelWriter.RemoveInFlight(request.HandlerId);

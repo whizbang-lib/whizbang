@@ -156,4 +156,31 @@ public class IntegrityLedgerUnhealableSqlTests : EFCoreTestBase {
     await Assert.That(marked).IsNull()
       .Because("a ledger that cannot be reached leaves repair on its terminal cadence, the harmless direction");
   }
+
+  [Test]
+  public async Task MarkUnhealable_ThroughAThroughputGatedCoordinator_MarksAsync() {
+    var origin = TrackedGuid.New().Value;
+    var key = _key(origin);
+    await _trackAsync(key);
+    await using var ctx = CreateDbContext();
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 1, logger: Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorGate>.Instance);
+    IWorkCoordinator coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(), gate: gate);
+
+    var marked = await coordinator.IntegrityMarkUnhealableBatchAsync(origin, [key], _now);
+
+    await Assert.That(marked).IsEquivalentTo([key]);
+  }
+
+  [Test]
+  public async Task MarkUnhealable_CanceledDuringShutdown_PropagatesInsteadOfReadingAsUnsupportedAsync() {
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await _coordinator().IntegrityMarkUnhealableBatchAsync(
+        TrackedGuid.New().Value, [_key(TrackedGuid.New().Value)], _now, stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("a swallowed shutdown would read as a ledger that cannot answer");
+  }
 }
+
