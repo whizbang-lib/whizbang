@@ -709,31 +709,13 @@ public sealed class PostgresSchemaInitializer {
       // table is large. A driver that sent the file whole would push the unsubstituted size token
       // at the server; both drivers read the same migration files, so both have to read the marks.
       foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
-        cmd.CommandText = segment.Sql;
-
         if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
           // Catalog-checked (#1636), as on the EF Core driver: idempotent DDL with nothing to do takes no lock.
           cmd.CommandText = CatalogCheckedDdl.Guard(segment.Sql);
           await cmd.ExecuteNonQueryAsync(cancellationToken);
-          continue;
-        }
-
-        var passes = 0;
-        while (true) {
-          var reported = await cmd.ExecuteScalarAsync(cancellationToken);
-          var rows = reported is null or DBNull
-            ? 0L
-            : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
-          if (rows <= 0) {
-            break;
-          }
-
-          if (++passes > MaxBatchPasses) {
-            throw new InvalidOperationException(
-              $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
-              + "region has to exclude the rows it already handled, or it reports the same rows "
-              + "forever.");
-          }
+        } else {
+          cmd.CommandText = segment.Sql;
+          await _runBatchedRegionAsync(cmd, migration.Name, cancellationToken);
         }
       }
 
@@ -760,6 +742,30 @@ public sealed class PostgresSchemaInitializer {
       await transaction.RollbackAsync(cancellationToken);
     }
     return failure;
+  }
+
+  /// <summary>
+  /// Runs a batched region's command repeatedly until it reports no rows, failing once it has run more passes than
+  /// <see cref="MaxBatchPasses"/> allows.
+  /// </summary>
+  private static async Task _runBatchedRegionAsync(NpgsqlCommand cmd, string migrationName, CancellationToken cancellationToken) {
+    var passes = 0;
+    while (true) {
+      var reported = await cmd.ExecuteScalarAsync(cancellationToken);
+      var rows = reported is null or DBNull
+        ? 0L
+        : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
+      if (rows <= 0) {
+        break;
+      }
+
+      if (++passes > MaxBatchPasses) {
+        throw new InvalidOperationException(
+          $"Migration {migrationName} ran {passes} batches without finishing. A batched "
+          + "region has to exclude the rows it already handled, or it reports the same rows "
+          + "forever.");
+      }
+    }
   }
 
   /// <summary>
