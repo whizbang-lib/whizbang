@@ -33,7 +33,8 @@ public static partial class SubscriptionRetryHelper {
     TransportBatchOptions BatchOptions,
     SubscriptionState State,
     SubscriptionResilienceOptions Options,
-    ILogger Logger);
+    ILogger Logger,
+    TimeProvider TimeProvider);
   /// <summary>
   /// Calculates the next delay using exponential backoff, capped at MaxRetryDelay.
   /// </summary>
@@ -56,7 +57,7 @@ public static partial class SubscriptionRetryHelper {
   /// <param name="logger">Logger for retry attempts.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface: changing the signature is a binary/source break for NuGet consumers; each parameter is a distinct subscription concern (transport, destination, handler, batch options, state, resilience options, logger, cancellation).")]
-  public static async Task SubscribeWithRetryAsync(
+  public static Task SubscribeWithRetryAsync(
     ITransport transport,
     TransportDestination destination,
     Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
@@ -65,7 +66,36 @@ public static partial class SubscriptionRetryHelper {
     SubscriptionResilienceOptions options,
     ILogger logger,
     CancellationToken cancellationToken
+  ) => SubscribeWithRetryAsync(transport, destination, batchHandler, batchOptions, state, options, logger, TimeProvider.System, cancellationToken);
+
+  /// <summary>
+  /// Attempts to subscribe to a destination with retry logic and exponential backoff, timing every wait on
+  /// <paramref name="timeProvider"/>.
+  /// </summary>
+  /// <param name="transport">The transport to subscribe through.</param>
+  /// <param name="destination">The destination to subscribe to.</param>
+  /// <param name="batchHandler">The batch message handler callback.</param>
+  /// <param name="batchOptions">The batch options the subscription is created with.</param>
+  /// <param name="state">The subscription state to update.</param>
+  /// <param name="options">Resilience options.</param>
+  /// <param name="logger">Logger for retry attempts.</param>
+  /// <param name="timeProvider">The clock the retry and reconnect delays wait on, and the error times are read from.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperReconnectBackoffTests.cs</tests>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Public API surface: the overload of the method above that takes the clock; each parameter is a distinct subscription concern (transport, destination, handler, batch options, state, resilience options, logger, clock, cancellation).")]
+  public static async Task SubscribeWithRetryAsync(
+    ITransport transport,
+    TransportDestination destination,
+    Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+    TransportBatchOptions batchOptions,
+    SubscriptionState state,
+    SubscriptionResilienceOptions options,
+    ILogger logger,
+    TimeProvider timeProvider,
+    CancellationToken cancellationToken
   ) {
+    ArgumentNullException.ThrowIfNull(timeProvider);
     var currentDelay = options.InitialRetryDelay;
     var attempt = 0;
 
@@ -93,7 +123,7 @@ public static partial class SubscriptionRetryHelper {
         state.Subscription = subscription;
         var watch = new DisconnectWatch(
           subscription,
-          new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger),
+          new SubscriptionContext(transport, destination, batchHandler, batchOptions, state, options, logger, timeProvider),
           cancellationToken);
         subscription.OnDisconnected += watch.OnDisconnected;
         if (subscription.Disconnection is { } missed) {
@@ -107,10 +137,10 @@ public static partial class SubscriptionRetryHelper {
       } catch (OperationCanceledException) {
         throw; // Don't retry on cancellation
       } catch (Exception ex) {
-        _handleSubscriptionFailure(state, ex);
+        _handleSubscriptionFailure(state, ex, timeProvider);
         _logRetryAttempt(logger, destination, attempt, currentDelay, options, ex);
 
-        await Task.Delay(currentDelay, cancellationToken);
+        await Task.Delay(currentDelay, timeProvider, cancellationToken);
         currentDelay = CalculateNextDelay(currentDelay, options);
       }
     }
@@ -172,7 +202,7 @@ public static partial class SubscriptionRetryHelper {
 
       // The error is recorded before the status, so an observer of the change to Recovering reads it.
       ctx.State.LastError = args.Exception;
-      ctx.State.LastErrorTime = DateTimeOffset.UtcNow;
+      ctx.State.LastErrorTime = ctx.TimeProvider.GetUtcNow();
       ctx.State.Status = SubscriptionStatus.Recovering;
 
       // The reconnect, not this handler, disposes the subscription it replaces: a transport raises the disconnect from
@@ -181,8 +211,8 @@ public static partial class SubscriptionRetryHelper {
       _ = Task.Run(async () => {
         try {
           _disposeReplaced();
-          await Task.Delay(ctx.Options.InitialRetryDelay, cancellationToken);
-          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
+          await Task.Delay(ctx.Options.InitialRetryDelay, ctx.TimeProvider, cancellationToken);
+          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.BatchHandler, ctx.BatchOptions, ctx.State, ctx.Options, ctx.Logger, ctx.TimeProvider, cancellationToken);
         } catch (OperationCanceledException) {
           // Shutdown - ignore
         } catch (Exception ex) {
@@ -227,10 +257,10 @@ public static partial class SubscriptionRetryHelper {
   /// <summary>
   /// Updates subscription state on failure.
   /// </summary>
-  private static void _handleSubscriptionFailure(SubscriptionState state, Exception ex) {
+  private static void _handleSubscriptionFailure(SubscriptionState state, Exception ex, TimeProvider timeProvider) {
     // The status is written last, so an observer of the change to Recovering reads the error and the count.
     state.LastError = ex;
-    state.LastErrorTime = DateTimeOffset.UtcNow;
+    state.LastErrorTime = timeProvider.GetUtcNow();
     state.IncrementAttempt();
     state.Status = SubscriptionStatus.Recovering;
   }

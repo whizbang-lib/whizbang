@@ -57,6 +57,31 @@ public class SubscriptionResilienceOptions {
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
+  /// How long a subscription must stay healthy before its next disconnect is treated as a fresh one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// When a subscription that was established successfully disconnects, the reconnect waits before subscribing
+  /// again. The first reconnect waits <see cref="InitialRetryDelay"/>. When the subscription it established
+  /// disconnects again before staying healthy for this long, the next reconnect waits the previous reconnect's delay
+  /// times <see cref="BackoffMultiplier"/>, capped at <see cref="MaxRetryDelay"/>, so a destination that keeps failing
+  /// right after each successful subscribe (an entity that stays disabled, an identity that stays unauthorized, a
+  /// channel that closes again as soon as it opens) backs off instead of reconnecting every
+  /// <see cref="InitialRetryDelay"/> forever. A subscription that stays healthy for this long has recovered: its next
+  /// disconnect waits <see cref="InitialRetryDelay"/> again.
+  /// </para>
+  /// <para>
+  /// <see cref="TimeSpan.Zero"/> treats every disconnect as a fresh one, so every reconnect waits
+  /// <see cref="InitialRetryDelay"/>.
+  /// </para>
+  /// </remarks>
+  /// <value>Default: 30 seconds</value>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionResilienceOptionsTests.cs:ReconnectBackoffResetAfter_Default_IsThirtySecondsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Resilience/SubscriptionRetryHelperReconnectBackoffTests.cs</tests>
+  public TimeSpan ReconnectBackoffResetAfter { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
   /// If true, retry indefinitely until subscription succeeds or cancellation is requested.
   /// If false, mark subscription as failed after <see cref="InitialRetryAttempts"/>.
   /// </summary>
