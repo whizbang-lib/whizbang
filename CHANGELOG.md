@@ -160,6 +160,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in stage. The `startup` health component's detail leads with the stage's line, `AggregatedHealth.Stage` carries
   it, and the ASP.NET health checks add `startup_stage`, `startup_stage_name` and `startup_stage_message` to their
   data. `IStartupStageObserver` watches every change.
+- **Workers declare the startup stage they need (part of #1636).** `IStartupStageGate` (default `StartupStageGate`,
+  registered by the worker pipeline as an observer of the stage reporter) answers whether this instance has reached a
+  startup stage and waits for it: a stage is reached once it, or a later one, is entered or skipped, and every stage up
+  to Coordinate once the schema-ready gate opens; a shutdown stage reaches nothing.
+  `services.AddHostedServiceAtStage(stage, sp => ...)` registers a hosted service, wrapped in
+  `StartupStageGatedService<TService>`, that the host starts with everything else and that starts the service only
+  once its stage is reached (a fault in the service's own loop is the wrapper's, so the host handles it as before).
+  `PgSharedNotifyConnection.OnAliveLockClaimed` is raised on each alive-lock claim, the work-available poll sources
+  take a `SchemaReadyGate`, and `RoleAssignmentHealthSource` has a constructor taking the stage gate.
 - **`ISchemaInitializationObserver`** — watch schema initialization: `OnSchemaLockContendedAsync` (another
   instance holds the schema lock; this start waits) and `OnAttemptFailedAsync` (a background attempt failed and
   will be retried), on both Postgres drivers.
@@ -742,6 +751,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   128 MiB; zero disables): a fetched row that would exceed it is not queued, and it and the rest of its stream in that
   fetch are handed back with their attempts refunded, to be offered again once the working set drains. With nothing
   held one row is always admitted, however large.
+- **A fresh or upgrading database no longer deadlocks its migration against the service's own workers (part of
+  #1636).** The migrations that add columns to the instance and role tables took `ACCESS EXCLUSIVE` on them on every
+  run while the same instance's role electors, partition assigner, notification connection and work-available probes
+  used them with the schema gate closed, so the pass met `40P01` repeatedly and finished on a lucky retry. Four
+  changes, on both Postgres drivers:
+  - *Idempotent DDL takes no lock when there is nothing to do.* `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and
+    `CREATE INDEX IF NOT EXISTS` take their table lock before they look; each such statement, in every migration, the
+    core tables' ensure and the bootstrap closure, now runs inside a `DO` block that asks the catalog first
+    (`CatalogCheckedDdl`), so a re-run, and a migration re-applying what the bootstrap created, takes no lock on a
+    table its workers use. Applied as the SQL is executed: no migration file and no ledger hash changes.
+  - *Each worker starts at its stage.* The duty holder (maintainer votes, and the vacuum on winning) and the partition
+    assigner start at Coordinate, the notification connection and its alive-lock at the end of Preflight; the
+    work-available probes send nothing while the schema-ready gate is closed, and the `roles` health component reads
+    nothing before Elect. The migrator election still runs in Elect. The alive-lock claim no longer calls a function
+    the migrations have not created yet: it waits, at Debug, and is made on a later keepalive (it used to fail with
+    `42883` at Warning and never be made on that connection). The Dapper start reports Elect as skipped once the
+    database answers.
+  - *A deadlocked step is retried in place.* A step (a file on the Dapper driver) that loses a `40P01` runs again after
+    100 ms doubling to 2 s, logged at Warning as `Migration X of Y - Deadlocked : <step> : 40P01 ...; retrying the
+    step in <delay> (deadlock n of 5)`; nothing before it runs again, and after five it fails as any step does.
+  - *A second initialization waits for the first.* `EnsureWhizbangInitializedAsync` called while the host's own
+    initialization was still running returned at once ("already initialized"); it now waits for it, and runs one of
+    its own if that one failed. `app.Services` and the root scope the hosted initializer is built from are now one
+    host to it.
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and

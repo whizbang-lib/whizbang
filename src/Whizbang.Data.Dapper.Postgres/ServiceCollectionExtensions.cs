@@ -439,7 +439,8 @@ public static class ServiceCollectionExtensions {
         connectionString,
         options,
         () => createInitializer(sp),
-        sp.GetRequiredService<ILogger<DapperSchemaInitializationRunner>>()));
+        sp.GetRequiredService<ILogger<DapperSchemaInitializationRunner>>(),
+        sp));
     }
     services.AddWhizbangSchemaInitialization();
   }

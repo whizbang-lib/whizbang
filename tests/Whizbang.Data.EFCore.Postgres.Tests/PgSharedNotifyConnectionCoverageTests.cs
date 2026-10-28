@@ -187,17 +187,23 @@ public class PgSharedNotifyConnectionCoverageTests : EFCoreTestBase {
     }
   }
 
-  // The claim can also fail outright (e.g. an older schema that predates migration 055). If
-  // that exception were swallowed without a trace, IsAliveLockHeld would sit at false and look
-  // IDENTICAL to "another session holds it" -- two failure modes that need completely different
-  // remediation (nothing to do, vs. run the missing migration) collapse into one silent state.
+  // The claim can also fail outright. If that exception were swallowed without a trace,
+  // IsAliveLockHeld would sit at false and look IDENTICAL to "another session holds it" -- two
+  // failure modes that need completely different remediation collapse into one silent state. A
+  // function that is simply not there yet is not this case (#1636): the claim waits for it quietly
+  // and is made on a later keepalive (AliveLockSourcePostgresTests); one that is there and fails is.
   [Test]
   [Timeout(60000)]
-  public async Task AliveLock_ClaimFunctionMissing_ReportsClaimFailedAsync(
+  public async Task AliveLock_ClaimFunctionFails_ReportsClaimFailedAsync(
       CancellationToken cancellationToken) {
     await using (var dbContext = CreateDbContext()) {
-      await dbContext.Database.ExecuteSqlRawAsync(
-        "DROP FUNCTION claim_instance_alive_lock(uuid)", cancellationToken);
+      await dbContext.Database.ExecuteSqlRawAsync("""
+        CREATE OR REPLACE FUNCTION claim_instance_alive_lock(p_instance_id UUID) RETURNS BOOLEAN AS $$
+        BEGIN
+          RAISE EXCEPTION 'claim_instance_alive_lock refused';
+        END;
+        $$ LANGUAGE plpgsql
+        """, cancellationToken);
     }
 
     var logger = new CapturingLogger();

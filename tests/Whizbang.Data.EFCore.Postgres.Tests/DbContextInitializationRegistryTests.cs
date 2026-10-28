@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -183,6 +184,117 @@ public class DbContextInitializationRegistryTests {
     await DbContextInitializationRegistry.InitializeAllAsync(host);
     await Assert.That(attempts).IsEqualTo(2)
       .Because("the idempotence guard still has to hold after a successful initialization.");
+  }
+
+  /// <summary>
+  /// A second call while the first is still initializing waits for it (#1636). It returned at once, saying "already
+  /// initialized", so a host that initialized again from ApplicationStarted went on to use a schema the first call was
+  /// still migrating. The first call is held mid-initialization by its own callback, so "not finished" is a fact when
+  /// it is asserted, not a race.
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_ASecondCallWhileTheFirstRuns_ReturnsOnlyOnceTheFirstHasFinishedAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var calls = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      Interlocked.Increment(ref calls);
+      entered.TrySetResult();
+      await release.Task;
+    });
+    var host = new FakeServiceProvider();
+    var sink = new List<string>();
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(host);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host, new ListLogger(sink));
+
+    await Assert.That(second.IsCompleted).IsFalse()
+      .Because("the first initialization is still running, so the schema is not initialized yet");
+    await Assert.That(sink).Contains("Whizbang database initialization is in progress; waiting for it to finish");
+    release.TrySetResult();
+    await second;
+    await Assert.That(first.IsCompletedSuccessfully).IsTrue().Because("the second returned only after the first finished");
+    await Assert.That(calls).IsEqualTo(1).Because("waiting is not initializing again");
+  }
+
+  /// <summary>
+  /// A second call that waited for a first attempt that failed does not report success: it runs an attempt of its
+  /// own, and returns only when that one has finished.
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_ASecondCallWhoseFirstFails_RunsItsOwnAttemptAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var calls = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      if (Interlocked.Increment(ref calls) == 1) {
+        entered.TrySetResult();
+        await release.Task;
+        throw new InvalidOperationException("migration failed");
+      }
+    });
+    var host = new FakeServiceProvider();
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(host);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host);
+    release.TrySetResult();
+
+    await Assert.That(async () => await first).Throws<InvalidOperationException>();
+    await second;
+    await Assert.That(calls).IsEqualTo(2).Because("the failed attempt initialized nothing, so the waiting call runs one");
+  }
+
+  /// <summary>
+  /// The host's provider and the root scope its singletons are built from are two objects with one identity: a host
+  /// that initializes from <c>app.Services</c> while its hosted initializer, built from the root scope, is still
+  /// running waits for it rather than running a second initialization beside it (#1636).
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_TheHostsProviderAndItsRootScope_AreOneHostAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var calls = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      Interlocked.Increment(ref calls);
+      entered.TrySetResult();
+      await release.Task;
+    });
+    await using var host = new ServiceCollection().BuildServiceProvider();
+    var rootScope = host.GetRequiredService<IServiceProvider>();
+    await Assert.That(rootScope).IsNotSameReferenceAs(host).Because("precondition: the two are different objects");
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(rootScope);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host);
+
+    await Assert.That(second.IsCompleted).IsFalse();
+    release.TrySetResult();
+    await Task.WhenAll(first, second);
+    await Assert.That(calls).IsEqualTo(1).Because("one host, one initialization");
+  }
+
+  /// <summary>A call waiting for another's initialization stops waiting when its own token is canceled.</summary>
+  [Test]
+  public async Task InitializeAllAsync_ASecondCallsWait_EndsWithItsTokenAsync() {
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    DbContextInitializationRegistry.Register<FakeDbContextA>(async (_, _, _) => {
+      entered.TrySetResult();
+      await release.Task;
+    });
+    var host = new FakeServiceProvider();
+    using var cts = new CancellationTokenSource();
+
+    var first = DbContextInitializationRegistry.InitializeAllAsync(host);
+    await entered.Task;
+    var second = DbContextInitializationRegistry.InitializeAllAsync(host, cancellationToken: cts.Token);
+    await cts.CancelAsync();
+
+    await Assert.That(async () => await second).Throws<OperationCanceledException>();
+    release.TrySetResult();
+    await first;
   }
 
   [Test]

@@ -109,6 +109,9 @@ public sealed class SchemaStepRunner {
   /// </summary>
   public Func<Exception, TimeSpan?>? RetryDelayFor { get; init; }
 
+  /// <summary>How many deadlocks one step is retried in place for before it fails like any other step.</summary>
+  internal int MaxDeadlockRetries { get; init; } = MigrationDeadlockRetry.MAX_RETRIES;
+
   /// <summary>
   /// Whether another instance brought the schema up to date while this one waited for the lock. Once true, every
   /// step this runner is handed does nothing.
@@ -182,13 +185,21 @@ public sealed class SchemaStepRunner {
       _position++;
     }
 
+    var work = new StepWork(step, counted, isCurrentAsync, applyAsync, recordFailureAsync);
     var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
     var attempt = 0;
+    var deadlocks = 0;
     while (true) {
       attempt++;
       cancellationToken.ThrowIfCancellationRequested();
-      var outcome = await _attemptAsync(
-        connection, step, counted, isCurrentAsync, applyAsync, recordFailureAsync, cancellationToken).ConfigureAwait(false);
+      var (outcome, deadlock) = await _attemptAsync(connection, work, deadlocks, cancellationToken).ConfigureAwait(false);
+      if (deadlock is not null) {
+        // #1636: the server chose this step's transaction as a deadlock's victim and rolled it back. The step runs
+        // again, after a short back-off, rather than failing the attempt.
+        deadlocks++;
+        await _waitOutDeadlockAsync(step, counted, deadlock, deadlocks, cancellationToken).ConfigureAwait(false);
+        continue;
+      }
       if (outcome is { } done) {
         await SchemaInitializationObservers.StepCommittedAsync(_services, _schema, step, cancellationToken).ConfigureAwait(false);
         return done;
@@ -225,15 +236,33 @@ public sealed class SchemaStepRunner {
 #pragma warning restore CA5394, S2245
   }
 
-  /// <summary>One attempt: null when the lock was another instance's, so nothing ran.</summary>
-  private async Task<SchemaStepOutcome?> _attemptAsync(
-      NpgsqlConnection connection,
-      string step,
-      bool counted,
-      Func<CancellationToken, Task<bool>> isCurrentAsync,
-      Func<CancellationToken, Task> applyAsync,
-      Func<Exception, CancellationToken, Task>? recordFailureAsync,
-      CancellationToken cancellationToken) {
+  /// <summary>
+  /// The wait before retrying a step after its <paramref name="deadlock"/>th deadlock: 100 ms doubling to a 2 s cap,
+  /// plus up to half again of jitter.
+  /// </summary>
+  internal static TimeSpan DeadlockRetryDelay(int deadlock, Random random) => MigrationDeadlockRetry.Delay(deadlock, random);
+
+  /// <summary>Says a step lost a deadlock and will run again, at Warning, then waits out the back-off.</summary>
+  private async Task _waitOutDeadlockAsync(
+      string step, bool counted, PostgresException deadlock, int deadlocks, CancellationToken cancellationToken) {
+    var delay = DeadlockRetryDelay(deadlocks, Random.Shared);
+    if (counted) {
+      SchemaInitializationLog.StepDeadlocked(_logger, _position, _total, step, deadlock.SqlState, deadlock.MessageText,
+        new StepDuration(delay), deadlocks, MaxDeadlockRetries);
+    } else {
+      SchemaInitializationLog.UncountedStepDeadlocked(_logger, step, deadlock.SqlState, deadlock.MessageText,
+        new StepDuration(delay), deadlocks, MaxDeadlockRetries);
+    }
+    await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// One attempt: its outcome, null when the lock was another instance's so nothing ran; or the deadlock it lost and
+  /// will be retried for, with nothing reported or recorded.
+  /// </summary>
+  private async Task<(SchemaStepOutcome? Outcome, PostgresException? Deadlock)> _attemptAsync(
+      NpgsqlConnection connection, StepWork work, int deadlocks, CancellationToken cancellationToken) {
+    var (step, counted, isCurrentAsync, applyAsync, recordFailureAsync) = work;
     // A raw transaction rather than BeginTransactionAsync on the context: the retrying execution strategy refuses a
     // user-initiated transaction, and the initializer has its own retry.
     var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -264,23 +293,41 @@ public sealed class SchemaStepRunner {
 
     // Only a step that ran under the lock failed; one that never got that far has nothing to record or report.
     if (failure is not null && outcome is not null) {
+      if (deadlocks < MaxDeadlockRetries && MigrationDeadlockRetry.AsDeadlock(failure) is { } deadlock) {
+        return (null, deadlock);
+      }
       _reportFailure(step, counted, failure);
       await _recordFailureAsync(step, recordFailureAsync, failure).ConfigureAwait(false);
     }
     _rethrowIfFailed(failure);
 
     if (counted && outcome is { } ended) {
-      if (ended == SchemaStepOutcome.Applied) {
-        _applied++;
-        var elapsed = _timeProvider.GetElapsedTime(started);
-        SchemaInitializationLog.StepSucceeded(_logger, _position, _total, step, new StepDuration(elapsed));
-      } else {
-        _skipped++;
-        SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
-      }
+      _tally(step, ended, started);
     }
-    return outcome;
+    return (outcome, null);
   }
+
+  /// <summary>Counts a counted step that ended under the lock as applied or skipped, and says so.</summary>
+  private void _tally(string step, SchemaStepOutcome ended, long started) {
+    if (ended == SchemaStepOutcome.Applied) {
+      _applied++;
+      var elapsed = _timeProvider.GetElapsedTime(started);
+      SchemaInitializationLog.StepSucceeded(_logger, _position, _total, step, new StepDuration(elapsed));
+    } else {
+      _skipped++;
+      SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
+    }
+  }
+
+  /// <summary>
+  /// One step's name, whether it is counted in the progress lines, and its callbacks, as an attempt runs them.
+  /// </summary>
+  private readonly record struct StepWork(
+      string Step,
+      bool Counted,
+      Func<CancellationToken, Task<bool>> IsCurrentAsync,
+      Func<CancellationToken, Task> ApplyAsync,
+      Func<Exception, CancellationToken, Task>? RecordFailureAsync);
 
   /// <summary>Rethrows a captured failure with its original stack, once it has been rolled back and recorded.</summary>
   private static void _rethrowIfFailed(Exception? failure) {

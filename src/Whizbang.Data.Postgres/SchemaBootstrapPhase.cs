@@ -170,7 +170,10 @@ public static class SchemaBootstrapPhase {
 
       foreach (var (name, sql) in closure.Scripts) {
         applying = name;
-        await using var command = new NpgsqlCommand(sql, connection) {
+        // Catalog-checked (#1636): one transaction applies the whole closure, so an ADD COLUMN or CREATE INDEX that
+        // took its lock with nothing to do held it across every table after it, while the instances already running
+        // used those tables.
+        await using var command = new NpgsqlCommand(CatalogCheckedDdl.Guard(sql), connection) {
           CommandTimeout = commandTimeoutSeconds,
         };
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

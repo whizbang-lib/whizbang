@@ -144,21 +144,20 @@ public class RoleAssignmentRegistrationTests : EFCoreTestBase {
     await using var owned = provider;
 
     var holder = provider.GetRequiredService<DutyHolderWorker>();
-    // The hosted-service factories AddWhizbangRoleAssignment registered, invoked as the host would invoke them.
-    // Resolving every hosted service instead would construct the rest of the fixture's workers, which it does not
-    // wire up. A factory lambda is compiled into a closure type nested in the class that declares it.
-    var extensions = typeof(RoleAssignmentServiceCollectionExtensions).FullName!;
+    // The hosted-service factory that starts the holder loop, invoked as the host would invoke it. Resolving every
+    // hosted service instead would construct the rest of the fixture's workers, which it does not wire up. The loop
+    // starts at Coordinate (#1636), so the factory returns the wrapper that waits for that stage.
     var hosted = services
       .Where(d => d.ServiceType == typeof(IHostedService) && d.ImplementationFactory is not null
-        && d.ImplementationFactory.Method.DeclaringType?.FullName?.StartsWith(extensions, StringComparison.Ordinal) == true)
-      .Select(d => d.ImplementationFactory!(provider))
-      .OfType<DutyHolderWorker>()
+        && d.ImplementationFactory.GetType().GenericTypeArguments[^1] == typeof(StartupStageGatedService<DutyHolderWorker>))
+      .Select(d => (StartupStageGatedService<DutyHolderWorker>)d.ImplementationFactory!(provider))
       .ToList();
 
     await Assert.That(hosted).Count().IsEqualTo(1)
       .Because("the host starts the holder loop once");
-    await Assert.That(hosted[0]).IsSameReferenceAs(holder)
+    await Assert.That(hosted[0].Inner).IsSameReferenceAs(holder)
       .Because("the loop the host runs is the singleton the status and owed-work paths talk to, not a second copy");
+    await Assert.That(hosted[0].Stage).IsEqualTo(StartupStage.Coordinate);
   }
 
   [Test]

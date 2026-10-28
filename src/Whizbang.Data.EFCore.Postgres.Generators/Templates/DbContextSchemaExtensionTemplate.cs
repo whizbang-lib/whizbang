@@ -708,11 +708,12 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var previousSearchPath = await Whizbang.Data.Postgres.MigrationSearchPath.EnterAsync(
       migrationConnection, "__SCHEMA__", cancellationToken);
 
-    // The overwhelming majority of migrations carry no marker and come back as one plain segment,
-    // which is sent exactly as it was before this path existed.
+    // The overwhelming majority of migrations carry no marker and come back as one plain segment. Its idempotent DDL
+    // is catalog-checked as it is sent (#1636): an ADD COLUMN or CREATE INDEX IF NOT EXISTS with nothing to do takes
+    // no lock, so a re-run does not queue behind, or deadlock with, the workers using the table.
     foreach (var segment in segments) {
       if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
-        await dbContext.Database.ExecuteSqlRawAsync(segment.Sql, cancellationToken);
+        await dbContext.Database.ExecuteSqlRawAsync(Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(segment.Sql), cancellationToken);
         continue;
       }
 
@@ -1129,7 +1130,10 @@ END $$;
     var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     try {
-      await dbContext.Database.ExecuteSqlRawAsync(coreInfrastructureSchema, cancellationToken);
+      // Catalog-checked (#1636): the ensure re-asserts every column and index on every pass, and each would otherwise
+      // take its table's lock to find it already there.
+      await dbContext.Database.ExecuteSqlRawAsync(
+        Whizbang.Data.Postgres.CatalogCheckedDdl.Guard(coreInfrastructureSchema), cancellationToken);
       logger?.LogDebug("Core infrastructure tables created successfully");
     } catch (Exception ex) {
       logger?.LogError(ex, "Failed to create core infrastructure tables");

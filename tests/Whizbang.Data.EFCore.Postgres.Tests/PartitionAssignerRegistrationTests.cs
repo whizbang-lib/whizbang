@@ -42,7 +42,9 @@ public class PartitionAssignerRegistrationTests {
     await Assert.That(sp.GetRequiredService<IPartitionAssignmentStore>()).IsTypeOf<PgPartitionAssignmentStore>();
     await Assert.That(sp.GetRequiredService<IInstanceConnectionModeSource>()).IsSameReferenceAs(sp.GetRequiredService<PgSharedNotifyConnection>());
     var hosted = sp.GetServices<IHostedService>().ToList();
-    await Assert.That(hosted.OfType<PartitionAssignerWorker>().Count()).IsEqualTo(1);
+    await Assert.That(hosted.OfType<StartupStageGatedService<PartitionAssignerWorker>>().Single().Inner)
+      .IsSameReferenceAs(sp.GetRequiredService<PartitionAssignerWorker>())
+      .Because("the assigner starts at Coordinate (#1636), through the wrapper that waits for the stage");
     await Assert.That(hosted.OfType<PartitionAssignmentSubscriber>().Count()).IsEqualTo(1);
     await Assert.That(sp.GetRequiredService<IOptions<RoleAssignmentOptions>>().Value.Roles).Contains(PartitionAssignerOptions.ROLE);
   }
