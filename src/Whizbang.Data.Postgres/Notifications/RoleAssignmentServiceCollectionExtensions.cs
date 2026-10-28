@@ -106,7 +106,8 @@ public static class RoleAssignmentServiceCollectionExtensions {
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IWhizbangHealthSource, RoleAssignmentHealthSource>(sp =>
       new RoleAssignmentHealthSource(
         new DeferredRoleAssignmentReader(sp),
-        sp.GetRequiredService<IOptions<RoleAssignmentOptions>>())));
+        sp.GetRequiredService<IOptions<RoleAssignmentOptions>>(),
+        sp.GetService<IStartupStageGate>())));
 
     // Pending duty work, and the holder loop that runs it: a skipped duty step is owed to the role
     // (the startup pipeline resolves this store), and whichever instance holds the role runs it.
@@ -129,7 +130,10 @@ public static class RoleAssignmentServiceCollectionExtensions {
       sp.GetRequiredService<ILogger<DutyHolderWorker>>(),
       sp.GetService<ISharedNotifyConnection>(),
       sp.GetRequiredService<RoleAssignmentMetrics>()));
-    services.AddHostedService(sp => sp.GetRequiredService<DutyHolderWorker>());
+    // #1636: the holder loop votes, renews and runs owed work from Coordinate on. Before then its maintainer vote, and
+    // the vacuum on winning, ran against tables the migration was altering and, on a fresh database, before they
+    // existed. The migrator is never held here: it is elected in Elect, by the initializer.
+    services.AddHostedServiceAtStage(StartupStage.Coordinate, sp => sp.GetRequiredService<DutyHolderWorker>());
     services.AddSingleton<IReleasesDutiesOnShutdown>(sp => sp.GetRequiredService<PgRoleElector>());
     services.AddHostedService<DutyShutdownReleaseService>();
   }

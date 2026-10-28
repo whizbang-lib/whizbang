@@ -56,7 +56,10 @@ public sealed class RoleAssignmentHealthSource : IWhizbangHealthSource {
 
   /// <inheritdoc />
   public async ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
-    _ = _stages;
+    if (_stages?.HasReached(StartupStage.Elect) == false) {
+      return new ComponentHealth(ComponentState.Degraded,
+        "role assignments are read from the Elect stage on; this instance is in an earlier one");
+    }
     System.Collections.Generic.IReadOnlyList<RoleAssignmentSnapshot> snapshots;
     try {
       snapshots = await _reader.ReadAssignmentsAsync(cancellationToken).ConfigureAwait(false);

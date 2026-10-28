@@ -18,18 +18,25 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <param name="options">The connection retry settings the wait uses.</param>
 /// <param name="createInitializer">Builds the initializer for one attempt.</param>
 /// <param name="logger">Where the wait reports its retries.</param>
+/// <param name="services">Where the stage reporter is registered; null reports no stage.</param>
 /// <docs>data/turnkey-initialization</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperSchemaStartupTests.cs</tests>
 internal sealed class DapperSchemaInitializationRunner(
     string connectionString,
     PostgresOptions options,
     Func<PostgresSchemaInitializer> createInitializer,
-    ILogger<DapperSchemaInitializationRunner> logger) : ISchemaInitializationRunner {
+    ILogger<DapperSchemaInitializationRunner> logger,
+    IServiceProvider? services = null) : ISchemaInitializationRunner {
 
   /// <inheritdoc />
   public async Task RunAsync(CancellationToken cancellationToken) {
     var retry = new PostgresConnectionRetry(options, logger);
     await retry.WaitForConnectionAsync(connectionString, cancellationToken).ConfigureAwait(false);
+    // #1636: this driver holds no election, so Preflight ends here, once the database answers, and Elect is reported
+    // skipped; what waits for the end of Preflight (the notification connection and its alive-lock) starts now.
+    await SchemaInitializationStages.ElectedAsync(
+      services, new SchemaStaging(SchemaStage.Unstaged, null, "the Dapper driver holds no election"), cancellationToken)
+      .ConfigureAwait(false);
     await createInitializer().InitializeSchemaAsync(cancellationToken).ConfigureAwait(false);
     await retry.WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
   }

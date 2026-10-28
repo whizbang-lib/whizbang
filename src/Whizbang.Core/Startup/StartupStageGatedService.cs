@@ -11,6 +11,18 @@ namespace Whizbang.Core.Startup;
 /// Starts a hosted service only once this instance reaches the startup stage the service needs (#1636), so nothing
 /// it does touches the database before that stage.
 /// </summary>
+/// <remarks>
+/// <para>
+/// The host starts the wrapper with every other hosted service; the wrapper waits on the <see cref="IStartupStageGate"/>
+/// in the background and then starts the service. Stopped before the stage is reached, the service is never started
+/// and so never stopped. A service whose own loop is a <see cref="BackgroundService"/> has that loop watched: a fault
+/// in it is the wrapper's fault, which the host handles exactly as it would have handled the service's.
+/// </para>
+/// <para>
+/// With no gate registered (a host composed without the worker pipeline, which therefore records no stages) the
+/// service starts with the host, as it did before it was wrapped.
+/// </para>
+/// </remarks>
 /// <typeparam name="TService">The hosted service it starts.</typeparam>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 /// <tests>tests/Whizbang.Core.Component.Tests/Startup/StartupStageGatedServiceTests.cs</tests>
@@ -40,11 +52,14 @@ public sealed class StartupStageGatedService<TService> : BackgroundService where
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _ = _gate;
+    if (_gate is not null) {
+      await _gate.WaitForAsync(Stage, stoppingToken).ConfigureAwait(false);
+    }
     await Inner.StartAsync(stoppingToken).ConfigureAwait(false);
     _started.TrySetResult();
-    if (Inner is BackgroundService { ExecuteTask: { } running }) {
-      await running.WaitAsync(stoppingToken).ConfigureAwait(false);
+    if (Inner is BackgroundService background) {
+      // Set by StartAsync, which has returned.
+      await background.ExecuteTask!.WaitAsync(stoppingToken).ConfigureAwait(false);
     }
   }
 

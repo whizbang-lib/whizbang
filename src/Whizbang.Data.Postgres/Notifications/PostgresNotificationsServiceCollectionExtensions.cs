@@ -14,6 +14,7 @@ using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Notifications.AppSignals;
 using Whizbang.Core.Signals;
+using Whizbang.Core.Startup;
 
 using Whizbang.Data.Postgres.MultiStream;
 
@@ -102,7 +103,10 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     services.TryAddSingleton<PgSharedNotifyConnection>();
     services.AddSingleton<INotifySignalingGate>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     services.AddSingleton<ISharedNotifyConnection>(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
-    services.AddHostedService(sp => sp.GetRequiredService<PgSharedNotifyConnection>());
+    // #1636: the connection, its LISTENs and the instance's alive-lock come up as Preflight ends, not as the host
+    // starts: nothing of this instance touches the database during Preflight, and the alive-lock is what the election
+    // that follows reads.
+    services.AddHostedServiceAtStage(StartupStage.Elect, sp => sp.GetRequiredService<PgSharedNotifyConnection>());
     // #1286: the shared connection takes the instance's alive-lock, so it is the source the heartbeat's cadence and
     // the claim read. It reports the lock held only on a connection of its own; behind the pooled fallback it reports
     // none, and a pooled deployment keeps the fast cadence. Displaces the core's null default in either order; a
@@ -152,15 +156,41 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // latency-relaxed correctness checks; when NOTIFY is unavailable they carry the wake load.
     // TimeProvider is resolved from DI so tests can inject a FakeTimeProvider.
     services.TryAddSingleton<TimeProvider>(_ => TimeProvider.System);
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<
-      Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>());
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<
-      Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>());
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<
-      Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>());
+    // #1636: each reads the schema-ready gate and sends nothing while it is closed, because the tables it reads may
+    // not exist yet. Constructed by a factory naming the constructor, so the gate is handed to it.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Signals.ISignalSource, PgOutboxWorkAvailablePollSource>(sp =>
+      new PgOutboxWorkAvailablePollSource(
+        sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
+        sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+        sp.GetRequiredService<ILogger<PgOutboxWorkAvailablePollSource>>(),
+        sp.GetService<INotificationConnectionStringFallback>(), sp.GetService<INotifySignalingGate>()) {
+        SchemaReadyGate = sp.GetService<Whizbang.Core.Workers.ISchemaReadyGate>(),
+      }));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Signals.ISignalSource, PgInboxWorkAvailablePollSource>(sp =>
+      new PgInboxWorkAvailablePollSource(
+        sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
+        sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+        sp.GetRequiredService<ILogger<PgInboxWorkAvailablePollSource>>(),
+        sp.GetService<INotificationConnectionStringFallback>(), sp.GetService<INotifySignalingGate>()) {
+        SchemaReadyGate = sp.GetService<Whizbang.Core.Workers.ISchemaReadyGate>(),
+      }));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Signals.ISignalSource, PgPerspectiveWorkAvailablePollSource>(sp =>
+      new PgPerspectiveWorkAvailablePollSource(
+        sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
+        sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+        sp.GetRequiredService<ILogger<PgPerspectiveWorkAvailablePollSource>>(),
+        sp.GetService<INotificationConnectionStringFallback>(), sp.GetService<INotifySignalingGate>()) {
+        SchemaReadyGate = sp.GetService<Whizbang.Core.Workers.ISchemaReadyGate>(),
+      }));
     // Temporal engine (F2): backstop pull source for due schedules.
-    services.TryAddEnumerable(ServiceDescriptor.Singleton<
-      Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Signals.ISignalSource, PgScheduleDuePollSource>(sp =>
+      new PgScheduleDuePollSource(
+        sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<IOptions<WhizbangNotificationOptions>>(),
+        sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+        sp.GetRequiredService<ILogger<PgScheduleDuePollSource>>(),
+        sp.GetService<INotificationConnectionStringFallback>(), sp.GetService<INotifySignalingGate>()) {
+        SchemaReadyGate = sp.GetService<Whizbang.Core.Workers.ISchemaReadyGate>(),
+      }));
     // Temporal engine (F2): the authoritative claimer (wh_claim_due_schedules) + the firing worker.
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.

@@ -101,6 +101,9 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
 
   /// <inheritdoc />
   protected sealed override async ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
+    if (SchemaReadyGate is { IsReady: false }) {
+      return false;   // #1636: the tables this reads may not exist yet, and nothing claims work before the gate opens
+    }
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     // Prefer the registered notification data source - the only path that
     // works under UseNpgsql(NpgsqlDataSource), where the resolver's fallback
