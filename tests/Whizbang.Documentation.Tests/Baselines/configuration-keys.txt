@@ -477,6 +477,7 @@ Whizbang:Workers:InboxBatch:MaxSize
 Whizbang:Workers:InboxBatch:MaxWait
 Whizbang:Workers:InboxBatch:SlidingWindow
 Whizbang:Workers:InboxDeserializeCache:Enabled
+Whizbang:Workers:InboxDeserializeCache:MaxBytes
 Whizbang:Workers:InboxDeserializeCache:MaxEntries
 Whizbang:Workers:InboxDeserializeCache:TtlMinutes
 Whizbang:Workers:InboxDispatch:Enabled

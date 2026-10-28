@@ -39,6 +39,9 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDeserializeCacheTests.cs</tests>
 public sealed class InboxDeserializeCache {
   private const int DEFAULT_MAX_ENTRIES = 10_000;
+
+  /// <summary>Default byte budget (#1793): 64 MiB of payload, measured as the payload's UTF-8 JSON.</summary>
+  public const long DEFAULT_MAX_BYTES = 64L * 1024 * 1024;
   private static readonly TimeSpan _defaultTtl = TimeSpan.FromMinutes(2);
 
   private readonly ConcurrentDictionary<Guid, Entry> _entries = new();
@@ -53,10 +56,13 @@ public sealed class InboxDeserializeCache {
   /// <param name="timeProvider">Time source — inject a fake in tests for deterministic TTL.</param>
   /// <param name="ttl">Time-to-live for an entry. Default 2 minutes.</param>
   /// <param name="maxEntries">Hard cap on resident entries. Default 10k. When exceeded, the oldest ~10% evict on next insert.</param>
+  /// <param name="maxBytes">Byte budget across resident entries (#1793). Default <see cref="DEFAULT_MAX_BYTES"/>.</param>
   public InboxDeserializeCache(
     ITimeProvider timeProvider,
     TimeSpan? ttl = null,
-    int maxEntries = DEFAULT_MAX_ENTRIES) {
+    int maxEntries = DEFAULT_MAX_ENTRIES,
+    long maxBytes = DEFAULT_MAX_BYTES) {
+    _ = maxBytes;
     ArgumentNullException.ThrowIfNull(timeProvider);
     if (maxEntries < 1) {
       throw new ArgumentOutOfRangeException(nameof(maxEntries), "maxEntries must be at least 1.");
@@ -102,6 +108,21 @@ public sealed class InboxDeserializeCache {
     _entries[messageId] = new Entry(message, expiresAt);
     _enforceCapIfNeeded();
   }
+
+  /// <summary>
+  /// Stores <paramref name="message"/> with the size of the payload it was parsed from (#1793). Scaffold: the size is
+  /// not used yet.
+  /// </summary>
+  public void Set(Guid messageId, object message, long sizeBytes) {
+    _ = sizeBytes;
+    Set(messageId, message);
+  }
+
+  /// <summary>Drops the entry for a row that completed (#1793). Scaffold: does nothing yet.</summary>
+  public void Remove(Guid messageId) => _ = _entries.ContainsKey(messageId);
+
+  /// <summary>Payload bytes the resident entries were parsed from (#1793). Scaffold: always zero.</summary>
+  public long Bytes { get; }
 
   /// <summary>
   /// Drops every entry whose expiry is at or before now. Called periodically by a background
