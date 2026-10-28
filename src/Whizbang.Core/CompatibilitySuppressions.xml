@@ -8,4 +8,18 @@
     <Right>lib/net10.0/Whizbang.Core.dll</Right>
     <IsBaselineSuppression>true</IsBaselineSuppression>
   </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.InboxDeserializeCache.#ctor(Whizbang.Core.ITimeProvider,System.Nullable{System.TimeSpan},System.Int32)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:Whizbang.Core.Workers.InboxHandlerWorker.#ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Whizbang.Core.Workers.IFailureChannel,Whizbang.Core.Workers.ISchemaReadyGate,Microsoft.Extensions.Options.IOptions{Whizbang.Core.Workers.InboxHandlerWorkerOptions},Microsoft.Extensions.Logging.ILogger{Whizbang.Core.Workers.InboxHandlerWorker},Whizbang.Core.Workers.IPinnedConnectionPool,Whizbang.Core.Observability.WorkCoordinatorMetrics)</Target>
+    <Left>lib/net10.0/Whizbang.Core.dll</Left>
+    <Right>lib/net10.0/Whizbang.Core.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
 </Suppressions>

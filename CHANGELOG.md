@@ -719,6 +719,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Inbox commit failures are logged at Warning, and a dropped control-plane row keeps its last error (Fixes #1789).**
+  A per-row failure returned by `commit_handler_batch` was counted only in a Debug line. It is now logged at Warning
+  with the message id, type and error before it is routed to the failure channel; one flush logs the first five and
+  summarizes the rest, and a failure result naming no request is logged too. The control-plane drop line now carries
+  the row's last recorded error and names its cause: a lease that lapsed without a reported outcome, a recorded
+  failure, or none recorded. `HandlerCommitRequest` gains an init-only `MessageType` for the log line.
+- **Inbox rows this instance holds keep their leases and are queued once (Fixes #1788).** Nothing renewed inbox
+  leases, so a row queued in memory past its lease lost it without being dispatched, was re-claimed with another
+  attempt charged, and was queued again while its first copy waited (the drain re-queued every leased row each time
+  the claim re-offered its stream). The inbox channel writer now tracks each held row as queued, dispatching or
+  waiting for its commit. The dispatch worker's lease keeper renews held rows once half their lease is spent (up to
+  `LeaseHandleOptions.MaxRenewalsPerWork` per state, extending a running row's dispatch deadline with it); a row whose
+  renewals run out is logged with its type and state, and one never dispatched is handed back with its attempt
+  refunded. Only the first copy of a row dispatches, the drain skips rows already held, a row stays held until its
+  commit lands, and rows retired at the attempt bound no longer count as drain throughput. The lease renewal
+  killswitch (`Whizbang:Workers:LeaseRenewal:Enabled`) turns the keeper off. No migration.
+- **Inbox memory is bounded by payload bytes, not row counts (Fixes #1793).** The deserialize cache is bounded by
+  `Whizbang:Workers:InboxDeserializeCache:MaxBytes` (default 64 MiB, measured as each payload's UTF-8 JSON) as well as
+  its entry count, does not cache a payload larger than the budget, and drops a row's entry when the row completes.
+  The rows held in memory for dispatch are bounded by `Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes` (default
+  128 MiB; zero disables): a fetched row that would exceed it is not queued, and it and the rest of its stream in that
+  fetch are handed back with their attempts refunded, to be offered again once the working set drains. With nothing
+  held one row is always admitted, however large.
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and

@@ -448,10 +448,10 @@ public class InboxDispatchWorkerLifecycleGatingTests {
   }
 
   [Test]
-  public async Task Slice15_CacheHit_OnRedeliveryWithinTtl_SkipsDeserializeAsync() {
-    // Lock the slice 15 cache invariant: when the same messageId is re-dispatched (transport
-    // redelivery, lease re-claim, retry) within the cache's TTL window, the deserializer is
-    // NOT called again. Pre-slice-15 every redelivery re-parsed the JSON.
+  public async Task Slice15_CacheHit_WithinTtl_SkipsDeserialize_AndCompletionDropsTheEntryAsync() {
+    // Lock the slice 15 cache invariant: a row re-dispatched (lease re-claim, retry after a failure) while its parsed
+    // payload is still cached is NOT deserialized again. Since #1793 the entry is dropped when the row completes, so a
+    // completed row never holds cache memory for its TTL; the entry here stands for one left by an earlier attempt.
     var registry = new FakeReceptorRegistry(hasReceptors: (_, _) => true);
     var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 5, 7, 12, 0, 0, TimeSpan.Zero));
     var cache = new InboxDeserializeCache(new SystemTimeProvider(fake), ttl: TimeSpan.FromMinutes(2));
@@ -460,23 +460,15 @@ public class InboxDispatchWorkerLifecycleGatingTests {
     using var cts = new CancellationTokenSource();
     await harness.Worker.StartAsync(cts.Token);
 
-    // First dispatch — populates the cache.
     var work = _makeWork("Slice15.Cache.Event, Test");
+    cache.Set(work.MessageId, new object(), 10);
     await harness.Inbox.WriteAsync(work, cts.Token);
     await harness.HandlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    var firstCount = harness.Deserializer.CallCount;
-
-    // Redeliver the SAME messageId (transport double-fire scenario). New work record but
-    // shares the message id so the cache key collides.
-    var redelivery = work with { Attempts = 1 };
-    await harness.Inbox.WriteAsync(redelivery, cts.Token);
-    await harness.HandlerCommit.Second.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-    await Assert.That(harness.HandlerCommit.All.Count).IsEqualTo(2)
-      .Because("Both dispatches should reach completion.");
-    await Assert.That(harness.Deserializer.CallCount).IsEqualTo(firstCount)
-      .Because("Cache hit on redelivery within TTL must skip the deserialize call entirely.");
+    await Assert.That(harness.Deserializer.CallCount).IsEqualTo(0)
+      .Because("Cache hit within TTL must skip the deserialize call entirely.");
+    await Assert.That(cache.TryGet(work.MessageId, out _)).IsFalse()
+      .Because("the row completed, so its parsed payload is never needed again (#1793)");
     await cts.CancelAsync();
   }
 

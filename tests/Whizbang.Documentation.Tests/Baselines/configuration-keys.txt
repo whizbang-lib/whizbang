@@ -477,6 +477,7 @@ Whizbang:Workers:InboxBatch:MaxSize
 Whizbang:Workers:InboxBatch:MaxWait
 Whizbang:Workers:InboxBatch:SlidingWindow
 Whizbang:Workers:InboxDeserializeCache:Enabled
+Whizbang:Workers:InboxDeserializeCache:MaxBytes
 Whizbang:Workers:InboxDeserializeCache:MaxEntries
 Whizbang:Workers:InboxDeserializeCache:TtlMinutes
 Whizbang:Workers:InboxDispatch:Enabled
@@ -493,6 +494,7 @@ Whizbang:Workers:InboxDrain:Batcher:SlidingWindow
 Whizbang:Workers:InboxDrain:DepthHeadroomFactor
 Whizbang:Workers:InboxDrain:Enabled
 Whizbang:Workers:InboxDrain:MaxBytesPerStream
+Whizbang:Workers:InboxDrain:MaxHeldPayloadBytes
 Whizbang:Workers:InboxDrain:MaxPerStream
 Whizbang:Workers:InboxDrain:MaxPerStreamCeiling
 Whizbang:Workers:InboxDrain:MaxRowsPerCycle

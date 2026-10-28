@@ -69,6 +69,10 @@ public class InboxDrainWorkerGapTests {
         throw injected;
       }
       Written.Enqueue(work);
+      Interlocked.Add(ref HeldBytes, System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(work.Envelope.Payload).Length);
+      if (HoldWrites) {
+        Held?.TryAdd(work.MessageId, 0);
+      }
       if (Written.Count >= TargetCount) {
         ReachedTarget.TrySetResult(Written.Count);
       }
@@ -81,7 +85,13 @@ public class InboxDrainWorkerGapTests {
       }
       return _channel.Writer.TryWrite(work);
     }
-    public bool IsInFlight(Guid messageId) => false;
+    /// <summary>When set, the rows this writer reports as held (#1788); a written row is added when <see cref="HoldWrites"/> is on.</summary>
+    public ConcurrentDictionary<Guid, byte>? Held { get; set; }
+    public bool HoldWrites { get; set; }
+    /// <summary>Payload bytes this writer reports as held (#1793): a starting amount plus each written payload.</summary>
+    public long HeldBytes;
+    public long HeldPayloadBytes => Interlocked.Read(ref HeldBytes);
+    public bool IsInFlight(Guid messageId) => Held?.ContainsKey(messageId) ?? false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _channel.Writer.Complete();
@@ -116,6 +126,16 @@ public class InboxDrainWorkerGapTests {
     public Exception? ThrowOnFetch { get; set; }
     public Action? OnFetch { get; set; }
     public ConcurrentQueue<Guid[]> FetchCalls { get; } = new();
+    public ConcurrentQueue<(Guid InstanceId, Guid[] Ids)> Releases { get; } = new();
+    public Exception? ThrowOnRelease { get; set; }
+
+    public Task<int> ReleaseUnprocessedInboxAsync(Guid instanceId, IReadOnlyList<Guid> messageIds, CancellationToken cancellationToken = default) {
+      if (ThrowOnRelease is not null) {
+        return Task.FromException<int>(ThrowOnRelease);
+      }
+      Releases.Enqueue((instanceId, [.. messageIds]));
+      return Task.FromResult(messageIds.Count);
+    }
 
     public Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
       IReadOnlyList<Guid> streamIds, Guid instanceId, int maxPerStream = 100, CancellationToken cancellationToken = default) {
@@ -639,6 +659,182 @@ public class InboxDrainWorkerGapTests {
       .Because("one batched fetch + two inner-loop fetches (second finds nothing new)");
     await Assert.That(writer.SignalCount).IsEqualTo(1)
       .Because("the newRows==0 exit signals exactly once when work was enqueued");
+  }
+
+  /// <summary>
+  /// #1788: a row this process already holds (queued, dispatching or committing) is not queued again when the claim
+  /// re-offers its stream. claim_work re-emits every stream whose rows this instance holds on every poll, and the fetch
+  /// returns every leased unprocessed row, so without this a row waiting in a dispatch queue was copied into it again
+  /// on each poll.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_ARowAlreadyHeld_IsNotQueuedAgainAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var held = (Guid)TrackedGuid.New();
+    var fresh = (Guid)TrackedGuid.New();
+
+    var coord = new ScriptedCoordinator();
+    coord.RowsByStream[streamId] = [_row(held, streamId), _row(fresh, streamId)];
+
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 1, Held = new() { [held] = 0 } };
+
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 });
+
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await idleTcs.Task.WaitAsync(_timeout);
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo([fresh])
+      .Because("a row is never queued twice in one process while its first copy is pending");
+  }
+
+  /// <summary>
+  /// #1788, the inner loop: the same cap-filling rows returned again are already held after the batch path queued them,
+  /// so the inner loop queues none of them a second time.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_RepeatedRowsAtCap_HeldRowsAreNotQueuedTwiceAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var msg1 = (Guid)TrackedGuid.New();
+    var msg2 = (Guid)TrackedGuid.New();
+
+    var coord = new ScriptedCoordinator { ConsumeRows = false };
+    coord.RowsByStream[streamId] = [_row(msg1, streamId), _row(msg2, streamId)];
+
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 2, Held = new(), HoldWrites = true };
+
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 2 });
+
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await idleTcs.Task.WaitAsync(_timeout);
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(writer.Written.Count).IsEqualTo(2)
+      .Because("the inner loop re-fetches the rows the batch path just queued; queuing them again duplicated them in memory");
+  }
+
+  // ==========================================================================
+  // #1793: the in-memory working set has a byte budget
+  // ==========================================================================
+
+  private static async Task<(TestInboxWriter Writer, ScriptedCoordinator Coordinator, RecordingLogger Log)> _drainOnceAsync(
+      Dictionary<Guid, List<InboxBatchRow>> rows, long budget, long alreadyHeld, int maxPerStream = 100,
+      bool consume = true, Exception? releaseFailure = null) {
+    var coord = new ScriptedCoordinator { ConsumeRows = consume, ThrowOnRelease = releaseFailure };
+    foreach (var kv in rows) {
+      coord.RowsByStream[kv.Key] = kv.Value;
+    }
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { HeldBytes = alreadyHeld };
+    var log = new RecordingLogger(LogLevel.Information);
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = maxPerStream, AdaptivePerStreamEnabled = false, MaxHeldPayloadBytes = budget },
+      logger: log);
+
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var sid in rows.Keys) {
+      await drain.WriteAsync(sid);
+    }
+    await idleTcs.Task.WaitAsync(_timeout);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+    return (writer, coord, log);
+  }
+
+  [Test]
+  public async Task WorkingSetFull_TheStreamIsNotQueued_AndIsHandedBackUnchargedAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var ids = Enumerable.Range(0, 3).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var (writer, coord, log) = await _drainOnceAsync(
+      new() { [streamId] = [.. ids.Select(id => _row(id, streamId))] }, budget: 100, alreadyHeld: 100);
+
+    await Assert.That(writer.Written).IsEmpty()
+      .Because("row counts never saw message size, so a storm of large rows filled the pod waiting for a dispatch consumer");
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids)
+      .Because("a row left leased and unqueued would lapse and be charged an attempt it never used");
+    await Assert.That(log.Entries.Select(e => e.Message).Any(m => m.Contains("working set", StringComparison.OrdinalIgnoreCase))).IsTrue();
+  }
+
+  [Test]
+  public async Task NothingHeld_OneRowIsAdmittedHoweverLarge_ThenTheRestOfItsStreamWaitsAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var first = (Guid)TrackedGuid.New();
+    var second = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row(first, streamId), _row(second, streamId)] }, budget: 1, alreadyHeld: 0);
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo([first])
+      .Because("an oversized message must still be delivered rather than stall its stream for ever");
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo([second]);
+  }
+
+  [Test]
+  public async Task BudgetDisabled_EverythingIsQueuedAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId), _row((Guid)TrackedGuid.New(), streamId)] },
+      budget: 0, alreadyHeld: long.MaxValue / 2);
+
+    await Assert.That(writer.Written.Count).IsEqualTo(2);
+    await Assert.That(coord.Releases).IsEmpty();
+  }
+
+  [Test]
+  public async Task WorkingSetFull_InTheInnerLoop_TheRestOfTheStreamIsHandedBackAsync() {
+    // Two-row pages: the batched fetch queues rows 1 and 2, the inner loop fetches 3 and 4, and the budget fits two.
+    var streamId = (Guid)TrackedGuid.New();
+    var ids = Enumerable.Range(0, 4).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [.. ids.Select(id => _row(id, streamId))] }, budget: 4, alreadyHeld: 0, maxPerStream: 2);
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo(ids[..2]);
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids[2..])
+      .Because("once a row of the stream does not fit, the rows after it wait too, so the stream's order holds");
+  }
+
+  [Test]
+  public async Task WorkingSetFull_OnAFullPage_TheStreamIsNotFetchedFurtherAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var ids = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.New()).ToArray();
+    var (writer, coord, _) = await _drainOnceAsync(
+      new() { [streamId] = [.. ids.Select(id => _row(id, streamId)), _row((Guid)TrackedGuid.New(), streamId)] },
+      budget: 10, alreadyHeld: 10, maxPerStream: 2);
+
+    await Assert.That(writer.Written).IsEmpty();
+    await Assert.That(coord.FetchCalls.Count).IsEqualTo(1)
+      .Because("a stream the working set cannot take any of is not paged further this cycle");
+    await Assert.That(coord.Releases.Single().Ids).IsEquivalentTo(ids);
+  }
+
+  [Test]
+  public async Task HandingBackFails_IsLoggedWithWhatItCostsAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var (_, _, log) = await _drainOnceAsync(
+      new() { [streamId] = [_row((Guid)TrackedGuid.New(), streamId)] }, budget: 1, alreadyHeld: 1,
+      releaseFailure: new InvalidOperationException("connection reset"));
+
+    await Assert.That(log.Entries.Select(e => e.Message).Any(m => m.Contains("could not hand back", StringComparison.Ordinal))).IsTrue();
   }
 
   /// <summary>

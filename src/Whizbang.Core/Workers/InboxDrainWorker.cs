@@ -342,6 +342,8 @@ public sealed partial class InboxDrainWorker(
       // deep streams travel together at a wide page, shallow ones at the floor. Bounded to
       // ceiling/floor calls however many streams are active.
       var plan = _planFetches(streamIds);
+      // #1793: rows the working-set budget turned away this cycle, handed back once the streams are done.
+      var deferred = new List<Guid>();
       var capByStream = new Dictionary<Guid, int>(streamIds.Count);
       var collected = new List<InboxBatchRow>();
       foreach (var group in plan) {
@@ -393,8 +395,9 @@ public sealed partial class InboxDrainWorker(
           // were consumed at the SQL level, so they won't reappear in the inner-loop fetch.
           var seen = new HashSet<Guid>();
           var hadAnyNew = false;
+          var full = false;
           foreach (var row in rows) {
-            if (!seen.Add(row.MessageId)) {
+            if (!seen.Add(row.MessageId) || _inboxChannelWriter.IsInFlight(row.MessageId)) {
               continue;
             }
             InboxWork work;
@@ -410,6 +413,13 @@ public sealed partial class InboxDrainWorker(
             if (!_admitRow(row, rowsRaw)) {
               continue;
             }
+            // #1793: once one row of a stream does not fit the working set, the rest of the stream waits too, so
+            // the stream's order holds.
+            if (full || !_fitsWorkingSet(work)) {
+              full = true;
+              deferred.Add(row.MessageId);
+              continue;
+            }
             await _inboxChannelWriter.WriteAsync(work, ct);
             hadAnyNew = true;
           }
@@ -419,8 +429,8 @@ public sealed partial class InboxDrainWorker(
           // afresh from where we left off (the batched fetch consumed up to MaxPerStream
           // rows from this stream); its seen-set is independent but redundant fetches
           // can only happen on real races, dedupped downstream by wh_message_deduplication.
-          if (rows.Count >= capByStream.GetValueOrDefault(sid, _options.MaxPerStream)) {
-            await _drainStreamInnerAsync(sid, ct);
+          if (!full && rows.Count >= capByStream.GetValueOrDefault(sid, _options.MaxPerStream)) {
+            await _drainStreamInnerAsync(sid, deferred, ct);
           } else if (hadAnyNew) {
             _inboxChannelWriter.SignalNewInboxWorkAvailable();
           }
@@ -429,6 +439,9 @@ public sealed partial class InboxDrainWorker(
         } catch (Exception ex) {
           LogDrainError(_logger, sid, ex);
         }
+      }
+      if (deferred.Count > 0) {
+        await _handBackAsync(coordinator, deferred, ct);
       }
     } finally {
       // Always release the draining marker, even if the batched fetch threw before
@@ -441,7 +454,7 @@ public sealed partial class InboxDrainWorker(
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Code Smell", "S3776:Cognitive Complexity of methods should not be too high", Justification = "Per-stream drain loop coordinates fetch + sort + serialize + dispatch + completion enqueue; the loop's invariants depend on the branches staying inline (skip-empty short-circuit, FIFO ordering guarantee, scope lifetime).")]
-  private async Task _drainStreamInnerAsync(Guid streamId, CancellationToken ct) {
+  private async Task _drainStreamInnerAsync(Guid streamId, List<Guid> deferred, CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -477,8 +490,12 @@ public sealed partial class InboxDrainWorker(
       var rows = rowsRaw.OrderByMessageId().ToList();
 
       var newRows = 0;
+      var full = false;
       foreach (var row in rows) {
-        if (!seen.Add(row.MessageId)) {
+        // A row this process already holds is not new (#1788): claim_work re-offers every stream whose rows this
+        // instance holds on every poll, and the fetch returns every leased unprocessed row, so without this check a
+        // row waiting in a dispatch queue is copied into it again.
+        if (!seen.Add(row.MessageId) || _inboxChannelWriter.IsInFlight(row.MessageId)) {
           continue;
         }
         newRows++;
@@ -495,6 +512,11 @@ public sealed partial class InboxDrainWorker(
         if (!_admitRow(row, rowsRaw)) {
           continue;
         }
+        if (full || !_fitsWorkingSet(work)) {
+          full = true;
+          deferred.Add(row.MessageId);
+          continue;
+        }
         var writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await _inboxChannelWriter.WriteAsync(work, ct);
         totalWriteMs += (System.Diagnostics.Stopwatch.GetTimestamp() - writeStart)
@@ -503,7 +525,7 @@ public sealed partial class InboxDrainWorker(
         hadAnyNew = true;
       }
 
-      if (newRows == 0) {
+      if (newRows == 0 || full) {
         if (hadAnyNew) {
           _inboxChannelWriter.SignalNewInboxWorkAvailable();
         }
@@ -524,6 +546,42 @@ public sealed partial class InboxDrainWorker(
     }
     _logPerfIfInteresting(streamId, enqueued, fetchCount, totalDeserMs, totalWriteMs, drainStartTicks);
   }
+
+  /// <summary>
+  /// Whether queuing this row keeps the rows this process holds within the working-set byte budget (#1793). Always
+  /// true when the budget is off, and when nothing is held, so one row, however large, always gets through.
+  /// </summary>
+  private bool _fitsWorkingSet(InboxWork work) {
+    var budget = _options.MaxHeldPayloadBytes;
+    if (budget <= 0) {
+      return true;
+    }
+    var held = _inboxChannelWriter.HeldPayloadBytes;
+    return held == 0 || held + InboxPayload.Bytes(work.Envelope.Payload) <= budget;
+  }
+
+  /// <summary>
+  /// Hands back the rows the working-set budget turned away (#1793), refunding the attempt their claim took. They stay
+  /// on streams this instance owns, so the next claim offers them again here once the working set has drained.
+  /// </summary>
+  private async Task _handBackAsync(IWorkCoordinator coordinator, List<Guid> deferred, CancellationToken ct) {
+    LogWorkingSetFull(_logger, deferred.Count, _inboxChannelWriter.HeldPayloadBytes, _options.MaxHeldPayloadBytes);
+    try {
+      await coordinator.ReleaseUnprocessedInboxAsync(_instanceProvider.InstanceId, deferred, ct);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogHandBackFailed(_logger, deferred.Count, ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Information,
+    Message = "Inbox working set holds {HeldBytes} of its {BudgetBytes} payload byte budget; {Count} fetched row(s) were not "
+            + "queued and are handed back uncharged, to be offered again once it drains")]
+  static partial void LogWorkingSetFull(ILogger logger, int count, long heldBytes, long budgetBytes);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+    Message = "InboxDrainWorker could not hand back {Count} row(s) the working-set budget turned away; they stay leased until "
+            + "their leases lapse, and the next claim charges each an attempt it did not use")]
+  static partial void LogHandBackFailed(ILogger logger, int count, Exception ex);
 
   /// <summary>
   /// Whether a stream's drain is worth a debug perf line: five or more rows enqueued, or more than
@@ -821,6 +879,27 @@ public sealed class InboxDrainWorkerOptions {
   /// </para>
   /// </remarks>
   public long? MaxBytesPerStream { get; set; } = 4L * 1024 * 1024;
+
+  /// <summary>
+  /// Byte budget for the inbox rows this process holds in memory: queued for dispatch, dispatching, or waiting for
+  /// their commit, measured as each payload's UTF-8 JSON. Default 128 MiB; zero or negative disables it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The dispatch queues are bounded only by what the drain writes into them, and the claim and fetch bounds count
+  /// rows. One storm of large rows (re-delivery bundles carry up to 192 KB each) could therefore fill a pod with
+  /// payloads waiting for a dispatch consumer (#1793).
+  /// </para>
+  /// <para>
+  /// A row that would take the held total past the budget is not queued. It and the rest of its stream in that fetch
+  /// are handed back with the attempt their claim took refunded, and offered again once the working set has drained;
+  /// the stream stays owned by this instance, so its order holds. When nothing is held, one row is always admitted,
+  /// however large, so an oversized message cannot stall its stream.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/per-stream-drain#working-set-budget</docs>
+  /// <tests>tests/Whizbang.Core.Component.Tests/Workers/InboxDrainWorkerGapTests.cs</tests>
+  public long MaxHeldPayloadBytes { get; set; } = 128L * 1024 * 1024;
 
   /// <summary>
   /// Sliding-window batching policy for stream_id signals from <see cref="IInboxDrainChannel"/>.
