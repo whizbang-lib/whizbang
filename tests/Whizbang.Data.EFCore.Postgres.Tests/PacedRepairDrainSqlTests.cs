@@ -35,6 +35,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard1")]
 public class PacedRepairDrainSqlTests : EFCoreTestBase {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
@@ -189,7 +192,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var deficit = _key(origin, Guid.NewGuid());
     var mismatch = _key(origin, Guid.NewGuid());
     var surplus = _key(origin, Guid.NewGuid());
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, [
       _obs(deficit),
       new IntegrityReportObservation(mismatch, 11, 21, 77, 78, IsDeficit: false),
@@ -213,7 +216,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
     var key = _key(origin, Guid.NewGuid());
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, [_obs(key)], now, TimeSpan.FromMinutes(60));
 
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
@@ -242,7 +245,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     var unknown = _key(origin, Guid.NewGuid());
     var kept = _key(origin, Guid.NewGuid());
     var moved = _key(origin, Guid.NewGuid());
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     var cooldown = TimeSpan.FromMinutes(60);
     _ = await coordinator.IntegrityTryBeginReportAsync(unknown, 11, 21, 0, 0, now, cooldown);
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, [_obs(kept), _obs(moved)], now, cooldown);
@@ -269,7 +272,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
       origin, [_obs(_key(origin, Guid.NewGuid()))], now, TimeSpan.FromMinutes(60));
     await _execAsync("UPDATE wh_integrity_ledger SET is_deficit = NULL");
@@ -287,7 +290,7 @@ public class PacedRepairDrainSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     await _execAsync($"""
       INSERT INTO wh_integrity_ledger (origin_service_id, tenant_scope, event_type, stream_id,
         origin_lo, origin_hi, local_lo, local_hi, last_reported_at, last_touched, first_seen_at, is_deficit)

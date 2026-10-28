@@ -18,6 +18,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.EFCore;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/CoordinatorIntegrityRepairLedger.cs</code-under-test>
 [Category("Shard4")]
 public class CoordinatorRepairLedgerNoCoordinatorTests {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   [Test]
   public async Task Batches_WithoutACoordinator_FallBackToSingleKeySemanticsAsync() {
@@ -26,7 +29,7 @@ public class CoordinatorRepairLedgerNoCoordinatorTests {
     var key = new IntegrityRepairLedger.DivergenceKey(Guid.NewGuid(), "tenant-a", "Contracts.TypeX", Guid.NewGuid());
 
     var reports = await ledger.TryBeginReportBatchAsync(
-      [new IntegrityReportObservation(key, 1, 2, 3, 4, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      [new IntegrityReportObservation(key, 1, 2, 3, 4, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5));
     var repairs = await ledger.TryBeginRepairBatchAsync(
       [key], DateTimeOffset.UtcNow, TimeSpan.FromSeconds(30), maxAttempts: 3, maxGrants: 1);
 

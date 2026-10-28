@@ -39,6 +39,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 [Category("Integration")]
 [Category("Shard1")]
 public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
   private const string ORPHAN_EVENT_TYPE = "Whizbang.Tests.QuietOrphanEvent";
   private static readonly string[] _onePerspective = ["P.One"];
   private static readonly Guid _originId = Guid.Parse("88888888-8888-8888-8888-888888888888");
@@ -63,7 +66,7 @@ public class EFCoreWorkCoordinatorQuietLoggerTests : EFCoreTestBase {
     await _dropFunctionAsync("wh_integrity_try_begin_report_batch");
 
     var results = await _coordinator(dbContext, logger: null).IntegrityTryBeginReportBatchAsync(
-      _originId, [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+      _originId, [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5));
 
     await Assert.That(results).IsNull()
       .Because("null is the fall-back-to-single-keys signal with or without a logger");

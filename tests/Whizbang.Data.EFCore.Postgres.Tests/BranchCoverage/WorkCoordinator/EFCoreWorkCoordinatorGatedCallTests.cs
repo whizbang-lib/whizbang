@@ -48,6 +48,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.BranchCoverage.WorkCoordinator;
 [Category("Integration")]
 [Category("Shard4")]
 public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
   private const string HOLD_INSTRUMENT = "whizbang.gate.hold_duration_ms";
   private const string PERSPECTIVE = "Gate.Perspective";
   private const string EVENT_TYPE = "Gate.Event, Gate.Assembly";
@@ -148,7 +151,7 @@ public class EFCoreWorkCoordinatorGatedCallTests : EFCoreTestBase {
     register("IntegrityTryBeginReport", "_integrityLedgerBoolAsync", (c, _) =>
       c.IntegrityTryBeginReportAsync(_key(), 1, 10, 1, 5, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
     register("IntegrityTryBeginReportBatch", "_integrityLedgerBoolArrayAsync", (c, _) =>
-      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5)));
+      c.IntegrityTryBeginReportBatchAsync(_origin(), [new IntegrityReportObservation(_key(), 1, 10, 1, 5, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(5)));
     register("IntegrityStampRepairWindows", "IntegrityStampRepairWindowsAsync", (c, _) =>
       c.IntegrityStampRepairWindowsAsync(_origin(), [_key()], windowFrom: 1, windowUntil: 10));
     register("IntegrityClaimRepairDrain", "IntegrityClaimRepairDrainAsync", (c, _) =>

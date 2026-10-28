@@ -25,6 +25,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>resilience/stream-integrity</docs>
 [Category("Shard4")]
 public class CoordinatorIntegrityRepairLedgerBatchTests {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private sealed class BatchCoordinator : IWorkCoordinator {
     public IReadOnlyList<bool>? BatchAnswer { get; set; }
@@ -152,7 +155,7 @@ public class CoordinatorIntegrityRepairLedgerBatchTests {
     coordinator.ThrowOnBatch = true;
 
     var flags = await ledger.TryBeginReportBatchAsync(
-      [new(_key(origin), 1, 2, 0, 0, IsDeficit: true)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
+      [new(_key(origin), 1, 2, 0, 0, IsDeficit: true)], _fixedNow, TimeSpan.FromMinutes(60));
 
     await Assert.That(flags.Count).IsEqualTo(1);
     await Assert.That(coordinator.SingleReportCalls).IsEqualTo(1)

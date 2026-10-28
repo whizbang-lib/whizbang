@@ -28,6 +28,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Shard1")]
 public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
+  // A fixed instant, not the host clock: the tests compare instants they pass themselves (review check tests.real-time).
+  private static readonly DateTimeOffset _fixedNow = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
 
   private CapturingLogger _log = null!;
 
@@ -47,7 +50,7 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
     var other = Guid.NewGuid();
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     var tracked = _key(origin, Guid.NewGuid());
     var trackedNoTenant = _key(origin, Guid.NewGuid(), tenant: null);
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, [_obs(tracked), _obs(trackedNoTenant)], now, TimeSpan.FromMinutes(60));
@@ -78,7 +81,7 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
-    var now = DateTimeOffset.UtcNow;
+    var now = _fixedNow;
     var deficit = _key(origin, Guid.NewGuid());
     var surplus = _key(origin, Guid.NewGuid());
     var unknown = _key(origin, Guid.NewGuid());
@@ -107,8 +110,8 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
     var unhealable = _key(origin, Guid.NewGuid());
     var repairable = _key(origin, Guid.NewGuid());
     _ = await coordinator.IntegrityTryBeginReportBatchAsync(
-      origin, [_obs(unhealable), _obs(repairable)], DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
-    _ = await coordinator.IntegrityMarkUnhealableBatchAsync(origin, [unhealable], DateTimeOffset.UtcNow);
+      origin, [_obs(unhealable), _obs(repairable)], _fixedNow, TimeSpan.FromMinutes(60));
+    _ = await coordinator.IntegrityMarkUnhealableBatchAsync(origin, [unhealable], _fixedNow);
 
     var probe = await coordinator.IntegrityProbeRepairBacklogAsync(origin, [unhealable, repairable], backlogCap: 100);
 
@@ -123,7 +126,7 @@ public class IntegrityRepairBacklogProbeSqlTests : EFCoreTestBase {
     var coordinator = _coordinator(ctx);
     var origin = Guid.NewGuid();
     var keys = Enumerable.Range(0, 5).Select(_ => _key(origin, Guid.NewGuid())).ToList();
-    _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, keys.ConvertAll(_obs), DateTimeOffset.UtcNow, TimeSpan.FromMinutes(60));
+    _ = await coordinator.IntegrityTryBeginReportBatchAsync(origin, keys.ConvertAll(_obs), _fixedNow, TimeSpan.FromMinutes(60));
 
     var probe = await coordinator.IntegrityProbeRepairBacklogAsync(origin, [keys[0]], backlogCap: 3);
 
