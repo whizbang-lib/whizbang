@@ -1965,6 +1965,21 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
     Message = "Throttle pause for {TopicName}/{SubscriptionName} ended by transport disposal; the processor stays stopped")]
   private static partial void LogThrottlePauseEndedByDisposal(ILogger logger, Exception ended, string topicName, string subscriptionName);
 
+  // A processor that will not recover on its own is reported as a disconnect, so the consumer replaces the
+  // subscription instead of staying Healthy while nothing arrives (#1838). Not while the application has paused or
+  // disposed the subscription, or disposed this transport: those stops are its own.
+  private void _reportUnrecoverableProcessorFailure(
+    ProcessErrorEventArgs args,
+    TransportDestination destination,
+    AzureServiceBusSubscription subscription
+  ) {
+    if (!_disposed && subscription.IsActive && _unrecoverableProcessorFailure(args) is { } failure) {
+      subscription.RaiseDisconnected(
+        $"Service Bus processor for {destination.Address}/{_subscriptionOf(destination)} stopped receiving and will not recover on its own: {failure}",
+        args.Exception);
+    }
+  }
+
   private async Task _handleProcessorErrorAsync(
     ProcessErrorEventArgs args,
     TransportDestination destination,
@@ -1980,14 +1995,7 @@ public partial class AzureServiceBusTransport : ITransport, ITransportWithRecove
       args.ErrorSource
     );
 
-    // A processor that will not recover on its own is reported as a disconnect, so the consumer replaces the
-    // subscription instead of staying Healthy while nothing arrives (#1838). Not while the application has paused or
-    // disposed the subscription, or disposed this transport: those stops are its own.
-    if (!_disposed && subscription.IsActive && _unrecoverableProcessorFailure(args) is { } failure) {
-      subscription.RaiseDisconnected(
-        $"Service Bus processor for {destination.Address}/{_subscriptionOf(destination)} stopped receiving and will not recover on its own: {failure}",
-        args.Exception);
-    }
+    _reportUnrecoverableProcessorFailure(args, destination, subscription);
 
     if (_isConnectionError(args.Exception, out var connectionError)) {
       _logger.LogWarning(
