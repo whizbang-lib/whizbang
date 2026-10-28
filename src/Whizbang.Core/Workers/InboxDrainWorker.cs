@@ -394,7 +394,7 @@ public sealed partial class InboxDrainWorker(
           var seen = new HashSet<Guid>();
           var hadAnyNew = false;
           foreach (var row in rows) {
-            if (!seen.Add(row.MessageId)) {
+            if (!seen.Add(row.MessageId) || _inboxChannelWriter.IsInFlight(row.MessageId)) {
               continue;
             }
             InboxWork work;
@@ -478,7 +478,10 @@ public sealed partial class InboxDrainWorker(
 
       var newRows = 0;
       foreach (var row in rows) {
-        if (!seen.Add(row.MessageId)) {
+        // A row this process already holds is not new (#1788): claim_work re-offers every stream whose rows this
+        // instance holds on every poll, and the fetch returns every leased unprocessed row, so without this check a
+        // row waiting in a dispatch queue is copied into it again.
+        if (!seen.Add(row.MessageId) || _inboxChannelWriter.IsInFlight(row.MessageId)) {
           continue;
         }
         newRows++;
