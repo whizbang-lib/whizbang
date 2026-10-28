@@ -161,13 +161,50 @@ public sealed class InboxChannelWriterHeldRowsTests {
       .Because("the age-out bounds rows nobody renews; a row whose lease is being kept is still held");
   }
 
-  private static InboxWork _work() {
+  [Test]
+  public async Task HeldPayloadBytes_SumTheHeldPayloads_AndAreReleasedWithTheRowsAsync() {
+    var (_, writer) = _writer();
+    var a = _work("""{"a":1}""");
+    var b = _work("""{"Name":"abc"}""");
+    await writer.WriteAsync(a);
+    await writer.WriteAsync(b);
+    await writer.WriteAsync(a);
+    await Assert.That(writer.HeldPayloadBytes).IsEqualTo(7 + 14)
+      .Because("the working-set budget charges each held row once, by its payload's UTF-8 JSON");
+
+    _ = writer.TryBeginDispatch(a.MessageId);
+    writer.EndDispatch(a.MessageId);
+    await Assert.That(writer.HeldPayloadBytes).IsEqualTo(14);
+    writer.RemoveInFlight(b.MessageId);
+    writer.RemoveInFlight(b.MessageId);
+    await Assert.That(writer.HeldPayloadBytes).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task HeldPayloadBytes_AreReleasedByALapseAndByTheAgeOutAsync() {
+    var (clock, writer) = _writer();
+    var lapsing = _work();
+    await writer.WriteAsync(lapsing);
+    clock.Advance(_renewAfter);
+    _ = writer.SweepLeases(_renewAfter, maxRenewals: 0);
+    await Assert.That(writer.HeldPayloadBytes).IsEqualTo(0);
+
+    var aging = _work();
+    await writer.WriteAsync(aging);
+    clock.Advance(TimeSpan.FromHours(1));
+    var fresh = _work();
+    await writer.WriteAsync(fresh);
+    await Assert.That(writer.HeldPayloadBytes).IsEqualTo(2)
+      .Because("only the row written after the age-out is still held");
+  }
+
+  private static InboxWork _work(string payload = "{}") {
     var id = (Guid)TrackedGuid.New();
     return new InboxWork {
       MessageId = id,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(id),
-        Payload = JsonElement.Parse("{}"),
+        Payload = JsonElement.Parse(payload),
         Hops = [],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
       },
