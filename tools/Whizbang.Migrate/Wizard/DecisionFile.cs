@@ -1,6 +1,7 @@
 // Copyright (c) whizbang-lib contributors.
 // SPDX-License-Identifier: MIT
 
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -109,19 +110,20 @@ public sealed class DecisionFile {
     await File.WriteAllTextAsync(path, content, ct);
   }
 
-  /// <summary>
-  /// Generates JSONC content with helpful comments explaining each setting.
-  /// </summary>
-  // The commented document below is hand-built rather than serialized, so every value it does
-  // not interpolate is silently dropped on the next load. These helpers exist so state and
-  // per-file decisions render as real JSON instead of the placeholder literals that used to sit
-  // there. JsonEncodedText keeps the escaping correct without reflection, which the source-
-  // generated context in this file requires.
+  // The commented document below is hand-built rather than serialized, so a value it does not
+  // write from the model is silently dropped on the next load (#1766). Every value therefore goes
+  // through one of these helpers. JsonEncodedText keeps the escaping correct without reflection,
+  // which the source-generated context in this file requires.
   private static string _jsonText(string? value)
     => value is null ? "null" : $"\"{JsonEncodedText.Encode(value)}\"";
 
   private static string _jsonDate(DateTimeOffset? value)
     => value is null ? "null" : $"\"{value.Value:O}\"";
+
+  private static string _jsonBool(bool value) => value ? "true" : "false";
+
+  private static string _jsonEnum<TEnum>(TEnum value) where TEnum : struct, Enum
+    => _jsonText(value.ToString());
 
   // The usage comment repeats the project path as a command to copy, so it stays unescaped; only
   // a character that would end the comment early (a line break, which STJ also takes U+2028 and
@@ -142,12 +144,28 @@ public sealed class DecisionFile {
       ? "[]"
       : "[" + string.Join(", ", items.Select(_jsonText)) + "]";
 
-  private static string _jsonOverrides(Dictionary<string, DecisionChoice> overrides)
-    => overrides.Count == 0
+  private static string _jsonMap<TEnum>(Dictionary<string, TEnum> map) where TEnum : struct, Enum
+    => map.Count == 0
       ? "{}"
-      : "{ " + string.Join(", ", overrides.Select(kv => $"{_jsonText(kv.Key)}: \"{kv.Value}\"")) + " }";
+      : "{ " + string.Join(", ", map.Select(kv => $"{_jsonText(kv.Key)}: {_jsonEnum(kv.Value)}")) + " }";
 
+  /// <summary>
+  /// Generates JSONC content with helpful comments explaining each setting.
+  /// Every value is written from the model, so loading the result yields the same decisions.
+  /// </summary>
+  /// <tests>tests/Whizbang.Migrate.Component.Tests/Wizard/DecisionFileTests.cs:SaveAsync_WithComments_RoundTripsEveryField_Async</tests>
   public string ToJsonWithComments() {
+    return _headerAndStateSection() + "\n" + string.Join(",\n\n",
+      _conversionSections(),
+      _schemaSection(),
+      _detectionSections(),
+      _routingSection(),
+      _strategySections(),
+      _packagesSection(),
+      _jsonMigrationSection()) + "\n  }\n}\n";
+  }
+
+  private string _headerAndStateSection() {
     return $$"""
 {
   // Whizbang Migration Decision File
@@ -160,20 +178,25 @@ public sealed class DecisionFile {
 
   // Current migration state (managed by the tool)
   "state": {
-    "status": "{{State.Status}}",
+    "status": {{_jsonEnum(State.Status)}},
     "started_at": {{_jsonDate(State.StartedAt)}},
     "last_updated_at": {{_jsonDate(State.LastUpdatedAt)}},
     "completed_at": {{_jsonDate(State.CompletedAt)}},
-    "git_commit_before": "{{State.GitCommitBefore}}",
+    "git_commit_before": {{_jsonText(State.GitCommitBefore)}},
     "completed_categories": {{_jsonList(State.CompletedCategories)}},
-    "current_category": "{{State.CurrentCategory}}",
-    "current_item": {{State.CurrentItem}}
+    "current_category": {{_jsonText(State.CurrentCategory)}},
+    "current_item": {{State.CurrentItem.ToString(CultureInfo.InvariantCulture)}}
   },
 
   // Files excluded from every category.
   "exclude_patterns": {{_jsonList(ExcludePatterns)}},
 
   "decisions": {
+""";
+  }
+
+  private string _conversionSections() {
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // HANDLER MIGRATION: IHandle<T> → IReceptor<T, TResult>
     // ═══════════════════════════════════════════════════════════════════════════
@@ -184,11 +207,11 @@ public sealed class DecisionFile {
     // - IMessageBus → IDispatcher
     "handlers": {
       // Options: "Convert", "Skip", "ConvertWithWarning", "Prompt"
-      "default": "{{Decisions.Handlers.Default}}",
+      "default": {{_jsonEnum(Decisions.Handlers.Default)}},
 
       // Per-file overrides (use full or relative paths)
       // Example: "src/Handlers/MyHandler.cs": "Skip"
-      "overrides": {{_jsonOverrides(Decisions.Handlers.Overrides)}}
+      "overrides": {{_jsonMap(Decisions.Handlers.Overrides)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -202,8 +225,8 @@ public sealed class DecisionFile {
       // Interface to use for multi-stream projections (cross-aggregate views)
       "multi_stream": {{_jsonText(Decisions.Projections.MultiStream)}},
 
-      "default": "{{Decisions.Projections.Default}}",
-      "overrides": {{_jsonOverrides(Decisions.Projections.Overrides)}}
+      "default": {{_jsonEnum(Decisions.Projections.Default)}},
+      "overrides": {{_jsonMap(Decisions.Projections.Overrides)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -213,15 +236,15 @@ public sealed class DecisionFile {
     "event_store": {
       // AppendExclusive: Marten's exclusive append (optimistic concurrency)
       // ConvertWithWarning adds a TODO comment for manual review
-      "append_exclusive": "{{Decisions.EventStore.AppendExclusive}}",
+      "append_exclusive": {{_jsonEnum(Decisions.EventStore.AppendExclusive)}},
 
       // StartStream: Creates new event stream
       // Convert transforms to AppendAsync with new stream ID
-      "start_stream": "{{Decisions.EventStore.StartStream}}",
+      "start_stream": {{_jsonEnum(Decisions.EventStore.StartStream)}},
 
       // SaveChangesAsync: Marten's unit-of-work commit
       // Skip removes these calls (Whizbang auto-commits)
-      "save_changes": "{{Decisions.EventStore.SaveChanges}}"
+      "save_changes": {{_jsonEnum(Decisions.EventStore.SaveChanges)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -231,10 +254,10 @@ public sealed class DecisionFile {
     "id_generation": {
       // Guid.NewGuid() calls - Convert injects IWhizbangIdProvider
       // Use "Skip" if you want to keep Guid.NewGuid() as-is
-      "guid_new_guid": "{{Decisions.IdGeneration.GuidNewGuid}}",
+      "guid_new_guid": {{_jsonEnum(Decisions.IdGeneration.GuidNewGuid)}},
 
       // CombGuidIdGeneration.NewGuid() (Marten's sequential GUIDs)
-      "comb_guid": "{{Decisions.IdGeneration.CombGuid}}"
+      "comb_guid": {{_jsonEnum(Decisions.IdGeneration.CombGuid)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -242,10 +265,15 @@ public sealed class DecisionFile {
     // ═══════════════════════════════════════════════════════════════════════════
     // Transforms service registration patterns.
     "di_registration": {
-      "default": "{{Decisions.DiRegistration.Default}}",
-      "overrides": {{_jsonOverrides(Decisions.DiRegistration.Overrides)}}
-    },
+      "default": {{_jsonEnum(Decisions.DiRegistration.Default)}},
+      "overrides": {{_jsonMap(Decisions.DiRegistration.Overrides)}}
+    }
+""";
+  }
 
+  private string _schemaSection() {
+    var schema = Decisions.Schema;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // SCHEMA CONFIGURATION
     // ═══════════════════════════════════════════════════════════════════════════
@@ -257,34 +285,40 @@ public sealed class DecisionFile {
       // - "DifferentDbDefaultSchema": whizbang_db.public.wb_*
       // - "SameDbSameSchemaWithPrefix": mydb.public.wb_*
       // - "DifferentDbDifferentSchema": whizbang_db.events.wb_*
-      "strategy": "{{Decisions.Schema.Strategy}}",
+      "strategy": {{_jsonEnum(schema.Strategy)}},
 
       // Schema name (when using SameDbDifferentSchema)
-      "schema_name": {{_jsonText(Decisions.Schema.SchemaName)}},
+      "schema_name": {{_jsonText(schema.SchemaName)}},
 
       // Table prefixes
-      "infrastructure_prefix": {{_jsonText(Decisions.Schema.InfrastructurePrefix)}},
-      "perspective_prefix": {{_jsonText(Decisions.Schema.PerspectivePrefix)}},
+      "infrastructure_prefix": {{_jsonText(schema.InfrastructurePrefix)}},
+      "perspective_prefix": {{_jsonText(schema.PerspectivePrefix)}},
 
       // Connection string name (when using different database)
-      "connection_string_name": null
-    },
+      "connection_string_name": {{_jsonText(schema.ConnectionStringName)}}
+    }
+""";
+  }
 
+  private string _detectionSections() {
+    var tenant = Decisions.Tenant;
+    var streamId = Decisions.StreamId;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // TENANT CONTEXT
     // ═══════════════════════════════════════════════════════════════════════════
     // Multi-tenancy configuration (detected automatically if present).
     "tenant": {
-      "was_detected": false,
-      "detected_property": null,
-      "uses_marten_tenant_features": false,
+      "was_detected": {{_jsonBool(tenant.WasDetected)}},
+      "detected_property": {{_jsonText(tenant.DetectedProperty)}},
+      "uses_marten_tenant_features": {{_jsonBool(tenant.UsesMartenTenantFeatures)}},
 
       // Strategy options:
       // - "ScopeField": Store tenant in event scope (recommended)
       // - "ScopedDi": Per-tenant IEventStore registration
       // - "Manual": You handle it
-      "strategy": "{{Decisions.Tenant.Strategy}}",
-      "confirmed": false
+      "strategy": {{_jsonEnum(tenant.Strategy)}},
+      "confirmed": {{_jsonBool(tenant.Confirmed)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -292,44 +326,55 @@ public sealed class DecisionFile {
     // ═══════════════════════════════════════════════════════════════════════════
     // How aggregate/stream IDs are detected and used.
     "stream_id": {
-      "was_detected": false,
-      "detected_property": null,
-      "is_strongly_typed": false,
-      "confirmed": false
-    },
+      "was_detected": {{_jsonBool(streamId.WasDetected)}},
+      "detected_property": {{_jsonText(streamId.DetectedProperty)}},
+      "is_strongly_typed": {{_jsonBool(streamId.IsStronglyTyped)}},
+      "confirmed": {{_jsonBool(streamId.Confirmed)}}
+    }
+""";
+  }
 
+  private string _routingSection() {
+    var routing = Decisions.Routing;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // ROUTING CONFIGURATION
     // ═══════════════════════════════════════════════════════════════════════════
     // Message routing for inbox/outbox patterns.
     "routing": {
       // Domains owned by this service (commands routed to inbox)
-      "owned_domains": [],
-      "detected_domains": [],
+      "owned_domains": {{_jsonList(routing.OwnedDomains)}},
+      "detected_domains": {{_jsonList(routing.DetectedDomains)}},
 
       // Inbox strategy: "SharedTopic" or "DomainTopics"
-      "inbox_strategy": "{{Decisions.Routing.InboxStrategy}}",
-      "inbox_topic": null,
-      "inbox_suffix": null,
+      "inbox_strategy": {{_jsonEnum(routing.InboxStrategy)}},
+      "inbox_topic": {{_jsonText(routing.InboxTopic)}},
+      "inbox_suffix": {{_jsonText(routing.InboxSuffix)}},
 
       // Outbox strategy: "DomainTopics" or "SharedTopic"
-      "outbox_strategy": "{{Decisions.Routing.OutboxStrategy}}",
-      "outbox_topic": null,
-      "confirmed": false
-    },
+      "outbox_strategy": {{_jsonEnum(routing.OutboxStrategy)}},
+      "outbox_topic": {{_jsonText(routing.OutboxTopic)}},
+      "confirmed": {{_jsonBool(routing.Confirmed)}}
+    }
+""";
+  }
 
+  private string _strategySections() {
+    var baseClasses = Decisions.CustomBaseClasses;
+    var interfaces = Decisions.UnknownInterfaces;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // CUSTOM BASE CLASSES
     // ═══════════════════════════════════════════════════════════════════════════
     // How to handle handlers that inherit from custom base classes.
     "custom_base_classes": {
       // Options: "Prompt", "RemoveInheritance", "KeepInheritance", "Skip"
-      "default_strategy": "{{Decisions.CustomBaseClasses.DefaultStrategy}}",
+      "default_strategy": {{_jsonEnum(baseClasses.DefaultStrategy)}},
 
       // Per-class strategies
       // Example: "BaseMessageHandler": "RemoveInheritance"
-      "base_class_strategies": {},
-      "confirmed": false
+      "base_class_strategies": {{_jsonMap(baseClasses.BaseClassStrategies)}},
+      "confirmed": {{_jsonBool(baseClasses.Confirmed)}}
     },
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -338,32 +383,42 @@ public sealed class DecisionFile {
     // How to handle handler parameters with unknown interface types.
     "unknown_interfaces": {
       // Options: "Prompt", "RemoveParameter", "KeepAndInject", "MapToWhizbang", "Skip"
-      "default_strategy": "{{Decisions.UnknownInterfaces.DefaultStrategy}}",
+      "default_strategy": {{_jsonEnum(interfaces.DefaultStrategy)}},
 
       // Per-interface strategies
       // Example: "ICustomService": "KeepAndInject"
-      "interface_strategies": {},
-      "confirmed": false
-    },
+      "interface_strategies": {{_jsonMap(interfaces.InterfaceStrategies)}},
+      "confirmed": {{_jsonBool(interfaces.Confirmed)}}
+    }
+""";
+  }
 
+  private string _packagesSection() {
+    var packages = Decisions.Packages;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // PACKAGE MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════════
     // Controls which Whizbang packages are added and what versions are used.
     "packages": {
       // Whether to automatically manage packages. Default: true
-      "auto_manage": {{Decisions.Packages.AutoManage.ToString().ToLowerInvariant()}},
+      "auto_manage": {{_jsonBool(packages.AutoManage)}},
 
       // Version of Whizbang packages to use
-      "whizbang_version": {{_jsonText(Decisions.Packages.WhizbangVersion)}},
+      "whizbang_version": {{_jsonText(packages.WhizbangVersion)}},
 
       // Whether to remove old Marten/Wolverine packages. Default: true
-      "remove_old_packages": {{Decisions.Packages.RemoveOldPackages.ToString().ToLowerInvariant()}},
+      "remove_old_packages": {{_jsonBool(packages.RemoveOldPackages)}},
 
       // Packages to preserve (don't remove even if Marten/Wolverine)
-      "preserve_packages": []
-    },
+      "preserve_packages": {{_jsonList(packages.PreservePackages)}}
+    }
+""";
+  }
 
+  private string _jsonMigrationSection() {
+    var json = Decisions.JsonMigration;
+    return $$"""
     // ═══════════════════════════════════════════════════════════════════════════
     // JSON LIBRARY MIGRATION (OPTIONAL)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -376,13 +431,13 @@ public sealed class DecisionFile {
       //   - [JsonProperty("name")] → [JsonPropertyName("name")]
       //   - JsonConvert.SerializeObject → JsonSerializer.Serialize
       //   - JsonConvert.DeserializeObject<T> → JsonSerializer.Deserialize<T>
-      "enabled": {{Decisions.JsonMigration.Enabled.ToString().ToLowerInvariant()}},
+      "enabled": {{_jsonBool(json.Enabled)}},
 
       // Remove unused Newtonsoft.Json imports (runs even if enabled=false)
-      "remove_dead_imports": {{Decisions.JsonMigration.RemoveDeadImports.ToString().ToLowerInvariant()}},
+      "remove_dead_imports": {{_jsonBool(json.RemoveDeadImports)}},
 
       // Add TODO comments for patterns that can't be auto-converted
-      "add_todo_for_unsupported": {{Decisions.JsonMigration.AddTodoForUnsupported.ToString().ToLowerInvariant()}}
+      "add_todo_for_unsupported": {{_jsonBool(json.AddTodoForUnsupported)}}
 
       // NOTE: These patterns require manual migration:
       //   - JObject/JArray/JToken → JsonDocument/JsonElement
@@ -390,8 +445,6 @@ public sealed class DecisionFile {
       //   - Custom JsonConverters → System.Text.Json.Serialization.JsonConverter<T>
       //   - JsonSerializerSettings → JsonSerializerOptions
     }
-  }
-}
 """;
   }
 
