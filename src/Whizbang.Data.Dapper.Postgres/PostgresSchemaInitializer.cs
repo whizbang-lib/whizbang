@@ -642,92 +642,124 @@ public sealed class PostgresSchemaInitializer {
         continue;
       }
 
-      var isUpdate = existingHash != null;
-      // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
-      // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
-      // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
-      // pass shared, which met the contract but threw away every file that had succeeded when a later
-      // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
-      // This runner once ran them outside any transaction, and the divergence stayed invisible until
-      // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
-      // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
-      // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
-      // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
-      //
-      // The ledger write joins the transaction too, so a migration and the record saying it applied
-      // commit together or not at all. The FAILURE record is deliberately written outside it, after
-      // the rollback, because a row recorded inside the doomed transaction would roll back with it
-      // and leave the failure invisible.
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-      Exception? failure = null;
-      try {
-        await using var cmd = connection.CreateCommand();
-        cmd.Transaction = transaction;
-        cmd.CommandTimeout = 30;
-
-        // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
-        // batched region is several commands — the marked one repeatedly, until it reports no rows —
-        // because one statement over a whole table cannot finish inside a single command once the
-        // table is large. A driver that sent the file whole would push the unsubstituted size token
-        // at the server; both drivers read the same migration files, so both have to read the marks.
-        foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
-          cmd.CommandText = segment.Sql;
-
-          if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
-            // Catalog-checked (#1636), as on the EF Core driver: idempotent DDL with nothing to do takes no lock.
-            cmd.CommandText = CatalogCheckedDdl.Guard(segment.Sql);
-            await cmd.ExecuteNonQueryAsync(cancellationToken);
-            continue;
-          }
-
-          var passes = 0;
-          while (true) {
-            var reported = await cmd.ExecuteScalarAsync(cancellationToken);
-            var rows = reported is null or DBNull
-              ? 0L
-              : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
-            if (rows <= 0) {
-              break;
-            }
-
-            if (++passes > MaxBatchPasses) {
-              throw new InvalidOperationException(
-                $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
-                + "region has to exclude the rows it already handled, or it reports the same rows "
-                + "forever.");
-            }
-          }
-        }
-
-        var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = (existingHash == hash, isUpdate) switch {
-          (true, _) => "Re-applied (redefinition closure)",
-          (false, true) => $"Updated from hash {existingHash![..8]}...",
-          _ => "First apply",
-        };
-
-        // Store previous SQL content for rollback support (functions can be re-applied)
-        var previousContent = isUpdate ? migration.Sql : null;
-        await _upsertMigrationAsync(connection,
-            new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
-            cancellationToken, transaction);
-        await transaction.CommitAsync(cancellationToken);
-      } catch (Exception ex) {
-        // Captured rather than rethrown here. A rethrow from an async catch that also awaits
-        // makes the compiler hoist this handler out of the IL catch region and rewrite
-        // `throw;` as a capture-and-throw; the brace's sequence point then lands on
-        // state-machine cleanup nothing reaches. Throwing after the block keeps the same
-        // order — roll back, record the failure, propagate — with no unreachable line.
-        failure = ex;
-        await transaction.RollbackAsync(cancellationToken);
-        // Record failure on the connection with no ambient transaction, so it survives the rollback.
-        await _recordFailureAsync(connection, migration.Name, hash, versionId, ex, cancellationToken);
+      // A deadlock is the server choosing this file's transaction as its victim (#1636): the file runs again, in
+      // place, after a short back-off, as on the EF Core driver. Any other failure, or a deadlock that keeps
+      // happening, is recorded after the rollback and halts the migration.
+      var deadlocks = 0;
+      Exception? failure;
+      while ((failure = await _applyMigrationFileAsync(
+          connection, migration, hash, existingHash, versionId, executionOrder, cancellationToken)) is not null
+          && deadlocks < MigrationDeadlockRetry.MAX_RETRIES && MigrationDeadlockRetry.AsDeadlock(failure) is { } deadlock) {
+        deadlocks++;
+        await _waitOutDeadlockAsync(migration.Name, deadlock, deadlocks, cancellationToken);
       }
 
       if (failure is not null) {
+        // Recorded on the connection with no ambient transaction, so it survives the rollback.
+        await _recordFailureAsync(connection, migration.Name, hash, versionId, failure, cancellationToken);
         ExceptionDispatchInfo.Capture(failure).Throw();   // halt migration
       }
     }
+  }
+
+  /// <summary>Says a migration file lost a deadlock and will run again, at Warning, then waits out the back-off.</summary>
+  private async Task _waitOutDeadlockAsync(string file, PostgresException deadlock, int deadlocks, CancellationToken cancellationToken) {
+    var delay = MigrationDeadlockRetry.Delay(deadlocks, Random.Shared);
+    if (Logger is { } logger) {
+      _logMigrationDeadlocked(logger, file, deadlock.SqlState, deadlock.MessageText,
+        delay.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + "s", deadlocks,
+        MigrationDeadlockRetry.MAX_RETRIES, null);
+    }
+    await Task.Delay(delay, cancellationToken);
+  }
+
+  /// <summary>
+  /// Applies one migration file and its ledger row in a transaction of its own; on a failure, rolls it back and returns
+  /// the failure without recording it, so the caller decides between a retry and a recorded failure.
+  /// </summary>
+  private static async Task<Exception?> _applyMigrationFileAsync(
+      NpgsqlConnection connection, Core.Data.MigrationScript migration, string hash, string? existingHash, int versionId,
+      int executionOrder, CancellationToken cancellationToken) {
+    var isUpdate = existingHash != null;
+    // ONE TRANSACTION PER FILE, which is the contract the migrations are written against -- 123
+    // says so in as many words, and explains that CREATE INDEX CONCURRENTLY is therefore
+    // unavailable to them. The EF Core runner ran every file inside the one transaction its whole
+    // pass shared, which met the contract but threw away every file that had succeeded when a later
+    // one failed; since #1637 it runs each file in a transaction of its own as this runner does.
+    // This runner once ran them outside any transaction, and the divergence stayed invisible until
+    // a migration needed an explicit LOCK TABLE: PostgreSQL rejects one outside a transaction block
+    // with 25P01, so a cutover that moves rows between tables and then drops the columns they came
+    // from failed here while passing there. Nothing in these migrations is transaction-hostile (no
+    // CONCURRENTLY, no VACUUM), so the wrap is safe for all of them.
+    //
+    // The ledger write joins the transaction too, so a migration and the record saying it applied
+    // commit together or not at all. The FAILURE record is deliberately written outside it, after
+    // the rollback, because a row recorded inside the doomed transaction would roll back with it
+    // and leave the failure invisible.
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    Exception? failure = null;
+    try {
+      await using var cmd = connection.CreateCommand();
+      cmd.Transaction = transaction;
+      cmd.CommandTimeout = 30;
+
+      // Sent in segments, the same way the EF Core runner sends them. A migration that marks a
+      // batched region is several commands — the marked one repeatedly, until it reports no rows —
+      // because one statement over a whole table cannot finish inside a single command once the
+      // table is large. A driver that sent the file whole would push the unsubstituted size token
+      // at the server; both drivers read the same migration files, so both have to read the marks.
+      foreach (var segment in Whizbang.Data.Postgres.MigrationBatchRegions.Segment(migration.Sql)) {
+        cmd.CommandText = segment.Sql;
+
+        if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
+          // Catalog-checked (#1636), as on the EF Core driver: idempotent DDL with nothing to do takes no lock.
+          cmd.CommandText = CatalogCheckedDdl.Guard(segment.Sql);
+          await cmd.ExecuteNonQueryAsync(cancellationToken);
+          continue;
+        }
+
+        var passes = 0;
+        while (true) {
+          var reported = await cmd.ExecuteScalarAsync(cancellationToken);
+          var rows = reported is null or DBNull
+            ? 0L
+            : Convert.ToInt64(reported, System.Globalization.CultureInfo.InvariantCulture);
+          if (rows <= 0) {
+            break;
+          }
+
+          if (++passes > MaxBatchPasses) {
+            throw new InvalidOperationException(
+              $"Migration {migration.Name} ran {passes} batches without finishing. A batched "
+              + "region has to exclude the rows it already handled, or it reports the same rows "
+              + "forever.");
+          }
+        }
+      }
+
+      var status = isUpdate ? 2 : 1; // Updated vs Applied
+      var desc = (existingHash == hash, isUpdate) switch {
+        (true, _) => "Re-applied (redefinition closure)",
+        (false, true) => $"Updated from hash {existingHash![..8]}...",
+        _ => "First apply",
+      };
+
+      // Store previous SQL content for rollback support (functions can be re-applied)
+      var previousContent = isUpdate ? migration.Sql : null;
+      await _upsertMigrationAsync(connection,
+          new MigrationRecord(migration.Name, hash, versionId, status, desc, previousContent, executionOrder),
+          cancellationToken, transaction);
+      await transaction.CommitAsync(cancellationToken);
+    } catch (Exception ex) {
+      // Captured rather than rethrown here. A rethrow from an async catch that also awaits
+      // makes the compiler hoist this handler out of the IL catch region and rewrite
+      // `throw;` as a capture-and-throw; the brace's sequence point then lands on
+      // state-machine cleanup nothing reaches. Throwing after the block keeps the same
+      // order — roll back, then hand the failure back — with no unreachable line.
+      failure = ex;
+      await transaction.RollbackAsync(cancellationToken);
+    }
+    return failure;
   }
 
   /// <summary>
@@ -1237,6 +1269,11 @@ public sealed class PostgresSchemaInitializer {
   private static readonly Action<ILogger, string, string, string, Exception?> _logBothTablesExist = LoggerMessage.Define<string, string, string>(
     LogLevel.Warning, new EventId(1720, "PerspectiveTableRenameBlocked"),
     "The perspective table of {Model} was not renamed from {OldTable} to {NewTable}: both tables exist. Nothing was dropped or merged; move the rows you need from the old table by hand, then drop it");
+
+  private static readonly Action<ILogger, string, string, string, string, int, int, Exception?> _logMigrationDeadlocked =
+    LoggerMessage.Define<string, string, string, string, int, int>(
+      LogLevel.Warning, new EventId(1636, "MigrationDeadlocked"),
+      "Migration {Migration} deadlocked : {SqlState} {Error}; retrying it in {Delay} (deadlock {Deadlock} of {MaxDeadlocks})");
 
   private static readonly Action<ILogger, Exception?> _logReconcileFailed = LoggerMessage.Define(
     LogLevel.Warning, new EventId(1252, "ManagedObjectReconcileFailed"),
