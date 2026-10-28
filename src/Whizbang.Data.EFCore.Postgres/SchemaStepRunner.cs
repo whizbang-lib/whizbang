@@ -185,14 +185,14 @@ public sealed class SchemaStepRunner {
       _position++;
     }
 
+    var work = new StepWork(step, counted, isCurrentAsync, applyAsync, recordFailureAsync);
     var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
     var attempt = 0;
     var deadlocks = 0;
     while (true) {
       attempt++;
       cancellationToken.ThrowIfCancellationRequested();
-      var (outcome, deadlock) = await _attemptAsync(
-        connection, step, counted, isCurrentAsync, applyAsync, recordFailureAsync, deadlocks, cancellationToken).ConfigureAwait(false);
+      var (outcome, deadlock) = await _attemptAsync(connection, work, deadlocks, cancellationToken).ConfigureAwait(false);
       if (deadlock is not null) {
         // #1636: the server chose this step's transaction as a deadlock's victim and rolled it back. The step runs
         // again, after a short back-off, rather than failing the attempt.
@@ -261,14 +261,8 @@ public sealed class SchemaStepRunner {
   /// will be retried for, with nothing reported or recorded.
   /// </summary>
   private async Task<(SchemaStepOutcome? Outcome, PostgresException? Deadlock)> _attemptAsync(
-      NpgsqlConnection connection,
-      string step,
-      bool counted,
-      Func<CancellationToken, Task<bool>> isCurrentAsync,
-      Func<CancellationToken, Task> applyAsync,
-      Func<Exception, CancellationToken, Task>? recordFailureAsync,
-      int deadlocks,
-      CancellationToken cancellationToken) {
+      NpgsqlConnection connection, StepWork work, int deadlocks, CancellationToken cancellationToken) {
+    var (step, counted, isCurrentAsync, applyAsync, recordFailureAsync) = work;
     // A raw transaction rather than BeginTransactionAsync on the context: the retrying execution strategy refuses a
     // user-initiated transaction, and the initializer has its own retry.
     var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -308,17 +302,32 @@ public sealed class SchemaStepRunner {
     _rethrowIfFailed(failure);
 
     if (counted && outcome is { } ended) {
-      if (ended == SchemaStepOutcome.Applied) {
-        _applied++;
-        var elapsed = _timeProvider.GetElapsedTime(started);
-        SchemaInitializationLog.StepSucceeded(_logger, _position, _total, step, new StepDuration(elapsed));
-      } else {
-        _skipped++;
-        SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
-      }
+      _tally(step, ended, started);
     }
     return (outcome, null);
   }
+
+  /// <summary>Counts a counted step that ended under the lock as applied or skipped, and says so.</summary>
+  private void _tally(string step, SchemaStepOutcome ended, long started) {
+    if (ended == SchemaStepOutcome.Applied) {
+      _applied++;
+      var elapsed = _timeProvider.GetElapsedTime(started);
+      SchemaInitializationLog.StepSucceeded(_logger, _position, _total, step, new StepDuration(elapsed));
+    } else {
+      _skipped++;
+      SchemaInitializationLog.StepSkipped(_logger, _position, _total, step);
+    }
+  }
+
+  /// <summary>
+  /// One step's name, whether it is counted in the progress lines, and its callbacks, as an attempt runs them.
+  /// </summary>
+  private readonly record struct StepWork(
+      string Step,
+      bool Counted,
+      Func<CancellationToken, Task<bool>> IsCurrentAsync,
+      Func<CancellationToken, Task> ApplyAsync,
+      Func<Exception, CancellationToken, Task>? RecordFailureAsync);
 
   /// <summary>Rethrows a captured failure with its original stack, once it has been rolled back and recorded.</summary>
   private static void _rethrowIfFailed(Exception? failure) {
