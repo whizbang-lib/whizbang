@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -23,7 +24,7 @@ public sealed class InboxDispatchWorkerCacheLifetimeTests {
   [Test]
   public async Task Dispatch_CachesThePayloadWithItsSize_AndDropsItWhenTheRowCompletesAsync() {
     var cache = _cache();
-    var h = new InboxDispatchUnitHarness(cache: cache);
+    var h = new InboxDispatchUnitHarness(cache: cache, deserializer: new ObjectDeserializer());
     const string payload = """{"Name":"abcdefghij"}""";
     var work = InboxDispatchUnitHarness.Work(payload: payload);
     long bytesAtCommit = -1;
@@ -61,5 +62,12 @@ public sealed class InboxDispatchWorkerCacheLifetimeTests {
     await h.Worker.ProcessOneInnerAsync(work, CancellationToken.None);
 
     await Assert.That(cache.TryGet(work.MessageId, out _)).IsFalse();
+  }
+
+  private sealed class ObjectDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromEnvelope(IMessageEnvelope<System.Text.Json.JsonElement> envelope, string envelopeTypeName) => new();
+    public object DeserializeFromEnvelope(IMessageEnvelope<System.Text.Json.JsonElement> envelope) => new();
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) => new();
+    public object DeserializeFromJsonElement(System.Text.Json.JsonElement jsonElement, string messageTypeName) => new();
   }
 }

@@ -395,9 +395,18 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>Hands a completion to the batched commit channel, keeping the row held until the commit lands (#1788).</summary>
-  private ValueTask _enqueueCommitAsync(HandlerCommitRequest request, CancellationToken ct) {
+  /// <remarks>The row's parsed payload is dropped from the cache once the completion is handed on (#1793).</remarks>
+  private async ValueTask _enqueueCommitAsync(HandlerCommitRequest request, CancellationToken ct) {
     _inboxChannelWriter.MarkCommitPending(request.HandlerId);
-    return _handlerCommitChannel.EnqueueAsync(request, ct);
+    await _handlerCommitChannel.EnqueueAsync(request, ct);
+    _deserializeCache?.Remove(request.HandlerId);
+  }
+
+  /// <summary>A terminal path that bypasses the commit channel (a dead-letter move): the row stops being held and its
+  /// parsed payload is dropped (#571, #1793).</summary>
+  private void _releaseTerminal(Guid messageId) {
+    _inboxChannelWriter.RemoveInFlight(messageId);
+    _deserializeCache?.Remove(messageId);
   }
 
   /// <summary>Whether the row ends at the attempt bound without being tried, which is not drain (#1788).</summary>
@@ -563,7 +572,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           // SQL move deleted the inbox row), so the in-flight guard must release here —
           // the same symmetry OutboxPublishWorker keeps on every terminal path. Without
           // it the id wedges in flight until age-out and the item re-feeds.
-          _inboxChannelWriter.RemoveInFlight(work.MessageId);
+          _releaseTerminal(work.MessageId);
           return;
         } catch (Exception ex) {
           // DLQ move is best-effort — if it fails, fall back to the legacy
@@ -711,7 +720,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       MessageParseDiagnostics.Record(work.MessageId, MessageParseSource.ReceptorDispatch, MessageParseKind.Payload);
-      _deserializeCache?.Set(work.MessageId, message);
+      _deserializeCache?.Set(work.MessageId, message, InboxPayload.Bytes(work.Envelope.Payload));
       return (work.Envelope.ReconstructWithPayload(message, work.HandlerName), null);
     } catch (Exception ex) when (IsPayloadRefusal(ex)) {
       return (null, ex);
@@ -781,7 +790,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
-        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
+        _releaseTerminal(work.MessageId);
         return;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUndeserializableDeadLetterFailed(_logger, work.MessageId, ex);
@@ -950,7 +959,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
-        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
+        _releaseTerminal(work.MessageId);
         return;
       } catch (Exception ex) {
         // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
@@ -986,7 +995,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogCompositeCommitFailed(_logger, request.HandlerId, childCount, ex);
     } finally {
       // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
-      _inboxChannelWriter.RemoveInFlight(request.HandlerId);
+      _releaseTerminal(request.HandlerId);
     }
   }
 
@@ -1042,7 +1051,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         } else {
           LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
         }
-        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
+        _releaseTerminal(work.MessageId);
         return;
       } catch (Exception ex) {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);

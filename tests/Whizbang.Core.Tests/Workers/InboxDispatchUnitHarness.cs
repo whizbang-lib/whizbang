@@ -45,7 +45,8 @@ internal sealed class InboxDispatchUnitHarness {
       IServiceCollection? services = null,
       LeaseRegistry? leaseRegistry = null,
       LeaseHandleOptions? leaseHandleOptions = null,
-      FakeTimeProvider? time = null) {
+      FakeTimeProvider? time = null,
+      ILifecycleMessageDeserializer? deserializer = null) {
     Time = time ?? new FakeTimeProvider(Start);
     Inbox = inbox ?? new FakeInboxChannelWriter();
     var instance = new FakeInstanceProvider();
@@ -65,7 +66,7 @@ internal sealed class InboxDispatchUnitHarness {
       coordinatorOptions: Options.Create(new WorkCoordinatorOptions()),
       logger: new RecordingLogger(Logs),
       integrityOptions: Options.Create(new StreamIntegrityOptions()),
-      lifecycleMessageDeserializer: new JsonLifecycleMessageDeserializer(),
+      lifecycleMessageDeserializer: deserializer ?? new JsonLifecycleMessageDeserializer(),
       leaseHandleOptions: Options.Create(leaseHandleOptions ?? new LeaseHandleOptions()),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions()),
       receptorRegistry: new PermissiveReceptorRegistryQuery(),
