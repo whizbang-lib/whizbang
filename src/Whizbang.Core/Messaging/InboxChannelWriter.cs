@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs</tests>
 public class InboxChannelWriter : IInboxChannelWriter {
   private readonly Channel<InboxWork> _channel;
-  private readonly ConcurrentDictionary<Guid, DateTimeOffset> _inFlight = new();
+  private readonly ConcurrentDictionary<Guid, Held> _inFlight = new();
   private readonly TimeProvider _timeProvider;
   private static readonly TimeSpan _leaseRenewalThreshold = TimeSpan.FromSeconds(150); // Half of 300s lease
 
@@ -62,12 +62,17 @@ public class InboxChannelWriter : IInboxChannelWriter {
   private void _evictLapsed() {
     var cutoff = _timeProvider.GetUtcNow() - _inFlightMaxAge;
 
+    // Measured from the last renewal (#1788): a row whose lease is being kept is still held, however long ago it
+    // arrived. Only rows nobody renews age out.
     foreach (var entry in _inFlight) {
-      if (entry.Value <= cutoff) {
-        _inFlight.TryRemove(entry.Key, out _);
+      if (entry.Value.LastRenewedAt <= cutoff) {
+        _inFlight.TryRemove(entry);
       }
     }
   }
+
+  private void _track(InboxWork work) =>
+    _inFlight.GetOrAdd(work.MessageId, static (_, state) => new Held(state.Type, state.Now), (Type: work.MessageType, Now: _timeProvider.GetUtcNow()));
 
   /// <inheritdoc />
   public ChannelReader<InboxWork> Reader => _channel.Reader;
@@ -75,7 +80,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   /// <inheritdoc />
   public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
     _evictLapsed();
-    _inFlight.TryAdd(work.MessageId, _timeProvider.GetUtcNow());
+    _track(work);
     return _channel.Writer.WriteAsync(work, ct);
   }
 
@@ -83,7 +88,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   public bool TryWrite(InboxWork work) {
     if (_channel.Writer.TryWrite(work)) {
       _evictLapsed();
-      _inFlight.TryAdd(work.MessageId, _timeProvider.GetUtcNow());
+      _track(work);
       return true;
     }
     return false;
@@ -98,23 +103,81 @@ public class InboxChannelWriter : IInboxChannelWriter {
 
   /// <inheritdoc />
   public bool ShouldRenewLease(Guid messageId) {
-    if (_inFlight.TryGetValue(messageId, out var trackedAt)) {
-      return _timeProvider.GetUtcNow() - trackedAt > _leaseRenewalThreshold;
+    if (_inFlight.TryGetValue(messageId, out var held)) {
+      return _timeProvider.GetUtcNow() - held.TrackedAt > _leaseRenewalThreshold;
     }
     return false;
   }
 
   /// <inheritdoc />
-  public bool TryBeginDispatch(Guid messageId) => true;
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  public bool TryBeginDispatch(Guid messageId) {
+    if (!_inFlight.TryGetValue(messageId, out var held)) {
+      return false;
+    }
+    lock (held.Gate) {
+      if (held.State != InboxHoldState.Queued) {
+        return false;
+      }
+      held.State = InboxHoldState.Dispatching;
+      held.Renewals = 0;
+      return true;
+    }
+  }
 
   /// <inheritdoc />
-  public void MarkCommitPending(Guid messageId) { }
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  public void MarkCommitPending(Guid messageId) {
+    if (_inFlight.TryGetValue(messageId, out var held)) {
+      lock (held.Gate) {
+        held.State = InboxHoldState.CommitPending;
+        held.Renewals = 0;
+      }
+    }
+  }
 
   /// <inheritdoc />
-  public void EndDispatch(Guid messageId) { }
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  public void EndDispatch(Guid messageId) {
+    if (_inFlight.TryGetValue(messageId, out var held) && held.State != InboxHoldState.CommitPending) {
+      _inFlight.TryRemove(new KeyValuePair<Guid, Held>(messageId, held));
+    }
+  }
 
   /// <inheritdoc />
-  public InboxLeaseSweep SweepLeases(TimeSpan renewAfter, int maxRenewals) => InboxLeaseSweep.Empty;
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  public InboxLeaseSweep SweepLeases(TimeSpan renewAfter, int maxRenewals) {
+    var now = _timeProvider.GetUtcNow();
+    var renew = new List<Guid>();
+    var lapsed = new List<LapsedInboxLease>();
+    foreach (var entry in _inFlight) {
+      var held = entry.Value;
+      lock (held.Gate) {
+        if (now - held.LastRenewedAt < renewAfter) {
+          continue;
+        }
+        if (held.Renewals >= maxRenewals) {
+          _inFlight.TryRemove(entry);
+          lapsed.Add(new LapsedInboxLease(entry.Key, held.MessageType, held.State, held.Renewals));
+          continue;
+        }
+        held.Renewals++;
+        held.LastRenewedAt = now;
+        renew.Add(entry.Key);
+      }
+    }
+    return renew.Count == 0 && lapsed.Count == 0 ? InboxLeaseSweep.Empty : new InboxLeaseSweep(renew, lapsed);
+  }
+
+  /// <summary>One row this process holds: where it is, when its lease was last kept, and how many renewals it has used.</summary>
+  private sealed class Held(string messageType, DateTimeOffset trackedAt) {
+    public Lock Gate { get; } = new();
+    public string MessageType { get; } = messageType;
+    public DateTimeOffset TrackedAt { get; } = trackedAt;
+    public DateTimeOffset LastRenewedAt { get; set; } = trackedAt;
+    public InboxHoldState State { get; set; }
+    public int Renewals { get; set; }
+  }
 
   /// <inheritdoc />
   public void Complete() {
