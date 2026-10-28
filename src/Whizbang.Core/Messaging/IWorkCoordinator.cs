@@ -1625,6 +1625,48 @@ public interface IWorkCoordinator {
   Task<double?> SqueezeTableAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.FromResult<double?>(null);
 
+  /// <summary>
+  /// Measures one table's bloat ratio by <paramref name="method"/>, on the same scale as the estimate
+  /// <see cref="GetTablesNeedingRewriteAsync"/> reports.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Estimate"/> reads the catalog only.
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Approx"/> runs <c>pgstattuple_approx</c>, which reads
+  /// the visibility map and scans only the pages that are not all-visible; the caller asks for it only while the
+  /// pgstattuple capability is Ready. <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Exact"/> is never run
+  /// by the library and is refused.
+  /// </para>
+  /// <para>Default: nothing is measured (null).</para>
+  /// </remarks>
+  /// <param name="tableName">A framework table offered by <see cref="GetTablesNeedingRewriteAsync"/>.</param>
+  /// <param name="method">How to measure it.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The ratio, or null when the table has no rows to measure against or the backend does not measure.</returns>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
+  Task<double?> MeasureTableBloatAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) =>
+    Task.FromResult<double?>(null);
+
+  /// <summary>
+  /// Records that a table owes a rewrite, as <see cref="RequestTableRewriteAsync"/> does, together with the measurement
+  /// that confirmed it and the estimate it confirmed, so the queue orders by the measured ratio and a reader can tell
+  /// how it was obtained.
+  /// </summary>
+  /// <param name="tableName">The table.</param>
+  /// <param name="measurement">The measured ratio and its method.</param>
+  /// <param name="estimatedRatio">The estimate the measurement confirmed.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task that completes when the request is recorded.</returns>
+  /// <remarks>Default: the request is recorded without its measurement.</remarks>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableBloatMeasurementSqlTests.cs</tests>
+  Task RequestMeasuredTableRewriteAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurement measurement, double estimatedRatio,
+      CancellationToken cancellationToken = default) =>
+    RequestTableRewriteAsync(tableName, cancellationToken);
+
   /// <summary>Clears a table's recorded rewrite request. Call only after verifying success.</summary>
   Task ClearTableRewriteRequestAsync(string tableName, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
@@ -4169,6 +4211,22 @@ public readonly record struct TableRewriteCandidate(string TableName, double Blo
   /// measure it. The online rewrite spends <c>OnlineRewriteMaxBytesPerCycle</c> by it.
   /// </summary>
   public long SizeBytes { get; init; }
+
+  /// <summary>
+  /// How <see cref="BloatRatio"/> was obtained: the measurement a queued table was confirmed with, or
+  /// <see cref="Whizbang.Core.Observability.BloatMeasurementMethod.Estimate"/> for the catalog estimate (a table not yet
+  /// queued, or one queued without a measurement).
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  public Whizbang.Core.Observability.BloatMeasurementMethod Method { get; init; }
+
+  /// <summary>
+  /// The ratio at or above which a table is offered for rewrite (<c>table_rewrite_bloat_threshold</c>), against which a
+  /// measurement confirms or rejects the estimate; 0 when the backend does not report it, and then no measurement
+  /// rejects one.
+  /// </summary>
+  /// <docs>operations/infrastructure/storage-maintenance#how-bloat-is-measured</docs>
+  public double RewriteThreshold { get; init; }
 }
 
 /// <summary>What vacuuming one work table did (#1351).</summary>

@@ -27,6 +27,7 @@ public sealed class TableStatisticsMetrics {
   private readonly ConcurrentDictionary<string, long> _tableSizes = new();
   private readonly ConcurrentDictionary<string, long> _queueDepths = new();
   private readonly ConcurrentDictionary<string, double> _tableBloat = new();
+  private readonly ConcurrentDictionary<string, BloatMeasurement> _measuredBloat = new();
   private readonly ConcurrentDictionary<string, TableStorageStatistics> _tableStorage = new();
   private readonly ConcurrentDictionary<string, EventTypeBytes> _eventTypeBytes = new();
   private readonly ConcurrentDictionary<string, UnusedIndex> _unusedIndexes = new();
@@ -189,6 +190,17 @@ public sealed class TableStatisticsMetrics {
   public void UpdateTableBloat(IReadOnlyDictionary<string, double> ratios) => _replace(_tableBloat, ratios);
 
   /// <summary>
+  /// Replaces the measured bloat ratios, each reported on <c>whizbang.table.bloat_ratio</c> beside the table's estimate
+  /// and tagged with its method. Called by the maintenance cycle, which measures the tables the estimate shortlists.
+  /// </summary>
+  /// <param name="measurements">The latest measurement per table.</param>
+  /// <remarks>A table missing from <paramref name="measurements"/> stops reporting a measured value.</remarks>
+  /// <docs>operations/observability/metrics#table-statistics</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/TableStatisticsMetricsBloatMethodTests.cs</tests>
+  public void UpdateMeasuredTableBloat(IReadOnlyDictionary<string, BloatMeasurement> measurements) =>
+    _replace(_measuredBloat, measurements);
+
+  /// <summary>
   /// Updates the cached per-table storage split and live row counts. Called by
   /// <see cref="TableStatisticsCollector"/>.
   /// </summary>
@@ -217,4 +229,7 @@ public sealed class TableStatisticsMetrics {
 
   internal double? GetBloatRatioForTest(string table) =>
     _tableBloat.TryGetValue(table, out var v) ? v : null;
+
+  internal BloatMeasurement? GetMeasuredBloatForTest(string table) =>
+    _measuredBloat.TryGetValue(table, out var v) ? v : null;
 }

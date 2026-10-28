@@ -76,6 +76,22 @@ public class OnlineTableRewriteStepTests {
       return Task.CompletedTask;
     }
 
+    /// <summary>The ratio pgstattuple_approx measures after the rewrite, per table.</summary>
+    public Dictionary<string, double?> ApproxAfter { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>When set, every measurement throws this.</summary>
+    public Exception? MeasureThrows { get; init; }
+
+    public List<(string Table, Whizbang.Core.Observability.BloatMeasurementMethod Method)> Measured { get; } = [];
+
+    public Task<double?> MeasureTableBloatAsync(
+        string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) {
+      Measured.Add((tableName, method));
+      return MeasureThrows is not null
+        ? Task.FromException<double?>(MeasureThrows)
+        : Task.FromResult(ApproxAfter.GetValueOrDefault(tableName));
+    }
+
     // Unused surface for this test.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -261,7 +277,7 @@ public class OnlineTableRewriteStepTests {
     });
 
     await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
-    await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x -> 1.25x");
+    await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x (estimate) -> 1.25x (estimate)");
   }
 
   [Test]
@@ -454,9 +470,9 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(string.Join(",", coordinator.Repacked)).IsEqualTo("wh_outbox,wh_inbox");
     await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"])
       .Because("a rewrite that did not bring the ratio down stays queued for the next cycle");
-    await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_repack, bloat 9x -> 1.5x");
+    await Assert.That(_messages(logger)).Contains("Online rewrite: wh_outbox rewritten through pg_repack, bloat 9x (estimate) -> 1.5x (estimate)");
     await Assert.That(_messages(logger)).Contains(
-      "Online rewrite: wh_inbox did not reduce bloat (4x -> 4x); the request stays queued");
+      "Online rewrite: wh_inbox did not reduce bloat (4x (estimate) -> 4x (estimate)); the request stays queued");
   }
 
   [Test]
@@ -600,5 +616,81 @@ public class OnlineTableRewriteStepTests {
     await Assert.That(provider.GetServices<ITableRewriter>().Select(r => r.Strategy))
       .Contains(TableRewriteStrategies.PG_SQUEEZE);
     await Assert.That(provider.GetServices<IMaintenanceStep>().OfType<OnlineTableRewriteStep>().Count()).IsEqualTo(1);
+  }
+
+  // ---- the re-measure after a rewrite uses pgstattuple_approx while it is Ready (#1807) ----
+
+  /// <summary>A registry with pg_squeeze Ready and pgstattuple in <paramref name="pgstattuple"/> on one database.</summary>
+  private static async Task<CapabilityRegistry> _squeezeWithPgstattupleAsync(CapabilityState pgstattuple) {
+    var provider = new FakeCapabilityProvider("postgres", ["db-0"],
+      FakeCapabilityProvider.Describe("postgres", "pg_squeeze"), FakeCapabilityProvider.Describe("postgres", "pgstattuple"));
+    provider.States["pgstattuple"] = pgstattuple;
+    var registry = new CapabilityRegistry([provider], NullLogger<CapabilityRegistry>.Instance);
+    await registry.RefreshAsync(CancellationToken.None);
+    return registry;
+  }
+
+  private static TableRewriteCandidate _measured(string table, double ratio) =>
+    _requested(table, ratio) with { Method = Whizbang.Core.Observability.BloatMeasurementMethod.Approx };
+
+  [Test]
+  public async Task WhenPgstattupleIsReady_TheReMeasureIsApprox_AndItDecidesTheClearAsync() {
+    var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _measured("wh_outbox", 4.0), _measured("wh_inbox", 4.0) },
+      // The catalog estimate after the squeeze says both improved; the measurement says only one did.
+      RatioAfter = { ["wh_outbox"] = 1.2, ["wh_inbox"] = 1.2 },
+      ApproxAfter = { ["wh_outbox"] = 1.1, ["wh_inbox"] = 4.3 },
+    }, registry: await _squeezeWithPgstattupleAsync(CapabilityState.Ready));
+
+    await Assert.That(coordinator.Measured).IsEquivalentTo([
+      ("wh_outbox", Whizbang.Core.Observability.BloatMeasurementMethod.Approx),
+      ("wh_inbox", Whizbang.Core.Observability.BloatMeasurementMethod.Approx),
+    ]).Because("did it shrink is answered by the same measurement that queued it, never the exact full scan");
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x (approx) -> 1.1x (approx)");
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_inbox did not reduce bloat (4x (approx) -> 4.3x (approx)); the request stays queued");
+  }
+
+  [Test]
+  public async Task WhilePgstattupleIsNotReady_TheReMeasureIsTheEstimateAsync() {
+    var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _measured("wh_outbox", 4.0) },
+      RatioAfter = { ["wh_outbox"] = 1.2 },
+    }, registry: await _squeezeWithPgstattupleAsync(CapabilityState.NotPermitted));
+
+    await Assert.That(coordinator.Measured).IsEmpty();
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x (approx) -> 1.2x (estimate)");
+  }
+
+  [Test]
+  public async Task WhenTheApproxReMeasureFails_TheEstimateStandsIn_AndTheFailureIsLoggedAsync() {
+    var (coordinator, logger) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _measured("wh_outbox", 4.0) },
+      RatioAfter = { ["wh_outbox"] = 1.2 },
+      MeasureThrows = new InvalidOperationException("permission denied for function pgstattuple_approx"),
+    }, registry: await _squeezeWithPgstattupleAsync(CapabilityState.Ready));
+
+    await Assert.That(coordinator.Cleared).IsEquivalentTo(["wh_outbox"]);
+    await Assert.That(_messages(logger)).Contains(
+      "Measuring the bloat of wh_outbox with pgstattuple_approx failed; the estimate stands in for it");
+    await Assert.That(_messages(logger)).Contains(
+      "Online rewrite: wh_outbox rewritten through pg_squeeze, bloat 4x (approx) -> 1.2x (estimate)");
+  }
+
+  [Test]
+  public async Task WhenNothingWasRewritten_NothingIsMeasuredAsync() {
+    var (coordinator, _) = await _runAsync(new SqueezeCoordinator {
+      Candidates = { _measured("wh_outbox", 4.0) },
+      RatioAfter = { ["wh_outbox"] = null },
+      ApproxAfter = { ["wh_outbox"] = 1.0 },
+    }, registry: await _squeezeWithPgstattupleAsync(CapabilityState.Ready));
+
+    await Assert.That(coordinator.Measured).IsEmpty()
+      .Because("a rewrite that did not run left nothing to re-measure, and a scan would only cost");
+    await Assert.That(coordinator.Cleared).IsEmpty();
   }
 }

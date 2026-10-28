@@ -1337,6 +1337,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Microsoft.EntityFrameworkCore.Infrastructure.AccessorExtensions
         .GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>(_dbContext)).ConnectionString;
 
+  /// <inheritdoc />
+  public Task<double?> MeasureTableBloatAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurementMethod method, CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
+  /// <inheritdoc />
+  public Task RequestMeasuredTableRewriteAsync(
+      string tableName, Whizbang.Core.Observability.BloatMeasurement measurement, double estimatedRatio,
+      CancellationToken cancellationToken = default) =>
+    throw new NotImplementedException();
+
   /// <summary>The table's bloat ratio, measured as <c>wh_tables_needing_rewrite</c> measures it.</summary>
   private static async Task<double?> _measureRatioAsync(
       Npgsql.NpgsqlConnection conn, string tableName, CancellationToken cancellationToken) {
