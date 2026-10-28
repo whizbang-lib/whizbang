@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,6 +14,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -150,7 +152,8 @@ public class ServiceBusConsumerWorkerDropGateTests {
     _buildWorker(IReceptorRegistryQuery? registry, IReceptorRegistry? runtimeRegistry = null,
                  IEnvelopeSerializer? envelopeSerializer = null,
                  IEventMarkerResolver? eventMarkerResolver = null,
-                 TransportMetrics? metrics = null) {
+                 TransportMetrics? metrics = null,
+                 IMessageDiscardPolicy? discardPolicy = null) {
     var transport = new CapturingTransport();
     var strategy = new CountingStrategy();
     var services = new ServiceCollection();
@@ -159,6 +162,9 @@ public class ServiceBusConsumerWorkerDropGateTests {
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     if (metrics is not null) {
       services.AddSingleton(metrics);
+    }
+    if (discardPolicy is not null) {
+      services.AddSingleton(discardPolicy);
     }
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
@@ -374,5 +380,61 @@ public class ServiceBusConsumerWorkerDropGateTests {
 
       await worker.StopAsync(CancellationToken.None);
     }
+  }
+
+  // ===== Absorbed namespaces (#1776) =====
+
+  /// <summary>The shared discard policy over a routing that absorbs <paramref name="absorb"/>, as the worker pipeline registers it.</summary>
+  private static MessageDiscardPolicy _policy(bool hasAnyConsumer, params string[] absorb) =>
+    new(new FakeReceptorRegistry(hasAnyConsumer), NullLogger<MessageDiscardPolicy>.Instance,
+      new System.Diagnostics.Metrics.Meter("Whizbang.Tests.ServiceBusConsumerWorkerDropGateTests"),
+      Options.Create(new RoutingOptions().AbsorbNamespaces(absorb)),
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+
+  private static MessageEnvelope<JsonElement> _asReceived() => new() {
+    MessageId = MessageId.From((Guid)TrackedGuid.New()),
+    Payload = JsonElement.Parse("{\"value\":\"hi\"}"),
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
+  };
+
+  private static async Task<InboxMessage> _deliverAsync(bool hasAnyConsumer, params string[] absorb) {
+    var (worker, transport, strategy, sp) = _buildWorker(
+      new FakeReceptorRegistry(hasAnyConsumer), discardPolicy: _policy(hasAnyConsumer, absorb));
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      await worker.StartAsync(cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
+      await transport.BatchHandler!.Invoke([new TransportMessage(_asReceived(), _makeWrapperEnvelopeType())], cts.Token);
+      await worker.StopAsync(CancellationToken.None);
+    }
+    await Assert.That(strategy.QueueInboxMessageCalls).IsEqualTo(1).Because("every received message is stored (#1720)");
+    return strategy.LastQueued!;
+  }
+
+  [Test]
+  public async Task HandleMessage_UnconsumedEventInAnAbsorbedNamespace_IsStoredLive_SoTheEventStoreCapturesItAsync() {
+    // Parity with TransportConsumerWorker: an absorbed namespace is persisted locally whether or not anything here
+    // consumes it yet, so a perspective added later can rebuild from it.
+    var stored = await _deliverAsync(hasAnyConsumer: false, typeof(DropGateTestEvent).Namespace!);
+
+    await Assert.That(stored.DiscardedOnReceive).IsNull()
+      .Because("an absorbed event is kept even with no local consumer, so the row is stored live for the event-store write");
+  }
+
+  [Test]
+  public async Task HandleMessage_UnconsumedEventOutsideTheAbsorbedNamespaces_IsStillStoredSettledAsync() {
+    var stored = await _deliverAsync(hasAnyConsumer: false, "Some.Other.Contracts");
+
+    await Assert.That(stored.DiscardedOnReceive).IsEqualTo(InboxReceiveDiscard.NO_LOCAL_CONSUMER)
+      .Because("absorbing is namespace-scoped; an unconsumed event elsewhere is still skipped on receive");
+  }
+
+  [Test]
+  public async Task HandleMessage_AbsorbedEventWithALocalConsumer_IsStoredLiveAsBeforeAsync() {
+    var stored = await _deliverAsync(hasAnyConsumer: true, typeof(DropGateTestEvent).Namespace!);
+
+    await Assert.That(stored.DiscardedOnReceive).IsNull()
+      .Because("a consumed event is processed whether or not its namespace is absorbed");
   }
 }

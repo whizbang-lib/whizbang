@@ -420,4 +420,40 @@ public class InboxDispatchWorkerCompositeCommitTests {
     await cts.CancelAsync();
     await h.Worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>Consumes the named types only; every other type has no local consumer.</summary>
+  private sealed class ConsumesTypesRegistry(params string[] consumedTypeFragments) : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => HasAnyConsumer(messageType);
+    public bool HasInboxHandler(string messageType) => HasAnyConsumer(messageType);
+    public bool HasAnyConsumer(string messageType) =>
+      consumedTypeFragments.Any(fragment => messageType.Contains(fragment, StringComparison.Ordinal));
+  }
+
+  [Test]
+  public async Task Composite_ChildInAnAbsorbedNamespace_WithNoLocalConsumer_IsKeptAtExpansionAsync() {
+    // #1776: an absorbed namespace is persisted locally whether or not anything here consumes it yet. A child dropped
+    // at expansion is never stored, so it never reaches the event store and a perspective added later cannot rebuild
+    // from it. Kept, it is stored like any arrival and skipped only at dispatch.
+    var routing = new RoutingOptions().AbsorbNamespaces(typeof(RowRemoved).Namespace!);
+    var policy = new MessageDiscardPolicy(
+      // The composite row itself is typed JsonElement in this harness; consuming it keeps the row past the dispatch gate.
+      new ConsumesTypesRegistry(nameof(RowAdded), nameof(JsonElement)), NullLogger<MessageDiscardPolicy>.Instance,
+      new System.Diagnostics.Metrics.Meter("Whizbang.Tests.InboxDispatchWorkerCompositeCommitTests.Absorb"), Options.Create(routing),
+      new EventMarkerResolver(NullMessageTypeCatalog.Instance));
+    using var h = _harness(new Composite(new RowAdded("a"), new RowRemoved("b")), discardPolicy: policy);
+    using var cts = new CancellationTokenSource();
+    await h.Worker.StartAsync(cts.Token);
+
+    await h.Inbox.WriteAsync(_compositeWork(), cts.Token);
+    var commit = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(commit.NewInboxMessages!.Select(m => m.MessageType)).Contains(t => t.Contains(nameof(RowRemoved), StringComparison.Ordinal))
+      .Because("an absorbed child with no local consumer is stored so the event-store write captures it");
+    await Assert.That(commit.NewInboxMessages!.Count).IsEqualTo(2);
+    var meter = h.MeterFactory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(ProbeMeterReader.ReadTotal(meter, "whizbang.composites.children_unsubscribed")).IsEqualTo(0);
+
+    await cts.CancelAsync();
+    await h.Worker.StopAsync(CancellationToken.None);
+  }
 }
