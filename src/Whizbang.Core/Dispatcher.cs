@@ -4587,7 +4587,7 @@ public abstract partial class Dispatcher(
     if (initiating is null || initiating.CorrelationId.Value == Guid.Empty) {
       return null;
     }
-    // Scope honours the ShouldPropagate contract via HopScope.FromAmbient (identical to
+    // Scope honors the ShouldPropagate contract via HopScope.FromAmbient (identical to
     // CascadeContext.ResolveHopFirstScope's ambient branch — the ONE ambient-scope rule). Do NOT re-add an
     // initiating-scope fallback here: it would bypass PropagateToOutgoingMessages=false and leak a deliberately
     // non-propagating scope onto the child hop (the divergence the audit found; the fallback was accidental
