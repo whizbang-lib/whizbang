@@ -284,6 +284,7 @@ Whizbang:StreamIntegrity:MaxEpochVerificationsPerSweep
 Whizbang:StreamIntegrity:MaxGapReportsPerCheckpoint
 Whizbang:StreamIntegrity:MaxManifestPagesPerAudit
 Whizbang:StreamIntegrity:MaxRepairAttemptsPerBucket
+Whizbang:StreamIntegrity:MaxRepairDrainBacklog
 Whizbang:StreamIntegrity:PublishReportEvents
 Whizbang:StreamIntegrity:RepairDrainBatchSize
 Whizbang:StreamIntegrity:RepairDrainEnabled

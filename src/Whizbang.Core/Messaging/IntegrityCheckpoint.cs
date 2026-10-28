@@ -147,7 +147,9 @@ public enum IntegrityRepairMode {
   /// <remarks>
   /// Bounded in two dimensions, and both are required. Per occurrence,
   /// <c>MaxAutoRepairRequestsPerAudit</c> / <c>MaxAutoRepairRequestsPerCheckpoint</c> cap one
-  /// batch. Across occurrences, the repair ledger's <c>RepairRequestBackoffSeconds</c> and
+  /// batch (with the paced repair drain on, <c>MaxAutoRepairRequestsPerAudit</c> caps the new
+  /// buckets one comparison adds to the drain's ledger, and <c>MaxRepairDrainBacklog</c> caps the
+  /// ledger's total). Across occurrences, the repair ledger's <c>RepairRequestBackoffSeconds</c> and
   /// <c>MaxRepairAttemptsPerBucket</c> cap how often the SAME bucket may be re-requested.
   /// <para>
   /// The second is what actually prevents a storm; a per-batch cap alone only sets its rate.
@@ -328,8 +330,56 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Phase A: digest rows per manifest chunk (default 500 — bounded payloads).</summary>
   public int MaxDigestsPerManifest { get; set; } = 500;
 
-  /// <summary>Phase A: storm cap on stream-scoped repair requests per received manifest chunk (default 25).</summary>
+  /// <summary>
+  /// Phase A: storm cap on the stream-scoped repairs one manifest comparison may start (default 25).
+  /// A comparison is one received manifest chunk, so a window followed across several pages, or
+  /// several origins audited in one cycle, each get their own allowance.
+  /// </summary>
+  /// <remarks>
+  /// What the cap counts depends on who dispatches the repairs:
+  /// <list type="bullet">
+  ///   <item><description><b>Paced drain on</b> (<see cref="RepairDrainEnabled"/>, the default, with
+  ///   <see cref="IntegrityRepairMode.AutoRepairCapped"/>): the cap bounds how many NEW deficit buckets
+  ///   one comparison may add to the repair ledger the drain dispatches from. A bucket the ledger
+  ///   already tracks is refreshed without counting, because it adds nothing to the backlog.
+  ///   <see cref="MaxRepairDrainBacklog"/> bounds the ledger's total across comparisons. A deficit
+  ///   over either cap is deferred, not dropped: it stays divergent, so a later audit re-detects it
+  ///   and admits it once there is room. Deferrals are logged and counted
+  ///   (<c>whizbang.stream_integrity.repairs_deferred</c>).</description></item>
+  ///   <item><description><b>Paced drain off</b> (the burst path): the cap bounds the repair requests
+  ///   the comparison itself sends.</description></item>
+  /// </list>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#repair-caps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestDrainAdmissionTests.cs</tests>
   public int MaxAutoRepairRequestsPerAudit { get; set; } = 25;
+
+  /// <summary>
+  /// Upper bound on the paced repair drain's backlog: the per-stream repair-ledger rows the drain
+  /// may claim, across every origin (default 10,000).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// With the drain on, a manifest comparison records each admitted deficit bucket as a ledger row
+  /// and the drain dispatches those rows at <see cref="RepairDrainRatePerSecond"/>. Without a total
+  /// bound the ledger grew with the number of divergent streams and accumulated across audits, for
+  /// example after an upgrade that left a large history unstamped. Once the backlog reaches this
+  /// bound, comparisons admit no new deficit buckets; buckets already tracked keep draining, and
+  /// the deferred ones are re-detected by a later audit once the drain has made room.
+  /// </para>
+  /// <para>
+  /// The bound is checked when a comparison admits buckets, so concurrent comparisons on several
+  /// replicas may each add up to <see cref="MaxAutoRepairRequestsPerAudit"/> past it before they
+  /// see each other's rows. At the default drain rate of 5 rows per second, 10,000 rows is a little
+  /// over half an hour of dispatch. Must be at least 1; host start fails otherwise. Applies only
+  /// while the drain is on and <see cref="RepairMode"/> is
+  /// <see cref="IntegrityRepairMode.AutoRepairCapped"/>.
+  /// </para>
+  /// </remarks>
+  /// <docs>resilience/stream-integrity#repair-caps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityManifestDrainAdmissionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/StreamIntegrityOptionsValidatorTests.cs</tests>
+  public int MaxRepairDrainBacklog { get; set; } = 10_000;
 
   /// <summary>
   /// #80-B cursor-following: pages of a windowed stream-level answer the consumer follows per
