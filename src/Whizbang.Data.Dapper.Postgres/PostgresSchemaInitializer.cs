@@ -190,9 +190,10 @@ public sealed class PostgresSchemaInitializer {
   /// <summary>The migration pass, under the schema lock: infrastructure, migrations, perspectives, then this instance.</summary>
   private async Task _migrateAsync(
       NpgsqlConnection connection, string schemaSql, string schema, CancellationToken cancellationToken) {
-    // Execute infrastructure schema (event store, inbox, outbox, etc.)
+    // Execute infrastructure schema (event store, inbox, outbox, etc.), catalog-checked (#1636): it re-asserts every
+    // column and index at every start, and each would otherwise take its table's lock to find it already there.
     await using var command = connection.CreateCommand();
-    command.CommandText = schemaSql;
+    command.CommandText = CatalogCheckedDdl.Guard(schemaSql);
     command.CommandTimeout = 30; // 30 seconds should be plenty for schema creation
     await command.ExecuteNonQueryAsync(cancellationToken);
 
@@ -596,7 +597,7 @@ public sealed class PostgresSchemaInitializer {
     var bootstrap = migrations.FirstOrDefault(m => m.Name.StartsWith("000", StringComparison.Ordinal));
     if (bootstrap != null) {
       await using var bootstrapCmd = connection.CreateCommand();
-      bootstrapCmd.CommandText = bootstrap.Sql;
+      bootstrapCmd.CommandText = CatalogCheckedDdl.Guard(bootstrap.Sql);
       bootstrapCmd.CommandTimeout = 30;
       await bootstrapCmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -673,6 +674,8 @@ public sealed class PostgresSchemaInitializer {
           cmd.CommandText = segment.Sql;
 
           if (segment.Kind == Whizbang.Data.Postgres.MigrationSegmentKind.Plain) {
+            // Catalog-checked (#1636), as on the EF Core driver: idempotent DDL with nothing to do takes no lock.
+            cmd.CommandText = CatalogCheckedDdl.Guard(segment.Sql);
             await cmd.ExecuteNonQueryAsync(cancellationToken);
             continue;
           }

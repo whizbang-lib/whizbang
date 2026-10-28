@@ -128,7 +128,7 @@ public class CatalogCheckedDdlTests {
 
   [Test]
   public async Task AScriptWithNothingToGuard_IsReturnedAsItIsAsync() {
-    const string SQL = "CREATE TABLE IF NOT EXISTS t (id int);\nCOMMENT ON TABLE t IS 'a; b';\nSELECT 1;";
+    const string SQL = "CREATE TABLE IF NOT EXISTS t (id int);\nCOMMENT ON TABLE t IS 'it''s; b';\nSELECT 4 - 2 / 1;";
 
     await Assert.That(CatalogCheckedDdl.Guard(SQL)).IsSameReferenceAs(SQL);
   }
@@ -143,6 +143,7 @@ public class CatalogCheckedDdlTests {
   [Arguments("ALTER TABLE t ADD COLUMN IF EXISTS c int;")]
   [Arguments("ALTER TABLE t ADD IF;")]
   [Arguments("ALTER TABLE;")]
+  [Arguments("ALTER TABLE (t) ADD COLUMN IF NOT EXISTS c int;")]
   [Arguments("ALTER TABLE s.;")]
   [Arguments("ALTER INDEX i RENAME TO j;")]
   [Arguments("ALTER;")]
@@ -238,6 +239,10 @@ public class CatalogCheckedDdlTests {
       "SELECT $q$ never closed ALTER TABLE t ADD COLUMN IF NOT EXISTS c int;",
       "/* never closed ALTER TABLE t ADD COLUMN IF NOT EXISTS c int;",
       "SELECT E'never closed \\",
+      "SELECT $abc",
+      "-- ALTER TABLE t ADD COLUMN IF NOT EXISTS c int;",
+      "SELECT 1 -",
+      "SELECT 2 /",
     ];
 
     foreach (var sql in scripts) {
