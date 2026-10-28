@@ -69,6 +69,9 @@ public class InboxDrainWorkerGapTests {
         throw injected;
       }
       Written.Enqueue(work);
+      if (HoldWrites) {
+        Held?.TryAdd(work.MessageId, 0);
+      }
       if (Written.Count >= TargetCount) {
         ReachedTarget.TrySetResult(Written.Count);
       }
@@ -81,7 +84,10 @@ public class InboxDrainWorkerGapTests {
       }
       return _channel.Writer.TryWrite(work);
     }
-    public bool IsInFlight(Guid messageId) => false;
+    /// <summary>When set, the rows this writer reports as held (#1788); a written row is added when <see cref="HoldWrites"/> is on.</summary>
+    public ConcurrentDictionary<Guid, byte>? Held { get; set; }
+    public bool HoldWrites { get; set; }
+    public bool IsInFlight(Guid messageId) => Held?.ContainsKey(messageId) ?? false;
     public void RemoveInFlight(Guid messageId) { }
     public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _channel.Writer.Complete();
@@ -639,6 +645,76 @@ public class InboxDrainWorkerGapTests {
       .Because("one batched fetch + two inner-loop fetches (second finds nothing new)");
     await Assert.That(writer.SignalCount).IsEqualTo(1)
       .Because("the newRows==0 exit signals exactly once when work was enqueued");
+  }
+
+  /// <summary>
+  /// #1788: a row this process already holds (queued, dispatching or committing) is not queued again when the claim
+  /// re-offers its stream. claim_work re-emits every stream whose rows this instance holds on every poll, and the fetch
+  /// returns every leased unprocessed row, so without this a row waiting in a dispatch queue was copied into it again
+  /// on each poll.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_ARowAlreadyHeld_IsNotQueuedAgainAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var held = (Guid)TrackedGuid.New();
+    var fresh = (Guid)TrackedGuid.New();
+
+    var coord = new ScriptedCoordinator();
+    coord.RowsByStream[streamId] = [_row(held, streamId), _row(fresh, streamId)];
+
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 1, Held = new() { [held] = 0 } };
+
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 });
+
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await idleTcs.Task.WaitAsync(_timeout);
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(writer.Written.Select(w => w.MessageId)).IsEquivalentTo([fresh])
+      .Because("a row is never queued twice in one process while its first copy is pending");
+  }
+
+  /// <summary>
+  /// #1788, the inner loop: the same cap-filling rows returned again are already held after the batch path queued them,
+  /// so the inner loop queues none of them a second time.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_RepeatedRowsAtCap_HeldRowsAreNotQueuedTwiceAsync() {
+    var streamId = (Guid)TrackedGuid.New();
+    var msg1 = (Guid)TrackedGuid.New();
+    var msg2 = (Guid)TrackedGuid.New();
+
+    var coord = new ScriptedCoordinator { ConsumeRows = false };
+    coord.RowsByStream[streamId] = [_row(msg1, streamId), _row(msg2, streamId)];
+
+    var drain = new RecordingDrainChannel();
+    var writer = new TestInboxWriter { TargetCount = 2, Held = new(), HoldWrites = true };
+
+    var worker = _buildWorker(coord, drain, writer,
+      new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 2 });
+
+    var idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTcs.TrySetResult(true);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    await idleTcs.Task.WaitAsync(_timeout);
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { /* stopping is teardown; its outcome is not what this test asserts */ }
+
+    await Assert.That(writer.Written.Count).IsEqualTo(2)
+      .Because("the inner loop re-fetches the rows the batch path just queued; queuing them again duplicated them in memory");
   }
 
   /// <summary>
