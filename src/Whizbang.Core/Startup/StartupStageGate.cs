@@ -14,21 +14,15 @@ namespace Whizbang.Core.Startup;
 /// reached. A shutdown stage completes none, so a worker still waiting for its stage when the host starts to stop is
 /// never started.
 /// </remarks>
+/// <param name="schemaReady">
+/// The schema-ready gate, which opens at the end of <see cref="StartupStage.Coordinate"/>; null when the host has none.
+/// </param>
 /// <docs>operations/startup/startup-status#what-runs-in-each-stage</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupStageGateTests.cs</tests>
-public sealed class StartupStageGate : IStartupStageGate, IStartupStageObserver {
-  private readonly ISchemaReadyGate? _schemaReady;
+public sealed class StartupStageGate(ISchemaReadyGate? schemaReady = null) : IStartupStageGate, IStartupStageObserver {
+  private readonly ISchemaReadyGate? _schemaReady = schemaReady;
   private readonly Dictionary<StartupStage, TaskCompletionSource> _reached = StartupStages.Startup
     .ToDictionary(s => s, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
-
-  /// <summary>Creates the gate.</summary>
-  /// <param name="schemaReady">
-  /// The schema-ready gate, which opens at the end of <see cref="StartupStage.Coordinate"/>; null when the host has
-  /// none.
-  /// </param>
-  public StartupStageGate(ISchemaReadyGate? schemaReady = null) {
-    _schemaReady = schemaReady;
-  }
 
   /// <inheritdoc />
   public bool HasReached(StartupStage stage) =>
