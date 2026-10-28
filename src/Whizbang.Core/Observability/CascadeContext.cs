@@ -123,6 +123,7 @@ public sealed record CascadeContext {
   /// blank (the "no scope" case). The lowest-level scope primitive shared by the hop builders that stamp scope
   /// from an explicit id pair — one place for the null-on-blank rule instead of re-inlining it per site.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/CascadeContextCoverageTests.cs:SecurityFromIds_BothBlankIsNull_AndEitherIdCarriesAContextAsync</tests>
   public static SecurityContext? SecurityFromIds(string? tenantId, string? userId) =>
     string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)
       ? null
@@ -138,12 +139,13 @@ public sealed record CascadeContext {
     scope is null ? null : new SecurityContext { TenantId = scope.TenantId, UserId = scope.UserId };
 
   /// <summary>
-  /// The Tenant/User scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/>, or
-  /// <see langword="null"/> when the context carries no tenant/user. Shared by the hop builders that stamp scope
-  /// from an explicit message context (dispatcher initial hop + the transport envelope builders).
+  /// The scope carried by an <see cref="IMessageContext"/> as a <see cref="ScopeDelta"/> (see
+  /// <see cref="HopScope.FromMessageContext"/>), or <see langword="null"/> when the context carries no tenant/user.
+  /// Shared by the hop builders that stamp scope from an explicit message context (dispatcher initial hop + the
+  /// transport envelope builders).
   /// </summary>
   public static ScopeDelta? ScopeDeltaFromMessageContext(IMessageContext context) =>
-    ScopeDelta.FromSecurityContext(SecurityFromIds(context.TenantId, context.UserId));
+    HopScope.FromMessageContext(context);
 
   /// <summary>
   /// Resolves the cascade identity (<see cref="CorrelationId"/> + causation <see cref="MessageId"/>) to stamp
@@ -247,19 +249,16 @@ public sealed record CascadeContext {
   }
 
   /// <summary>
-  /// Resolves the security scope (Tenant/User) to stamp on a child event's hop, HOP-FIRST — the source hop
+  /// Resolves the security scope (the whole scope and its propagated claims, see <see cref="HopScope"/>) to stamp on
+  /// a child event's hop, HOP-FIRST: the source hop
   /// captured at the calling site is authoritative (survives detached/worker/collective boundaries), ambient is
   /// the fallback. The scope companion to <see cref="ResolveHopFirstIdentity"/>: together they are the ONE place
   /// the hop-first precedence lives, shared by every hop builder.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_HopPresent_WinsOverDifferentAmbientAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs:ResolveHopFirstScope_NoHop_FallsBackToAmbientAsync</tests>
-  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) {
-    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
-      ? ScopeDelta.FromSecurityContext(SecurityFromScope(s.Scope))
-      : null;
-    return sourceScope ?? ScopeDelta.FromSecurityContext(GetSecurityFromAmbient());
-  }
+  public static ScopeDelta? ResolveHopFirstScope(IMessageEnvelope? sourceEnvelope) =>
+    HopScope.FromEnvelope(sourceEnvelope) ?? HopScope.FromAmbient();
 
   /// <summary>
   /// Creates a new CascadeContext with the specified metadata added/updated.

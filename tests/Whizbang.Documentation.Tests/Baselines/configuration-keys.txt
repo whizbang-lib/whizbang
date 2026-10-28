@@ -241,6 +241,7 @@ Whizbang:Scope:OrganizationIdHeaderName
 Whizbang:Scope:PermissionsAggregation
 Whizbang:Scope:PermissionsClaimType
 Whizbang:Scope:PermissionsClaimTypes:*
+Whizbang:Scope:PropagatedClaimTypes:*
 Whizbang:Scope:RolesClaimType
 Whizbang:Scope:TenantIdClaimType
 Whizbang:Scope:TenantIdClaimTypes:*

@@ -3,7 +3,6 @@
 
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,6 +10,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Workers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -23,15 +23,23 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <see cref="IOutboxBatchStrategy"/> for per-stream sliding-window batching.
 /// </summary>
 public class StreamAffinityWorkCoordinatorStrategyTests {
+  /// <summary>
+  /// The batch window. The batcher runs on a <see cref="BatchWindowClock"/>, so the window closes only when a test
+  /// advances the clock past it, never because a loaded runner was slow.
+  /// </summary>
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(30);
+
   private readonly Uuid7IdProvider _idProvider = new();
 
   // ===== async path: outbox routes through IOutboxBatchStrategy =====
 
   [Test]
-  public async Task QueueOutboxMessageAsync_RoutesThroughOutboxBatchStrategyAsync() {
+  [Timeout(30000)]
+  public async Task QueueOutboxMessageAsync_RoutesThroughOutboxBatchStrategyAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
-    var flushed = new TaskCompletionSource();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
+    var clock = new BatchWindowClock(_window);
 
     await using var batch = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -41,18 +49,22 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var inner = new RecordingInnerStrategy();
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
     var msg = _outboxMessage(streamId);
-    await sut.QueueOutboxMessageAsync(msg);
+    await sut.QueueOutboxMessageAsync(msg, cancellationToken);
 
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    // One message, one window: close it once its timer exists, then wait for the flush it causes.
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(_window);
+    await flushed.Task.WaitAsync(cancellationToken);
 
     // Outbox was routed through the batcher, NOT the inner strategy
     await Assert.That(inner.QueueOutboxCallCount).IsEqualTo(0);
@@ -67,9 +79,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   // EventAudited message itself and ride it on the same batch.
 
   [Test]
-  public async Task QueueOutboxMessageAsync_AuditedEvent_AppendsEventAuditedToSameBatchAsync() {
+  [Timeout(30000)]
+  public async Task QueueOutboxMessageAsync_AuditedEvent_AppendsEventAuditedToSameBatchAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage>();
-    var twoSeen = new TaskCompletionSource();
+    var twoSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
 
     await using var batch = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -81,10 +95,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
@@ -92,9 +107,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null, systemEventOptions: options);
 
     var msg = _eventOutboxMessage(_idProvider.NewGuid());
-    await sut.QueueOutboxMessageAsync(msg);
+    await sut.QueueOutboxMessageAsync(msg, cancellationToken);
 
-    await twoSeen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    // One call appends two messages, so the drain may arm one window or two; close each as it is armed until both
+    // messages have been flushed, which is the condition the assertions read.
+    await clock.CloseWindowsUntilAsync(twoSeen.Task, cancellationToken);
 
     List<OutboxMessage> snapshot;
     lock (captured) { snapshot = [.. captured]; }
@@ -112,9 +129,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   }
 
   [Test]
-  public async Task QueueOutboxMessageAsync_AuditDisabled_OnlyDomainMessageBatchedAsync() {
+  [Timeout(30000)]
+  public async Task QueueOutboxMessageAsync_AuditDisabled_OnlyDomainMessageBatchedAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage>();
-    var flushed = new TaskCompletionSource();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
 
     await using var batch = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -124,17 +143,20 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var inner = new RecordingInnerStrategy();
     // No SystemEventOptions at all — the pre-audit wiring shape. Nothing extra may be batched.
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
 
-    await sut.QueueOutboxMessageAsync(_eventOutboxMessage(_idProvider.NewGuid()));
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.QueueOutboxMessageAsync(_eventOutboxMessage(_idProvider.NewGuid()), cancellationToken);
+    await clock.CloseWindowsUntilAsync(flushed.Task, cancellationToken);
+    // Stopping flushes whatever is still buffered, so an extra message cannot hide in a window nobody closed.
+    await batch.FlushAndStopAsync(cancellationToken);
 
     List<OutboxMessage> snapshot;
     lock (captured) { snapshot = [.. captured]; }
@@ -143,9 +165,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   }
 
   [Test]
-  public async Task QueueOutboxMessageAsync_NonEventMessage_NoAuditCompanionAsync() {
+  [Timeout(30000)]
+  public async Task QueueOutboxMessageAsync_NonEventMessage_NoAuditCompanionAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage>();
-    var flushed = new TaskCompletionSource();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
 
     await using var batch = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -155,10 +179,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var inner = new RecordingInnerStrategy();
     var options = new Whizbang.Core.SystemEvents.SystemEventOptions();
@@ -166,8 +191,10 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null, systemEventOptions: options);
 
     // IsEvent = false (commands, non-event messages) — never audited, mirroring AddOutboxMessage.
-    await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()));
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.QueueOutboxMessageAsync(_outboxMessage(_idProvider.NewGuid()), cancellationToken);
+    await clock.CloseWindowsUntilAsync(flushed.Task, cancellationToken);
+    // Stopping flushes whatever is still buffered, so an extra message cannot hide in a window nobody closed.
+    await batch.FlushAndStopAsync(cancellationToken);
 
     List<OutboxMessage> snapshot;
     lock (captured) { snapshot = [.. captured]; }
@@ -216,10 +243,12 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
   // ===== same-stream batching: many outbox emits → single batch =====
 
   [Test]
-  public async Task QueueOutboxMessageAsync_ManySameStreamEmits_SingleSortedBatchAsync() {
+  [Timeout(30000)]
+  public async Task QueueOutboxMessageAsync_ManySameStreamEmits_SingleSortedBatchAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
-    var flushed = new TaskCompletionSource();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
+    var clock = new BatchWindowClock(_window);
 
     await using var batch = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -229,10 +258,11 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var inner = new RecordingInnerStrategy();
     var sut = new StreamAffinityWorkCoordinatorStrategy(inner: inner, outboxBatch: batch, logger: NullLogger.Instance, auditDecisionHook: null);
@@ -241,12 +271,18 @@ public class StreamAffinityWorkCoordinatorStrategyTests {
     var m2 = _outboxMessage(streamId);
     var m3 = _outboxMessage(streamId);
 
-    // Emit out-of-order; verify the batch arrives ordered
-    await sut.QueueOutboxMessageAsync(m3);
-    await sut.QueueOutboxMessageAsync(m1);
-    await sut.QueueOutboxMessageAsync(m2);
+    // Emit out-of-order; verify the batch arrives ordered. Each emit is drained, and its window armed, before the
+    // next one is made, so all three are in the open batch when the clock closes the window. The frozen clock is
+    // what keeps the window open between emits; on the real clock a slow runner closed it early and split the batch.
+    await sut.QueueOutboxMessageAsync(m3, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    await sut.QueueOutboxMessageAsync(m1, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    await sut.QueueOutboxMessageAsync(m2, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    clock.Advance(_window);
+    await flushed.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var arr = captured[0];

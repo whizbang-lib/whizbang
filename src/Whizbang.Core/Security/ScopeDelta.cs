@@ -207,6 +207,26 @@ public sealed class ScopeDelta {
   }
 
   /// <summary>
+  /// The scope a message carries on its hop: the whole <paramref name="scope"/>, extensions included, and
+  /// the <paramref name="claims"/> allowed to cross with it. Built only by <see cref="HopScope"/>.
+  /// </summary>
+  /// <param name="scope">The scope to carry.</param>
+  /// <param name="claims">The claims that may cross the hop, or null for none.</param>
+  /// <returns>The hop scope.</returns>
+  internal static ScopeDelta ForHop(PerspectiveScope scope, IReadOnlyDictionary<string, string>? claims) {
+    var values = new Dictionary<ScopeProp, JsonElement> { [ScopeProp.Scope] = _serializeScope(scope) };
+    if (claims is null || claims.Count == 0) {
+      return new ScopeDelta { Values = values };
+    }
+    return new ScopeDelta {
+      Values = values,
+      Collections = new Dictionary<ScopeProp, CollectionChanges> {
+        [ScopeProp.Claims] = new CollectionChanges { Add = _serializeStringDictionary(claims) }
+      }
+    };
+  }
+
+  /// <summary>
   /// Creates a delta containing only differences between previous and current scope.
   /// Returns null if nothing changed (scopes are equivalent).
   /// </summary>
@@ -588,7 +608,7 @@ public sealed class ScopeDelta {
     };
   }
 
-  private static JsonElement _serializeStringDictionary(Dictionary<string, string> dict) {
+  private static JsonElement _serializeStringDictionary(IReadOnlyDictionary<string, string> dict) {
     var sb = new StringBuilder();
     sb.Append('{');
     var first = true;

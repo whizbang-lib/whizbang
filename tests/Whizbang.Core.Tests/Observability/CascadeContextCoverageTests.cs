@@ -64,4 +64,19 @@ public class CascadeContextCoverageTests {
     await Assert.That(fromScope!.TenantId).IsEqualTo("tenant-1");
     await Assert.That(fromScope.UserId).IsEqualTo("user-1");
   }
+
+  /// <summary>
+  /// No ids means no security context, not an empty one; either id alone is enough to carry a context.
+  /// Hop scopes are built by <c>HopScope</c> since #1854, so this public primitive is tested directly.
+  /// </summary>
+  [Test]
+  public async Task SecurityFromIds_BothBlankIsNull_AndEitherIdCarriesAContextAsync() {
+    var tenantOnly = CascadeContext.SecurityFromIds("tenant-1", null);
+    var userOnly = CascadeContext.SecurityFromIds("", "user-1");
+
+    await Assert.That(CascadeContext.SecurityFromIds(null, "")).IsNull();
+    await Assert.That(tenantOnly!.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(tenantOnly.UserId).IsNull();
+    await Assert.That(userOnly!.UserId).IsEqualTo("user-1");
+  }
 }

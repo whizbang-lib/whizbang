@@ -42,6 +42,7 @@ public class HotChocolateOptionsConfigurationBindingTests {
       ["Whizbang:Scope:GroupsAggregation"] = "Aggregate",
       ["Whizbang:Scope:ExtensionClaimMappings:region"] = "region_claim",
       ["Whizbang:Scope:ExtensionHeaderMappings:region"] = "X-Region",
+      ["Whizbang:Scope:PropagatedClaimTypes:0"] = "department",
     });
     services.AddWhizbangScope();
     await using var provider = services.BuildServiceProvider();
@@ -64,6 +65,7 @@ public class HotChocolateOptionsConfigurationBindingTests {
     await Assert.That(options.GroupsAggregation).IsEqualTo(ClaimAggregation.Aggregate);
     await Assert.That(options.ExtensionClaimMappings["region"]).IsEqualTo("region_claim");
     await Assert.That(options.ExtensionHeaderMappings["region"]).IsEqualTo("X-Region");
+    await Assert.That(options.PropagatedClaimTypes).IsEquivalentTo(["department"]);
   }
 
   /// <summary>
@@ -80,7 +82,7 @@ public class HotChocolateOptionsConfigurationBindingTests {
       "TenantIdClaimType", "TenantIdHeaderName", "UserIdClaimType", "UserIdHeaderName", "OrganizationIdClaimType",
       "CustomerIdClaimType", "CorrelationIdHeaderName", "RolesClaimType", "PermissionsClaimType",
       "PermissionsAggregation", "GroupsClaimType", "GroupsAggregation", "PermissionsClaimTypes:0",
-      "ExtensionClaimMappings:region", "ExtensionHeaderMappings:region",
+      "ExtensionClaimMappings:region", "ExtensionHeaderMappings:region", "PropagatedClaimTypes:0",
     ];
     var services = _services(keys.ToDictionary(key => "Whizbang:Scope:" + key, _ => (string?)blank));
     services.AddWhizbangScope(code => code.TenantIdHeaderName = "X-Tenant");
@@ -103,6 +105,7 @@ public class HotChocolateOptionsConfigurationBindingTests {
     await Assert.That(options.GroupsAggregation).IsEqualTo(defaults.GroupsAggregation);
     await Assert.That(options.ExtensionClaimMappings).IsEmpty();
     await Assert.That(options.ExtensionHeaderMappings).IsEmpty();
+    await Assert.That(options.PropagatedClaimTypes).IsEmpty();
   }
 
   [Test]

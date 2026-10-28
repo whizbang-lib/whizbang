@@ -803,6 +803,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     initialization was still running returned at once ("already initialized"); it now waits for it, and runs one of
     its own if that one failed. `app.Services` and the root scope the hosted initializer is built from are now one
     host to it.
+- **A message's hop scope carries the request's scope extensions and the claims the application lists (Fixes #1854).**
+  The hop scope a dispatched message carried was rebuilt from the tenant and user id alone, so a scope extension (for
+  example one `WhizbangScopeOptions.ExtensionClaimMappings` maps from a claim at the HTTP edge), the customer and
+  organization ids and every claim were dropped at the first hop, and a receptor in another service, and every event it
+  emitted, saw an empty `Extensions` list and no claims. Every dispatch path (send, publish, batches, scheduled and
+  deferred messages, local runs, cascades, the transport bridges and the event-store decorator) now builds its hop scope
+  through one helper, `HopScope`, which carries the whole ambient `PerspectiveScope`. Claims cross a hop only by type,
+  when the application lists the type in `WhizbangScopeOptions.PropagatedClaimTypes`
+  (`Whizbang:Scope:PropagatedClaimTypes`, empty by default), so no token or personal claim is copied into message
+  metadata unless it is listed. A receiving service restores both into its scope context
+  (`IScopeContext.Scope.Extensions`, `IScopeContext.Claims`) and passes the restored claims on to the messages it
+  dispatches. The allow-list rides on the scope context as `SecurityExtraction.PropagatedClaimTypes` and
+  `ImmutableScopeContext.PropagatedClaimTypes`. Extensions and claims travel only with the tenant and user they were
+  established for, and a scope with no tenant and no user still yields no hop scope. The wire format is unchanged: the
+  hop scope already had fields for extensions and claims, and older receivers read them.
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and

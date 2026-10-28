@@ -24,15 +24,25 @@ namespace Whizbang.Core.Tests.Workers;
 /// independently. Defaults 50ms / 1s / 100 (mirror of inbox).
 /// </summary>
 public class SlidingWindowOutboxBatchStrategyTests {
+  /// <summary>
+  /// The batch windows. Tests that wait on a window run the batcher on a <see cref="BatchWindowClock"/>, so the
+  /// window closes only when the test advances the clock past it, never because a loaded runner was slow.
+  /// </summary>
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(30);
+
+  private static readonly TimeSpan _shortWindow = TimeSpan.FromMilliseconds(20);
+
   private readonly Uuid7IdProvider _idProvider = new();
 
   // ===== same-stream batching =====
 
   [Test]
-  public async Task AppendAsync_SameStream_SingleBatchSortedByMessageIdAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_SameStream_SingleBatchSortedByMessageIdAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -42,21 +52,28 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var m1 = _make(streamId);
     var m2 = _make(streamId);
     var m3 = _make(streamId);
 
-    // Enqueue out-of-order on purpose
-    await sut.AppendAsync(m3);
-    await sut.AppendAsync(m1);
-    await sut.AppendAsync(m2);
+    // Enqueue out-of-order on purpose. Each append is drained, and its window armed, before the next one is made,
+    // so all three are in the open batch when the clock closes the window. The frozen clock is what keeps the window
+    // open between appends; on the real clock a slow runner closed it early and split the batch.
+    await sut.AppendAsync(m3, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    await sut.AppendAsync(m1, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    await sut.AppendAsync(m2, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    clock.Advance(_window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
@@ -76,9 +93,10 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var streamB = _idProvider.NewGuid();
     var captured = new List<(Guid? Stream, int Count)>();
     var lockObj = new object();
-    var bothFlushed = new TaskCompletionSource();
+    var bothFlushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var flushedA = 0;
     var flushedB = 0;
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, _) => {
@@ -102,16 +120,18 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(_make(streamA), testToken);
     await sut.AppendAsync(_make(streamB), testToken);
     await sut.AppendAsync(_make(streamA), testToken);
 
-    await bothFlushed.Task.WaitAsync(testToken);
+    // Close each window as a stream's worker arms it, until every message the assertions count has been flushed.
+    await clock.CloseWindowsUntilAsync(bothFlushed.Task, testToken);
 
     // Stream A and Stream B each had their own window. They produced separate batches.
     var aBatches = captured.Where(c => c.Stream == streamA).ToList();
@@ -136,9 +156,10 @@ public class SlidingWindowOutboxBatchStrategyTests {
   /// test read that as the size cap failing. A test for one mechanism has to exclude the other.
   /// </remarks>
   [Test]
-  public async Task AppendAsync_BatchExceedsMaxSize_FlushesEarlyAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_BatchExceedsMaxSize_FlushesEarlyAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
-    var firstFlush = new TaskCompletionSource();
+    var firstFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
@@ -152,13 +173,15 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 5,
-      });
+      },
+      // A clock nobody advances: the window cannot elapse at all, however slow the runner.
+      timeProvider: new FakeTimeProvider());
 
     for (var i = 0; i < 5; i++) {
-      await sut.AppendAsync(_make(streamId));
+      await sut.AppendAsync(_make(streamId), cancellationToken);
     }
 
-    await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await firstFlush.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(5);
@@ -167,12 +190,13 @@ public class SlidingWindowOutboxBatchStrategyTests {
   // ===== Null stream id routes to default buffer =====
 
   [Test]
-  public async Task AppendAsync_NullStreamId_RoutesToDefaultBufferAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_NullStreamId_RoutesToDefaultBufferAsync(CancellationToken cancellationToken) {
     var captured = new List<OutboxMessage[]>();
-    var flushed = new TaskCompletionSource();
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    // Flushed by size, not by time: windows that never elapse and a size of two make the two messages
-    // one batch exactly when they share one buffer. A 30 ms window let a loaded run split them.
+    // Flushed by size, not by time: windows that never elapse (a clock nobody advances) and a size of two make the
+    // two messages one batch exactly when they share one buffer. A 30 ms window let a loaded run split them.
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (msgs, ct) => {
         captured.Add(msgs);
@@ -184,12 +208,13 @@ public class SlidingWindowOutboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromHours(1),
         MaxWait = TimeSpan.FromHours(1),
         MaxSize = 2,
-      });
+      },
+      timeProvider: new FakeTimeProvider());
 
-    await sut.AppendAsync(_make(streamId: null));
-    await sut.AppendAsync(_make(streamId: null));
+    await sut.AppendAsync(_make(streamId: null), cancellationToken);
+    await sut.AppendAsync(_make(streamId: null), cancellationToken);
 
-    await flushed.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    await flushed.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured).Count().IsEqualTo(1).Because("both null-stream messages share the one default buffer");
     await Assert.That(captured[0].Length).IsEqualTo(2);
@@ -215,9 +240,11 @@ public class SlidingWindowOutboxBatchStrategyTests {
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
-        MaxWait = TimeSpan.FromMinutes(1),  // very long; only Stop drains
+        MaxWait = TimeSpan.FromMinutes(1),
         MaxSize = 1000,
-      });
+      },
+      // A clock nobody advances: no window can close, so only Stop drains.
+      timeProvider: new FakeTimeProvider());
 
     await sut.AppendAsync(_make(streamA));
     await sut.AppendAsync(_make(streamB));
@@ -429,7 +456,8 @@ public class SlidingWindowOutboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync() {
+  [Timeout(30000)]
+  public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync(CancellationToken cancellationToken) {
     // A failed bulk flush must not tear down the batcher: the dispatcher re-emits, and
     // killing the strategy would take every other stream's buffer down with it.
     // Signalling before the throw would release the test while the failure had not happened yet,
@@ -439,6 +467,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     // and kept flushing can produce it.
     var attempts = 0;
     var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_shortWindow);
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => {
@@ -449,17 +478,19 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        SlidingWindow = _shortWindow,
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(_make(_idProvider.NewGuid()));
-    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
 
     // Waits on the strategy having flushed again after a failed flush, which is the property
-    // under test -- not merely on the first failure having been reached.
-    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // under test -- not merely on the first failure having been reached. The clock closes each
+    // window as it is armed, so the flushes happen when the test lets them, not when the runner can.
+    await clock.CloseWindowsUntilAsync(secondAttempt.Task, cancellationToken);
 
     await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1)
       .Because("a failed bulk flush must not tear the batcher down: the dispatcher re-emits, and "
@@ -490,12 +521,14 @@ public class SlidingWindowOutboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync() {
+  [Timeout(30000)]
+  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync(CancellationToken cancellationToken) {
     // Shutdown deadline reached with a flush still in flight: the drain is abandoned
     // rather than waited on forever.
     var releaseFlush = new TaskCompletionSource();
-    var flushEntered = new TaskCompletionSource();
+    var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var flushToken = CancellationToken.None;
+    var clock = new BatchWindowClock(_shortWindow);
 
     var sut = new SlidingWindowOutboxBatchStrategy(
       flush: async (_, ct) => {
@@ -505,20 +538,24 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowOutboxBatchStrategy>.Instance,
       options: new SlidingWindowOutboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        SlidingWindow = _shortWindow,
         MaxWait = TimeSpan.FromMilliseconds(100),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(_make(_idProvider.NewGuid()));
-    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(_shortWindow);
+    await flushEntered.Task.WaitAsync(cancellationToken);
 
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
-    // "Without hanging" has to be enforced rather than hoped for: a stop that in fact waits on the
-    // drain would otherwise sit here until the suite-level timeout kills the whole run.
-    await sut.FlushAndStopAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+    // "Without hanging" has to be enforced rather than hoped for: the flush is held until the end of
+    // the test, so a stop that in fact waited on the drain would sit here until the test's own
+    // timeout failed it.
+    await sut.FlushAndStopAsync(cts.Token).WaitAsync(cancellationToken);
 
     // Abandoning is more than returning early: the flush still in flight is TOLD to give up. That
     // signal is what lets the deadline end the process, instead of leaving a batch writing into a
