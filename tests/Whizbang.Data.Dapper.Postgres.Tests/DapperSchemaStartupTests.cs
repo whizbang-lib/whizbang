@@ -90,6 +90,48 @@ public class DapperSchemaStartupTests {
     await Assert.That(await _tableExistsAsync(TABLE)).IsTrue();
   }
 
+  /// <summary>
+  /// The Dapper driver holds no election (#1636): its start reports Elect as skipped before it migrates, so the end
+  /// of Preflight is marked on this driver too, and what waits for it (the notification connection and its
+  /// alive-lock) starts there rather than only once the schema is ready.
+  /// </summary>
+  [Test]
+  public async Task HostStart_ReportsElectSkipped_BeforeItMigratesAsync() {
+    var stages = new RecordingStages();
+    var services = _services();
+    services.AddSingleton<Whizbang.Core.Startup.IStartupStageReporter>(stages);
+    await using var provider = services.BuildServiceProvider();
+
+    await _initializer(provider).StartAsync(CancellationToken.None);
+
+    await Assert.That(stages.Calls).IsEquivalentTo([
+      "Skip Elect: no election could be held, so this instance migrates under the schema lock",
+      "Enter Coordinate: recomputing partitions before the schema-ready gate opens",
+    ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+  }
+
+  private sealed class RecordingStages : Whizbang.Core.Startup.IStartupStageReporter {
+    private readonly List<string> _calls = [];
+
+    public List<string> Calls => [.. _calls];
+
+    public Whizbang.Core.Startup.StartupStageSnapshot? Current { get; private set; }
+
+    public ValueTask EnterAsync(Whizbang.Core.Startup.StartupStage stage, string message, CancellationToken cancellationToken = default) {
+      _calls.Add($"Enter {stage}: {message}");
+      Current = new(stage, message, false, DateTimeOffset.UnixEpoch);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask SkipAsync(Whizbang.Core.Startup.StartupStage stage, string reason, CancellationToken cancellationToken = default) {
+      _calls.Add($"Skip {stage}: {reason}");
+      Current = new(stage, "skipped: " + reason, true, DateTimeOffset.UnixEpoch);
+      return ValueTask.CompletedTask;
+    }
+
+    public ValueTask InstanceRegisteredAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+  }
+
   [Test]
   public async Task HostStart_RegistersThisInstanceAsync() {
     await using var provider = _services().BuildServiceProvider();
