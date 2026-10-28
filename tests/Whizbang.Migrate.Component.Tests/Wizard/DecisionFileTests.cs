@@ -409,6 +409,164 @@ public class DecisionFileTests {
     }
   }
 
+  // ── Every field survives the commented form (#1766) ───────────────────────
+
+  private const string AWKWARD = "C:\\Users\\me\\Work \"Q\"\tTab\r\nNext\u2028Line\u2029Para";
+
+  // Every field set away from its default, with every string carrying characters that need
+  // escaping. EveryFieldDecided_DiffersFromTheDefaultEverywhere_Async checks that nothing is left at its default, so a
+  // field added to the model later has to be set here too or that guard fails first.
+  private static DecisionFile _everyFieldDecided() {
+    var file = DecisionFile.Create("proj " + AWKWARD);
+    file.Version = "2.0 " + AWKWARD;
+    file.GeneratedAt = new DateTimeOffset(2026, 1, 20, 10, 0, 0, TimeSpan.FromHours(-5));
+    file.ExcludePatterns.Add("**/Gen " + AWKWARD);
+
+    var state = file.State;
+    state.Status = MigrationStatus.Reverted;
+    state.StartedAt = new DateTimeOffset(2026, 1, 18, 14, 30, 0, TimeSpan.FromHours(2));
+    state.LastUpdatedAt = new DateTimeOffset(2026, 1, 19, 8, 15, 30, TimeSpan.Zero);
+    state.CompletedAt = new DateTimeOffset(2026, 1, 19, 9, 0, 0, TimeSpan.FromHours(-3));
+    state.GitCommitBefore = "commit " + AWKWARD;
+    state.CompletedCategories.Add("handlers " + AWKWARD);
+    state.CurrentCategory = "current " + AWKWARD;
+    state.CurrentItem = 42;
+
+    var d = file.Decisions;
+    d.Handlers.Default = DecisionChoice.ApplyToAll;
+    d.Handlers.Overrides["handler " + AWKWARD] = DecisionChoice.Skip;
+    d.Projections.Default = DecisionChoice.ConvertWithWarning;
+    d.Projections.Overrides["projection " + AWKWARD] = DecisionChoice.Prompt;
+    d.Projections.SingleStream = "Single " + AWKWARD;
+    d.Projections.MultiStream = "Multi " + AWKWARD;
+    d.EventStore.AppendExclusive = DecisionChoice.Skip;
+    d.EventStore.StartStream = DecisionChoice.Prompt;
+    d.EventStore.SaveChanges = DecisionChoice.Convert;
+    d.IdGeneration.GuidNewGuid = DecisionChoice.Skip;
+    d.IdGeneration.CombGuid = DecisionChoice.ConvertWithWarning;
+    d.DiRegistration.Default = DecisionChoice.Prompt;
+    d.DiRegistration.Overrides["di " + AWKWARD] = DecisionChoice.ConvertWithWarning;
+
+    d.Schema.Strategy = SchemaStrategy.DifferentDbDifferentSchema;
+    d.Schema.SchemaName = "schema " + AWKWARD;
+    d.Schema.InfrastructurePrefix = "infra " + AWKWARD;
+    d.Schema.PerspectivePrefix = "persp " + AWKWARD;
+    d.Schema.ConnectionStringName = "conn " + AWKWARD;
+
+    d.Tenant.WasDetected = true;
+    d.Tenant.DetectedProperty = "tenant " + AWKWARD;
+    d.Tenant.UsesMartenTenantFeatures = true;
+    d.Tenant.Strategy = TenantStrategy.ScopedDi;
+    d.Tenant.Confirmed = true;
+
+    d.StreamId.WasDetected = true;
+    d.StreamId.DetectedProperty = "stream " + AWKWARD;
+    d.StreamId.IsStronglyTyped = true;
+    d.StreamId.Confirmed = true;
+
+    d.Routing.OwnedDomains.Add("owned " + AWKWARD);
+    d.Routing.DetectedDomains.Add("detected-a " + AWKWARD);
+    d.Routing.DetectedDomains.Add("detected-b");
+    d.Routing.InboxStrategy = InboxStrategyChoice.DomainTopics;
+    d.Routing.InboxTopic = "inbox " + AWKWARD;
+    d.Routing.InboxSuffix = "suffix " + AWKWARD;
+    d.Routing.OutboxStrategy = OutboxStrategyChoice.SharedTopic;
+    d.Routing.OutboxTopic = "outbox " + AWKWARD;
+    d.Routing.Confirmed = true;
+
+    d.CustomBaseClasses.DefaultStrategy = CustomBaseClassStrategy.KeepInheritance;
+    d.CustomBaseClasses.BaseClassStrategies["Base " + AWKWARD] = CustomBaseClassStrategy.RemoveInheritance;
+    d.CustomBaseClasses.BaseClassStrategies["OtherBase"] = CustomBaseClassStrategy.Skip;
+    d.CustomBaseClasses.Confirmed = true;
+
+    d.UnknownInterfaces.DefaultStrategy = UnknownInterfaceStrategy.MapToWhizbang;
+    d.UnknownInterfaces.InterfaceStrategies["IService " + AWKWARD] = UnknownInterfaceStrategy.KeepAndInject;
+    d.UnknownInterfaces.InterfaceStrategies["IOther"] = UnknownInterfaceStrategy.RemoveParameter;
+    d.UnknownInterfaces.Confirmed = true;
+
+    d.Packages.AutoManage = false;
+    d.Packages.WhizbangVersion = "ver " + AWKWARD;
+    d.Packages.RemoveOldPackages = false;
+    d.Packages.PreservePackages.Add("Marten " + AWKWARD);
+    d.Packages.PreservePackages.Add("Wolverine.Http");
+
+    d.JsonMigration.Enabled = true;
+    d.JsonMigration.RemoveDeadImports = false;
+    d.JsonMigration.AddTodoForUnsupported = false;
+    return file;
+  }
+
+  // The fixed list of manual-migration notes is read-only and never loaded, so it is not a
+  // decision the file has to carry.
+  private static readonly HashSet<string> _notADecision = ["unsupported_patterns"];
+
+  // Walks the plain serialized form (the source-generated context lists every property, so this
+  // needs no reflection) and collects each leaf the fixture leaves equal to a default file.
+  private static void _collectUnchanged(JsonElement decided, JsonElement baseline, string path, List<string> unchanged) {
+    if (decided.ValueKind == JsonValueKind.Object && decided.EnumerateObject().Any()) {
+      foreach (var property in decided.EnumerateObject()) {
+        if (_notADecision.Contains(property.Name)) {
+          continue;
+        }
+        if (baseline.ValueKind == JsonValueKind.Object && baseline.TryGetProperty(property.Name, out var other)) {
+          _collectUnchanged(property.Value, other, path + "." + property.Name, unchanged);
+        }
+      }
+      return;
+    }
+    if (decided.GetRawText() == baseline.GetRawText()) {
+      unchanged.Add(path);
+    }
+  }
+
+  [Test]
+  public async Task EveryFieldDecided_DiffersFromTheDefaultEverywhere_Async() {
+    // Guards the round-trip test below: a field the fixture leaves at its default would pass
+    // that test even if the commented form never wrote it, which is how #1766 went unnoticed.
+    using var decided = JsonDocument.Parse(_everyFieldDecided().ToJson());
+    using var baseline = JsonDocument.Parse(DecisionFile.Create("/src/MyProject").ToJson());
+    var unchanged = new List<string>();
+
+    _collectUnchanged(decided.RootElement, baseline.RootElement, "$", unchanged);
+
+    await Assert.That(unchanged).IsEmpty()
+      .Because("every field must be set away from its default, or the round trip cannot tell "
+             + "a written value from a dropped one");
+  }
+
+  [Test]
+  public async Task SaveAsync_WithComments_RoundTripsEveryField_Async() {
+    // The commented form is hand-built, so it is a second writer for the same document. Any
+    // field it writes as fixed text instead of the recorded decision (#1766) loads back as the
+    // default and silently undoes what the user chose. Comparing the plain serialized forms
+    // covers every property the model has, including ones added after this test.
+    var dir = Path.Combine(Path.GetTempPath(), "whizbang-decisionfile", Guid.NewGuid().ToString("N"));
+    try {
+      var path = Path.Combine(dir, "decisions.jsonc");
+      var original = _everyFieldDecided();
+
+      await original.SaveAsync(path, includeComments: true);
+      var loaded = await DecisionFile.LoadAsync(path);
+
+      await Assert.That(loaded.ToJson()).IsEqualTo(original.ToJson());
+    } finally {
+      if (Directory.Exists(dir)) { Directory.Delete(dir, recursive: true); }
+    }
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_OnANewFile_RoundTripsEveryField_Async() {
+    // The other end of every value: unset optional strings and empty lists and maps must load
+    // back as unset and empty, not as an empty string or a placeholder.
+    var original = DecisionFile.Create("/src/MyProject");
+
+    var restored = DecisionFile.FromJson(original.ToJsonWithComments());
+
+    await Assert.That(restored.ToJson()).IsEqualTo(original.ToJson());
+    await Assert.That(restored.State.GitCommitBefore).IsNull();
+    await Assert.That(restored.State.CurrentCategory).IsNull();
+  }
+
   // ── Paths, defaults and failure modes ─────────────────────────────────────
 
   [Test]
