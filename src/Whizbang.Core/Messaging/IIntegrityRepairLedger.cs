@@ -27,6 +27,18 @@ public readonly record struct IntegrityRepairDrainItem(
   long? WindowFrom, long? WindowUntil);
 
 /// <summary>
+/// What a manifest comparison needs to know before it adds deficit buckets to the paced repair
+/// drain's ledger: how large the drain's backlog already is, and which of the comparison's keys the
+/// ledger already tracks (re-admitting a tracked key adds nothing to the backlog).
+/// </summary>
+/// <param name="Backlog">Per-stream ledger rows the drain may claim, across every origin, counted
+/// up to the cap the caller passed (a count at the cap means "at least the cap").</param>
+/// <param name="Tracked">Element i is true when key i already has a ledger row.</param>
+/// <docs>resilience/stream-integrity#repair-caps</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairBacklogProbeSqlTests.cs</tests>
+public sealed record IntegrityRepairBacklogProbe(long Backlog, IReadOnlyList<bool> Tracked);
+
+/// <summary>
 /// Convergence state for stream integrity: what divergence has already been reported, and how
 /// often a bucket's repair has been requested.
 /// </summary>

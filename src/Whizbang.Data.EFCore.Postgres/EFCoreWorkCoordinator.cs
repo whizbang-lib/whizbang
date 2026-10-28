@@ -879,6 +879,51 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// The count stops at <paramref name="backlogCap"/> (a LIMITed subquery), so the read costs at most
+  /// the bound however large the ledger is. Rows on the synthetic bulk lane (stream zero) are left out,
+  /// exactly as the drain's claim leaves them out. Best-effort: a probe that cannot reach the ledger
+  /// is logged and answers null, and the comparison falls back to its per-comparison cap.
+  /// </remarks>
+  public async Task<IntegrityRepairBacklogProbe?> IntegrityProbeRepairBacklogAsync(
+      Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, int backlogCap,
+      CancellationToken cancellationToken = default) {
+    try {
+      return await _withCoordinatorCommandAsync<IntegrityRepairBacklogProbe?>(async (cmd, schema) => {
+        cmd.CommandText = $"""
+          SELECT
+            (SELECT COUNT(*) FROM (
+               SELECT 1 FROM {schema}.wh_integrity_ledger
+               WHERE stream_id <> '00000000-0000-0000-0000-000000000000'::uuid
+               LIMIT @p_limit) b),
+            ARRAY(
+              SELECT EXISTS (
+                SELECT 1 FROM {schema}.wh_integrity_ledger l
+                WHERE l.origin_service_id = @p_origin_service_id
+                  AND l.tenant_scope = COALESCE(k.scope, '')
+                  AND l.event_type = k.event_type
+                  AND l.stream_id = k.stream_id)
+              FROM UNNEST(@p_tenant_scopes, @p_event_types, @p_stream_ids) WITH ORDINALITY AS k(scope, event_type, stream_id, ord)
+              ORDER BY k.ord)
+          """;
+        _bindDivergenceKeyArrays((Npgsql.NpgsqlCommand)cmd, originServiceId, keys);
+        ((Npgsql.NpgsqlCommand)cmd).Parameters.AddWithValue(P_LIMIT, backlogCap);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return new IntegrityRepairBacklogProbe(reader.GetInt64(0), reader.GetFieldValue<bool[]>(1));
+      }, cancellationToken).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+#pragma warning disable CA1848 // Rare error path; the comparison falls back to its per-comparison cap.
+      _log.LogWarning(ex,
+        "Integrity repair-backlog probe failed; this comparison admits deficits by its per-comparison cap alone.");
+#pragma warning restore CA1848
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
   public async Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
       IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
       int limit, CancellationToken cancellationToken = default) {

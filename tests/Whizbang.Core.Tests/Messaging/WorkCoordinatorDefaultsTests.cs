@@ -520,6 +520,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task IntegrityProbeRepairBacklogAsync_WithoutProviderSupport_AnswersUnsupportedAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var result = await coordinator.IntegrityProbeRepairBacklogAsync(Guid.Empty, [], backlogCap: 10);
+
+    await Assert.That(result).IsNull()
+      .Because("null tells the drain admission to fall back to the per-comparison cap alone");
+  }
+
+  [Test]
   public async Task IntegrityClaimRepairDrainAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

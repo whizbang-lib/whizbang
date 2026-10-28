@@ -1764,6 +1764,20 @@ public interface IWorkCoordinator {
     Task.CompletedTask;
 
   /// <summary>
+  /// Reads what the paced repair drain's admission check needs in one round trip: the drain's
+  /// backlog (per-stream ledger rows, every origin, counted up to <paramref name="backlogCap"/> so
+  /// the read stays bounded) and, for each of <paramref name="keys"/>, whether the ledger already
+  /// tracks it. Null = unsupported or failed; the caller then admits by its per-comparison cap
+  /// alone.
+  /// </summary>
+  /// <docs>resilience/stream-integrity#repair-caps</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/IntegrityRepairBacklogProbeSqlTests.cs</tests>
+  Task<IntegrityRepairBacklogProbe?> IntegrityProbeRepairBacklogAsync(
+    Guid originServiceId, IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys, int backlogCap,
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IntegrityRepairBacklogProbe?>(null);
+
+  /// <summary>
   /// Atomically claims up to <paramref name="limit"/> repair-eligible ledger rows for the paced
   /// drain: past their exponential backoff, under <paramref name="maxAttempts"/>, restricted to
   /// <paramref name="originIds"/> (origins whose request topic is learned — nothing else could be
