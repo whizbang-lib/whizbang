@@ -719,6 +719,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention and the variables are in `.github/WORKFLOWS.md`, "Runner selection".
 
 ### Fixed
+- **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
+  repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
+  verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to
+  redeliver them, the store skipped each redelivered event as a duplicate, and the next check asked again, a standing
+  loop bounded only by the repair drain rate. A committed redelivery bundle is now reconciled with the events the store
+  already holds (`RedeliveryReconciler`, migration 249 `wh_adopt_redelivered_origin`): an empty origin takes the
+  bundle's origin and an empty origin commit sequence the event's sequence (a recorded origin is never overwritten or
+  re-attributed, and the local service adopts nothing), the event's digest moves from the local lane to the origin's,
+  and sealed epochs over it are refolded. The origin is the only source of those sequences, so this history is
+  backfilled by the one redelivery verification asks for, then verifies like any other. A bundle whose events were all
+  already stored under their origin marks its buckets in the repair ledger (`wh_integrity_ledger.unhealable_at`,
+  `IIntegrityRepairLedger.MarkUnhealableBatchAsync`): neither the burst grant nor the paced drain asks for them again,
+  the cooldown stops re-reporting them, and each is reported once (a warning naming the bucket); a changed signature
+  or a heal lifts the mark, and a bucket whose origin never answered keeps the terminal cadence. New counters
+  `whizbang.stream_integrity.origins_adopted` and `whizbang.stream_integrity.repairs_unhealable`; `IWorkCoordinator`
+  gains `AdoptRedeliveredOriginAsync` and `IntegrityMarkUnhealableBatchAsync` (Fixes #1790)
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and

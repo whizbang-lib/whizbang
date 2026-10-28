@@ -57,6 +57,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private const string P_MAX = "p_max";
   private const string P_NOW = "p_now";
   private const string P_ORIGIN = "p_origin";
+  private const string P_ORIGIN_SERVICE_ID = "p_origin_service_id";
   private const string P_SETTLE = "p_settle";
   private const string P_STREAM_ID = "p_stream_id";
   private const string P_STREAM_IDS = "p_stream_ids";
@@ -754,7 +755,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private static void _bindDivergenceKeyArrays(
       Npgsql.NpgsqlCommand cmd, Guid originServiceId,
       IReadOnlyList<IntegrityRepairLedger.DivergenceKey> keys) {
-    cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
       Value = keys.Select(k => k.TenantScope).ToArray()
     });
@@ -804,7 +805,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Guid originServiceId, IReadOnlyList<IntegrityReportObservation> observations,
       DateTimeOffset now, TimeSpan cooldown, CancellationToken cancellationToken = default) =>
     _integrityLedgerBoolArrayAsync("wh_integrity_try_begin_report_batch", cmd => {
-      cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+      cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_tenant_scopes", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) {
         Value = observations.Select(o => o.Key.TenantScope).ToArray()
       });
@@ -1016,7 +1017,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
-    cmd.Parameters.AddWithValue("p_origin_service_id", originServiceId);
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = eventIds.ToArray()
     });
@@ -1091,7 +1092,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   private static void _bindDivergenceKey(Npgsql.NpgsqlCommand cmd, IntegrityRepairLedger.DivergenceKey key) {
-    cmd.Parameters.AddWithValue("p_origin_service_id", key.OriginServiceId);
+    cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, key.OriginServiceId);
     cmd.Parameters.AddWithValue("p_tenant_scope", (object?)key.TenantScope ?? string.Empty);
     cmd.Parameters.AddWithValue("p_event_type", key.EventType);
     cmd.Parameters.AddWithValue(P_STREAM_ID, key.StreamId);
