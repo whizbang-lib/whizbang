@@ -70,11 +70,11 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
     h.Time.Advance(_halfLease);
     await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
 
-    var renewal = coordinator.Renewals.Single();
-    await Assert.That(renewal.Category).IsEqualTo(WorkCategory.Inbox);
-    await Assert.That(renewal.Ids).IsEquivalentTo([work.MessageId])
+    var (category, ids, leaseSeconds) = coordinator.Renewals.Single();
+    await Assert.That(category).IsEqualTo(WorkCategory.Inbox);
+    await Assert.That(ids).IsEquivalentTo([work.MessageId])
       .Because("nothing renewed inbox leases, so a row queued past 300 s lost its lease without ever being dispatched");
-    await Assert.That(renewal.LeaseSeconds).IsEqualTo(new LeaseRenewalWorkerOptions().LeaseSeconds);
+    await Assert.That(leaseSeconds).IsEqualTo(new LeaseRenewalWorkerOptions().LeaseSeconds);
   }
 
   [Test]
@@ -106,9 +106,9 @@ public sealed class InboxDispatchWorkerHeldLeaseTests {
     h.Time.Advance(_halfLease);
     await h.Worker.RenewHeldLeasesOnceAsync(CancellationToken.None);
 
-    var release = coordinator.Releases.Single();
-    await Assert.That(release.InstanceId).IsEqualTo(h.InstanceId);
-    await Assert.That(release.Ids).IsEquivalentTo([work.MessageId])
+    var (instanceId, releasedIds) = coordinator.Releases.Single();
+    await Assert.That(instanceId).IsEqualTo(h.InstanceId);
+    await Assert.That(releasedIds).IsEquivalentTo([work.MessageId])
       .Because("attempts count dispatches, not queue time: a row this instance cannot reach in time goes back uncharged");
     var lapse = h.Logs.Single(l => l.Message.Contains(work.MessageId.ToString(), StringComparison.Ordinal));
     await Assert.That(lapse.Level).IsEqualTo(LogLevel.Warning);
