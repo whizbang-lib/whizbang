@@ -84,6 +84,19 @@ internal sealed class CapturingPerspectiveCompletionChannel : IPerspectiveComple
     }
   }
 
+  /// <summary>Completes once every one of <paramref name="eventWorkIds"/> has been enqueued, in any order.
+  /// Signal-based (SemaphoreSlim released on enqueue), no polling.</summary>
+  public async Task WaitForEventWorkIdsAsync(TimeSpan timeout, params Guid[] eventWorkIds) {
+    using var deadline = new CancellationTokenSource(timeout);
+    while (!eventWorkIds.All(EventWorkIds.Contains)) {
+      try {
+        await _eventWorkIdSignal.WaitAsync(deadline.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Not every awaited event-work-id was seen within {timeout}");
+      }
+    }
+  }
+
   public void Dispose() {
     _eventWorkIdSignal.Dispose();
     _cursorSignal.Dispose();

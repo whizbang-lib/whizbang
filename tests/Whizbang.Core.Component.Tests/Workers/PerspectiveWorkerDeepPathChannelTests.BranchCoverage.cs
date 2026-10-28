@@ -322,6 +322,30 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   }
 
   [Test]
+  public async Task Rewind_ThatDropsItsStraggler_CountsTheDropAndRunsTheNormalPathAsync() {
+    // #1862: an ephemeral runner with no snapshot floor skips the rewind and drops the late event that flagged the
+    // cursor. The work item still carries events after the cursor; skipping the rewind must not skip those too.
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.DroppedStragglerPerspective";
+    var coordinator = _rewindCoordinator(streamId, perspectiveName, Guid.CreateVersion7());
+    var runner = new RecordingRunner { RewindDropsTheTrigger = true };
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new PerspectiveMetrics(new WhizbangMetrics(meterFactory));
+    using var meters = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var (worker, _, _) = _buildBranchWorker(coordinator, registry, new BranchSetup { Metrics = metrics });
+
+    await worker.ProcessChannelBatchAsync(
+      [_branchWork(streamId, perspectiveName, PerspectiveProcessingStatus.RewindRequired)], CancellationToken.None);
+
+    await Assert.That(_branchSum(meters, "whizbang.perspective.stragglers_dropped")).IsEqualTo(1d)
+      .Because("the dropped straggler is counted, so an operator can see that late events are being lost");
+    await Assert.That(runner.RunCallCount).IsEqualTo(1)
+      .Because("the events after the cursor are applied by the normal path once the rewind is skipped");
+    await Assert.That(_branchSum(meters, "whizbang.perspective.rewinds_triggered")).IsEqualTo(1d);
+  }
+
+  [Test]
   public async Task Rewind_ThatThrows_CountsTriggeredAndFailedAndLeavesNothingInFlightAsync() {
     var streamId = Guid.CreateVersion7();
     const string perspectiveName = "Deep.CountedFailingRewindPerspective";

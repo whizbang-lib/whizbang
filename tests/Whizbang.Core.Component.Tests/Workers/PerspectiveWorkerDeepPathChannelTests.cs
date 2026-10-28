@@ -1375,8 +1375,19 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
       });
     }
 
+    /// <summary>#1862: the rewind is one an ephemeral runner with no snapshot floor skips, dropping its trigger.</summary>
+    public bool RewindDropsTheTrigger { get; init; }
+
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
-      RunAsync(streamId, perspectiveName, null, cancellationToken);
+      RewindDropsTheTrigger
+        ? Task.FromResult(new PerspectiveCursorCompletion {
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = Guid.Empty,
+          Status = PerspectiveProcessingStatus.None,
+          DroppedStragglers = [triggeringEventId]
+        })
+        : RunAsync(streamId, perspectiveName, null, cancellationToken);
 
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref _bootstrapCallCount);

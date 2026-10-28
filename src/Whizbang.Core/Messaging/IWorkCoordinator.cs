@@ -3871,6 +3871,19 @@ public record PerspectiveCursorCompletion {
   /// incorrectly marked as processed via range-based cursor advancement.
   /// </summary>
   public Guid[] ProcessedEventIds { get; init; } = [];
+
+  /// <summary>
+  /// The late events this run dropped, without applying them, instead of rewinding for them. Empty when it dropped none.
+  /// </summary>
+  /// <remarks>
+  /// An ephemeral perspective cannot rewind for an event that lands behind its row once no snapshot floor precedes it:
+  /// a replay would read bodies that are already reaped. The runner keeps the row as it is, leaves the cursor where it
+  /// is, and names the straggler here so the worker retires its work. Before the runner reported it, the work stayed
+  /// pending, so every claim found the same event again and dropped it again (#1862).
+  /// </remarks>
+  /// <docs>fundamentals/events/ephemeral-events</docs>
+  [JsonIgnore]
+  public Guid[] DroppedStragglers { get; init; } = [];
 }
 
 /// <summary>

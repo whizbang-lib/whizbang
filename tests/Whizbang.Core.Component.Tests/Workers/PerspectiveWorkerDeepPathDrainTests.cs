@@ -1277,9 +1277,35 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       }
 
       _firstRunWithEvents.TrySetResult();
+      if (RunWithEventsReportsDropped is not null) {
+        return _dropped(streamId, perspectiveName, RunWithEventsReportsDropped);
+      }
+      // An ephemeral runner meeting an event below its row's position rewinds for it, and with no snapshot floor
+      // drops it instead: the earliest such event is the one it names (#1862).
+      var straggler = events.FirstOrDefault(e => Stragglers.Contains(e.MessageId.Value));
+      if (straggler is not null) {
+        return _dropped(streamId, perspectiveName, [straggler.MessageId.Value]);
+      }
       var lastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.Empty;
       return _completed(streamId, perspectiveName, lastEventId) with { Status = CompletionStatus };
     }
+
+    /// <summary>
+    /// #1862: events an ephemeral runner with no snapshot floor drops instead of rewinding for them. A rewind triggered
+    /// by one of these, or a run handed one, reports it dropped and applies nothing.
+    /// </summary>
+    public HashSet<Guid> Stragglers { get; init; } = [];
+
+    /// <summary>When set, every run reports these dropped, whatever it was handed.</summary>
+    public Guid[]? RunWithEventsReportsDropped { get; init; }
+
+    private static PerspectiveCursorCompletion _dropped(Guid streamId, string perspectiveName, Guid[] dropped) => new() {
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastEventId = Guid.Empty,
+      Status = PerspectiveProcessingStatus.None,
+      DroppedStragglers = dropped
+    };
 
 
     /// <summary>Completes once the token is cancelled. Waits on the condition, never a duration.</summary>
@@ -1310,6 +1336,11 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     }
 
     private PerspectiveCursorCompletion _rewound(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
+      Stragglers.Contains(triggeringEventId)
+        ? _dropped(streamId, perspectiveName, [triggeringEventId])
+        : _replayed(streamId, perspectiveName, triggeringEventId);
+
+    private PerspectiveCursorCompletion _replayed(Guid streamId, string perspectiveName, Guid triggeringEventId) =>
       Frontier is null
         ? _completed(streamId, perspectiveName, triggeringEventId)
         : _completed(streamId, perspectiveName, Frontier.Value.EventId) with {

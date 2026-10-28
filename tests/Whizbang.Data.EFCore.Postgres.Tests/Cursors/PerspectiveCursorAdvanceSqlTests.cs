@@ -124,6 +124,53 @@ public class PerspectiveCursorAdvanceSqlTests : EFCoreTestBase {
       .Because("the cursor never passes an event still pending for the perspective");
   }
 
+  [Test]
+  public async Task CompletePerspective_ADroppedStragglersWork_RetiresItClearsTheRewindFlagAndLeavesTheCursorAsync() {
+    // #1862: what the worker sends once an ephemeral perspective drops a late event it cannot rewind for: the event's
+    // work id, and a completion for the pair that names no event. On the state an older build left behind (the
+    // cursor flagged for a rewind, the straggler's work still pending) the flush deletes the work, leaves the cursor
+    // where it was, and clears the flag, so nothing is left to find the straggler again.
+    await using var conn = await _openAsync();
+    var stream = TrackedGuid.New();
+    var events = await _appendAsync(conn, stream, 2);
+    var straggler = events[0];
+    await _completeAsync(_completion(stream, events[1]));
+    var stragglerWork = (Guid)TrackedGuid.New();
+    await using (var flagged = new NpgsqlCommand(
+        "UPDATE wh_perspective_cursors SET status = status | 32, rewind_trigger_event_id = @e, rewind_flagged_at = NOW(), "
+        + "rewind_first_flagged_at = NOW() WHERE stream_id = @s AND perspective_name = @p; "
+        + "INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at) "
+        + "VALUES (@w, @s, @p, @e, 0, 0, NOW())", conn)) {
+      flagged.Parameters.AddWithValue("w", stragglerWork);
+      flagged.Parameters.AddWithValue("s", (Guid)stream);
+      flagged.Parameters.AddWithValue("p", PERSPECTIVE);
+      flagged.Parameters.AddWithValue("e", straggler);
+      await flagged.ExecuteNonQueryAsync();
+    }
+
+    await using (var dbContext = CreateDbContext()) {
+      var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
+      await coordinator.CompletePerspectiveAsync(
+        cursors: [_completion(stream, Guid.Empty) with { Status = PerspectiveProcessingStatus.None, DroppedStragglers = [straggler] }],
+        eventWorkIds: [stragglerWork],
+        debugMode: false);
+    }
+
+    await using var pending = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = @w", conn);
+    pending.Parameters.AddWithValue("w", stragglerWork);
+    await Assert.That((long)(await pending.ExecuteScalarAsync())!).IsEqualTo(0L)
+      .Because("the dropped straggler's work is retired, so no claim finds it again");
+    await Assert.That(await _cursorAsync(conn, stream)).IsEqualTo(events[1])
+      .Because("the cursor is never moved backward to the dropped event");
+    await using var status = new NpgsqlCommand(
+      "SELECT status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p", conn);
+    status.Parameters.AddWithValue("s", (Guid)stream);
+    status.Parameters.AddWithValue("p", PERSPECTIVE);
+    await Assert.That(Convert.ToInt32(await status.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture) & 32).IsEqualTo(0)
+      .Because("with nothing left pending the rewind flag clears, so the rewind work-item path stops asking for it");
+  }
+
   private static PerspectiveCursorCompletion _completion(Guid stream, Guid lastEventId) => new() {
     StreamId = stream,
     PerspectiveName = PERSPECTIVE,

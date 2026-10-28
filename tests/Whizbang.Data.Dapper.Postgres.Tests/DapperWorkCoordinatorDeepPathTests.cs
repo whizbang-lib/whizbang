@@ -420,4 +420,53 @@ public class DapperWorkCoordinatorDeepPathTests : PostgresTestBase {
       "SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = @w", new { w = workId });
     await Assert.That(remaining).IsEqualTo(0L);
   }
+
+  // ----- CompletePerspectiveAsync: a dropped straggler's work (#1862) -----
+
+  [Test]
+  public async Task CompletePerspectiveAsync_DroppedStragglersWork_RetiresItClearsTheRewindFlagAndLeavesTheCursorAsync() {
+    // What the worker sends once an ephemeral perspective drops a late event it cannot rewind for: the event's work id
+    // and a completion for the pair that names no event. On the state an older build left behind (the cursor flagged
+    // for a rewind, the straggler's work still pending) the work goes, the cursor stays, and the flag clears.
+    var c = _build();
+    const string perspective = "DroppedStragglerPerspective";
+    var streamId = (Guid)TrackedGuid.New();
+    var straggler = (Guid)TrackedGuid.New();
+    var frontier = (Guid)TrackedGuid.New();
+    var stragglerWork = (Guid)TrackedGuid.New();
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await _seedEventStoreRowAsync(conn, straggler, streamId, version: 1, commitSequence: 72L);
+    await _seedEventStoreRowAsync(conn, frontier, streamId, version: 2, commitSequence: 100L);
+    await conn.ExecuteAsync(@"
+      INSERT INTO wh_perspective_cursors
+        (stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id, rewind_flagged_at, rewind_first_flagged_at)
+      VALUES (@s, @p, @f, 34, @e, NOW(), NOW())",
+      new { s = streamId, p = perspective, f = frontier, e = straggler });
+    await _seedPerspectiveEventAsync(conn, stragglerWork, streamId, perspective, straggler, instanceId: null, leaseExpiry: null, attempts: 0);
+
+    await c.CompletePerspectiveAsync(
+      [new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspective,
+        LastEventId = Guid.Empty,
+        Status = PerspectiveProcessingStatus.None,
+        DroppedStragglers = [straggler]
+      }],
+      eventWorkIds: [stragglerWork],
+      debugMode: false);
+
+    var remaining = await conn.ExecuteScalarAsync<long>(
+      "SELECT COUNT(*) FROM wh_perspective_events WHERE event_work_id = @w", new { w = stragglerWork });
+    await Assert.That(remaining).IsEqualTo(0L)
+      .Because("the dropped straggler's work is retired, so no claim finds it again");
+    var cursor = await conn.QuerySingleAsync<(Guid LastEventId, short Status)>(
+      "SELECT last_event_id, status FROM wh_perspective_cursors WHERE stream_id = @s AND perspective_name = @p",
+      new { s = streamId, p = perspective });
+    await Assert.That(cursor.LastEventId).IsEqualTo(frontier)
+      .Because("the cursor is never moved backward to the dropped event");
+    await Assert.That(cursor.Status & 32).IsEqualTo(0)
+      .Because("with nothing left pending the rewind flag clears");
+  }
 }
