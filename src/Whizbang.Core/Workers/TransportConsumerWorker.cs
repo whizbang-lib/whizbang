@@ -596,6 +596,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
     // Ensure event type set is built before echo check (lazy, one-time init).
     _ensureKnownEventTypesInitialized(scope.ServiceProvider);
+    // The shared discard policy the worker pipeline registers; absent, the receive gate keeps the registry-only decision.
+    var discardPolicy = scope.ServiceProvider.GetService<IMessageDiscardPolicy>();
 
     // Collect inbox messages for one direct INSERT (store_inbox_messages)
     var inboxMessages = new List<InboxMessage>(messages.Count);
@@ -618,17 +620,14 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       // EXEMPTION, composites: a composite is wire-only, so NO service consumes the composite type itself; its
       // consumers are registered for the INNER events, addressable once the dispatch seam fans it out. See
       // CompositeInboxFanout.IsCompositeWireType.
+      // EXEMPTION, absorbed namespaces (#1776): an event in RoutingOptions.AbsorbedNamespaces is kept with no local
+      // consumer, so the claim copies it into the event store for a perspective added later to rebuild from. The shared
+      // discard policy owns that decision; ReceiveConsumerGate asks it, for this worker and ServiceBusConsumerWorker alike.
       string? discardedOnReceive = null;
-      if (!string.IsNullOrWhiteSpace(msg.EnvelopeType)
-          && !EnvelopeTypeNameHelper.IsBodyClaimEnvelope(msg.EnvelopeType)) {
-        var innerMessageType = EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType);
-        if (innerMessageType is not null
-            && !_receptorRegistry.HasAnyConsumer(innerMessageType)
-            && !_runtimeReceptorRegistry.HasAnyRuntimeReceptors(innerMessageType)
-            && !CompositeInboxFanout.IsCompositeWireType(innerMessageType, _eventMarkerResolver)) {
-          discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
-          _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType));
-        }
+      if (ReceiveConsumerGate.UnconsumedMessageType(
+            msg.EnvelopeType, _receptorRegistry, _runtimeReceptorRegistry, _eventMarkerResolver, discardPolicy) is not null) {
+        discardedOnReceive = InboxReceiveDiscard.NO_LOCAL_CONSUMER;
+        _countDiscard(discardedOnReceive, TypeNameFormatter.GetSimpleName(msg.EnvelopeType!));
       }
 
       // CONTROL CLASS — non-durable receive (topology arc phase 9): receive → compare → discard.

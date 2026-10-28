@@ -103,6 +103,32 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
   }
 
+  [Test]
+  public async Task EvaluateInbox_UnconsumedType_OnAbsorbedNamespace_IsSkippedAsRoutine_NotAsRegistryDriftAsync() {
+    // #1776: an absorbed event with no local consumer is stored live so the event-store write captures it; at dispatch
+    // there is still nothing here to hand it to. That is the expected steady state of an absorbed namespace, not a
+    // receptor that disappeared in a deploy, so it is skipped as routine (Debug) rather than reported as registry drift.
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.AbsorbInbox");
+    var policy = _newPolicyWithAbsorb(meter, "Test.Contracts");
+
+    var decision = policy.EvaluateInbox(UNCONSUMED_TYPE);
+
+    await Assert.That(decision.ShouldDiscard).IsTrue()
+      .Because("the event is already in the event store; there is no handler here to dispatch it to");
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
+  }
+
+  [Test]
+  public async Task EvaluateInbox_UnconsumedType_OnNonAbsorbedNamespace_IsStillRegistryDriftAsync() {
+    using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.AbsorbInbox2");
+    var policy = _newPolicyWithAbsorb(meter, "Other.Namespace");
+
+    var decision = policy.EvaluateInbox(UNCONSUMED_TYPE);
+
+    await Assert.That(decision.ShouldDiscard).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.RegistryChanged);
+  }
+
   // Body-offload (claim-check): an offloaded message arrives with the internal
   // BodyClaimEnvelopePayload as its wire payload type — no service consumes it, so HasAnyConsumer
   // says "discard". That silently drops every offloaded message before TransportConsumerWorker can

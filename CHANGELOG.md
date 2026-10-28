@@ -822,6 +822,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ImmutableScopeContext.PropagatedClaimTypes`. Extensions and claims travel only with the tenant and user they were
   established for, and a scope with no tenant and no user still yields no hop scope. The wire format is unchanged: the
   hop scope already had fields for extensions and claims, and older receivers read them.
+- **An event in an absorbed namespace reaches the event store when nothing on the service consumes it (Fixes #1776).**
+  Both consumer workers decided "no local consumer" from the receptor registries alone, so an unconsumed event in a
+  namespace the service absorbs (`RoutingOptions.AbsorbNamespaces`) was stored settled as `no_local_consumer` and never
+  copied into the event store, and a perspective added later had nothing to rebuild from. The transport consumer and
+  the Service Bus consumer now make one shared decision that asks the message-discard policy when the registries find
+  no consumer, so such an event is stored as a live inbox row and the claim copies it into the event store. A child of
+  a composite in an absorbed namespace is likewise kept at expansion instead of being dropped. Nothing here takes the
+  event, so the dispatch gate settles the row on its first claim without dispatching, retrying or dead-lettering it,
+  and now reports that skip as `NoLocalConsumer` (Debug) rather than `RegistryChanged` (Information). An unconsumed
+  event in a namespace that is not absorbed is stored settled as before.
 - **On the Dapper driver, a perspective table that gains a column is migrated by column copy instead of an event
   replay (Fixes #1826).** Choosing how to migrate a changed perspective table compares each existing column's type,
   read from the database, with its type in the new DDL. The database reported `timestamp with time zone` and

@@ -825,10 +825,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   /// <summary>
   /// A child nobody here subscribes to is dropped at expansion rather than stored, leased, fetched and discarded at
-  /// dispatch; the same gate ShouldSkipInbox applies to ordinary rows (#736). Null when no discard policy is registered.
+  /// dispatch (#736). Whether a child is stored is the receive question, so the policy's receive gate answers it: an
+  /// absorbed child with no local consumer is kept, so the claim copies it into the event store (#1776), and is then
+  /// skipped at dispatch like any absorbed row.
   /// </summary>
   private Func<string, bool>? _hasConsumerFilter() =>
-    messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
+    messageType => !_discardPolicy.EvaluateReceive(messageType, string.Empty, string.Empty).ShouldDiscard;
 
   /// <summary>
   /// Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes precedence over
