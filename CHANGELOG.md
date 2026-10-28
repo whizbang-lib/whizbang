@@ -742,8 +742,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still dropped, ordinary traffic keeps trusting deduplication, and ephemeral and at-most-once events are never
   restored. A child on a stream whose earlier history was truncated here is refused, because it cannot be told from
   an event the truncation removed on purpose: it is stored settled with the reason, the reconciliation reads it
-  (`wh_reconcile_redelivered_bundle`, `RedeliveredBucketPresence.Refused`, `RedeliveryReconciliation.Refused`), and
-  the bucket is marked as one repair cannot change and reported once (Fixes #1843)
+  (`wh_reconcile_redelivered_bundle_by_first_hop` from migration 253, `RedeliveredBucketPresence.RefusedTruncated`,
+  `RedeliveryReconciliation.RefusedTruncated`), and the bucket is marked as one repair cannot change and reported once
+  (Fixes #1843)
+- **A redelivery no longer stamps its origin on events this service authored.** Origin adoption on redelivery
+  (#1790) could not tell an event received before origins were recorded from one this service authored, since both
+  have empty origin columns; when an origin's own store had filed events received from this service as its own, its
+  redelivery would stamp itself as their origin, and the origin would then alarm on a surplus it could never repair.
+  Before an empty origin is filled, the receiver now reads the stored event's hops and adopts only when the first hop
+  names the bundle's origin service (the service on the bundle's publish hop, compared without case). A first hop
+  with no service identity (the slim stored form), no hops, or a bundle naming no service adopt as before, so that
+  history still converges; an event that already carries an origin is unchanged. Refused events keep their empty
+  origin and local digest, are counted per bucket (`RedeliveredBucketPresence.RefusedForeignOrigin`,
+  `RedeliveryReconciliation.RefusedForeignOrigin`) and on the new counter `whizbang.stream_integrity.origins_refused`,
+  and are reported in one Warning per bundle. Migration 253 adds `wh_reconcile_redelivered_bundle_by_first_hop`, the
+  one function the coordinator calls per bundle (it also returns the truncation refusals and replaces 252's
+  `wh_reconcile_redelivered_bundle`);
+  `IWorkCoordinator.AdoptRedeliveredOriginAsync` takes the origin's service name, `RedeliveryReconciler.ReconcileAsync`
+  accepts it, and `RedeliveryReconciler.OriginServiceNameOf` reads it from a bundle's envelope. The 249 function is
+  kept for versions that still call it (Fixes #1844)
 - **Stream integrity converges on history received before origins were recorded, and stops re-requesting a bucket
   repair cannot change.** Events a service stored before migration 087 keep empty origin columns, so origin-keyed
   verification (checkpoint counts, the origin's digest lane) counted every one as missing; repair asked the origin to

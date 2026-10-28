@@ -1074,12 +1074,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = _resolveSchema(typeof(OutboxRecord));
-    // 252 (#1843): the 249 adoption plus, per bucket, the children the store refused to restore past deduplication.
-    var qualified = BuildSchemaQualifiedName(schema, "wh_reconcile_redelivered_bundle");
+    // 253 (#1843, #1844): per bucket, the events present, those that adopted the origin, the children the store
+    // refused to restore past deduplication, and the present events the first-hop check refused.
+    var qualified = BuildSchemaQualifiedName(schema, "wh_reconcile_redelivered_bundle_by_first_hop");
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
     cmd.Parameters.AddWithValue(P_ORIGIN_SERVICE_ID, originServiceId);
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_origin_service_name", NpgsqlTypes.NpgsqlDbType.Text) {
+      Value = (object?)originServiceName ?? DBNull.Value
+    });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
       Value = eventIds.ToArray()
     });
@@ -1087,7 +1091,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       Value = commitSequences.ToArray()
     });
 #pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
-    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count, refused_count FROM {qualified}(@p_origin_service_id,@p_event_ids,@p_commit_sequences)";
+    cmd.CommandText = $"SELECT stream_id, tenant_scope, event_type, present_count, adopted_count, refused_truncated_count, refused_foreign_origin_count FROM {qualified}(@p_origin_service_id,@p_origin_service_name,@p_event_ids,@p_commit_sequences)";
 #pragma warning restore S2077
     var buckets = new List<RedeliveredBucketPresence>();
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -1095,7 +1099,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var tenant = reader.GetString(1);
       buckets.Add(new RedeliveredBucketPresence(
         reader.GetGuid(0), tenant.Length == 0 ? null : tenant, reader.GetString(2), reader.GetInt32(3), reader.GetInt32(4),
-        reader.GetInt32(5)));
+        reader.GetInt32(5), reader.GetInt32(6)));
     }
     return buckets;
   }
