@@ -464,7 +464,9 @@ public static class ServiceCollectionExtensions {
   private static void _registerPerspectiveSyncServices(IServiceCollection services) {
     // Built from the bound options (Whizbang:DebuggerAwareClock, #1014); defaults when nothing binds them.
     services.TryAddSingleton<IDebuggerAwareClock>(sp =>
-      new DebuggerAwareClock(sp.GetRequiredService<IOptions<DebuggerAwareClockOptions>>().Value));
+      new DebuggerAwareClock(
+        sp.GetRequiredService<IOptions<DebuggerAwareClockOptions>>().Value,
+        sp.GetService<Microsoft.Extensions.Logging.ILogger<DebuggerAwareClock>>()));
     services.TryAddSingleton<ITracer, Tracer>();
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
 
