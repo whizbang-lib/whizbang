@@ -20,6 +20,7 @@ namespace Whizbang.Core.Messaging;
 public class InboxChannelWriter : IInboxChannelWriter {
   private readonly Channel<InboxWork> _channel;
   private readonly ConcurrentDictionary<Guid, Held> _inFlight = new();
+  private long _heldBytes;
   private readonly TimeProvider _timeProvider;
   private static readonly TimeSpan _leaseRenewalThreshold = TimeSpan.FromSeconds(150); // Half of 300s lease
 
@@ -66,13 +67,18 @@ public class InboxChannelWriter : IInboxChannelWriter {
     // arrived. Only rows nobody renews age out.
     foreach (var entry in _inFlight) {
       if (entry.Value.LastRenewedAt <= cutoff) {
-        _inFlight.TryRemove(entry);
+        RemoveInFlight(entry.Key);
       }
     }
   }
 
-  private void _track(InboxWork work) =>
-    _inFlight.GetOrAdd(work.MessageId, static (_, state) => new Held(state.Type, state.Now), (Type: work.MessageType, Now: _timeProvider.GetUtcNow()));
+  /// <summary>Holds the row unless it is already held; a held row's payload bytes count once (#1793).</summary>
+  private void _track(InboxWork work) {
+    var held = new Held(work.MessageType, _timeProvider.GetUtcNow(), InboxPayload.Bytes(work.Envelope.Payload));
+    if (_inFlight.TryAdd(work.MessageId, held)) {
+      Interlocked.Add(ref _heldBytes, held.Bytes);
+    }
+  }
 
   /// <inheritdoc />
   public ChannelReader<InboxWork> Reader => _channel.Reader;
@@ -98,7 +104,12 @@ public class InboxChannelWriter : IInboxChannelWriter {
   public bool IsInFlight(Guid messageId) => _inFlight.ContainsKey(messageId);
 
   /// <inheritdoc />
-  public void RemoveInFlight(Guid messageId) => _inFlight.TryRemove(messageId, out _);
+  public void RemoveInFlight(Guid messageId) {
+    // Every removal comes through here, so the held bytes are released exactly once per row (#1793).
+    if (_inFlight.TryRemove(messageId, out var held)) {
+      Interlocked.Add(ref _heldBytes, -held.Bytes);
+    }
+  }
 
 
   /// <inheritdoc />
@@ -110,7 +121,8 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <inheritdoc />
-  public long HeldPayloadBytes { get; }
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
+  public long HeldPayloadBytes => Interlocked.Read(ref _heldBytes);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
@@ -143,7 +155,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InboxChannelWriterHeldRowsTests.cs</tests>
   public void EndDispatch(Guid messageId) {
     if (_inFlight.TryGetValue(messageId, out var held) && held.State != InboxHoldState.CommitPending) {
-      _inFlight.TryRemove(new KeyValuePair<Guid, Held>(messageId, held));
+      RemoveInFlight(messageId);
     }
   }
 
@@ -160,7 +172,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
           continue;
         }
         if (held.Renewals >= maxRenewals) {
-          _inFlight.TryRemove(entry);
+          RemoveInFlight(entry.Key);
           lapsed.Add(new LapsedInboxLease(entry.Key, held.MessageType, held.State, held.Renewals));
           continue;
         }
@@ -173,7 +185,8 @@ public class InboxChannelWriter : IInboxChannelWriter {
   }
 
   /// <summary>One row this process holds: where it is, when its lease was last kept, and how many renewals it has used.</summary>
-  private sealed class Held(string messageType, DateTimeOffset trackedAt) {
+  private sealed class Held(string messageType, DateTimeOffset trackedAt, long bytes) {
+    public long Bytes { get; } = bytes;
     public Lock Gate { get; } = new();
     public string MessageType { get; } = messageType;
     public DateTimeOffset TrackedAt { get; } = trackedAt;
