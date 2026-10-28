@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 using System.Threading.Channels;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -10,11 +11,12 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Most use real <see cref="TimeProvider.System"/>
-/// with small delays. FakeTimeProvider was once too flaky here because the batcher began waiting for the next item
-/// before it armed the window's deadline, so a test could advance fake time in between and the deadline, created
-/// afterwards, never fired. The deadline is now armed first, and
-/// <see cref="ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync"/> pins that with a fake clock.
+/// Change-level tests for <see cref="SlidingWindowBatcher{T}"/>. Every test runs the batcher on a fake clock, so a
+/// window or maximum wait closes only when the test advances the clock, never because a loaded runner was slow. A
+/// test that moves time does it from <see cref="WaitHookReader"/>, which runs on the batcher's own thread as each
+/// wait for the next item begins: the batcher arms the window's deadline before that wait (pinned by
+/// <see cref="ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync"/>), so an advance made there always
+/// finds the deadline it means to move past.
 /// </summary>
 public class SlidingWindowBatcherTests {
   private static readonly int[] _expected123 = [1, 2, 3];
@@ -23,16 +25,25 @@ public class SlidingWindowBatcherTests {
   private static readonly int[] _expected12 = [1, 2];
   private static readonly int[] _expected34 = [3, 4];
 
+  private static readonly SlidingWindowBatcherOptions _defaultOptions = new() {
+    MaxSize = 100,
+    SlidingWindow = TimeSpan.FromMilliseconds(50),
+    MaxWait = TimeSpan.FromSeconds(1)
+  };
+
+  /// <summary>
+  /// A batcher over a fresh channel on a frozen clock. <paramref name="onWait"/> runs on the batcher's thread as each
+  /// wait for the next item begins, numbered from one: the first wait of a batch is made with no deadline armed, and
+  /// each later one with the batch's deadline already armed.
+  /// </summary>
   private static (Channel<int> ch, SlidingWindowBatcher<int> batcher) _setup(
-      SlidingWindowBatcherOptions? options = null) {
+      SlidingWindowBatcherOptions? options = null, Action<Channel<int>, FakeTimeProvider, int>? onWait = null) {
     var ch = Channel.CreateUnbounded<int>();
-    var batcher = new SlidingWindowBatcher<int>(
-      ch.Reader,
-      options ?? new SlidingWindowBatcherOptions {
-        MaxSize = 100,
-        SlidingWindow = TimeSpan.FromMilliseconds(50),
-        MaxWait = TimeSpan.FromSeconds(1)
-      });
+    var clock = new FakeTimeProvider();
+    ChannelReader<int> reader = onWait is null
+      ? ch.Reader
+      : new WaitHookReader(ch.Reader, wait => onWait(ch, clock, wait));
+    var batcher = new SlidingWindowBatcher<int>(reader, options ?? _defaultOptions, clock);
     return (ch, batcher);
   }
 
@@ -41,28 +52,31 @@ public class SlidingWindowBatcherTests {
   /// the window expires and the batch flushes with all 3.
   /// </summary>
   [Test]
-  public async Task ReadBatches_ThreeArrivalsWithinSlidingWindow_FlushesAsOneBatchAsync() {
-    // CI under load: Task.Delay(20ms) often actually waits much longer than 20ms because the
-    // scheduler is busy. Use a generous sliding window (500ms) so all 3 writes land before the
-    // window expires, even on slow hosts. The MaxWait is bumped proportionally so the
-    // assertion path doesn't blocked-poll a tighter budget than the sliding window.
+  [Timeout(30000)]
+  public async Task ReadBatches_ThreeArrivalsWithinSlidingWindow_FlushesAsOneBatchAsync(CancellationToken cancellationToken) {
+    var window = TimeSpan.FromMilliseconds(500);
+    var gap = TimeSpan.FromMilliseconds(20);
+    // Items 2 and 3 each arrive 20 ms into the window the previous arrival opened; once the third is in, the
+    // window passes with no further arrival.
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
-      SlidingWindow = TimeSpan.FromMilliseconds(500),
+      SlidingWindow = window,
       MaxWait = TimeSpan.FromSeconds(5)
+    }, (channel, time, wait) => {
+      if (wait is 2 or 3) {
+        time.Advance(gap);
+        channel.Writer.TryWrite(wait);
+      } else if (wait == 4) {
+        time.Advance(window);
+      }
     });
-    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)), cancellationToken);
 
-    await ch.Writer.WriteAsync(1);
-    await Task.Delay(20);
-    await ch.Writer.WriteAsync(2);
-    await Task.Delay(20);
-    await ch.Writer.WriteAsync(3);
-    // No more arrivals — sliding window (500ms) will expire ~500ms after the third arrival.
+    await ch.Writer.WriteAsync(1, cancellationToken);
 
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var batch = await firstBatch.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
@@ -74,25 +88,25 @@ public class SlidingWindowBatcherTests {
   /// MaxSize (5).
   /// </summary>
   [Test]
-  public async Task ReadBatches_HitsMaxSize_FlushesImmediatelyAsync() {
-    // The window and MaxWait are far beyond the deadline below, so the only way the batch arrives in time is
-    // the MaxSize flush; a loaded CI runner can stretch that flush by seconds without inverting the outcome,
-    // where a 500 ms window against a 400 ms deadline once did.
+  [Timeout(30000)]
+  public async Task ReadBatches_HitsMaxSize_FlushesImmediatelyAsync(CancellationToken cancellationToken) {
+    // The clock is never advanced, so neither the window nor MaxWait can close the batch: the only way it arrives
+    // at all is the MaxSize flush.
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 5,
       SlidingWindow = TimeSpan.FromSeconds(30),
       MaxWait = TimeSpan.FromSeconds(60)
     });
-    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)), cancellationToken);
 
     for (var i = 0; i < 5; i++) {
-      await ch.Writer.WriteAsync(i);
+      await ch.Writer.WriteAsync(i, cancellationToken);
     }
 
     // Flushes at MaxSize=5 without waiting for the 30 s window.
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var batch = await firstBatch.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
@@ -104,43 +118,39 @@ public class SlidingWindowBatcherTests {
   /// expires, but MaxWait flushes the batch eventually.
   /// </summary>
   [Test]
-  public async Task ReadBatches_BusyProducer_FlushesAtMaxWaitAsync() {
-    // Timing margins are chosen so CI load cannot invert the intended ordering. Task.Delay is a
-    // FLOOR — under load the producer's arrival gap only stretches, never shrinks — while MaxWait
-    // is a real timer that fires close to schedule. So the window and MaxWait must be large
-    // enough that even a heavily-stretched arrival gap (say 10x, ~200ms) still stays under the
-    // sliding window (keeping the debounce alive) and still lets >= 3 arrivals land before MaxWait:
-    //   - gap nominal 20ms; stretched to ~200ms still << 1000ms window -> window keeps resetting
-    //   - MaxWait 1500ms >> 3 stretched gaps (~600ms) -> at least 3 items always accrue first
-    //   - MaxWait 1500ms fires before size (75 items nominal < MaxSize 100) -> MaxWait is the trigger
+  [Timeout(30000)]
+  public async Task ReadBatches_BusyProducer_FlushesAtMaxWaitAsync(CancellationToken cancellationToken) {
+    // A busy producer: an item every 600 ms against a 1000 ms window, so the debounce never expires. The fourth
+    // in-window wait comes 1800 ms after the first arrival with the window open until 2800 ms; advancing to the
+    // 2000 ms MaxWait, short of that, flushes only if MaxWait is honored. Were it not, the batch would never
+    // arrive and the test would fail on its timeout.
+    var gap = TimeSpan.FromMilliseconds(600);
+    var maxWait = TimeSpan.FromMilliseconds(2000);
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
       SlidingWindow = TimeSpan.FromMilliseconds(1000),
-      MaxWait = TimeSpan.FromMilliseconds(1500)
-    });
-    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
-    using var cts = new CancellationTokenSource();
-    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)));
-
-    // Fast steady arrivals — the sliding window keeps resetting so the debounce never expires —
-    // MaxWait is the hard cap that forces the flush.
-    var producer = Task.Run(async () => {
-      for (var i = 1; i <= 100 && !cts.IsCancellationRequested; i++) {
-        try {
-          await ch.Writer.WriteAsync(i, cts.Token);
-        } catch (OperationCanceledException) { return; }
-        await Task.Delay(20);
+      MaxWait = maxWait
+    }, (channel, time, wait) => {
+      if (wait is >= 2 and <= 4) {
+        time.Advance(gap);
+        channel.Writer.TryWrite(wait);
+      } else if (wait == 5) {
+        time.Advance(maxWait - (gap * 3));
       }
     });
+    var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    var consumeTask = Task.Run(async () => firstBatch.TrySetResult(await batcher.ReadBatchesAsync(cts.Token).FirstAsync(cts.Token)), cancellationToken);
 
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    await ch.Writer.WriteAsync(1, cancellationToken);
+
+    var batch = await firstBatch.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
     try { await consumeTask; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
-    try { await producer; } catch (OperationCanceledException) { /* cancellation is the expected way out */ }
 
-    // MaxWait flushed a multi-item batch (>= 3) that includes the first arrival, and it flushed
-    // because of MaxWait rather than MaxSize (count stays well under the 100 cap).
-    await Assert.That(batch.Count).IsGreaterThanOrEqualTo(3);
+    // MaxWait flushed a multi-item batch that includes the first arrival, and it flushed because
+    // of MaxWait rather than MaxSize (count stays well under the 100 cap).
+    await Assert.That(batch.Count).IsEqualTo(4);
     await Assert.That(batch.Count).IsLessThan(100);
     await Assert.That(batch.Contains(1)).IsTrue();
   }
@@ -149,18 +159,19 @@ public class SlidingWindowBatcherTests {
   /// Empty channel close: no batches are yielded.
   /// </summary>
   [Test]
-  public async Task ReadBatches_ChannelCompletesEmpty_TerminatesWithNoBatchesAsync() {
+  [Timeout(30000)]
+  public async Task ReadBatches_ChannelCompletesEmpty_TerminatesWithNoBatchesAsync(CancellationToken cancellationToken) {
     var (ch, batcher) = _setup();
     var batches = new List<IReadOnlyList<int>>();
 
     var task = Task.Run(async () => {
-      await foreach (var batch in batcher.ReadBatchesAsync()) {
+      await foreach (var batch in batcher.ReadBatchesAsync(cancellationToken)) {
         batches.Add(batch);
       }
-    });
+    }, cancellationToken);
 
     ch.Writer.Complete();
-    await task.WaitAsync(TimeSpan.FromSeconds(2));
+    await task.WaitAsync(cancellationToken);
     await Assert.That(batches).IsEmpty();
   }
 
@@ -168,22 +179,29 @@ public class SlidingWindowBatcherTests {
   /// Channel closes mid-batch: pending items are still yielded.
   /// </summary>
   [Test]
-  public async Task ReadBatches_ChannelClosesWithPendingItems_FlushesPendingBatchAsync() {
-    var (ch, batcher) = _setup();
+  [Timeout(30000)]
+  public async Task ReadBatches_ChannelClosesWithPendingItems_FlushesPendingBatchAsync(CancellationToken cancellationToken) {
+    // The channel closes while the batch is waiting inside its window, which the frozen clock holds open
+    var windowOpen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (ch, batcher) = _setup(onWait: (_, _, wait) => {
+      if (wait == 2) {
+        windowOpen.TrySetResult();
+      }
+    });
     var batches = new List<IReadOnlyList<int>>();
 
     var task = Task.Run(async () => {
-      await foreach (var batch in batcher.ReadBatchesAsync()) {
+      await foreach (var batch in batcher.ReadBatchesAsync(cancellationToken)) {
         batches.Add(batch);
       }
-    });
+    }, cancellationToken);
 
-    await ch.Writer.WriteAsync(1);
-    await ch.Writer.WriteAsync(2);
-    await Task.Delay(10);
+    await ch.Writer.WriteAsync(1, cancellationToken);
+    await ch.Writer.WriteAsync(2, cancellationToken);
+    await windowOpen.Task.WaitAsync(cancellationToken);
     ch.Writer.Complete();
 
-    await task.WaitAsync(TimeSpan.FromSeconds(2));
+    await task.WaitAsync(cancellationToken);
     await Assert.That(batches).Count().IsEqualTo(1);
     await Assert.That(batches[0].SequenceEqual(_expected12)).IsTrue();
   }
@@ -192,18 +210,25 @@ public class SlidingWindowBatcherTests {
   /// Cancellation: cancelling mid-wait terminates the enumerator promptly.
   /// </summary>
   [Test]
-  public async Task ReadBatches_CancellationDuringWait_TerminatesAsync() {
-    var (ch, batcher) = _setup();
+  [Timeout(30000)]
+  public async Task ReadBatches_CancellationDuringWait_TerminatesAsync(CancellationToken cancellationToken) {
+    // Canceled while the batch is waiting inside its window, which the frozen clock holds open
+    var windowOpen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var (ch, batcher) = _setup(onWait: (_, _, wait) => {
+      if (wait == 2) {
+        windowOpen.TrySetResult();
+      }
+    });
     using var cts = new CancellationTokenSource();
     var task = Task.Run(async () => {
       await foreach (var _ in batcher.ReadBatchesAsync(cts.Token)) { /* no-op callback */ }
-    });
+    }, cancellationToken);
 
-    await ch.Writer.WriteAsync(1);
-    await Task.Delay(10);
+    await ch.Writer.WriteAsync(1, cancellationToken);
+    await windowOpen.Task.WaitAsync(cancellationToken);
     await cts.CancelAsync();
 
-    await task.WaitAsync(TimeSpan.FromSeconds(2));
+    await task.WaitAsync(cancellationToken);
     await Assert.That(task.IsCompleted).IsTrue();
   }
 
@@ -212,33 +237,44 @@ public class SlidingWindowBatcherTests {
   /// batch with its own sliding window.
   /// </summary>
   [Test]
-  public async Task ReadBatches_MultipleSequentialBatches_EachIndependentAsync() {
+  [Timeout(30000)]
+  public async Task ReadBatches_MultipleSequentialBatches_EachIndependentAsync(CancellationToken cancellationToken) {
+    var window = TimeSpan.FromMilliseconds(60);
+    // Wait 1 finds items 1 and 2 already written. Wait 2 is batch 1's in-window wait: the window passes quiet.
+    // Wait 3 is the next batch's first wait, made with no deadline armed: items 3 and 4 arrive. Wait 4 is batch 2's
+    // in-window wait: its own window passes quiet.
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 100,
-      SlidingWindow = TimeSpan.FromMilliseconds(60),
+      SlidingWindow = window,
       MaxWait = TimeSpan.FromSeconds(2)
+    }, (channel, time, wait) => {
+      if (wait is 2 or 4) {
+        time.Advance(window);
+      } else if (wait == 3) {
+        channel.Writer.TryWrite(3);
+        channel.Writer.TryWrite(4);
+      }
     });
-    var batch1 = new TaskCompletionSource<IReadOnlyList<int>>();
-    var batch2 = new TaskCompletionSource<IReadOnlyList<int>>();
-    using var cts = new CancellationTokenSource();
+    var batch1 = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var batch2 = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    // Batch 1: items 1, 2, written before the batcher starts reading
+    await ch.Writer.WriteAsync(1, cancellationToken);
+    await ch.Writer.WriteAsync(2, cancellationToken);
     var task = Task.Run(async () => {
       var seen = 0;
       await foreach (var batch in batcher.ReadBatchesAsync(cts.Token)) {
         seen++;
         if (seen == 1) { batch1.TrySetResult(batch); } else if (seen == 2) { batch2.TrySetResult(batch); return; }
       }
-    });
+    }, cancellationToken);
 
-    // Batch 1: items 1, 2 — window expires after 60ms quiet
-    await ch.Writer.WriteAsync(1);
-    await ch.Writer.WriteAsync(2);
-    var b1 = await batch1.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var b1 = await batch1.Task.WaitAsync(cancellationToken);
     await Assert.That(b1.SequenceEqual(_expected12)).IsTrue();
 
     // Batch 2: items 3, 4
-    await ch.Writer.WriteAsync(3);
-    await ch.Writer.WriteAsync(4);
-    var b2 = await batch2.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var b2 = await batch2.Task.WaitAsync(cancellationToken);
     await Assert.That(b2.SequenceEqual(_expected34)).IsTrue();
 
     await cts.CancelAsync();
@@ -290,8 +326,9 @@ public class SlidingWindowBatcherTests {
   /// class unreliable under load.
   /// </summary>
   [Test]
-  public async Task ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync() {
-    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+  [Timeout(30000)]
+  public async Task ReadBatches_WindowElapsesAsTheInWindowWaitBegins_StillFlushesAsync(CancellationToken cancellationToken) {
+    var clock = new FakeTimeProvider();
     var ch = Channel.CreateUnbounded<int>();
     var reader = new WaitHookReader(ch.Reader, wait => {
       if (wait == 2) {
@@ -305,8 +342,8 @@ public class SlidingWindowBatcherTests {
     }, clock);
     ch.Writer.TryWrite(1);
 
-    await using var batches = batcher.ReadBatchesAsync(CancellationToken.None).GetAsyncEnumerator();
-    var moved = await batches.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+    await using var batches = batcher.ReadBatchesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+    var moved = await batches.MoveNextAsync().AsTask().WaitAsync(cancellationToken);
 
     await Assert.That(moved).IsTrue();
     await Assert.That(batches.Current).IsEquivalentTo(_expectedOne);

@@ -23,14 +23,20 @@ namespace Whizbang.Core.Tests.Workers;
 /// 50ms / 1s / 100 per plans/pump-then-process.md.
 /// </summary>
 public class SlidingWindowInboxBatchStrategyTests {
+  /// <summary>
+  /// The batch window. Tests that wait on a window run the batcher on a <see cref="BatchWindowClock"/>, so the window
+  /// closes only when the test advances the clock past it, never because a loaded runner was slow.
+  /// </summary>
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(30);
+
   private readonly Uuid7IdProvider _idProvider = new();
 
   [Test]
-  public async Task AppendAsync_SingleMessage_FlushedAfterSlidingWindowAsync() {
-    // Real time provider — FakeTimeProvider is flaky with SlidingWindowBatcher per
-    // SlidingWindowBatcherTests' guidance. 30ms sliding / 200ms max-wait is fast + reliable.
+  [Timeout(30000)]
+  public async Task AppendAsync_SingleMessage_FlushedAfterSlidingWindowAsync(CancellationToken cancellationToken) {
     var captured = new List<InboxMessage[]>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
@@ -40,24 +46,28 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(_makeMessage());
+    await sut.AppendAsync(_makeMessage(), cancellationToken);
 
-    // Sliding-window debounce fires after 30ms idle → flush
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    // The sliding-window debounce flushes once the window passes with no further arrival
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(_window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(1);
   }
 
   [Test]
-  public async Task AppendAsync_BatchExceedsMaxSize_FlushesEarlyAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_BatchExceedsMaxSize_FlushesEarlyAsync(CancellationToken cancellationToken) {
     var captured = new List<InboxMessage[]>();
-    var firstFlush = new TaskCompletionSource();
+    var firstFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, ct) => {
@@ -72,21 +82,24 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromSeconds(30),
         MaxWait = TimeSpan.FromSeconds(30),
         MaxSize = 5,
-      });
+      },
+      // A clock nobody advances: the window cannot elapse at all, however slow the runner.
+      timeProvider: new FakeTimeProvider());
 
     for (var i = 0; i < 5; i++) {
-      await sut.AppendAsync(_makeMessage());
+      await sut.AppendAsync(_makeMessage(), cancellationToken);
     }
 
     // The fifth message reaches MaxSize, which flushes
-    await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await firstFlush.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(5);
   }
 
   [Test]
-  public async Task FlushAndStopAsync_DrainsBufferedMessagesAsync() {
+  [Timeout(30000)]
+  public async Task FlushAndStopAsync_DrainsBufferedMessagesAsync(CancellationToken cancellationToken) {
     var captured = new List<InboxMessage[]>();
 
     var sut = new SlidingWindowInboxBatchStrategy(
@@ -97,15 +110,17 @@ public class SlidingWindowInboxBatchStrategyTests {
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(50),
-        MaxWait = TimeSpan.FromMinutes(1),  // very long — won't fire before stop
+        MaxWait = TimeSpan.FromMinutes(1),
         MaxSize = 1000,
-      });
+      },
+      // A clock nobody advances: no window can close, so only Stop drains.
+      timeProvider: new FakeTimeProvider());
 
-    await sut.AppendAsync(_makeMessage());
-    await sut.AppendAsync(_makeMessage());
+    await sut.AppendAsync(_makeMessage(), cancellationToken);
+    await sut.AppendAsync(_makeMessage(), cancellationToken);
 
     // Stop drains the remaining buffered messages
-    await sut.FlushAndStopAsync();
+    await sut.FlushAndStopAsync(cancellationToken);
 
     var totalFlushed = captured.Sum(b => b.Length);
     await Assert.That(totalFlushed).IsEqualTo(2);
@@ -140,14 +155,16 @@ public class SlidingWindowInboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task AppendAsync_OutOfOrderArrivals_FlushedSortedByMessageIdAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_OutOfOrderArrivals_FlushedSortedByMessageIdAsync(CancellationToken cancellationToken) {
     // Slice 18 invariant: every batch boundary delivers event_id-sorted output. Concurrent
     // producers (transport consumers across multiple RabbitMQ channels) can deposit messages
     // into the inbox sliding window in non-deterministic order. Cursor-by-event_id on the
     // perspective-apply side depends on lex order matching commit order, so the window must
     // sort before flushing to wh_inbox.
     var captured = new List<InboxMessage[]>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
@@ -157,10 +174,11 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     // Generate three messages — Uuid7 provider guarantees m1 < m2 < m3 lex order.
     var m1 = _makeMessage();
@@ -168,12 +186,18 @@ public class SlidingWindowInboxBatchStrategyTests {
     var m3 = _makeMessage();
 
     // Enqueue out-of-order on purpose — mirror of the producer race that triggers
-    // cursor inversion downstream.
-    await sut.AppendAsync(m3);
-    await sut.AppendAsync(m1);
-    await sut.AppendAsync(m2);
+    // cursor inversion downstream. Each append is drained, and its window armed, before the next one is made,
+    // so all three are in the open batch when the clock closes the window. The frozen clock is what keeps the
+    // window open between appends; on the real clock a slow runner could close it early and split the batch.
+    await sut.AppendAsync(m3, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    await sut.AppendAsync(m1, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    await sut.AppendAsync(m2, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    clock.Advance(_window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
@@ -187,11 +211,12 @@ public class SlidingWindowInboxBatchStrategyTests {
   // ===== slice 23: per-stream invariants =====
 
   [Test]
-  public async Task AppendAsync_DifferentStreams_FlushIndependentBatchesAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_DifferentStreams_FlushIndependentBatchesAsync(CancellationToken cancellationToken) {
     // Slice 23 invariant: each stream gets its own per-stream buffer + drain task.
     // Messages for stream A and stream B MUST NOT be mixed into one flush — that would
     // re-introduce the cross-batch ordering race the slice fixed.
-    // Flushed by size and by shutdown, never by time: windows that do not elapse, a size of two that
+    // Flushed by size and by shutdown, never by time: windows on a clock nobody advances, a size of two that
     // flushes stream A's pair, and disposal that drains stream B's single message. A 30 ms window let
     // a loaded run split stream A across two flushes.
     var captured = new System.Collections.Concurrent.ConcurrentBag<InboxMessage[]>();
@@ -208,11 +233,12 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromHours(1),
         MaxWait = TimeSpan.FromHours(1),
         MaxSize = 2,
-      });
+      },
+      timeProvider: new FakeTimeProvider());
 
-    await sut.AppendAsync(_makeMessage(streamA));
-    await sut.AppendAsync(_makeMessage(streamA));
-    await sut.AppendAsync(_makeMessage(streamB));
+    await sut.AppendAsync(_makeMessage(streamA), cancellationToken);
+    await sut.AppendAsync(_makeMessage(streamA), cancellationToken);
+    await sut.AppendAsync(_makeMessage(streamB), cancellationToken);
     await sut.DisposeAsync();
 
     var batches = captured.ToArray();
@@ -225,13 +251,15 @@ public class SlidingWindowInboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task AppendAsync_SameStream_CrossWindowArrivals_CoalesceInOneFlushAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_SameStream_CrossWindowArrivals_CoalesceInOneFlushAsync(CancellationToken cancellationToken) {
     // The motivating fan-in case: stream X receives messages from multiple producers
     // across the sliding window. Per-slice-23 they MUST flush in a single batch (sorted
     // by MessageId), so the downstream apply sees them in order with no inversion.
     var captured = new List<InboxMessage[]>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamX = _idProvider.NewGuid();
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
@@ -241,27 +269,31 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        // CI under load: Task.Delay(20ms) often actually waits longer than 20ms because the
-        // scheduler is busy. Use a generous sliding window (500ms) so all 3 appends land
-        // before the window expires, even on slow hosts. MaxWait bumped proportionally.
-        SlidingWindow = TimeSpan.FromMilliseconds(500),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromSeconds(3),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     // m1, m2, m3 are MessageId-sorted. Append m3 first, m1 second (within window),
     // m2 third (also within window) — mirrors the cross-producer race that produced
-    // cursor inversions before slice 23.
+    // cursor inversions before slice 23. Two thirds of a window passes before each later
+    // arrival: together they span more than one window, and each arrival restarts it.
     var m1 = _makeMessage(streamX);
     var m2 = _makeMessage(streamX);
     var m3 = _makeMessage(streamX);
-    await sut.AppendAsync(m3);
-    await Task.Delay(20);
-    await sut.AppendAsync(m1);
-    await Task.Delay(20);
-    await sut.AppendAsync(m2);
+    var gap = _window * 2 / 3;
+    await sut.AppendAsync(m3, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(gap);
+    await sut.AppendAsync(m1, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    clock.Advance(gap);
+    await sut.AppendAsync(m2, cancellationToken);
+    await clock.Armed(3).WaitAsync(cancellationToken);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    clock.Advance(_window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     var batch = captured[0];
@@ -273,14 +305,16 @@ public class SlidingWindowInboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task AppendAsync_NullStreamId_RoutesToDefaultBufferAsync() {
+  [Timeout(30000)]
+  public async Task AppendAsync_NullStreamId_RoutesToDefaultBufferAsync(CancellationToken cancellationToken) {
     // Broadcast-style messages with no aggregate identity (StreamId == null) MUST route
     // through a single default buffer keyed by Guid.Empty — not create a buffer per null
     // message. Mirrors the SlidingWindowOutboxBatchStrategy._defaultStreamKey behavior.
     var captured = new List<InboxMessage[]>();
-    var flushedSignal = new TaskCompletionSource();
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    // Flushed by size, not by time, so the two messages are one batch exactly when they share a buffer
+    // Flushed by size, not by time (a clock nobody advances), so the two messages are one batch exactly when
+    // they share a buffer
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (msgs, _) => {
         captured.Add(msgs);
@@ -292,12 +326,13 @@ public class SlidingWindowInboxBatchStrategyTests {
         SlidingWindow = TimeSpan.FromHours(1),
         MaxWait = TimeSpan.FromHours(1),
         MaxSize = 2,
-      });
+      },
+      timeProvider: new FakeTimeProvider());
 
-    await sut.AppendAsync(_makeMessage(streamId: null));
-    await sut.AppendAsync(_makeMessage(streamId: null));
+    await sut.AppendAsync(_makeMessage(streamId: null), cancellationToken);
+    await sut.AppendAsync(_makeMessage(streamId: null), cancellationToken);
 
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    await flushedSignal.Task.WaitAsync(cancellationToken);
 
     await Assert.That(captured.Count).IsEqualTo(1);
     await Assert.That(captured[0].Length).IsEqualTo(2);
@@ -306,14 +341,17 @@ public class SlidingWindowInboxBatchStrategyTests {
 
   /// <summary>
   /// Covers the idle-sweep timer callback (static lambda → _fireAndForgetIdleSweep →
-  /// _runIdleSweepAsync). A tight IdleSweepInterval ensures the timer fires at least once
-  /// during the wait, and a tight IdleEvictionWindow ensures the inactive buffer is
-  /// evicted.
+  /// _runIdleSweepAsync). Advancing the clock by one IdleSweepInterval fires the timer, and by
+  /// then the buffer has been quiet for longer than the IdleEvictionWindow, so it is evicted.
   /// </summary>
   [Test]
-  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync() {
-    var flushedSignal = new TaskCompletionSource();
+  [Timeout(30000)]
+  public async Task IdleSweep_EvictsInactiveStreamBuffersAsync(CancellationToken cancellationToken) {
+    var flushedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var streamId = _idProvider.NewGuid();
+    var window = TimeSpan.FromMilliseconds(10);
+    var sweepInterval = TimeSpan.FromSeconds(1);
+    var clock = new BatchWindowClock(window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => {
@@ -322,20 +360,25 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: NullLogger<SlidingWindowInboxBatchStrategy>.Instance,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-        IdleSweepInterval = TimeSpan.FromMilliseconds(20),
-        IdleEvictionWindow = TimeSpan.FromMilliseconds(20),
-      });
+        IdleSweepInterval = sweepInterval,
+        IdleEvictionWindow = sweepInterval,
+      },
+      timeProvider: clock);
 
-    await sut.AppendAsync(_makeMessage(streamId));
-    await flushedSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await sut.AppendAsync(_makeMessage(streamId), cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(window);
+    await flushedSignal.Task.WaitAsync(cancellationToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the stream stays mapped after its flush until a sweep finds it idle");
 
-    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
-    while (sut.ActiveStreamCount > 0 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // The sweep timer's callback runs inside the advance and records the sweep it starts; wait for that sweep
+    clock.Advance(sweepInterval);
+    await sut.IdleSweeps.DrainAsync(cancellationToken);
+
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
   }
 
@@ -411,9 +454,10 @@ public class SlidingWindowInboxBatchStrategyTests {
     // drain loop would silently stop batching for that stream for the life of the process, with
     // messages accepted into a buffer nothing reads.
     var attempts = 0;
-    var firstFlush = new TaskCompletionSource();
-    var secondFlush = new TaskCompletionSource();
+    var firstFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new RecordingLogger();
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => {
@@ -427,24 +471,29 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: logger,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     var streamId = Guid.CreateVersion7();
     await sut.AppendAsync(_makeMessage(streamId), testToken);
+    await clock.Armed(1).WaitAsync(testToken);
+    clock.Advance(_window);
 
     // Wait for the first flush to be entered rather than sleeping for longer than it ought to take.
     // Its invocation is proof the first batch closed and was dispatched, which is the whole reason
     // the second append has to come after it: appended sooner, both messages join one batch, the
     // second flush never happens and the test times out. A 120ms sleep held on a quiet machine and
     // failed under CI load, which is the flake this replaces.
-    await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await firstFlush.Task.WaitAsync(testToken);
 
     await sut.AppendAsync(_makeMessage(streamId), testToken);
+    await clock.Armed(2).WaitAsync(testToken);
+    clock.Advance(_window);
 
-    await secondFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await secondFlush.Task.WaitAsync(testToken);
 
     await Assert.That(attempts).IsGreaterThanOrEqualTo(2)
       .Because("a failed flush must not end the stream's drain loop — the next batch still runs");
@@ -456,8 +505,9 @@ public class SlidingWindowInboxBatchStrategyTests {
     // The batch is dropped on failure and recovered only by transport redelivery, so the log
     // line is the sole record that it happened. Without it a silent drop looks like a message
     // that was never sent.
-    var failed = new TaskCompletionSource();
+    var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new RecordingLogger();
+    var clock = new BatchWindowClock(_window);
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
       flush: (_, _) => {
@@ -466,13 +516,16 @@ public class SlidingWindowInboxBatchStrategyTests {
       },
       logger: logger,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        SlidingWindow = _window,
         MaxWait = TimeSpan.FromMilliseconds(200),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(_makeMessage(), testToken);
-    await failed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await clock.Armed(1).WaitAsync(testToken);
+    clock.Advance(_window);
+    await failed.Task.WaitAsync(testToken);
     // The log is written after the flush task faults, on the drain loop. Wait for the log itself, not for a duration:
     // a 150ms sleep passed on a quiet machine and failed under CI load. A missing log now fails by the test's timeout.
     await logger.ErrorLogged.WaitAsync(testToken);
@@ -504,7 +557,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     await Assert.That(flushCount).IsEqualTo(0)
       .Because("nothing was ever appended, so no pass may invent a flush — a second stop that re-ran "
              + "the drain would re-deliver whatever the first one had already handed downstream.");
-    await Assert.ThrowsAsync<ObjectDisposedException>(async () => await sut.AppendAsync(_makeMessage()))
+    await Assert.ThrowsAsync<ObjectDisposedException>(async () => await sut.AppendAsync(_makeMessage(), testToken))
       .Because("repeat disposal leaves the strategy DISPOSED rather than resetting it — the same "
              + "guarantee a single stop gives (AppendAsync_AfterStop_ThrowsAsync), unchanged by "
              + "however many times the host's shutdown path disposes it.");

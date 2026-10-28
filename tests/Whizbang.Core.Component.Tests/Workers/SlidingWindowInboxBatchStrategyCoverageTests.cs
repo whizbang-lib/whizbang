@@ -87,6 +87,8 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
       CancellationToken testToken) {
     var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var logger = new RecordingLogger();
+    var window = TimeSpan.FromMilliseconds(10);
+    var clock = new BatchWindowClock(window);
 
     var sut = new SlidingWindowInboxBatchStrategy(
       flush: async (_, ct) => {
@@ -97,13 +99,16 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
       },
       logger: logger,
       options: new SlidingWindowInboxOptions {
-        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        SlidingWindow = window,
         MaxWait = TimeSpan.FromMilliseconds(50),
         MaxSize = 100,
-      });
+      },
+      timeProvider: clock);
 
     await sut.AppendAsync(_makeMessage(), testToken);
-    await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await clock.Armed(1).WaitAsync(testToken);
+    clock.Advance(window);
+    await flushStarted.Task.WaitAsync(testToken);
 
     using var callerCts = new CancellationTokenSource();
     await callerCts.CancelAsync();
@@ -111,11 +116,11 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     // The caller's token is already canceled and the flush is still hung, so awaiting the
     // drain workers with that token must throw immediately — caught internally, forcing the
     // strategy's own hard-cancel — rather than this call ever throwing out to us.
-    await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await sut.FlushAndStopAsync(callerCts.Token).WaitAsync(testToken);
 
-    // Give the drain task's own exception handler, now unblocked by the forced cancellation, a moment to
-    // run — it either returns quietly or, if regressed, logs a spurious failure.
-    await Task.Delay(200, testToken);
+    // Wait for the drain worker itself to finish: its exception handler, unblocked by the forced cancellation,
+    // either returns quietly or, if regressed, logs a spurious failure, and both happen before the worker ends.
+    await sut.WhenWorkersStoppedForTests().WaitAsync(testToken);
 
     await Assert.That(logger.Errors).IsEmpty()
       .Because("a shutdown-forced cancellation of an in-flight flush is not a flush failure and must never be logged as one");
@@ -173,7 +178,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
              + "for that stream's drain and loses whatever was still queued in it");
 
     timeProvider.SweepTimer.ReleaseDispose();
-    await stop.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    await stop.WaitAsync(testToken);
     await Assert.That(stop.IsCompletedSuccessfully).IsTrue()
       .Because("the stop path owns the drain and must complete it once the timer is gone");
   }

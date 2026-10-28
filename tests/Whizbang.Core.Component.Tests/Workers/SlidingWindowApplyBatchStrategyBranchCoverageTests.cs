@@ -17,21 +17,25 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public class SlidingWindowApplyBatchStrategyBranchCoverageTests {
 
+  private static readonly TimeSpan _window = TimeSpan.FromMilliseconds(20);
+
   private static SlidingWindowApplyOptions _fastWindow() => new() {
-    SlidingWindow = TimeSpan.FromMilliseconds(20),
+    SlidingWindow = _window,
     MaxWait = TimeSpan.FromMilliseconds(200),
     IdleEvictionWindow = TimeSpan.FromSeconds(30),
     IdleSweepInterval = TimeSpan.FromSeconds(10),
   };
 
   [Test]
-  public async Task FailedFlush_WithoutALogger_IsDroppedAndTheStreamKeepsFlushingAsync() {
+  [Timeout(30000)]
+  public async Task FailedFlush_WithoutALogger_IsDroppedAndTheStreamKeepsFlushingAsync(CancellationToken cancellationToken) {
     // The failure report falls back to nothing when no logger was given. If reporting it threw
     // instead, the stream's drain loop would die on the first failed flush and every later signal
     // for that stream would sit in a buffer nobody reads.
     var firstAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var attempts = 0;
+    var clock = new BatchWindowClock(_window);
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (_, _, _) => {
         var n = Interlocked.Increment(ref attempts);
@@ -39,13 +43,19 @@ public class SlidingWindowApplyBatchStrategyBranchCoverageTests {
         throw new InvalidOperationException("perspective store unavailable");
       },
       logger: null!,
-      options: _fastWindow());
+      options: _fastWindow(),
+      timeProvider: clock);
     var streamId = Guid.CreateVersion7();
 
-    await sut.AppendAsync(streamId);
-    await firstAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await sut.AppendAsync(streamId);
-    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // Each window is closed by the clock once its timer is armed, never by how fast the runner is
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(1).WaitAsync(cancellationToken);
+    clock.Advance(_window);
+    await firstAttempt.Task.WaitAsync(cancellationToken);
+    await sut.AppendAsync(streamId, cancellationToken);
+    await clock.Armed(2).WaitAsync(cancellationToken);
+    clock.Advance(_window);
+    await secondAttempt.Task.WaitAsync(cancellationToken);
 
     await Assert.That(Volatile.Read(ref attempts)).IsGreaterThanOrEqualTo(2)
       .Because("the same stream flushed again after a failed flush with no logger to report it to");
